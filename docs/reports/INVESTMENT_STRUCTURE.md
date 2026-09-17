@@ -258,3 +258,107 @@ taken against it.
   briefing variants re-generate from their own legacy prompts against legacy
   heading names and are decoupled from this registry. They will drift further;
   that is separate work.
+
+---
+
+## v4.0 — the document has room for what it retrieves (17 Sep 2026)
+
+> "In its current form, it is simply not good enough. … the Zoning, Planning
+> and Infrastructure sections are simply not good enough at the moment. The
+> information being incorporated does not provide the client with sufficiently
+> solid, meaningful or valuable information … Please refer back to the previous
+> legacy report that used to be generated, which was approximately 80 pages or
+> more, and use that as a source of inspiration in terms of the level of
+> detail, depth, professionalism, educational value and overall quality."
+> — the owner, 17 Sep 2026
+
+### The two things that were measured
+
+**Zoning had no section.** `Zoning` and `Planning` were `sourceHeadings` of
+`compass.riskDashboard` — a 500-word section whose own `purpose` reads *"The
+table IS the section — no prose restating rows"*. So the planning controls this
+platform retrieves had nowhere to be explained, and the reader got a row in a
+risk table.
+
+**The legacy benchmark, measured rather than remembered.** `df813535` (Lot
+2410 Prescott Road, Mambourin) is 338,471 characters — the longest stored
+report — and it is **the same 27-section document written three times** by a
+resume defect. One pass is ~110,000 characters across 27 sections. The 17 Sep
+2026 Compass is **38,648 characters across 11**, against a v3.0 word cap of
+5,010.
+
+Its per-section weight is where the difference is: Demographics & Demand
+Drivers 11,308 characters, Environmental Risks & Climate 10,538, Recreational
+Amenities 7,699, Schools & Education 7,510, Loan Structure 7,397, Transport
+3,719, Crime & Safety 3,060. The Compass folded schools, healthcare, retail,
+recreation *and* transport into one 600-word `Amenity & Access`, and climate
+and crime into a risk table.
+
+### The v4.0 list
+
+| # | Section | Words | Was |
+|---|---|---|---|
+| 1 | Cover Page | 60 | — |
+| 2 | Executive Verdict | 550 | 450 |
+| 3 | Property & Locality Snapshot | 350 | 300 |
+| 4 | Why This Location Matters | 900 | 700 |
+| 5 | Demand Drivers | 950 | 750 |
+| 6 | Amenity & Access | 700 | 600 (also held transport) |
+| 7 | **Transport & Connectivity** | 450 | merged into 6 |
+| 8 | **Planning, Zoning & What Is Mapped Over the Land** | 900 | *nowhere* |
+| 9 | **Environment, Climate & Safety** | 650 | merged into 12 |
+| 10 | Market Positioning | 600 | 450 |
+| 11 | Property Fit Within the Suburb | 550 | 450 |
+| 12 | Risk Dashboard | 550 | 500 (also held 8 and 9) |
+| 13 | Due Diligence Checklist | 350 | 250 |
+| 14 | Final Recommendation | 350 | 250 |
+| 15 | Appendix, Source Notes & Disclaimer | 300 | 250 |
+
+**8,150 words across a 34-page budget** — about 240 words a page, which is what
+a page carrying a table or a figure holds. The ceiling is what the retrieved
+evidence can carry honestly, not a target: a section still writes what it has
+and stops.
+
+### Why the merges were right and are now wrong
+
+v3.0 merged those sections because they repeated each other, and that was the
+correct call on the evidence of the time. What changed is that there is now a
+register behind each one:
+
+- **Planning** — `planningConstraints.pure.ts` returns the zone, the height,
+  the floor space ratio, the minimum lot size, heritage, bushfire, flood,
+  landslip, acid sulfate soils and the regional plan, each with its instrument,
+  its clause and its currency date, and `planningControlGuide.pure.ts` explains
+  what each one obliges.
+- **Transport** — `transport_stops` holds 185,177 GTFS stops across four
+  networks, with `parent_station` grouping.
+- **Environment, Climate & Safety** — four states of recorded crime and the
+  climate readings.
+
+**A section with nothing behind it should be merged. A section with a register
+behind it should not.**
+
+### Two rules the split turns on
+
+**A heading belongs to exactly ONE section.** Listed in two, the partition
+resolves it to whichever comes first and the other silently loses it — and
+`fork-investment-report` drops an unmatched heading from both forks without
+saying so. `compassRegistryParity.spec.ts` now fails on any clash (two legacy
+aliases are grandfathered) and separately asserts that every legacy heading is
+still routable SOMEWHERE, which is the rule that actually protects the forks.
+
+**Both registries move together.** `sectionRegistry.pure.ts` is a second
+registry with its own per-tier placements, and its DECLARED GAP for planning
+is closed by this change. Its reasoning is kept verbatim because it was right
+when written — *"the record holds no planning data … the fix is upstream of the
+reporting engine and cannot be made here"* — and the fix was made upstream. The
+strategic tier keeps `producer: null`, because a Due Diligence planning section
+also needs title and easements, which no register here reads, and half a
+section declared as a whole one is the failure that registry exists to stop.
+
+### The resume path needed no change
+
+`total_sections` records which list the banked content was written under, and a
+mismatch against the current registry forces a fresh regeneration rather than a
+resume — the guard that already existed for exactly this. A report banked under
+eleven sections will not resume under fifteen.

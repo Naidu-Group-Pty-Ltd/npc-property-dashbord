@@ -582,7 +582,10 @@ function buildCanonicalTemplateContext(tier: 'compass-40' | 'financial-analysis'
   const sections = tier === 'financial-analysis' ? financialSections() : compassSections();
   const title = tier === 'financial-analysis'
     ? 'Financial Analysis Report Structure'
-    : 'Investment Location & Property Fit Report Structure (≈38 pages)';
+    // Read from the band rather than written, because the registry's page
+    // budget is the thing that decides it and a literal beside it is how the
+    // two come to disagree. v3.0 said 38 against a 23-page document.
+    : `Investment Location & Property Fit Report Structure (${COMPASS_PAGE_BAND.min}–${COMPASS_PAGE_BAND.max} pages)`;
 
   const compassStyleRules = tier === 'compass-40' ? [
     '',
@@ -857,7 +860,21 @@ function sanitizeCompass40Content(raw: string): string {
 
   let out = kept.join('\n');
 
-  // Strip Perplexity-style inline citation markers like [1], [2], [1][3]
+  /*
+   * Strip Perplexity-style inline citation markers like [1], [2], [1][3].
+   *
+   * A marker between two word characters leaves a SPACE, not nothing. The
+   * model emits `location[1]and dwelling` — the marker attaches to the word
+   * before it and the next word follows with no space of its own — so removing
+   * it outright printed `**Top strengths (locationand dwelling):**` on page 2
+   * of the 17 Sep 2026 regeneration of 262 Pallas Street. Verified in the
+   * stored bytes: `20 737472656e67746873 20 28 6c6f636174696f6e 616e64 20`,
+   * with nothing between "location" and "and".
+   *
+   * Everywhere else the marker goes outright, so `rate[1].` does not become
+   * `rate .`; the boundary is what decides, not the marker.
+   */
+  out = out.replace(/(\w)\[\d+\](?:\[\d+\])*(\w)/g, '$1 $2');
   out = out.replace(/\[\d+\](?:\[\d+\])*/g, '');
 
   // Strip placeholder tokens

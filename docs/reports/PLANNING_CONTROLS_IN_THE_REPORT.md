@@ -393,3 +393,123 @@ absent rather than printed as zeros.
   earlier chunk is detectable — `partitionByRegistry` already knows the
   ordinals — but handing it forward rather than dropping it is the part that
   needs care, so it is named here rather than half-done.
+
+---
+
+## 8. The registers were answering the whole time (17 Sep 2026)
+
+Until this section, §3 of this document was true of the code and false of the
+world. `planningFacts.pure.ts` carried one honest sentence for overlays:
+
+> Overlay mapping (heritage, flood, bushfire, character, acoustic) is held in
+> the council scheme and is not retrieved by this platform. Nothing here
+> states that the property carries no overlay — only that none was looked up.
+
+The premise underneath it — *"No integrated layer publishes overlays at a
+point yet"* — had never been measured. It is wrong for four of the eight
+jurisdictions, including the two that carry most of the corpus.
+
+### 8.1 What was measured
+
+Probed from the **production egress** on 17 Sep 2026 (pg_net request ids
+263970–263976, 263992–263998, 264009–264016; the local sandbox's proxy refuses
+these hosts, which is why the measurement had to be taken from the deployment).
+Every one answered **HTTP 200** with a parseable body, under an open licence,
+with no key:
+
+| Jurisdiction | Service | What it answers at a point |
+|---|---|---|
+| NSW | `ePlanning/Planning_Portal_Principal_Planning` | The LEP and its amendment, the zone, **maximum building height in metres**, **floor space ratio**, **minimum lot size**, **heritage** (item number, type, significance), land reservation acquisition, foreshore building line, minimum dwelling density — each with the **legislative clause** that creates it and its **own currency date** |
+| NSW | `ePlanning/Planning_Portal_Hazard` | Bushfire Prone Land, Flood Planning Map, Landslide Risk Land |
+| NSW | `ePlanning/Planning_Portal_Protection` | Acid sulfate soils, airport noise, drinking-water catchment, groundwater vulnerability, riparian land, salinity, terrestrial biodiversity, wetlands, scenic protection, environmentally sensitive land |
+| VIC | Vicmap `plan_overlay` (WFS) | Every overlay at the point, with its schedule and gazettal date |
+| QLD | `PlanningCadastre/StatePlanning` | Regional plan (name, **legal status**, version), priority living areas, PDAs, SDAs, coordinated projects, infrastructure designations |
+| QLD | `FloodCheck/RapidHazardAssessment` | Flood hazard |
+| QLD | `Environment/MattersOfStateEnvironmentalSignificance` | 26 layers: regulated vegetation, wildlife habitat, wetlands, watercourses, koala habitat |
+| TAS | `Public/PlanningOnline` layers 14, 15 | The Code Overlay and the General Overlay, with the Local Provisions Schedule that carries them |
+
+Two real answers, verbatim:
+
+**Muswellbrook, NSW** — one `identify` call returned six controls:
+`Muswellbrook Local Environmental Plan 2009` (Amendment No 7), R1 General
+Residential, **8.5 m** maximum height under **cl. 4.3** current 18 Nov 2022,
+**0.5:1** floor space ratio under **cl. 4.4**, **600 m²** minimum lot size
+under **cl. 4.1** current 2 Jul 2021, and a **Residential Heritage
+Conservation Area (item C2, local significance)** under **cl. 5.10** current
+1 Mar 2024.
+
+**262 Pallas Street, Maryborough QLD** — `Maryborough Priority Living Area`,
+inside the `Wide Bay Burnett Regional Plan`, **Legal status: Statutory,
+Version: December 2023**.
+
+Every one of those is a fact this report had nothing to say about.
+
+### 8.2 The four rules
+
+**A constraint is named only where a layer named it.** Nothing infers a
+control from a zone code, a suburb or a neighbouring parcel.
+
+**A layer that was never asked is evidence of nothing.** `askedFamilies`
+travels with the answer, an unreachable register contributes no coverage at
+all, and "checked and not mapped at this coordinate" is a different sentence
+from "nobody looked". Measured: `layers=all` on the NSW Hazard service answers
+`{"results":[]}` at any point, because ArcGIS reads `all` as *all VISIBLE* and
+that service's group carries `defaultVisibility: false`. An empty answer to a
+question nobody asked is the worst shape this codebase knows — it reads as a
+property with no bushfire and no flood — so the explicit layer ids in
+`NSW_HAZARD_LAYERS` are required rather than a refinement.
+
+**A value carries its unit, its instrument and its clause.** `8.5` is not a
+fact. `8.5 m maximum building height, Muswellbrook LEP 2009 cl. 4.3, current
+18 Nov 2022` is one, and it is the difference between a number a client can
+take to a town planner and a number they cannot. Each layer publishes its own
+currency and the report keeps them apart, because the maps amend separately.
+
+**A retrieval is not information.** `planningControlGuide.pure.ts` explains
+what each control IS, what it obliges, and what to obtain — about the
+CONTROL, never about the property, which is what lets it be written in advance
+and still be true. `planningConstraints.spec.ts` rejects any currency amount,
+percentage, measurement or BAL rating in it, and any sentence that could read
+as a clearance.
+
+### 8.3 Why the legacy report is the wrong model for this section
+
+The owner's 17 Sep review asked for the legacy long-form report as a benchmark
+of substance. Its zoning section is fluent, specific and structured — a
+controls table with an Implications column, future rezoning potential,
+overlays and risks, investment implications, and a genuinely useful paragraph
+telling the reader to obtain a Section 32.
+
+It is also fabricated, and one file proves it. `df813535` carries **three
+copies of its own zoning section**, on **one lot**, in **one document**, and
+they disagree on every material control:
+
+| | Copy 1 | Copy 2 | Copy 3 |
+|---|---|---|---|
+| Flood overlay | Moderate, 1% AEP near Werribee River | **Minimal — outside the 1-in-100 floodplain** | Moderate, affects 5% of the lot |
+| Bushfire overlay | **High**, BAL-19 required | **Low risk** | BAL-12.5 to BAL-29 |
+| Contributions | $45,000+ per lot | $15,000–$20,000 | $52,000 per lot |
+| Height limit | 9 m | 9 m | 9.5 m |
+| PSP approved | 2018 | 2018 | 2022 |
+| Dwellings | 6,500 by 2036 | 13,000 by 2036 | 2,500 by 2031 |
+| Subdivision | **High upside** | **No subdivision potential** | Two 200 m² lots, +$250,000 |
+
+Copy 2 cites **Wyong Shire Council** flood mapping — a New South Wales
+council, 900 km away — for a Victorian property. It is the same class as the
+`450 m²` and the NSW instrument names on a Queensland property that §1 of this
+document records.
+
+So the legacy report is the benchmark for **structure, depth, educational
+scaffolding and register**, and the opposite of the benchmark for
+**provenance**. What it did well needed no retrieval at all: the paragraph
+naming the document to obtain. `VERIFICATION_DOCUMENT` now carries that for
+all eight jurisdictions, named precisely — asking a Queensland council for a
+"Section 32" gets nowhere, and asking a Victorian vendor for a "planning and
+development certificate" gets nowhere either.
+
+### 8.4 Also fixed here
+
+`Parcel area: 0 m² (surveyed)` printed on 262 Pallas Street — a surveyed
+measurement of nothing — because the guard was `facts.parcelAreaSqm !== null`
+and `num()` admits zero as a finite number. A parcel area of zero is the layer
+declining to publish one.

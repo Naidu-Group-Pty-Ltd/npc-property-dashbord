@@ -199,3 +199,73 @@ describe('the rules claim the whole report, and name live search', () => {
     expect(rules).not.toMatch(/INFRASTRUCTURE RULES — these override/);
   });
 });
+
+describe('the strategic designation the point sits inside', () => {
+  /*
+   * Measured at 262 Pallas Street, Maryborough on 17 Sep 2026 (pg_net request
+   * id 263994). The instruments probe asks four NAMED Queensland layers —
+   * priority development areas, state development areas, coordinated projects,
+   * infrastructure designations — and none of them matched, so the report said
+   * "the property lies inside no declared priority development area, state
+   * development area, coordinated project or infrastructure designation" and
+   * stopped.
+   *
+   * True, and it left out what the SAME service returns at the SAME
+   * coordinate. This is the verbatim answer.
+   */
+  const WITH_CONTEXT = {
+    ...PALLAS,
+    constraints: [
+      {
+        family: 'growthArea', kind: 'context', label: 'Maryborough Priority Living Area',
+        code: null, value: null, instrument: 'Priority Living Area', clause: null,
+        currencyDate: null, detail: 'Wide Bay Burnett',
+        source: 'Queensland StatePlanning', licence: 'CC BY 4.0',
+      },
+      {
+        family: 'regionalPlan', kind: 'context', label: 'Wide Bay Burnett Regional Plan',
+        code: null, value: null, instrument: 'Wide Bay Burnett Regional Plan', clause: null,
+        currencyDate: null, detail: 'Statutory instrument · version December 2023',
+        source: 'Queensland StatePlanning', licence: 'CC BY 4.0',
+      },
+      // A hazard belongs to the planning section, never to this one.
+      {
+        family: 'flood', kind: 'hazard', label: 'Rapid Hazard Assessment',
+        code: null, value: null, instrument: null, clause: null,
+        currencyDate: null, detail: null, source: 'Queensland FloodCheck', licence: 'CC BY 4.0',
+      },
+    ],
+  };
+
+  const evidence = buildInfrastructureEvidence({ planningData: WITH_CONTEXT });
+
+  it('carries the designations and nothing else from the register', () => {
+    expect(evidence.items.map((i) => i.name)).toEqual([
+      'Maryborough Priority Living Area', 'Wide Bay Burnett Regional Plan',
+    ]);
+    expect(evidence.anyEvidenced).toBe(true);
+  });
+
+  it('gives a designation no delivery standing, because it is not a project', () => {
+    // Reading a plan as `approved` would put it in the same column as a road
+    // under construction. A regional plan says what an area is planned to
+    // BECOME; it does not control what is built on one lot.
+    expect(evidence.items.every((i) => i.standing === null)).toBe(true);
+    expect(evidence.items.map((i) => i.kind)).toEqual(['Growth / priority area', 'Regional plan']);
+  });
+
+  it('prints the publisher’s own standing and version', () => {
+    const rendered = renderInfrastructureOutlook(evidence);
+    expect(rendered).toContain('Wide Bay Burnett Regional Plan');
+    expect(rendered).toContain('Statutory instrument');
+    expect(rendered).toContain('version December 2023');
+    // And still no forecast of any kind.
+    expect(rendered).not.toMatch(/due (in|by)|expected (in|by)|completion (in|by)/i);
+  });
+
+  it('still forbids quantifying an uplift from a designation', () => {
+    const rules = infrastructureRules(evidence);
+    expect(rules).toMatch(/Do NOT quantify an uplift/);
+    expect(rules).toMatch(/only from items in the table/);
+  });
+});

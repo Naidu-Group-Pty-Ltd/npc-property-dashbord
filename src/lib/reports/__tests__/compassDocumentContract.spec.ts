@@ -199,3 +199,38 @@ describe('the contract itself', () => {
     expect(c).not.toMatch(/\bminimum\b.{0,20}\bwords\b/i);
   });
 });
+
+describe('a citation marker leaves a space where a word needs one', () => {
+  /*
+   * `**Top strengths (locationand dwelling):**` reached page 2 of the 17 Sep
+   * 2026 regeneration of 262 Pallas Street. Verified in the stored bytes:
+   * `20 737472656e67746873 20 28 6c6f636174696f6e 616e64 20` — " strengths
+   * (locationand " — with nothing at all between the two words.
+   *
+   * The model writes `location[1]and dwelling`: the marker attaches to the
+   * word before it and the next word follows with no space of its own, so a
+   * stripper that removes the marker outright joins them. The cause of the
+   * markers is fixed too — the legacy prompt's point 8 said "Include
+   * [citation] markers where data is sourced from external references" — but
+   * the stripper has to be right for every marker a live search still leaves.
+   */
+  const strip = (t: string) => t
+    .replace(/(\w)\[\d+\](?:\[\d+\])*(\w)/g, '$1 $2')
+    .replace(/\[\d+\](?:\[\d+\])*/g, '');
+
+  it('separates two words a marker was sitting between', () => {
+    expect(strip('strengths (location[1]and dwelling)')).toBe('strengths (location and dwelling)');
+    expect(strip('the rate[1][3]rose sharply')).toBe('the rate rose sharply');
+  });
+
+  it('leaves punctuation alone, so a full stop does not gain a space', () => {
+    expect(strip('the cash rate[1]. Demand held.')).toBe('the cash rate. Demand held.');
+    expect(strip('median[2], which is')).toBe('median, which is');
+    expect(strip('held steady [1] over the period')).toBe('held steady  over the period');
+  });
+
+  it('is the shape the generator actually carries', () => {
+    const gen = readFileSync(GEN, 'utf8');
+    expect(gen).toContain("out.replace(/(\\w)\\[\\d+\\](?:\\[\\d+\\])*(\\w)/g, '$1 $2');");
+  });
+});

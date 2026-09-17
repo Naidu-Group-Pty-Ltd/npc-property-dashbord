@@ -205,6 +205,59 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
     absences.push(str(inst.note) ?? 'No state development-instrument reading for this point.');
   }
 
+  /*
+   * ── the strategic designations the point sits inside ─────────────────────
+   *
+   * Added 17 Sep 2026, and the measurement is why. The instruments probe asks
+   * four named Queensland layers — priority development areas, state
+   * development areas, coordinated projects, infrastructure designations — and
+   * at 262 Pallas Street none of them matched, so the report said "the
+   * property lies inside no declared priority development area, state
+   * development area, coordinated project or infrastructure designation" and
+   * stopped. True, and it left out what the SAME service returns at the SAME
+   * coordinate: `Maryborough Priority Living Area`, inside the `Wide Bay
+   * Burnett Regional Plan`, **Legal status: Statutory, Version: December
+   * 2023**.
+   *
+   * A regional plan does not control what is built on one lot, and nothing
+   * here says it does — `standing` is null and the kind is the register's own
+   * word. What it does is state, in the publisher's own instrument, what the
+   * area is planned to BECOME, which is the most reliable published statement
+   * about long-term direction a report of this kind can carry. The legacy
+   * long-form report filled that space by inventing a station, a freeway
+   * extension and a dwelling target.
+   *
+   * It is drawn from the constraint register's `context` readings alone.
+   * Anything the register filed as a hazard, a development control or a
+   * protected value belongs to the planning section, not to this one.
+   */
+  const contextual = Array.isArray(data?.constraints) ? data!.constraints as unknown[] : [];
+  for (const raw of contextual) {
+    if (!isRecord(raw)) continue;
+    if (str(raw.kind) !== 'context') continue;
+    const name = str(raw.label);
+    if (!name) continue;
+    const family = str(raw.family);
+    items.push({
+      name,
+      kind: family === 'regionalPlan' ? 'Regional plan'
+        : family === 'growthArea' ? 'Growth / priority area'
+          : 'Strategic designation',
+      statedStatus: str(raw.detail),
+      // A designation is not a project and has no delivery standing. Reading
+      // one as `approved` would put a plan in the same column as a road under
+      // construction.
+      standing: null,
+      dateLabel: str(raw.currencyDate) ? 'Current at' : null,
+      date: str(raw.currencyDate),
+      where: str(raw.instrument),
+      statedCost: null,
+      source: str(raw.source) ?? 'state planning layers',
+      licence: str(raw.licence),
+      retrievedAt,
+    });
+  }
+
   // ── the council's own development-application register ────────────────────
   const act = isRecord(data?.developmentActivity) ? data!.developmentActivity : null;
   const summary = act?.status === 'ok' && isRecord(act.summary) ? act.summary : null;
