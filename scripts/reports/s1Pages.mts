@@ -183,6 +183,22 @@ const dims = [
   return { ...d, ...rec, reason: gap?.reason ?? null, remedy: gap?.remedy ?? null };
 });
 const coverage = v2.evidenceCoverage != null ? Math.round(v2.evidenceCoverage * 100) : null;
+/**
+ * The four readings the record holds, kept apart — owner correction C2.1.
+ *
+ *   performance  the composite over the dimensions that COULD be measured,
+ *                and the grade that composite alone would carry
+ *   coverage     the share of the method the evidence reached
+ *   issued       the grade actually issued, after the evidence cap
+ *   conclusion   whether the evidence supports an overall recommendation
+ *
+ * Merging the first and third is what made the cover read "assessment
+ * performance F · 40" while page three said the composite would be C.
+ */
+const nominalPoints = Number(
+  String(v2.gradeCapReasons?.[0] ?? '').match(/delivers (\d+) of the composite/)?.[1] ?? NaN,
+);
+const capCeiling = v2.gradeEligibility?.ceiling ?? null;
 const measured = (v2.dimensions ?? []).filter((d: any) => d.available).length;
 const total = (v2.dimensions ?? []).length;
 
@@ -218,7 +234,7 @@ const COVER: Sheet = {
       bodySize: 16, bodyFont: 'token:heading', bodyLineHeight: 1.3, color: C.text, width: 430,
     })],
     [16, B('text-block', {
-      body: `Three of five assessment dimensions could be measured. Capital growth measured in full; rental return in full; market demand on 15% of its method. Location and property risk could not be measured at all, so the grade the scoring engine issues rests on ${coverage}% of the evidence its method calls for.`,
+      body: `${measured} of ${total} assessment criteria could be measured — capital growth in full, rental return in full, market demand on 15% of its method. Location and property risk could not be measured at all. On what WAS measured the property scores ${v2.score}, a ${v2.scoreGrade}; the grade issued is ${v2.grade}, because a criterion that was not measured never lifts a grade. Those are three different statements and this report keeps them apart.`,
       bodySize: 9, bodyFont: 'token:body', bodyLineHeight: 1.55, color: C.mutedOnField, width: 430,
     })],
     // No divider here: the `ruled` band draws its own 1.5pt rule over itself,
@@ -227,9 +243,12 @@ const COVER: Sheet = {
     [44, B('kpi-grid', {
       variant: 'ruled', columns: 3, height: 74,
       items: [
-        { label: 'Assessment performance', value: `${v2.grade} · ${v2.score}` },
-        { label: 'Dimensions measured', value: `${measured} of ${total}` },
+        { label: 'Measured-criteria score', value: `${v2.score} · ${v2.scoreGrade}` },
+        // One line. The ruled band does not reserve the label's line height, so
+        // a label that wraps drops its own value below the other two baselines
+        // — the reservation `AmlMetricCard` already makes for the same reason.
         { label: 'Evidence coverage', value: `${coverage}%` },
+        { label: 'Grade issued, after the cap', value: String(v2.grade) },
       ],
       valueFont: 'token:heading', labelFont: 'token:mono', labelSize: 6, labelTracking: 0.18,
       valueSize: 13, valueColor: C.text, labelColor: C.mutedOnField, ruleColor: '#4A3F32', emphasisColor: '#4A3F32',
@@ -305,12 +324,12 @@ const ASSESSMENT: Sheet = {
   flow: [
     [0, eyebrow('HOW THE ASSESSMENT WAS REACHED', C.muted)],
     [16, title('Performance, and what it rests on')],
-    [22, rule()],
-    [16, para('Two things are reported separately here and never combined. PERFORMANCE is how the property scored on what could be measured. COVERAGE is how much of the method the evidence reached. A strong score on a third of the method is not a strong property; it is a partial measurement.')],
-    [18, eyebrow('PERFORMANCE ON MEASURED CRITERIA')],
+    [20, rule()],
+    [12, para('Three things are kept apart here and never combined: how the property SCORED on what could be measured, how much of the method the evidence REACHED, and the GRADE issued once the second limits the first.')],
+    [14, eyebrow('PERFORMANCE ON MEASURED CRITERIA')],
     [12, B('data-table', {
       ...TABLE,
-      headers: ['Dimension', 'Score', 'Weight', 'Basis'],
+      headers: ['Criterion', 'Score', 'Weight applied', 'Measured on'],
       columnWidths: [0.32, 0.12, 0.13, 0.43],
       numericColumns: [1, 2],
       rows: dims.filter((d) => d.available).map((d) => ({
@@ -322,7 +341,8 @@ const ASSESSMENT: Sheet = {
         ],
       })),
     })],
-    [18, eyebrow('NOT MEASURED — AND WHY')],
+    [8, para(`Weight applied is not the criterion\u2019s share of the whole method. Capital growth carries ${Math.round((dims.find((d) => d.key === 'growth')?.nominalWeight ?? 0) * 100)}% of the full method, rental return and market demand ${Math.round((dims.find((d) => d.key === 'yield')?.nominalWeight ?? 0) * 100)}% each; with location and property risk unmeasured, those three are re-weighted across what remains, so they sum to 100 here. Figures are rounded to the nearest whole point.`, { bodySize: 8.4, color: C.muted })],
+    [12, eyebrow('NOT MEASURED — AND WHY')],
     // The record's own reason, and nothing else.
     //
     // Each gap also stores a `remedy`, and neither belongs on a client page:
@@ -336,22 +356,22 @@ const ASSESSMENT: Sheet = {
       title: '',
       items: dims.filter((d) => !d.available).map((d) => ({ term: d.label, definition: d.reason })),
     })],
-    [12, para('Neither absence is a finding about the property. Each is a gap in what the assessment could read, and closing either is work on this report rather than anything for the reader to do.', { bodySize: 8.8 })],
-    [12, provisional('S2', 'Both absences and their reasons are read from the stored record; the projection publishes the three scored rows only. The record also stores a remedy for each, in operator language, and the property-risk one is written in the past tense — neither is printed here.')],
-    [14, rule()],
-    [12, eyebrow('EVIDENCE COVERAGE')],
+    [10, para('Neither absence is a finding about the property. Closing both is our work — the location readings re-acquire when this report is next produced, and the property-risk criterion needs its per-class questions answered on this file. The certificates and searches on the risk page are separate, and remain yours to obtain before contract.', { bodySize: 8.4 })],
+    [10, provisional('S2', 'Both absences and their reasons are read from the stored record; the projection publishes the three scored rows only.')],
+    [12, rule()],
+    [8, eyebrow('EVIDENCE COVERAGE')],
     [4, B('progress-bars', {
       title: '',
       // The block prints the value as a percentage on the right of every bar,
       // so a label that also carries the figure prints it twice.
       items: [
         { label: 'Share of the method the evidence reached', value: coverage },
-        { label: 'Composite points delivered, of 100 available', value: 28 },
       ],
       accent: C.primary,
     })],
-    [14, para(`The engine issues ${v2.grade}. On the composite alone it would issue ${v2.scoreGrade}; the evidence caps it, because a dimension that was not measured contributes nothing toward a higher grade. That cap is working as designed.`, { bodySize: 9 })],
-    [14, callout('What this means for this property', 'A grade built on 57% of its method is a statement about the evidence as much as the asset. Location — the second-largest dimension — returned nothing, on a property 90 m from a public school and 106 m from a bus stop in a straight line. Until that is measured, this report states performance and coverage and stops short of a recommendation.')],
+    [14, eyebrow('WHY THE GRADE IS LOWER THAN THE SCORE')],
+    [8, para(`A separate measure sets the CEILING: across the full method the measured criteria deliver ${nominalPoints} of its 100 nominal points, and ${nominalPoints} supports at most ${capCeiling}. So the score is ${v2.score} (${v2.scoreGrade}) and the grade issued is ${v2.grade} — not a second opinion and not a penalty, but the rule that an unmeasured criterion never lifts a grade.`, { bodySize: 8.8 })],
+    [12, callout('What this means for this property', 'The largest gap is location, the second-heaviest criterion, on a property 90 m from a public school and 106 m from a bus stop in a straight line — so what is missing here is not obscure. Until it is measured this report gives you the score, the coverage and the grade, and stops short of an overall recommendation.')],
   ],
 };
 
@@ -423,7 +443,7 @@ const INFRA: Sheet = {
     [0, eyebrow('PART 08 · INFRASTRUCTURE & TEN-YEAR OUTLOOK', C.muted)],
     [16, title('What is coming, and what is only decided')],
     [22, rule()],
-    [16, para('A development application that has been DETERMINED has been decided by the consent authority. It is not an approval to build on a date, it is not funded, and it is not under construction. Nothing below carries a publisher-stated delivery date, so nothing below is placed on a horizon.')],
+    [16, para('A development application that has been DETERMINED has been decided by the consent authority. That is all this register records: whether the work is funded, whether it has started and when it might finish are NOT ESTABLISHED by anything below. No row carries a publisher-stated delivery date, so nothing below is placed on a horizon.')],
     [18, eyebrow(`TIMING UNCONFIRMED — ${WORDS[DA.length].toUpperCase()} APPLICATIONS IN THE REGISTER WINDOW`)],
     [12, B('data-table', {
       ...TABLE,
@@ -470,30 +490,64 @@ const RISK: Sheet = {
     [0, eyebrow('PART 12 · RISK DASHBOARD', C.muted)],
     [16, title('Exposure, and how well it is evidenced')],
     [18, rule()],
-    [14, para('EXPOSURE is how much this risk could matter; EVIDENCE is how well it is established. They move independently, and a checklist of work still to do is never a clearance.')],
-    [16, B('risk-register', {
-      // The rated table draws its title band unconditionally, so `title: ''`
-      // is an empty obsidian bar across the head of the register rather than
-      // no band at all.
-      title: 'Five risks — exposure and evidence',
-      // The register defaults to the legacy literals (#1A1A1A / #BF9B50 /
-      // #F4F0E6), which is a different gold from Chancery's. These are the
-      // tokens `investmentCompass/blocks.ts` passes, copied rather than chosen.
-      titleBg: 'token:bg', titleFg: 'token:accentOnField',
-      headerBg: 'token:panel', headerFg: 'token:mutedInk',
-      stripeBg: 'token:panel', rowBg: 'token:surface',
-      cellFg: 'token:ink', mutedColor: 'token:mutedInk', borderColor: 'token:line',
-      negativeColor: 'token:negative', cautionColor: 'token:caution', positiveColor: 'token:positive',
-      items: [
-        { risk: 'Environmental — flood, bushfire, related hazards', rating: 'Low', confidence: 'Desktop only', why: 'Nineteen hazard layers answered at this coordinate with no mapped feature. A layer answers at its published scale, not for the lot.', ddAction: 'Order the s.10.7(2) and (5) certificates; obtain AFRIP and RFS mapping.' },
-        { risk: 'Planning — subdivision and densification', rating: 'Moderate', confidence: 'Verified', why: 'R2 Low Density Residential, The Hills LEP 2019. 10\u00A0m height (cl.\u00A04.3) and a 700\u00A0m² minimum lot; the 765\u00A0m² lot is 65\u00A0m² above it.', ddAction: 'Confirm surveyed area and frontage against the minimum before assuming a split.' },
-        { risk: 'Planning — floor space ratio', rating: 'Moderate', confidence: 'Unresolved', why: 'The register carrying this control answered here and published no figure, so the allowable footprint is unknown from mapping.', ddAction: 'Read the FSR from the s.10.7(2) certificate and the DCP.' },
-        { risk: 'Supply — competing new dwellings', rating: 'Moderate', confidence: 'Verified', why: '680 new dwellings stated across 171 applications in The Hills Shire in the six months to 17\u00A0Sep\u00A02026.', ddAction: 'Count how many are comparable detached houses before setting rent and resale.' },
-        { risk: 'Transport — car reliance', rating: 'Moderate', confidence: 'Partly measured', why: `${grouped(li.transport?.stopsWithin1km)} boarding places within ${grouped(li.transport?.radiusMetres)}\u00A0m, nearest ${nearestStopMetres}\u00A0m in a straight line. Mode and frequency are not published per stop.`, ddAction: 'Check Transport for NSW timetables for the routes on Windsor Road.' },
+    [12, para('EXPOSURE is how much this risk could matter; EVIDENCE names what was actually checked. Where a register published nothing here the exposure reads NOT ESTABLISHED, which is different from low, and a checklist of work still to do is never a clearance.')],
+    // A Chancery ledger table rather than the `risk-register` block.
+    //
+    // Two reasons, both the owner's corrections. The block draws its rating
+    // and confidence as pills from a fixed palette in `_chips.html.ts` that
+    // reads no template token and ignores `radius: '0'`, so it cannot wear
+    // this design (C6.3). And its column widths are fixed at 22/12/13/28/25%,
+    // which gives the two prose columns 135pt and 120pt — at five rows of
+    // properly qualified wording that is a page and a half. Merging what was
+    // checked with what to do into one 48% column halves the wrap.
+    //
+    // The exposure / evidence separation the owner asked to keep is kept: they
+    // are two columns, and the vocabularies stay distinct.
+    [12, B('data-table', {
+      ...TABLE,
+      headers: ['Risk', 'Exposure', 'Evidence', 'What was checked, and what to do before contract'],
+      columnWidths: [0.2, 0.14, 0.17, 0.49],
+      numericColumns: [],
+      fontSize: 8.2,
+      rows: [
+        { cells: [
+          'Environmental — flood, bushfire, hazards',
+          'Not established',
+          'Desktop layers only',
+          'Nineteen hazard layers answered here and returned no mapped feature — but a layer answers at its published scale, not for the lot. An absence of mapping, not of hazard. Order the s.10.7(2) and (5) certificates and obtain AFRIP and RFS mapping.',
+        ] },
+        { cells: [
+          'Planning — subdivision and densification',
+          'Moderate',
+          'Mapped control',
+          'R2 Low Density Residential, The Hills LEP 2019: 10\u00A0m height (cl.\u00A04.3), 700\u00A0m² minimum lot. This 765\u00A0m² lot is 65\u00A0m² above it. Confirm surveyed area and frontage against the minimum before assuming a split.',
+        ] },
+        { cells: [
+          'Planning — floor space ratio',
+          'Not established',
+          'Not published',
+          'FSR caps TOTAL FLOOR AREA across all storeys against site area — not the footprint. The register answered here and published no figure, so permitted floor area is unknown. Read the FSR from the s.10.7(2) certificate and the DCP.',
+        ] },
+        { cells: [
+          'Supply — competing new dwellings',
+          'Moderate',
+          'Council-wide count',
+          '680 new dwellings across 171 applications in The Hills Shire, six months to 17\u00A0Sep\u00A02026. Count how many are comparable detached houses before setting rent and resale assumptions.',
+        ] },
+        { cells: [
+          'Transport — car reliance',
+          'Moderate',
+          'Stop register only',
+          `${grouped(li.transport?.stopsWithin1km)} boarding places within ${grouped(li.transport?.radiusMetres)}\u00A0m, nearest ${nearestStopMetres}\u00A0m straight-line; mode and frequency are not published per stop. Check Transport for NSW timetables for the routes on Windsor Road.`,
+        ] },
       ],
     })],
-    [12, callout('How to read this page', 'Nothing here is rated High, and nothing here is settled. Four of the five carry an outstanding check, and one — the floor space ratio — is unresolved rather than favourable. This is a conventional low-density holding with ordinary pre-contract work outstanding, not a cleared property.')],
-    [12, provisional('S3 · S4', 'Rows are read from the stored planning and enrichment records; the projection does not yet publish a risk namespace with separate exposure and evidence fields. The rating and confidence chips are drawn from a fixed palette in the block and do not follow this template\u2019s colourway.')],
+    // C6.2 — a concise source, date and method line on the page; the full
+    // provenance belongs in the appendix.
+    [16, eyebrow('WHERE EACH ROW CAME FROM', C.muted)],
+    [10, para('Hazard and planning controls: NSW Planning Portal and Spatial Services layers, read at this property\u2019s verified coordinate on 17 Sep 2026, each at its own publisher\u2019s scale. Supply: NSW development application register, The Hills Shire, applications determined 18 Mar – 17 Sep 2026. Transport: Transport for NSW GTFS stops (CC BY 4.0), straight-line distance from the coordinate. No field survey, certificate or site inspection informs this page.', { bodySize: 8, color: C.muted })],
+    [14, callout('How to read this page', 'Nothing here is rated High and nothing here is settled. All five rows carry an action, and two — environmental exposure and floor space ratio — read NOT ESTABLISHED rather than favourable, because the registers that would settle them published nothing here. This is a starting list for due diligence, not a clearance.')],
+    [12, provisional('S3 · S4', 'Rows are read from the stored planning and enrichment records; the projection does not yet publish a risk namespace with separate exposure and evidence fields. Drawn on the template\u2019s own ledger because the shared risk-register block\u2019s chips use a fixed palette that follows no colourway.')],
   ],
 };
 
