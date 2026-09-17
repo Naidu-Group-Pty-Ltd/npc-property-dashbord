@@ -177,9 +177,88 @@ The destination is exact rather than inferred — `renderPage` is handed
 prints folios 1, 2, 3, 4, 5, 6, 35, 36 and the eight destinations resolve to
 pages 1, 2, 3, 4, 5, 6, 35, 36.
 
+### 6a · And then it named the wrong things
+
+Eight rows, for a 36-page report whose body is twenty-one sections. The
+twenty-nine narrative sheets declare `tocContinues` and fold into the one row
+named "The report", so everything a reader opens a contents page to find was
+inside that row: *Cover · Contents · Executive dashboard · The assessment ·
+Risk and recommendation · The report · Sources and methodology · Important
+information*. Correct links to page archetypes are not a contents page.
+
+The outline was worse. WeasyPrint builds it from every `h1`–`h6` it draws, and
+two very different things were competing to name the document. A
+`markdown-block` heading IS a section name — all 44 of them were already
+right. A `text-block` heading is DISPLAY TYPE bound to the record, so the third
+entry read *"AVOID - Poor investment opportunity with multiple red flags"*, the
+first nested one repeated the property's address under the document title, and
+the pages a reader knows as "The assessment" and "Risk and recommendation"
+appeared under their headlines.
+
+**The sections were there the whole time; nothing had read them.** A
+`markdown-block` packs its source into buckets and draws bucket `pageIndex`, so
+the headings in THAT bucket are the sections that page opens — a mapping only
+the renderer can make, because pagination and conditional content decide it.
+`narrativeIndex.ts` is where that index is published and where its key is
+named; the contents block renders it and the page's own outline entry stands
+down for it, so **the two surfaces cannot describe the document differently**.
+
+Four rules carry it.
+
+**A section the report wrote outranks the page it landed on.** A page that
+opens a section lists its sections; a page that opens none keeps the row it
+always had. So the archetype pages still appear under the names their designer
+gave them and the body appears under the names the report gave itself.
+
+**A sheet in the middle of a section is not a part of the document.** The index
+carries every page the run draws on, not only the ones that open a section —
+otherwise pages 25 to 28, the middle of the risk register, announce themselves
+as "The report (20)" … "The report (23)" in the outline. `tocContinues` was
+approximating this, declared by a master rather than read off the render, and
+it is now asked only of a page the narrative does not draw on at all.
+
+**A bound headline may not name a part of a document.** The `text-block`
+heading keeps its element, its heading role and every drawn pixel; only its
+claim on the outline is withdrawn (`bookmark-level:none`), and the page
+contributes its own name at level 2 instead. `includeBookmarks: false` still
+means no outline property at all.
+
+**Only the run's own top level, unless a master asks for more.** The Compass's
+narrative carries 18 `h2` sections and 26 `h3` subsections; listing both is 51
+rows on a page that fits about 30, and `fitTocEntries` would then omit the tail
+— which loses the END of the document rather than its detail. A complete list
+of sections beats a truncated list of sections and subsections. `sectionDepth`
+widens it.
+
+Measured on the produced file (Chancery, schema sha256 `53f5fe7549a07387`,
+Annabelle's stored row, production print contract):
+
+| | before | after |
+| --- | --- | --- |
+| contents rows | 8 page archetypes | **22 sections and named pages** |
+| folios printed | 1 2 3 4 5 6 35 36 | 1 2 3 4 5 6 7 8 11 14 15 16 19 21 23 24 29 30 31 32 35 36 |
+| destinations resolving to those folios | 8 of 8 | **22 of 22** |
+| outline entries that name a part of the document | 44 of 49 | **49 of 49** |
+| veraPDF 1.30.2, `-f ua1` | PDF/UA-1 | **PDF/UA-1**, 0 failed rules |
+
+A section row's destination is the **heading's own id** — the same id
+`renderMarkdown` wrote and the same one the renderer read to find out which
+page it landed on — so the reader arrives at the section rather than at the top
+of the sheet carrying it.
+
 Two residuals, measured and left: the engine emits **two identical, co-located
 annotations per anchor** (harmless to a reader, and the file validates), and
 the **flowing** renderer's documents still carry no internal links at all.
+
+### 6b · The review artefact was not on the print contract
+
+`s1TemplateRender.mts` compiled its HTML the way the route compiles it — the
+resource boundary, `fontSource: 'container'` — and then handed the file to
+`weasyprint in.html out.pdf`, which takes the CLI's defaults. That is a
+different document: untagged, no `/StructTreeRoot`, no output intent. It could
+not be put through veraPDF and answer for the product's own PDF, which is the
+whole point of validating the artefact rather than the export settings. It
+renders through `renderWeasy.py` now, on the same six options the route sends.
 
 ## 7 · The chips a colourway could not reach
 
@@ -203,7 +282,6 @@ strings and still PDF/UA-1.
 | | stage |
 | --- | --- |
 | The six review pages are a review artefact; their prose has not been moved into the masters. | S3 |
-| Bookmark LABELS on the template path are content fragments (`AVOID — Poor investment opportunity…`), not section names. The flowing path's are section names. | S3 |
 | The flowing renderer's documents carry no internal links. | S3 |
 | The cover's title is positioned display type carrying no heading role, so the document's `h1` is emitted off the visual surface. The better fix is a semantic role on the title the masters already draw — a generator change. | S4 |
 | Report selection, editing, saving, reopening, previewing and exporting exercised end to end. | S5 |

@@ -111,10 +111,21 @@ for (const key of wanted) {
   // WeasyPrint writes CSS warnings to stderr on a clean render, so stderr is
   // captured and reported rather than treated as failure. Only a non-zero exit
   // is a failure.
+  //
+  // Drawn through `renderWeasy.py`, which sends the SAME engine options the
+  // route sends — `pdf_variant: 'pdf/ua-1'`, `pdf_tags`, `output_intent`,
+  // `optimize_images`, `custom_metadata`. A bare `weasyprint in.html out.pdf`
+  // takes the CLI's defaults instead, which is a different file: untagged,
+  // with no `/StructTreeRoot` and no output intent. This script already
+  // compiled the HTML the way the route compiles it and then handed it to an
+  // engine configured differently, so the review artefact could not be put
+  // through veraPDF and answer for the product's own document.
   let pages = '—';
   try {
-    const r = execFileSync('weasyprint', [htmlPath, pdfPath], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-    void r;
+    const r = execFileSync('python3', [resolve(REPO, 'scripts/reports/renderWeasy.py'), htmlPath, pdfPath], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    for (const line of r.split('\n')) if (line.startsWith('warning\t')) console.log(`  engine ${line.replace('\t', ': ')}`);
     pages = execFileSync('pdfinfo', [pdfPath], { encoding: 'utf8' }).match(/^Pages:\s+(\d+)/m)?.[1] ?? '—';
   } catch (err) {
     const e = err as { status?: number; stderr?: Buffer };

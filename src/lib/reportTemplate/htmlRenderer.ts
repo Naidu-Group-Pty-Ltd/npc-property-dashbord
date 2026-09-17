@@ -18,7 +18,11 @@ import { resolvePageOutputPolicy, resolvePageRenderPlan, shouldRenderPageBackgro
 import { shouldRenderBlock } from './renderVisibility';
 import { applyNarrativePlan, planNarrative } from './narrativePlan';
 import { closeDroppedBlocks } from './closeDroppedBlocks';
-import { NARRATIVE_GEOMETRY_KEY, NARRATIVE_NOTES_KEY } from './blocks/markdownBlockContent';
+import {
+  NARRATIVE_GEOMETRY_KEY, NARRATIVE_NOTES_KEY, resolveMarkdownBlockContent,
+} from './blocks/markdownBlockContent';
+import { sectionIndexFromBuckets } from '../../../supabase/functions/_shared/reports/markdownPaging.pure';
+import { NARRATIVE_INDEX_KEY, type NarrativeIndex } from './narrativeIndex';
 import {
   resolveRegionRenderPlanProjection, suppressedOverlayIdSet, buildFinalCropElementsHtml, pageCompositionDataAttrs,
 } from './rendering/regionRenderPlanApply';
@@ -618,7 +622,38 @@ function healPartMarker(block: Block, part: number | null): Block {
   return { ...block, props: { ...(block.props as Record<string, unknown>), body: body.replace(STATIC_PART_RE, `Part ${numeral}`) } } as Block;
 }
 
-function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, template: ReportTemplate, pages: Page[], editorMode = false): string {
+/**
+ * ## What a PDF outline entry is allowed to be
+ *
+ * WeasyPrint builds the outline from every `h1`–`h6` it draws, which on this
+ * path meant two very different things were competing to name the document.
+ * A `markdown-block` heading IS a section name. A `text-block` heading is
+ * DISPLAY TYPE bound to the record — so the third entry in every Investment
+ * Compass outline read *"AVOID - Poor investment opportunity with multiple red
+ * flags"*, the first nested one repeated the property's address under the
+ * document title, and the pages named "The assessment" and "Risk and
+ * recommendation" appeared under their headlines instead. A conclusion about a
+ * property is not a name for the part of the document that carries it.
+ *
+ * So a text-block heading contributes no outline entry (`bookmark-level:none`,
+ * set where it is drawn) and a page contributes its own NAME instead — but
+ * only where the page's narrative names no section of its own, because a page
+ * that opens "Demand Drivers" should say so rather than "The report (6)".
+ * That is exactly the rule the contents block applies, from the same two
+ * inputs, so the outline and the contents page cannot disagree.
+ *
+ * Level 2 puts a page beside a narrative `h2` and under the document's `h1`,
+ * which is the shape the outline already had.
+ */
+const PAGE_BOOKMARK_LEVEL = 2;
+
+function pageBookmarkStyle(label: string | null): string {
+  if (!label) return '';
+  const css = label.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/[\r\n]/g, ' ');
+  return `bookmark-label:'${css}';bookmark-level:${PAGE_BOOKMARK_LEVEL};`;
+}
+
+function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, template: ReportTemplate, pages: Page[], editorMode = false, bookmarkLabel: string | null = null): string {
   const blockCtx: HtmlBlockContext = {
     ...ctxBase,
     page: { width: page.size.width, height: page.size.height },
@@ -805,7 +840,11 @@ function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, temp
   const editorAttrs = editorMode ? ` data-page-id="${escapeHtml(String(page.id))}" data-page-index="${pageIndex}"` : '';
   const compositionAttrs = ` ${pageCompositionDataAttrs(page as unknown as Page, regionPlan, escapeHtml)}`;
   const dataAttrs = editorAttrs + compositionAttrs;
-  return `<section id="tpl-page-${pageIndex}" class="tpl-page tpl-page-${pageIndex}"${dataAttrs} style="${escapeHtml(bgStyle)}">${baselineEl}${blocks.join('\n')}${containedHtml}${regionCropsHtml}</section>`;
+  // The outline entry rides the page's own element, so it lands on the page
+  // it names however the content above it paginated.
+  const outline = (ctxBase as ResolveContext & { _includeBookmarks?: boolean })._includeBookmarks === false
+    ? '' : pageBookmarkStyle(bookmarkLabel);
+  return `<section id="tpl-page-${pageIndex}" class="tpl-page tpl-page-${pageIndex}"${dataAttrs} style="${escapeHtml(bgStyle + outline)}">${baselineEl}${blocks.join('\n')}${containedHtml}${regionCropsHtml}</section>`;
 }
 interface CascadeIndexEntry {
   pageIndex: number;
@@ -960,6 +999,56 @@ export function renderTemplateToHtml(
     }
   });
 
+  /**
+   * ## The report's own sections, and where each one landed
+   *
+   * A contents list and a PDF outline both name parts of a document. On this
+   * path they named PAGE ARCHETYPES: the Compass contents read *Cover ·
+   * Contents · Executive dashboard · The assessment · Risk and recommendation
+   * · The report · Sources and methodology · Important information* — eight
+   * rows for a 36-page report whose body is twenty-one sections, because the
+   * twenty-nine narrative pages declare `tocContinues` and fold into the one
+   * row named "The report". Every section a reader would look for was inside
+   * that row and reachable only by turning pages.
+   *
+   * The sections exist; nothing had ever read them. A `markdown-block` packs
+   * its source into buckets and draws bucket `pageIndex` on this page, so the
+   * headings in THAT bucket are the sections this page opens — which is the
+   * mapping pagination and conditional content would otherwise destroy, and
+   * the reason it is computed here rather than declared in a master. The
+   * buckets are memoised on (source, geometry, palette), so asking each
+   * instance what it holds costs one index rather than one render.
+   *
+   * `level` is the heading's own; `pageIndex` is the index into
+   * `visiblePages`, which is the same index `renderPage` stamps as
+   * `id="tpl-page-N"`, so a folio and a destination cannot disagree.
+   */
+  const narrativeIndex: NarrativeIndex = { narrativePages: [], sections: [] };
+  visiblePages.forEach((pg, pi) => {
+    let drawsNarrative = false;
+    for (const b of pg.blocks) {
+      if (b.type !== 'markdown-block') continue;
+      if (!shouldRenderBlock(b, ctxBase)) continue;
+      const content = resolveMarkdownBlockContent(b, ctxBase);
+      if (!content || !content.page.length) continue;
+      drawsNarrative = true;
+      for (const s of sectionIndexFromBuckets([content.page])) {
+        narrativeIndex.sections.push({ label: s.label, level: s.level, pageIndex: pi, anchor: s.id });
+      }
+    }
+    if (drawsNarrative) narrativeIndex.narrativePages.push(pi);
+  });
+  /**
+   * A sheet in the middle of a section is not a part of the document.
+   *
+   * `narrativePages` is every visible page the run draws on; `sections` is the
+   * subset that OPEN one. The outline and the contents both suppress a page's
+   * own name on the first and list the second, which is why pages 25 to 28 of
+   * a real Compass — the middle of the risk register — stopped announcing
+   * themselves as "The report (20)" … "The report (23)".
+   */
+  const narrativePages = new Set(narrativeIndex.narrativePages);
+
   // Rehaul Phase 3 — per-page section cache. A page section's HTML depends on
   // its own content plus this cross-page context; everything is folded into
   // the cache key so a hit is always byte-identical to a fresh render.
@@ -977,6 +1066,7 @@ export function renderTemplateToHtml(
         String(visiblePages.length),
         visiblePages.map((p) => `${p.id}\u0000${p.name}`).join('\u0001'),
         JSON.stringify(tocEntries),
+        JSON.stringify(narrativeIndex),
         // A page part number depends on which PRECEDING pages opted in,
         // which the per-page cache key cannot see.
         partNumbers.join(','),
@@ -1013,6 +1103,7 @@ export function renderTemplateToHtml(
         partCount,
         __healedPartNumber: healedParts[idx],
         __tocEntries: tocEntries,
+        [NARRATIVE_INDEX_KEY]: narrativeIndex,
       },
     };
     // pageCtx is built fresh (see the note on `_includeBookmarks` below), so
@@ -1037,7 +1128,10 @@ export function renderTemplateToHtml(
     // E7: runtime-only resolver mapping a region id → an ephemeral crop src
     // (signed/object/data URL). Never persisted; consumed only at paint time.
     if (options.regionCropSrc) (pageCtx as any)._pdfRegionCropSrc = options.regionCropSrc;
-    const rendered = renderPage(page, pageCtx, idx, template, visiblePages, !!options.editorMode);
+    const rendered = renderPage(
+      page, pageCtx, idx, template, visiblePages, !!options.editorMode,
+      narrativePages.has(idx) ? null : String(page.name ?? '').trim() || null,
+    );
     if (pageCache) pageCache.set(cacheKey, rendered);
     return rendered;
   }).join('\n');
