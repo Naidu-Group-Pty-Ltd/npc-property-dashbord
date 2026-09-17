@@ -363,8 +363,11 @@ export const NOT_ASSESSED_REASON: Readonly<Record<ScoredDimension, string>> = {
  * saying so is accurate rather than a deflection.
  */
 export const LOCATION_PRESENTED_UNVERIFIED =
-  'Not assessed — the location readings recorded for this property could not be '
-  + 'matched to it with the evidence stored alongside them.' as const;
+  // One string rather than a concatenation with `as const` on it: a const
+  // assertion may only be applied to a literal, and `'a' + 'b' as const` is
+  // TS1355. The frontend `tsc` never sees this tree — the edge functions are
+  // checked by Deno alone — so it read clean locally and failed CI.
+  'Not assessed — the location readings recorded for this property could not be matched to it with the evidence stored alongside them.';
 
 /** The label a dimension carries where it did score. */
 export const ASSESSED_LABEL = 'Measured' as const;

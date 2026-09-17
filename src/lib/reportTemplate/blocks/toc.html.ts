@@ -49,15 +49,43 @@ export function renderTocHtml(block: Block, ctx: HtmlBlockContext): string {
     lineHeightPt: lh, sizePt: size,
   });
   const lines = entries.slice(0, fit.shown).map(({ pg, i }, n) => ({
-    label: `${n + 1}. ${pg.name || `Page ${i + 1}`}`, page: String(i + 1),
+    label: `${n + 1}. ${pg.name || `Page ${i + 1}`}`, page: String(i + 1), target: i,
   }));
-  if (fit.omitted) lines.push({ label: tocOmittedLine(fit.omitted), page: '' });
+  if (fit.omitted) lines.push({ label: tocOmittedLine(fit.omitted), page: '', target: null });
 
-  const row = (line: { label: string; page: string }) =>
-    `<div style="display:flex;justify-content:space-between;gap:8pt;line-height:${fit.lineHeightPt.toFixed(2)}pt;font-size:${fit.sizePt.toFixed(2)}pt;color:${color};">
-      <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(line.label)}</span>
-      <span style="color:${idxColor};flex:none;">${esc(line.page)}</span>
-    </div>`;
+  /**
+   * A contents entry goes to its section.
+   *
+   * The list named the page and could not reach it: measured on a 36-page
+   * Templates render, the file carried 48 bookmarks and **zero** link
+   * annotations, so the only way through the document was the reader's own
+   * page field. `autoToc` has always linked; this list, which is the one the
+   * catalogue's masters draw, never did.
+   *
+   * The destination is exact rather than inferred. `renderPage` is handed
+   * `visiblePages` and stamps `id="tpl-page-<index into that array>"`, and
+   * `ctx.pages` is that same array — so `i` here and the anchor there are one
+   * index. An entry folded into the one above it (`tocContinues`) keeps
+   * pointing at where its section STARTS, which is the page number it already
+   * prints. The omitted-count line names no page and is therefore not a link.
+   */
+  const row = (line: { label: string; page: string; target: number | null }) => {
+    // The ANCHOR CARRIES TEXT AND NOTHING ELSE. Measured on WeasyPrint 69.0:
+    // `<a>` wrapping plain text tags as a conforming `/Link`, and the moment
+    // it contains an element — one `<span>`, the whole flex row — PDF/UA
+    // clause 7.18.5 test 1 fails, 32 checks on the 36-page render. So the row
+    // stays a flex box, the label alone is the link, and the folio beside it
+    // is not. `text-decoration`/`color` are restated because the engine's own
+    // stylesheet gives an anchor blue underlined text, which would repaint
+    // every contents page in the catalogue.
+    const label = `min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;`;
+    const inner = (line.target === null
+      ? `<span style="${label}">${esc(line.label)}</span>`
+      : `<a href="#tpl-page-${line.target}" style="${label}text-decoration:none;color:${color};">${esc(line.label)}</a>`)
+      + `<span style="color:${idxColor};flex:none;">${esc(line.page)}</span>`;
+    return `<div style="display:flex;justify-content:space-between;gap:8pt;`
+      + `line-height:${fit.lineHeightPt.toFixed(2)}pt;font-size:${fit.sizePt.toFixed(2)}pt;color:${color};">${inner}</div>`;
+  };
   const columns = splitTocColumns(lines, fit.columns).map((col) => col.map(row).join(''));
   const body = fit.columns === 1
     ? columns[0]

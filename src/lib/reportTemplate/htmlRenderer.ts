@@ -1088,7 +1088,51 @@ export function renderTemplateToHtml(
     meta.keywords && `<meta name="keywords" content="${r(meta.keywords)}"/>`,
     meta.creator  && `<meta name="generator" content="${r(meta.creator)}"/>`,
   ].filter(Boolean).join('\n');
-  const docTitle = options.title ?? (meta.title ? resolveBindable(meta.title, ctxBase) : 'Report');
+  /**
+   * The document's own title, and the heading that carries it.
+   *
+   * Two things were found by validating a produced file rather than by reading
+   * the export settings.
+   *
+   * **The title was the literal `Report`.** `options.title` is passed by the
+   * editor's preview and by nothing on the production path, and no seeded
+   * master declares `meta.title` — so `routeReportThroughTemplate`'s
+   * `compileTemplateHtmlForPdf(schema, { data })` fell through to the fallback
+   * on every report. WeasyPrint writes it into the PDF's `/Title`, and the
+   * render contract also sets `/ViewerPreferences /DisplayDocTitle true`,
+   * which asks the reader to show the title instead of the file name. So a
+   * client opening any templated report saw a window headed **Report**. The
+   * binding data already names the document and the property; it is read here
+   * rather than added to 500 generated masters.
+   *
+   * **And nothing in the document was an `<h1>`.** veraPDF 1.30.2 fails the
+   * 36-page Templates render on clause 7.4.2 test 1 — "if any heading tags are
+   * used, H1 shall be the first" — with 22 `h2` and 29 `h3` and no `h1` at
+   * all. The `cover` block does emit one, but the catalogue's masters set
+   * their cover title as positioned display type, which carries no heading
+   * role, so the first heading in the file is the `h2` on the page after it.
+   * The document's title IS its first-level heading, so it is emitted as one.
+   * It is placed out of the visual surface because the cover already shows it
+   * in display type, and printing it twice would change every master's cover.
+   * The better fix is for the masters to declare the semantic role on the
+   * title they already draw; that is a change to the generator, not to a
+   * renderer, and until it is made this keeps every existing master
+   * conformant.
+   */
+  const bound = (expr: string): string => {
+    try {
+      return String(resolveBindable(expr, ctxBase) ?? '').trim();
+    } catch {
+      return '';
+    }
+  };
+  const declared = options.title ?? (meta.title ? resolveBindable(meta.title, ctxBase) : '');
+  const named = [bound('{{report.documentTitle}}'), bound('{{property.address}}')]
+    .filter(Boolean).join(' — ');
+  const docTitle = declared || named || 'Report';
+  // 0 x 0 and clipped: present in the structure tree, absent from the page.
+  const titleHeading = `<h1 style="position:absolute;top:0;left:0;width:0;height:0;`
+    + `overflow:hidden;margin:0;">${escapeHtml(docTitle)}</h1>`;
 
   const editorRuntime = options.editorMode ? `
 <script>(function(){
@@ -1139,6 +1183,7 @@ ${metaTags}
 <style>${escapeStyleElementContent(css)}</style>
 </head>
 <body>
+${titleHeading}
 ${pageHtml}
 ${cascadeDebugIndexHtml}
 ${editorRuntime}

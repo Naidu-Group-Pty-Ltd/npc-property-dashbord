@@ -100,13 +100,87 @@ survived. Two things it learned:
   make the check fire on every correct tier separation. A row with no binding
   in it has no such excuse and is still judged.
 
-## 5 · Still open
+## 5 · Accessibility, measured on the artefact rather than claimed
+
+The render contract asks WeasyPrint for `pdf_variant: 'pdf/ua-1'`. Asking is an
+export setting. This stage put produced files through **veraPDF 1.30.2**, the
+reference validator, and the claim turned out to be false on the path this
+redesign uses.
+
+`scripts/reports/validateUa.mts` already existed and already refused to pass
+without a validator. What was missing was the validator: veraPDF's own
+distribution answers `403` through this egress while Maven Central answers
+`200`, and veraPDF publishes its **validation model** there. `scripts/reports/
+verapdf/get.sh` resolves it and compiles a front end speaking the same command
+line — the official engine, a local wrapper, no check re-implemented.
+
+**The ten flowing formats validated clean before and after.** Every failure was
+on the template-master path.
+
+| | found | fix |
+| --- | --- | --- |
+| **7.3** figure without alternative text | every image, on every document | one `imgTag` emitter, non-empty always |
+| **7.2 / 43** table rows of unequal width | every table with a band row | band drawn as real cells, not `colspan` |
+| **7.4.2 / 1** first heading is not `h1` | the whole 36-page document | the report's title is emitted as its `h1` |
+| **7.18.5 / 1** link not tagged | the contents links, once added | the anchor carries text and nothing else |
+
+Four things only a rendered file could say, each measured on the pinned engine:
+
+**`alt=""` is not "decorative" here.** `<img alt="">` and `<img>` with no
+attribute produce a **byte-identical** PDF — 7,167 bytes each on a one-image
+probe — and in both the figure is tagged `/Figure` with no `/Alt`. The two
+sites that carried `alt=""` (the cover mark, the closing mark) were therefore
+two of the three production failures, not a mitigation of them. There is no way
+to mark an image decorative on this engine, so the only conforming image is a
+described one, and `MISSING_ALT` names an absence rather than inventing a
+description of a picture the renderer cannot see.
+
+**`colspan` is written without `/ColSpan`.** The spanning cell reaches the
+structure tree as `/TD` with `/A {/O /Table, /Headers […]}` and no span, so a
+validator counts the row one column wide. Three arrangements were rendered and
+compared with the version they replace: full-width cells are clean but the band
+label widens the first column and moves every figure in the table;
+absolutely-positioned is clean of 7.2-43 and fails **7.2-9**, because the
+engine tags an abspos child of a cell as a second `/TD` nested in the first; a
+**zero-width block that overflows** is clean, nests nothing, and differs by 4
+pixels of 2,005,644 at 144 dpi.
+
+**The document was called `Report`.** `options.title` is passed by the editor's
+preview and by nothing on the production path, and no seeded master declares
+`meta.title`, so the fallback literal reached `/Title` on every templated
+report — with `/ViewerPreferences /DisplayDocTitle true` asking the reader to
+show it. A client opening any report saw a window headed *Report*. The binding
+data already names the document and the property.
+
+**A link is only tagged when the anchor holds text alone.** One `<span>` inside
+it fails clause 7.18.5 — 32 checks on the 36-page render. So the contents row
+stays a flex box, the label alone is the link, and the folio beside it is not.
+
+## 6 · The contents page reaches the report now
+
+`autoToc` has always linked. The `toc` block, which is the one the catalogue's
+masters draw, never did: the 36-page render carried 48 bookmarks and **zero**
+link annotations, so the only way through the document was the reader's own
+page field.
+
+The destination is exact rather than inferred — `renderPage` is handed
+`visiblePages` and stamps `id="tpl-page-<index into that array>"`, and
+`ctx.pages` is that same array. Verified on the produced file: the contents
+prints folios 1, 2, 3, 4, 5, 6, 35, 36 and the eight destinations resolve to
+pages 1, 2, 3, 4, 5, 6, 35, 36.
+
+Two residuals, measured and left: the engine emits **two identical, co-located
+annotations per anchor** (harmless to a reader, and the file validates), and
+the **flowing** renderer's documents still carry no internal links at all.
+
+## 7 · Still open
 
 | | stage |
 | --- | --- |
 | The six review pages are a review artefact; their prose has not been moved into the masters. | S3 |
-| Contents-page destinations, folios and bookmarks through the real Templates workflow. | S3 |
-| The `image` block emits no `alt`, so a report declaring `pdf/ua-1` does not conform. Reproduced on every render here. | S3 |
+| Bookmark LABELS on the template path are content fragments (`AVOID — Poor investment opportunity…`), not section names. The flowing path's are section names. | S3 |
+| The flowing renderer's documents carry no internal links. | S3 |
 | `_chips.html.ts` palettes read no token. | S3 |
+| The cover's title is positioned display type carrying no heading role, so the document's `h1` is emitted off the visual surface. The better fix is a semantic role on the title the masters already draw — a generator change. | S4 |
 | Report selection, editing, saving, reopening, previewing and exporting exercised end to end. | S5 |
 | The ten-year outlook's wider source work. | S4 |
