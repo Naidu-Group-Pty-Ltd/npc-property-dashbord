@@ -362,3 +362,50 @@ section declared as a whole one is the failure that registry exists to stop.
 mismatch against the current registry forces a fresh regeneration rather than a
 resume — the guard that already existed for exactly this. A report banked under
 eleven sections will not resume under fifteen.
+
+### The second structure contract, found after the first was removed
+
+Removing the legacy 38-page template from `propertyPrompt` was not the whole
+job. A **second** one was sitting behind it: the COMPASS-40 overlay, ~3.9 KB,
+built as `compass40Banner + prompt + compass40Overlay` — so it was both the
+first and the last thing the model read, and appended text is never trimmed.
+
+It was written against the legacy document and never revised:
+
+- Its KEEP/COMPRESS lists named sections the canonical registry does not have
+  (*Population & Development Trends*, *Suburb Character & Lifestyle*,
+  *Property-Level Information*, *Risk Summary*, *SEIFA / Socioeconomic
+  Profile*, *Employment & Industry Composition*).
+- It gave **page** caps against the registry's **word** ceilings —
+  *"Transport — consolidate … into ONE 2–3 page section"* beside a 450-word
+  budget, which is about 1.5 pages. Length contradictions are what produced
+  the 2.3×-over-budget documents this file already records.
+- It named **neither** of the two sections v4.0 added. A model could be asked
+  for *Planning, Zoning & What Is Mapped Over the Land* — 900 words, the
+  section the owner said was not good enough — and handed, last of all, a list
+  of this document's sections that did not contain it.
+
+It is deleted. **Removing a ceremony must never remove a control**, and every
+control it held was already in `buildCanonicalTemplateContext`, which is
+injected on the same runs: the forbidden editorial labels in all three forms
+with no permitted number, the financial exclusions, the placeholder and
+citation prohibitions, render-each-topic-once, no transition paragraphs, the
+word ceiling with its sub-heading and visualisation caps, the bed/bath/car/
+land-size and property-type consistency checks, and the Final Recommendation
+format. One line existed only in the banner — *finish every sentence rather
+than stopping mid-thought* — and moved into the guide with them.
+`compassDocumentContract.spec.ts` asserts the second contract is gone and that
+each of those controls is still stated.
+
+**And the overlay had one rule backwards.** It removed *Purchase Price* and
+*Weekly Rent* outright — "no card, no table cell, no inline mention" — and the
+guide's own HARD EXCLUSIONS repeated it. That contradicted three things at
+once: `TIER_CONTENT.compass.identityFigures` is **true** (§ Decision E of
+`TIER_FRAMEWORK.md` — what a property costs is a fact about the asset the way
+its land size is), the masters print both on the cover band and the executive
+dashboard, and *Market Positioning* has 600 words to place this property in its
+market and cannot do it without naming the price. What is excluded is the
+**analysis** — no yield from it, no repayment on it, no projection of it — and
+the **KPI-row form**, which is the Financial Analysis's. The sanitiser needed
+no change: its patterns are anchored at a line start and at table cells, so it
+already caught `| Purchase Price | $681,000 |` and never a sentence.

@@ -609,7 +609,17 @@ function buildCanonicalTemplateContext(tier: 'compass-40' | 'financial-analysis'
     '  Final Recommendation. In both it is written as continuous prose with no label.',
     '',
     '## HARD EXCLUSIONS (Compass / Location & Property Fit Report)',
-    '- DO NOT include purchase price, deposit, stamp duty, LMI, LVR, weekly rent, gross/net yield, loan amount, interest rate, monthly/annual repayments, cashflow, sensitivity, 10-year projections, capital growth %, equity-after-X-years, depreciation, negative gearing, land tax. ALL financial modelling lives in the separate Financial Analysis Report.',
+    '- DO NOT include deposit, stamp duty, LMI, LVR, gross/net yield, loan amount, interest rate, monthly/annual repayments, cashflow, sensitivity, 10-year projections, capital growth %, equity-after-X-years, depreciation, negative gearing, land tax. ALL financial modelling lives in the separate Financial Analysis Report.',
+    // The asking price and the indicative rent are NOT on that list, and the
+    // line that used to put them there contradicted three things at once: the
+    // tier policy (`identityFigures` is true on every tier — what the property
+    // costs is a fact about the asset the way its land size is), the document
+    // itself (the cover band and the dashboard both print them), and Market
+    // Positioning, whose whole job is to place this property in its market and
+    // which cannot do it without naming the price. What may not happen is the
+    // ANALYSIS of them, and the KPI-row form, both of which the next two lines
+    // and the sanitiser hold.
+    '- The asking price and the indicative weekly rent MAY be stated, as facts about the property, in a sentence. They may not be analysed — no yield from them, no repayment on them, no projection of them — and they may not be set as a KPI row or a table of figures.',
     '- DO NOT include a dashboard / KPI row of financial figures in the Executive Verdict or anywhere else.',
     '- DO NOT emit `[citation]`, `[source needed]`, `[TBD]` or any placeholder. Either name the real source inline, or omit the claim and let the Source Appendix carry it.',
     '- DO NOT repeat education, transport or employment content across sections. Each is rendered ONCE, in the section that owns it.',
@@ -619,6 +629,7 @@ function buildCanonicalTemplateContext(tier: 'compass-40' | 'financial-analysis'
     '- Respect the per-section word ceiling given above. It is a ceiling, not a target to reach: a section that says what it has to say in half of it is finished.',
     '- At most 4 `###` sub-headings in a section. A sub-heading carries a group of findings, not a single paragraph.',
     '- At most 2 visualisations per section, each showing data that is not also in a table on the same page.',
+    '- Finish every sentence and every paragraph. If you are running out of room, close the section cleanly rather than stopping mid-thought.',
     '',
     '## CONSISTENCY CHECKS',
     '- Bed / bath / car / land size stated in the Property & Locality Snapshot MUST match every later reference (Property Fit, Risk Dashboard, Final Recommendation).',
@@ -5482,92 +5493,34 @@ ${limitedTemplateContext}
       console.log('✓ Template context injected into prompt. New length:', prompt.length);
     }
 
-    // ========== COMPASS-40 OVERLAY (Client brief: trim legacy report) ==========
-    // Applied ONLY when generationEngine === 'compass-40'. Built on top of the
-    // legacy structure: KEEP Priority-1 sections, COMPRESS Priority-2 sections,
-    // REMOVE all financial modelling (Priority-3). See client brief for the
-    // exact priority list — these overrides WIN over the template above.
-    if (compass40OverlayActive) {
-      const compass40Overlay = `
-
----
-**COMPASS-40 OVERLAY — MANDATORY OVERRIDES TO THE TEMPLATE ABOVE**
-
-You are generating the trimmed, client-facing version of the Investor Compass report. Use the template structure above as the base, but apply ALL of the following overrides. These overrides WIN over anything in the template.
-
-### 1. KEEP (Priority 1) — write these in full, but strip every financial figure
-
-- **Executive Summary** — exactly ONE page. Cover: location verdict, property fit, tenant demand, key risks, recommendation. DO NOT include purchase price, LVR, yield, weekly rent, loan or cashflow figures. Use a non-financial \`{{glance}}\` opener and visual callouts rather than a financial KPI dashboard row.
-- **Property Snapshot** — physical and strategic only: property type, bed/bath/car, land size, estate, suburb, target tenant, locality fit. DO NOT include price, rent, yield, LVR or loan details.
-- **Location Overview** — strengthen. This is a core section explaining why the area matters.
-- **Population & Development Trends** — keep in full (macro demand, master-planned growth corridor).
-- **Suburb Character & Lifestyle** — keep but REDUCE. Who lives there, why tenants/buyers want it.
-- **Demand Drivers** — major client-facing section: tenant demand, family formation, employment access, master-planned amenity.
-- **Property-Level Information** — non-financial only: layout, land size, dwelling type, position within estate, tenant suitability, strengths, limitations.
-- **Risk Summary** — consolidate crime + environmental + planning + supply into ONE visual risk panel using \`{{gauge}}\`, \`{{heatmap}}\` or \`{{bars}}\`; only use a table if the data cannot be visualised.
-- **Final Recommendation** — rewrite as a simple verdict: **Proceed**, **Proceed with caution**, or **Not suitable**, followed by 150–250 words of plain rationale tied to location, tenant demand and risk. No financial verdict.
-
-### 2. COMPRESS (Priority 2) — cap pages as specified, no padding
-
-- **Education** — max 2–3 pages total. Do NOT split into multiple school sections.
-- **Healthcare** — max 1 page (½ page is fine).
-- **Shopping & Dining** — max 1 page. Daily convenience only, no long descriptive paragraphs.
-- **Parks & Recreation** — max 1 page.
-- **Transport** — consolidate public transport, commute, bus, road links and future upgrades into ONE 2–3 page section.
-- **SEIFA / Socioeconomic Profile** — small evidence box only. Do NOT explain the index methodology.
-- **Employment & Industry Composition** — render ONCE. Remove any duplicate employment sections appearing later in the template.
-
-### 3. REMOVE ENTIRELY (Priority 3) — these sections and items MUST NOT appear anywhere
-
-Sections to omit completely:
-- Purchase Costs / Purchase & Ongoing Costs
-- Annual Ongoing Costs
-- Rental Yield Calculations (Gross & Net)
-- Loan Assumptions
-- Cashflow Analysis (P&I Scenario, any scenario)
-- Interest Rate Sensitivity / Debt Serviceability Pressure
-- 10-Year Projections (Property Value, Rental Income, Annual Cashflow, Cumulative)
-- Loan Balance & Equity After 10 Years
-- Capital Appreciation Potential – 10-Year Projection
-- Structural Cashflow Deficit
-- Rental Assessment & Yield Calculation
-- Yield Comparison to Benchmarks
-- Land Tax Note
-- Income Potential – Pre-Calculated Yields (or rewrite as a short "tenant demand profile" with NO numbers)
-- Growth Outlook – 5% p.a. Capital Growth Assumption
-- Clear Yield Profile / Yield Below National Averages / Negative Cashflow Under 90% LVR
-
-Dashboard / KPI items to omit (no card, no table cell, no inline mention):
-- Purchase Price / Estimated Purchase Price
-- Weekly Rent / Estimated Weekly Rent
-- LVR
-- Net Yield / Gross Rental Yield / Net Rental Yield
-- Annual Rental Income
-- Occupancy Assumption
-- Loan amount and interest rate commentary
-
-### 4. STYLE RULES
-
-- Remove repeated transition paragraphs ("As we move into…", "Building on the above…", "This flows naturally…"). They make the report artificially long.
-- NO commentary blocks at all. Never write ${EDITORIAL_LABELS.map((l) => `"${l}"`).join(', ')} — not as a heading, not as a bold lead-in, not as a bare line above a paragraph. There is no permitted number: not one per section, not one per report. State the finding in the sentence that introduces the data instead.
-- Do NOT emit \`[citation]\`, \`[source needed]\`, \`[TBD]\` or any placeholder. Name the real source inline or omit the claim.
-- Bed / bath / car / land size / property type stated in the Property Snapshot MUST match every later reference exactly.
-- Where the legacy template would emit a financial figure, replace it with a single approved sentence: *"Detailed cashflow, yield, loan and 10-year projections are provided in the separate Financial Analysis Report."* Use this sentence AT MOST ONCE in the whole report.
-
-### 5. PAGE TARGET
-
-Aim for ${COMPASS_PAGE_BAND.min}–${COMPASS_PAGE_BAND.max} pages total after these trims. If the template would push you longer, trim Priority-2 sections further — never trim Priority-1 sections. A section that says what it has to say in half its word ceiling is finished; do not pad to the ceiling.
-
----
-`;
-      // Append at end AND prepend a short hard-rule banner at the very start
-      // so the model sees the financial exclusions before any legacy template
-      // language it may still be biased by from training data.
-      const compass40Banner = `\n**⚠️ COMPASS-40 HARD RULES (read first, apply globally)**\n- This is a Location & Property Fit report. NO financial modelling appears anywhere: no purchase price, weekly rent, LVR, gross/net yield, loan amount, interest rate, monthly/annual repayment, cashflow, sensitivity, 10-year projections, stamp duty, deposit, LMI, depreciation, negative gearing, land tax.\n- NO FINANCIAL KPI dashboard rows. NO "Purchase Price | $X | Weekly Rent | $Y" tables. Non-financial visual callouts, gauges, bars, heatmaps, timelines, pictographs, donuts and glance strips are REQUIRED.\n- NO inline citation markers like [1] [2] [1][2] — name the real source inline or omit the claim.\n- Finish every sentence and paragraph. Do NOT stop mid-thought. If running out of room, end the section cleanly.\n- Render Education, Transport and Employment exactly ONCE, in their own dedicated sections, never repeated under other sections.\n---\n`;
-      prompt = compass40Banner + prompt + compass40Overlay;
-      console.log(`✓ Compass-40 banner + overlay injected. Prompt length now: ${prompt.length}`);
-    }
-
+    /*
+     * The COMPASS-40 overlay and its banner were removed here (17 Sep 2026).
+     *
+     * They were a SECOND section contract, ~3.9 KB, appended after everything
+     * else and so never trimmed. Written against the legacy 38-section
+     * document, they named sections the canonical registry no longer has
+     * ("Population & Development Trends", "Suburb Character & Lifestyle",
+     * "Property-Level Information", "Risk Summary", "SEIFA / Socioeconomic
+     * Profile"), gave PAGE caps that fought the registry's WORD ceilings
+     * ("Transport — ONE 2-3 page section" against a 450-word budget), and
+     * named neither of the two sections v4.0 added — so the model could be
+     * asked for "Planning, Zoning & What Is Mapped Over the Land" and handed,
+     * as the last thing it read, a list of the document's sections that did
+     * not contain it.
+     *
+     * REMOVING A CEREMONY MUST NOT REMOVE A CONTROL, and every control they
+     * held is in `buildCanonicalTemplateContext` above, which is injected on
+     * the same runs: the forbidden editorial labels in all three forms with no
+     * permitted number, the financial exclusions, the placeholder and citation
+     * prohibitions, render-each-topic-once, no transition paragraphs, the word
+     * ceiling with its sub-heading and visualisation caps, the bed/bath/car/
+     * land-size and property-type consistency checks, and the Final
+     * Recommendation format. The one line only the banner had — finish every
+     * sentence rather than stopping mid-thought — moved there with them.
+     *
+     * The one thing that did NOT move is the pair they were wrong about: the
+     * asking price and the indicative rent. See the note in the guide.
+     */
     // ========== END RAG TEMPLATE CONTEXT INJECTION ==========
     
     const _brandSys = await getBrandConfig();

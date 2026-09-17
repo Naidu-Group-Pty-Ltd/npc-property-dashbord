@@ -234,3 +234,90 @@ describe('a citation marker leaves a space where a word needs one', () => {
     expect(gen).toContain("out.replace(/(\\w)\\[\\d+\\](?:\\[\\d+\\])*(\\w)/g, '$1 $2');");
   });
 });
+
+/**
+ * One structure contract, and only one.
+ *
+ * The legacy 38-page template was removed from the Compass prompt on 17 Sep
+ * 2026 and a SECOND one was left behind it: the COMPASS-40 overlay, ~3.9 KB
+ * appended after everything else — so never trimmed, and the last thing the
+ * model read. Written against the legacy document, it named sections the
+ * canonical registry no longer has, gave PAGE caps that fought the registry's
+ * WORD ceilings ("Transport — ONE 2-3 page section" against a 450-word
+ * budget), and named neither of the two sections v4.0 added. A model could be
+ * asked for "Planning, Zoning & What Is Mapped Over the Land" and handed, last
+ * of all, a list of this document's sections that did not contain it.
+ *
+ * These tests hold the two halves of removing it: the second contract is gone,
+ * and every control it carried is still enforced somewhere.
+ */
+describe('the Compass prompt states its structure exactly once', () => {
+  const generator = readFileSync('supabase/functions/generate-investment-report/index.ts', 'utf8');
+
+  it('concatenates no second structure contract onto the prompt', () => {
+    // Word-bounded, so the live `compass40OverlayActive` flag — which still
+    // selects the canonical registry and labels the stored run — is not
+    // mistaken for the deleted prompt string it used to also gate.
+    const ghosts = [
+      /\bcompass40Overlay\b/,
+      /\bcompass40Banner\b/,
+      /COMPASS-40 OVERLAY/,
+      /MANDATORY OVERRIDES TO THE TEMPLATE ABOVE/,
+    ];
+    const live = generator.split('\n')
+      .filter((l) => !l.trimStart().startsWith('*') && !l.trimStart().startsWith('//'));
+    for (const ghost of ghosts) {
+      expect(live.filter((l) => ghost.test(l)), `${ghost} is back in live code`).toEqual([]);
+    }
+    // And nothing else may be prepended or appended under the engine flag.
+    const assignments = generator.split('\n').filter((l) => /^\s*prompt = /.test(l));
+    expect(assignments.some((l) => /compass40/i.test(l)), 'a compass-only prompt concatenation').toBe(false);
+  });
+
+  it('keeps every control the overlay carried', () => {
+    /*
+     * Removing a ceremony must never remove a control. Each of these was in
+     * the overlay or its banner, and each is now in
+     * `buildCanonicalTemplateContext`, which is injected on the same runs.
+     */
+    const guide = generator.slice(
+      generator.indexOf('const compassStyleRules'),
+      generator.indexOf('## RECOMMENDATION FORMAT') + 400,
+    );
+    expect(guide).toContain('EDITORIAL_LABELS');           // forbidden labels, all forms
+    expect(guide).toContain('no permitted number');         // …with no allowance
+    expect(guide).toMatch(/\[citation\]/);                  // no placeholder markers
+    expect(guide).toMatch(/DO NOT repeat education, transport or employment/);
+    expect(guide).toMatch(/DO NOT include transition paragraphs/);
+    expect(guide).toMatch(/word ceiling/);
+    expect(guide).toMatch(/Bed \/ bath \/ car \/ land size/);
+    expect(guide).toMatch(/Property type .* MUST be identical/);
+    expect(guide).toMatch(/RECOMMENDATION FORMAT/);
+    // The one line only the banner had.
+    expect(guide).toMatch(/Finish every sentence and every paragraph/);
+  });
+
+  it('excludes the modelling and permits the price, which the overlay had backwards', () => {
+    /*
+     * The overlay removed "Purchase Price" and "Weekly Rent" outright — "no
+     * card, no table cell, no inline mention" — which contradicted three
+     * things at once: `TIER_CONTENT.compass.identityFigures` is true, the
+     * masters print both on the cover band and the dashboard, and Market
+     * Positioning cannot place a property in its market without naming what it
+     * costs. What is excluded is the ANALYSIS and the KPI-row form.
+     */
+    const exclusions = generator.slice(
+      generator.indexOf('## HARD EXCLUSIONS (Compass'),
+      generator.indexOf('## LENGTH AND STRUCTURE'),
+    );
+    expect(exclusions).toMatch(/DO NOT include deposit, stamp duty/);
+    expect(exclusions, 'the modelling is still excluded').toMatch(/gross\/net yield/);
+    expect(exclusions, 'a blanket ban on the price is the defect').not.toMatch(/DO NOT include purchase price/i);
+    expect(exclusions).toMatch(/asking price and the indicative weekly rent MAY be stated/);
+    expect(exclusions).toMatch(/may not be analysed/);
+    expect(exclusions).toMatch(/KPI row/);
+    // The contract says the same thing in its own words, and the two must not
+    // drift: one permits, the other must not forbid.
+    expect(COMPASS_DOCUMENT_CONTRACT).toMatch(/price and\s+the indicative rent may be stated once/);
+  });
+});
