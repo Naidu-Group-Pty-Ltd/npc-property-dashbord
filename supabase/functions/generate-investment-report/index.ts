@@ -1834,6 +1834,22 @@ Generate the ${sectionDef.name} sections now:`;
   const sectionInstructionBytes = byteLength(sectionInstructions);
   const basePromptBudget = Math.max(0, PERPLEXITY_SAFE_USER_MESSAGE_BYTES - sectionInstructionBytes - pinnedBytes - 2_000);
   const safeBasePrompt = limitPromptContext(basePrompt, basePromptBudget, `Base prompt for ${sectionDef.name}`);
+  /*
+   * Logged on every section, trimmed or not.
+   *
+   * `limitPromptContext` speaks only when it CUTS, so a run that fits silently
+   * looks the same as a run with no budget at all — and the question that
+   * matters after the legacy template and the COMPASS-40 overlay came out of
+   * this prompt (~81 KB between them) is whether the trim still engages. If
+   * `trimmed` reads false on every section, nothing the evidence pack carries
+   * can be lost to a byte boundary; if it starts reading true, the pack is what
+   * is at risk and it is the next thing to pin.
+   */
+  console.log(
+    `📏 ${sectionDef.name}: base ${byteLength(basePrompt)}B (budget ${basePromptBudget}B, `
+    + `trimmed ${byteLength(safeBasePrompt) < byteLength(basePrompt)}), `
+    + `pinned ${pinnedBytes}B, instructions ${sectionInstructionBytes}B`,
+  );
   let sectionPrompt = `${safeBasePrompt}${pinnedBlock}${sectionInstructions}`;
   if (byteLength(sectionPrompt) > PERPLEXITY_SAFE_USER_MESSAGE_BYTES) {
     const reducedBaseBudget = Math.max(0, PERPLEXITY_SAFE_USER_MESSAGE_BYTES - sectionInstructionBytes - pinnedBytes - 500);
