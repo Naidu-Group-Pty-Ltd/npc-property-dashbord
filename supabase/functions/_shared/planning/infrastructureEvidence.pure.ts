@@ -287,18 +287,26 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
     const licence = str(act?.licence);
     const council = str(summary.councilName) ?? 'the council';
     const window = `${str(summary.periodFrom) ?? ''} to ${str(summary.periodTo) ?? ''}`.trim();
-    const dwellings = num(summary.newDwellingsTotal);
+    // NEW applications only. A modification restates the development it
+    // modifies — the register carries the whole cost and the whole dwelling
+    // count on the modification row, not the delta — so the two may never be
+    // added. Measured on this register 17 Sep 2026 (The Hills Shire, 659
+    // applications over six months): summing them stated $2.367bn against
+    // $1.177bn of genuinely new proposals, and 3,447 dwellings against 1,412.
+    // See `classifyApplicationType`.
+    const newApps = isRecord(summary.newApplications) ? summary.newApplications : null;
+    const dwellings = num(newApps?.newDwellingsTotal);
     if (dwellings !== null) {
       pipelineDwellings = {
         total: dwellings,
-        rowsStating: num(summary.rowsWithDwellings) ?? 0,
+        rowsStating: num(newApps?.rowsWithDwellings) ?? 0,
         window,
         council,
       };
     }
-    const cost = num(summary.statedCostTotal);
+    const cost = num(newApps?.statedCostTotal);
     if (cost !== null) {
-      pipelineInvestment = { total: cost, rowsStating: num(summary.rowsWithCost) ?? 0 };
+      pipelineInvestment = { total: cost, rowsStating: num(newApps?.rowsWithCost) ?? 0 };
     }
     for (const raw of Array.isArray(summary.largestByCost) ? summary.largestByCost as unknown[] : []) {
       if (!isRecord(raw)) continue;
@@ -306,9 +314,18 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
       const statedStatus = str(raw.status);
       const determined = str(raw.determined);
       const lodged = str(raw.lodged);
+      const klass = str(raw.applicationClass);
+      const isAmendment = klass === 'amendment';
       items.push({
         name: types.length ? types.join(', ') : 'Development application',
-        kind: 'Development application',
+        // Named for what it is. A modification of an approved development is
+        // real activity and is carried, but it is not a new project and the
+        // reader is told which it is.
+        kind: isAmendment
+          ? 'Modification of an approved development'
+          : klass === 'unclassified'
+            ? 'Application (type not recognised)'
+            : 'Development application',
         statedStatus,
         standing: readDeliveryStanding(statedStatus),
         // A determination date is when a decision was made; a lodgement date

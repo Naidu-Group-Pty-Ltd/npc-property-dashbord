@@ -320,37 +320,96 @@ describe('council name resolution', () => {
 // ---------------------------------------------------------------------------
 
 describe('DA summary', () => {
-  const summary = summariseDaRows([NSW_DA_ROW, {
-    ...NSW_DA_ROW,
-    PlanningPortalApplicationNumber: 'PAN-000001',
-    CostOfDevelopment: 12_500_000,
-    NumberOfNewDwellings: 24,
-    ApplicationStatus: 'Under Assessment',
-    DevelopmentType: [{ DevelopmentType: 'Residential flat building' }],
-    Location: [{ Suburb: 'MUSWELLBROOK' }],
-  }], 'Muswellbrook Shire Council', '2026-03-07', '2026-09-06', 62);
+  /*
+   * Three classes, because the register carries three and they must never be
+   * added. `NSW_DA_ROW` is a **Modification Application** — and so, before
+   * this, was the second row of this fixture, because it spread the first.
+   * The old assertion therefore summed two restatements of the same kind of
+   * thing and called the result the area's development activity.
+   */
+  const summary = summariseDaRows([
+    NSW_DA_ROW,
+    {
+      ...NSW_DA_ROW,
+      PlanningPortalApplicationNumber: 'PAN-000001',
+      ApplicationType: 'Development Application',
+      CostOfDevelopment: 12_500_000,
+      NumberOfNewDwellings: 24,
+      ApplicationStatus: 'Under Assessment',
+      DevelopmentType: [{ DevelopmentType: 'Residential flat building' }],
+      Location: [{ Suburb: 'MUSWELLBROOK' }],
+    },
+    {
+      ...NSW_DA_ROW,
+      PlanningPortalApplicationNumber: 'PAN-000002',
+      ApplicationType: 'Some Future Application Kind',
+      CostOfDevelopment: 400_000,
+      NumberOfNewDwellings: 2,
+    },
+  ], 'Muswellbrook Shire Council', '2026-03-07', '2026-09-06', 62);
 
-  it('sums stated costs and dwellings with their row counts', () => {
-    expect(summary.statedCostTotal).toBe(13_458_740);
-    expect(summary.rowsWithCost).toBe(2);
-    expect(summary.newDwellingsTotal).toBe(25);
+  it('counts new proposals apart from the amendments that restate them', () => {
+    expect(summary.newApplications).toMatchObject({
+      rows: 1, statedCostTotal: 12_500_000, rowsWithCost: 1, newDwellingsTotal: 24, rowsWithDwellings: 1,
+    });
+    expect(summary.amendments).toMatchObject({
+      rows: 1, statedCostTotal: 958_740, rowsWithCost: 1, newDwellingsTotal: 1, rowsWithDwellings: 1,
+    });
+  });
+
+  it('puts a type it does not recognise in its own bucket, never in `new`', () => {
+    // The conservative side: a word the register adds tomorrow cannot inflate
+    // the headline figure, and it is visible rather than silently absorbed.
+    expect(summary.unclassified).toMatchObject({ rows: 1, statedCostTotal: 400_000, newDwellingsTotal: 2 });
+    expect(summary.byApplicationType).toContainEqual(
+      { type: 'Some Future Application Kind', klass: 'unclassified', count: 1 },
+    );
+  });
+
+  it('offers no combined total for anything to add up', () => {
+    // The fields that used to carry one are gone rather than redefined: a
+    // number that silently changes meaning is worse than one that stops
+    // compiling.
+    const keys = Object.keys(summary);
+    expect(keys).not.toContain('statedCostTotal');
+    expect(keys).not.toContain('newDwellingsTotal');
+    expect(keys).not.toContain('rowsWithCost');
+    expect(keys).not.toContain('rowsWithDwellings');
   });
 
   it('carries the register total beside the rows read, so a sample says so', () => {
     expect(summary.totalInPeriod).toBe(62);
-    expect(summary.rowsRead).toBe(2);
+    expect(summary.rowsRead).toBe(3);
   });
 
-  it('ranks the largest by stated cost', () => {
+  it('ranks the largest by stated cost, each carrying what it is', () => {
     expect(summary.largestByCost[0].cost).toBe(12_500_000);
     expect(summary.largestByCost[0].types).toContain('Residential flat building');
+    expect(summary.largestByCost[0].applicationClass).toBe('new');
+    // The modification is still listed — it is real activity — but it says so,
+    // so it cannot be read as a new project.
+    const mod = summary.largestByCost.find((l) => l.cost === 958_740);
+    expect(mod?.applicationClass).toBe('amendment');
   });
 
   it('the prompt block labels applicant-stated costs and sampling', () => {
     const block = developmentActivityBlock({ planningData: { developmentActivity: { status: 'ok', summary } } });
     expect(block).toContain('as stated by applicants');
     expect(block).toContain('62');
-    expect(block).toContain('2 applications read of 62');
+    expect(block).toContain('3 applications read of 62');
+  });
+
+  it('the prompt block keeps the three classes apart and says why', () => {
+    // The model reads this block. An unlabelled pair of figures is a pair a
+    // narrative will add together, which is the whole defect.
+    const block = developmentActivityBlock({ planningData: { developmentActivity: { status: 'ok', summary } } });
+    expect(block).toContain('New development applications — stated cost: **$12,500,000**');
+    expect(block).toContain('Modifications of approved developments — stated cost: **$958,740**');
+    expect(block).toContain('MUST NOT be added to the one above');
+    expect(block).toContain('Applications of an unrecognised type');
+    // And no line offers the sum of them.
+    expect(block).not.toContain('$13,458,740');
+    expect(block).not.toContain('$13,858,740');
   });
 });
 

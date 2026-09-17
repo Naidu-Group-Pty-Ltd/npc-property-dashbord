@@ -39,6 +39,55 @@ export interface NswDaRow {
   Location?: Array<{ Suburb?: unknown; Postcode?: unknown; FullAddress?: unknown }>;
 }
 
+/**
+ * What an application IS, for the purpose of adding costs up.
+ *
+ * ## The defect this ends
+ *
+ * A modification restates the development it modifies. The register carries
+ * the WHOLE cost and the WHOLE dwelling count on the modification row, not
+ * the delta — so adding every row together counts the same building twice,
+ * and counts it again for each further modification.
+ *
+ * Measured live against the register on 17 Sep 2026, The Hills Shire Council,
+ * every application lodged 17 Mar – 17 Sep 2026 (all 659 rows, 7 pages):
+ *
+ * | type | rows | stated cost | new dwellings |
+ * | --- | ---: | ---: | ---: |
+ * | Development Application | 474 | $1,177,228,202 | 1,412 |
+ * | Modification Application | 173 | $1,181,805,735 | 2,028 |
+ * | Review of determination | 12 | $7,857,446 | 7 |
+ * | **summed, as the report did** | **659** | **$2,366,891,383** | **3,447** |
+ *
+ * The report was therefore stating **$2.367bn** of development where the
+ * genuinely new proposals are **$1.177bn** — a 101% overstatement — and
+ * **3,447** new dwellings against **1,412**, which is 144%. The modifications
+ * alone restate more dwellings than every new application put together.
+ *
+ * ## The rules
+ *
+ * 1. **The three classes are never added together.** There is no combined
+ *    total on this summary at all, so a consumer must say which it means.
+ *    The previous fields are gone rather than redefined: a number that
+ *    silently changes meaning is worse than one that stops compiling.
+ * 2. **An unrecognised type is never `new`.** The register may add a word
+ *    this classifier does not know; it lands in `unclassified`, is reported
+ *    as its own line, and cannot inflate the headline.
+ * 3. **Nothing is dropped.** An amendment is real activity and a reader may
+ *    want it — it is carried, counted and labelled, never silently removed.
+ */
+export type DaApplicationClass = 'new' | 'amendment' | 'unclassified';
+
+export interface DaClassTotals {
+  rows: number;
+  /** Sum of stated costs, with how many rows stated one. */
+  statedCostTotal: number;
+  rowsWithCost: number;
+  /** Sum of stated new dwellings, with how many rows stated one. */
+  newDwellingsTotal: number;
+  rowsWithDwellings: number;
+}
+
 export interface DaSummary {
   councilName: string;
   periodFrom: string;
@@ -48,12 +97,14 @@ export interface DaSummary {
   /** How many rows this summary actually read. */
   rowsRead: number;
   byStatus: Array<{ status: string; count: number }>;
-  /** Sum of stated costs, with how many rows stated one. */
-  statedCostTotal: number;
-  rowsWithCost: number;
-  /** Sum of stated new dwellings, with how many rows stated one. */
-  newDwellingsTotal: number;
-  rowsWithDwellings: number;
+  /** Genuinely new proposals — the figure a reader means by "development". */
+  newApplications: DaClassTotals;
+  /** Changes to a decision already made. A RESTATEMENT of a parent, never an addition. */
+  amendments: DaClassTotals;
+  /** A type the register used that this classifier does not recognise. */
+  unclassified: DaClassTotals;
+  /** The application types seen, so a new one is visible rather than silent. */
+  byApplicationType: Array<{ type: string; klass: DaApplicationClass; count: number }>;
   topDevelopmentTypes: Array<{ type: string; count: number }>;
   largestByCost: Array<{
     cost: number;
@@ -62,7 +113,26 @@ export interface DaSummary {
     status: string | null;
     determined: string | null;
     lodged: string | null;
+    /** Carried so a modification can never be presented as a new project. */
+    applicationClass: DaApplicationClass;
   }>;
+}
+
+/**
+ * Classify by the register's own `ApplicationType`.
+ *
+ * Matched on a normalised form rather than the exact string, because the
+ * register's casing is not guaranteed; matched on the WHOLE word "modification"
+ * or "review" rather than a substring of a longer phrase nobody has seen, so a
+ * new type reads as unclassified instead of being guessed into a bucket.
+ */
+export function classifyApplicationType(applicationType: unknown): DaApplicationClass {
+  const t = typeof applicationType === 'string' ? applicationType.trim().toLowerCase() : '';
+  if (t === '') return 'unclassified';
+  if (t === 'development application') return 'new';
+  if (t.startsWith('modification')) return 'amendment';
+  if (t.startsWith('review of determination')) return 'amendment';
+  return 'unclassified';
 }
 
 const num = (v: unknown): number | null =>
@@ -145,14 +215,27 @@ export function summariseDaRows(
 ): DaSummary {
   const byStatus = new Map<string, number>();
   const byType = new Map<string, number>();
-  let statedCostTotal = 0;
-  let rowsWithCost = 0;
-  let newDwellingsTotal = 0;
-  let rowsWithDwellings = 0;
+  const byApplicationType = new Map<string, { klass: DaApplicationClass; count: number }>();
+
+  const blank = (): DaClassTotals => ({
+    rows: 0, statedCostTotal: 0, rowsWithCost: 0, newDwellingsTotal: 0, rowsWithDwellings: 0,
+  });
+  const totals: Record<DaApplicationClass, DaClassTotals> = {
+    new: blank(), amendment: blank(), unclassified: blank(),
+  };
 
   const costed: DaSummary['largestByCost'] = [];
 
   for (const row of rows) {
+    const klass = classifyApplicationType(row.ApplicationType);
+    const bucket = totals[klass];
+    bucket.rows += 1;
+
+    const appType = str(row.ApplicationType) ?? 'Not stated';
+    const seen = byApplicationType.get(appType);
+    if (seen) seen.count += 1;
+    else byApplicationType.set(appType, { klass, count: 1 });
+
     const status = str(row.ApplicationStatus) ?? 'Not stated';
     byStatus.set(status, (byStatus.get(status) ?? 0) + 1);
 
@@ -163,8 +246,8 @@ export function summariseDaRows(
 
     const cost = num(row.CostOfDevelopment);
     if (cost !== null && cost > 0) {
-      statedCostTotal += cost;
-      rowsWithCost += 1;
+      bucket.statedCostTotal += cost;
+      bucket.rowsWithCost += 1;
       costed.push({
         cost,
         types,
@@ -172,18 +255,20 @@ export function summariseDaRows(
         status: str(row.ApplicationStatus),
         determined: str(row.DeterminationDate)?.slice(0, 10) ?? null,
         lodged: str(row.LodgementDate)?.slice(0, 10) ?? null,
+        applicationClass: klass,
       });
     }
 
     const dwellings = num(row.NumberOfNewDwellings);
     if (dwellings !== null && dwellings > 0) {
-      newDwellingsTotal += dwellings;
-      rowsWithDwellings += 1;
+      bucket.newDwellingsTotal += dwellings;
+      bucket.rowsWithDwellings += 1;
     }
   }
 
   const sortDesc = <T,>(arr: T[], key: (t: T) => number) =>
     [...arr].sort((a, b) => key(b) - key(a));
+  const round = (t: DaClassTotals): DaClassTotals => ({ ...t, statedCostTotal: Math.round(t.statedCostTotal) });
 
   return {
     councilName,
@@ -192,10 +277,13 @@ export function summariseDaRows(
     totalInPeriod,
     rowsRead: rows.length,
     byStatus: sortDesc([...byStatus.entries()].map(([status, count]) => ({ status, count })), (e) => e.count),
-    statedCostTotal: Math.round(statedCostTotal),
-    rowsWithCost,
-    newDwellingsTotal,
-    rowsWithDwellings,
+    newApplications: round(totals.new),
+    amendments: round(totals.amendment),
+    unclassified: round(totals.unclassified),
+    byApplicationType: sortDesc(
+      [...byApplicationType.entries()].map(([type, v]) => ({ type, klass: v.klass, count: v.count })),
+      (e) => e.count,
+    ),
     topDevelopmentTypes: sortDesc([...byType.entries()].map(([type, count]) => ({ type, count })), (e) => e.count).slice(0, 6),
     largestByCost: sortDesc(costed, (c) => c.cost).slice(0, 5),
   };

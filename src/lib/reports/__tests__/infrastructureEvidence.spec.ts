@@ -53,11 +53,21 @@ const WITH_PROJECTS = {
       councilName: 'Fraser Coast Regional Council',
       periodFrom: '2026-03-17', periodTo: '2026-09-16',
       totalInPeriod: 62, rowsRead: 62,
-      statedCostTotal: 41_250_000, rowsWithCost: 48,
-      newDwellingsTotal: 214, rowsWithDwellings: 31,
+      // New proposals and the amendments that restate them, kept apart. The
+      // pipeline reading takes the NEW figures alone — adding the two counts
+      // the same building twice. See `classifyApplicationType`.
+      newApplications: {
+        rows: 41, statedCostTotal: 41_250_000, rowsWithCost: 48,
+        newDwellingsTotal: 214, rowsWithDwellings: 31,
+      },
+      amendments: {
+        rows: 19, statedCostTotal: 52_900_000, rowsWithCost: 17,
+        newDwellingsTotal: 305, rowsWithDwellings: 12,
+      },
+      unclassified: { rows: 2, statedCostTotal: 0, rowsWithCost: 0, newDwellingsTotal: 0, rowsWithDwellings: 0 },
       largestByCost: [
-        { cost: 18_400_000, types: ['Residential — multi dwelling'], suburb: 'Maryborough', status: 'Determined - Approved', determined: '2026-06-04', lodged: '2026-01-11' },
-        { cost: 6_900_000, types: ['Retail premises'], suburb: 'Pialba', status: 'Lodged', determined: null, lodged: '2026-05-22' },
+        { cost: 18_400_000, types: ['Residential — multi dwelling'], suburb: 'Maryborough', status: 'Determined - Approved', determined: '2026-06-04', lodged: '2026-01-11', applicationClass: 'new' },
+        { cost: 6_900_000, types: ['Retail premises'], suburb: 'Pialba', status: 'Lodged', determined: null, lodged: '2026-05-22', applicationClass: 'new' },
       ],
     },
   },
