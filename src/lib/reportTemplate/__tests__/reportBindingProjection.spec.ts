@@ -553,6 +553,45 @@ describe('a tier that withholds the modelling leaves no empty slot', () => {
     expect(financial.report.drawsFinancialModelling).toBe(true);
   });
 
+  it('withholds the Yield rationale but keeps the dimension itself', () => {
+    /*
+     * A dimension's own explanation can BE the modelling. The Yield scorer's
+     * reads `4.52% gross yield on a $575,000 purchase price.` — a yield,
+     * computed against the price, in one sentence — and it printed on page 4
+     * of a Compass whose `financials` withholds both. Withholding the figure
+     * and leaving its rationale on the scorecard is the same number through a
+     * second door.
+     *
+     * The dimension stays: it was measured, it carries weight in the grade,
+     * and saying so is not modelling.
+     */
+    const withScores = {
+      ...ROW,
+      investment_score: {
+        ...(ROW.investment_score as Record<string, unknown>),
+        breakdown: {
+          yieldScore: { score: 62, weight: 20, details: '4.52% gross yield on a $575,000 purchase price.' },
+          locationScore: { score: 71, weight: 25, details: 'Walkable to a shopping centre and two schools.' },
+        },
+      },
+    };
+    const row = (t: 'compass' | 'financial') => (applyInvestmentProjection({}, withScores, { tier: t })
+      .assessment as Array<Record<string, unknown>>);
+
+    const compassYield = row('compass').find((a) => a.label === 'Yield');
+    expect(compassYield?.score, 'the dimension is still scored').toBe(62);
+    expect(compassYield?.weightLabel).toBe('20%');
+    expect('details' in (compassYield ?? {}), 'the arithmetic goes').toBe(false);
+
+    // Location explains itself in locality terms and is published everywhere.
+    expect(row('compass').find((a) => a.label === 'Location')?.details)
+      .toContain('Walkable');
+
+    // And the Financial Analysis, which exists for the figures, keeps it.
+    expect(row('financial').find((a) => a.label === 'Yield')?.details)
+      .toContain('gross yield');
+  });
+
   it('puts every withheld binding on a conditional page or in a block that closes up', () => {
     const offences: string[] = [];
     for (const t of INVESTMENT_COMPASS_TEMPLATES) {

@@ -704,6 +704,28 @@ export function projectInvestmentReport(
   // scorer had no data for — `demandScore` and `growthScore` on the sampled
   // rows — so each entry is only emitted where it says something.
   const breakdown = obj(score.breakdown);
+  /*
+   * Resolved here rather than beside the document identity below, because the
+   * scorecard needs it: a dimension's own explanation can be financial
+   * modelling. See `MODELLING_DETAIL_DIMENSIONS`.
+   *
+   * The document being produced decides what may be published — the row's own
+   * tier for every caller but the condense fork. See `ProjectionOptions`.
+   */
+  const tier = String(row.report_tier ?? 'compass').trim().toLowerCase();
+  const policy = contentPolicyFor(options.tier ?? tier);
+
+  /**
+   * Dimensions whose `details` sentence states financial modelling.
+   *
+   * Narrow by construction and keyed on the dimension rather than matched on
+   * the text, for the reason `MODELLING_KEYS` is a list: a regex over a
+   * model-adjacent sentence either misses a phrasing or eats a legitimate
+   * one, and both are silent. Growth, Location, Demand and Risk explain
+   * themselves in market and locality terms and are published on every tier.
+   */
+  const MODELLING_DETAIL_DIMENSIONS = new Set(['yieldScore']);
+
   const DIMENSIONS: Array<{ key: string; label: string }> = [
     { key: 'growthScore', label: 'Growth' },
     { key: 'locationScore', label: 'Location' },
@@ -772,7 +794,20 @@ export function projectInvestmentReport(
       put(entry, 'weight', weight);
       put(entry, 'scoreLabel', score !== undefined ? String(Math.round(score)) : undefined);
       put(entry, 'weightLabel', weight !== undefined ? `${Math.round(weight)}%` : undefined);
-      put(entry, 'details', humaniseScoreDetail(str(d.details)));
+      // A dimension's own explanation can BE the modelling. The Yield
+      // scorer's reads `4.52% gross yield on a $575,000 purchase price.` —
+      // a yield, computed against the price, in one sentence — and it was
+      // printed on page 4 of a Compass that publishes neither. Withholding
+      // `financials.grossYield` and leaving its rationale on the scorecard
+      // is the same figure through a second door.
+      //
+      // The dimension keeps its label, its score and its weight: it was
+      // measured and it carries weight in the grade, and saying so is not
+      // modelling. What goes is the arithmetic behind it, which belongs in
+      // the Financial Analysis with the rest.
+      if (policy.financialModelling || !MODELLING_DETAIL_DIMENSIONS.has(key)) {
+        put(entry, 'details', humaniseScoreDetail(str(d.details)));
+      }
     }
     return entry;
     // A dimension the record does not carry at all has no score AND no
@@ -824,12 +859,7 @@ export function projectInvestmentReport(
   // now, and THIS is the one place the tier is translated into them; an
   // unrecognised or absent tier reads as compass, which is what the ranking's
   // default document has always been.
-  const tier = String(row.report_tier ?? 'compass').trim().toLowerCase();
   const identity = DOCUMENT_IDENTITY[tier] ?? DOCUMENT_IDENTITY.compass;
-  // The document being produced decides what may be published — which is the
-  // row's own tier for every caller but the condense fork. See
-  // `ProjectionOptions`.
-  const policy = contentPolicyFor(options.tier ?? tier);
   put(report, 'tier', tier);
   put(report, 'documentTitle', identity.title);
   // The standfirst comes from the CONTENT policy, not from the identity table,
