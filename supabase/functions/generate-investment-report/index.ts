@@ -1522,12 +1522,15 @@ Why this property earns a top-quartile rating.
 :::
 \`\`\`
 
-12. HORIZONTAL BARS — Tufte-style ranked comparator. Perfect for scorecards,
-    suburb rankings, lender comparisons, expense breakdowns. Each row = label + value.
+12. HORIZONTAL BARS — Tufte-style ranked comparator for MEASURED quantities:
+    prices against a median, distances, travel times, counts, shares, rates.
+    Each row = label + value, and every value must be one supplied to you.
     Values can be raw numbers, percentages (e.g. \`70%\`), or money (\`$1.2M\`, \`450k\`).
-    Format: \`{{bars: Label1 70, Label2 45%, Label3 $1.2M | title=… | max=100 | unit=%}}\`
+    NOT a scorecard: do not rank qualities by numbers you assign, and do not set
+    \`max=100\` on a chart whose values you chose — see the rating rule below.
+    Format: \`{{bars: Label1 70, Label2 45%, Label3 $1.2M | title=… | unit=%}}\`
 \`\`\`
-{{bars: Yield 7.4, Growth 8.1, Liquidity 5.2, Demand 8.6, Infrastructure 6.9 | title=Investment Pillars | max=10}}
+{{bars: Subject $565k, Suburb median $498k, Regional median $451k | title=Price against the market | unit=$}}
 \`\`\`
 
 13. QUADRANT MATRIX — 2×2 scatter for trade-off framing (Risk×Return, Yield×Growth,
@@ -1601,12 +1604,12 @@ VISUAL-FIRST RULES (CRITICAL):
   and never restates it afterwards.
 - Any "median grew from X to Y" / trend sentence MUST include either \`~~[…]~~\` inline or a \`::: stat\` callout nearby.
 - Any "subject vs suburb vs metro/state" comparison MUST use \`{{bars: Subject X, Suburb Y, Metro Z | title=…}}\`.
-- A 0-100 rating is drawn with \`{{gauge: …}}\` — and ONLY where the score is one supplied to you above (the Investment Score and the dimensions the engine actually scored). Do NOT mint a rating for appeal, suitability, confidence, affordability, land quality or any other attribute: where no score was supplied, state the finding in words and draw no gauge. The same holds for every number in a \`{{wheel: …}}\`. An invented dial is drawn with a verdict band beside it and reads to a client exactly like a measurement.
-- Any list of 3+ ranked metrics MUST be rendered as \`{{bars: …}}\` instead of a table.
+- **A RATING YOU INVENTED MAY NOT BE DRAWN, IN ANY PRIMITIVE.** A 0-100 rating is a SCORE, and the only scores that exist are the ones supplied to you above — the Investment Score and the dimensions the engine actually scored. Do NOT mint a rating for appeal, suitability, confidence, affordability, land quality, certainty, risk, "focus", "emphasis" or any other attribute, and do NOT draw one as a \`{{gauge}}\`, a \`{{wheel}}\`, a \`{{bars}}\`, a \`{{heatmap}}\`, a \`{{radar}}\` or anything else. In particular: do NOT write \`max=100\` on a chart whose numbers you chose. Where no score was supplied, state the finding in WORDS and draw no chart of it. A number on a scale is read as a measurement however it is drawn, and the reader has no way to tell one you assigned from one that was calculated.
+- Any list of 3+ ranked metrics MUST be rendered as \`{{bars: …}}\` instead of a table — where the metrics are MEASURED quantities that came from the data supplied to you (distances, counts, prices, shares, times, rates), each carrying its own real unit. A list of qualities you are ranking yourself is not a set of metrics: write it as prose or as a table with the reasons in it.
 - Any "X of Y households / dwellings / buyers" stat MUST use \`{{pictograph: …}}\`.
 - Any composition / share-of-total (tenure mix, age bands, expense split, capital
   allocation) MUST use \`{{donut: …}}\` instead of a table.
-- Any suburb × metric matrix MUST use \`{{heatmap: …}}\`.
+- Any suburb × metric matrix MUST use \`{{heatmap: …}}\` — with measured values in their own units, never scores you assigned.
 - An infrastructure/project pipeline is drawn with \`{{timeline: …}}\` — and ONLY from items in the Infrastructure & Development Outlook table, using the dates that table carries. With no evidenced items, draw no timeline.
 - Any "subject suburb vs N nearby suburbs" comparison MUST use \`{{tiles: …}}\`.
 - Any trade-off between two dimensions (yield vs growth, risk vs return) MUST use
