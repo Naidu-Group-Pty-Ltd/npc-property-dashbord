@@ -52,7 +52,7 @@ import {
   projectionAssumptionLinesForPrompt,
   sensitivityRowsForPrompt,
 } from '../_shared/reports/investment/promptFinancials.pure.ts';
-import { recordedScoreValues } from '../_shared/reports/investment/scoreClaims.pure.ts';
+import { recordedScoreValues, suppressUnrecordedScores } from '../_shared/reports/investment/scoreClaims.pure.ts';
 import { investmentScorePromptBlock, overallRecommendationLine } from '../_shared/reports/investment/scorePromptBlock.pure.ts';
 import { abbreviateState, domainCategoryFor, dwellingTypeFor } from '../_shared/reports/market/domainEvidence.pure.ts';
 import { populationGrowthPoint } from '../_shared/reports/market/populationGrowthEvidence.pure.ts';
@@ -6909,6 +6909,32 @@ YOUR DEDICATED PROPERTY PARTNER
     // is more use to everyone than no report; `validation_flags` is where a
     // finding belongs, and the row carries the rest of its quality metadata
     // there already.
+    /*
+     * A score the record does not hold does not reach the page.
+     *
+     * `suppressUnrecordedScores` had exactly one call site — the condense
+     * fork — so the derived Briefing was cleaned and the parent, which is the
+     * document a client receives, was not. This route measured the same thing
+     * with `recordedScoreValues` and filed a FINDING: QA is recorded, never
+     * thrown, so the sentence carrying an invented "68/100" was detected and
+     * printed anyway.
+     *
+     * Run unconditionally, above the overlay branch, because a switch that
+     * turns a correctness control off is not a switch about formatting. The
+     * removal is by SENTENCE, and composed tables printing recorded figures
+     * are untouched.
+     */
+    const scoreGuard = suppressUnrecordedScores(reportContent, {
+      recorded: recordedScoreValues(enhancedData.investmentScore),
+    });
+    if (scoreGuard.removed.length) {
+      reportContent = scoreGuard.markdown;
+      console.log(
+        `✓ Score guard: ${scoreGuard.removed.length} unrecorded score claim(s) removed — `
+        + scoreGuard.removed.map((r) => JSON.stringify(r.text)).join(', '),
+      );
+    }
+
     let compassQa: ReturnType<typeof runQAValidation> | null = null;
     if (compass40OverlayActive) {
       const beforePost = reportContent.length;
@@ -7263,6 +7289,17 @@ YOUR DEDICATED PROPERTY PARTNER
         // Right number, wrong label — grain, period or source (RF-7.2B.1 §7).
         ...claimFlags,
         ...governedFlags,
+        // A score the record does not hold, removed before the page was
+        // written. Disclosed rather than merely logged: the sentence carrying
+        // it is gone from the document, so the flag is the only trace a later
+        // reader has that it was ever there.
+        ...(scoreGuard.removed.length ? [{
+          type: 'unrecorded_score_claim',
+          severity: 'warning' as const,
+          field: 'report_content',
+          message: `${scoreGuard.removed.length} score claim(s) the record does not hold were removed from the narrative.`,
+          value: { claims: scoreGuard.removed.map((r) => r.text) },
+        }] : []),
         // Add quality-based validation flags
         ...(avgScore < 70 ? [{
           type: 'quality',

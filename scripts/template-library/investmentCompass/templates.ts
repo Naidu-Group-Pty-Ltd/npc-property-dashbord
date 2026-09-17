@@ -695,6 +695,24 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         }], DETAIL_CHARS.risk),
         conditional: 'risks && risks[0] && risks[0].risk',
       },
+      // A withheld register renders its reason.
+      //
+      // The register above is conditional and the heading over it is not, so
+      // on a report whose record holds no risk string — 197 carry no score
+      // object at all — the page opened "Risk register / Manageable with
+      // verification, not without it" over nothing. An empty area under a
+      // heading reads as a broken page, and it is also the wrong reading:
+      // this is a fact about what the record carries, not a finding that the
+      // property has no risks.
+      {
+        ...callout(
+          'No risk recorded',
+          'No risk was recorded against this property’s assessment. That is a statement about the record '
+          + 'rather than a finding: it does not mean no risk applies. The assessment section sets out the '
+          + 'risk dimension’s own reasoning, and the recommendation below stands either way.',
+        ),
+        conditional: '!(risks && risks[0] && risks[0].risk)',
+      },
       recommendation(
         '{{recommendation.headline}}',
         // Was `recommendation.rationale`, which the record does not carry —

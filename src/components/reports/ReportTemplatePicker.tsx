@@ -290,12 +290,19 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
   // the person had done: a tile clicked in that window was reverted, the tray
   // they opened was closed and the stored family's reopened, and their
   // colourway was overwritten by the stored one.
-  const seeded = useRef(false);
-  useEffect(() => { if (!open) seeded.current = false; }, [open]);
+  //
+  // What stops it is a TOUCH, not a load. Gating on "both queries have landed"
+  // was the first attempt and it is wrong in the same direction: a person who
+  // clicks while the library is still resolving is still overwritten when it
+  // lands. Gating on "seed once at open" is wrong in the other direction — the
+  // stored choice resolves after the dialog is interactive, so the dialog
+  // would open on "Choose automatically" for somebody who has a choice. So the
+  // seed keeps following the server until the person touches something, and
+  // never afterwards.
+  const touched = useRef(false);
+  useEffect(() => { if (!open) touched.current = false; }, [open]);
   useEffect(() => {
-    if (!open || seeded.current) return;
-    if (isLoading || library.isLoading) return;
-    seeded.current = true;
+    if (!open || touched.current) return;
     setConsentedChoice(null);
     setChoice(storedChoice);
     setOpenFamilyKey(storedFamilyKey);
@@ -303,7 +310,10 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
     if (lineage?.familyKey && lineage.colourway) {
       setColourwayByFamily((prev) => ({ ...prev, [lineage.familyKey!]: lineage.colourway! }));
     }
-  }, [open, isLoading, library.isLoading, storedChoice, storedFamilyKey, state]);
+  }, [open, storedChoice, storedFamilyKey, state]);
+
+  /** Every control that changes a choice says so, so the seed stops following. */
+  const chooseTemplate = (value: string) => { touched.current = true; setChoice(value); };
 
   // Opening a family from the gallery's second row would otherwise reveal its
   // tray below the fold — a click that appears to do nothing. `nearest` keeps
@@ -468,7 +478,7 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
             )}
 
             <div data-testid="template-picker-scroll" className="max-h-[62vh] space-y-5 overflow-y-auto pr-1">
-              <RadioGroup value={choice} onValueChange={setChoice} className="space-y-5">
+              <RadioGroup value={choice} onValueChange={chooseTemplate} className="space-y-5">
                 <label
                   className={cn(
                     'flex cursor-pointer items-start gap-3 rounded-md border p-3 transition',
@@ -530,6 +540,7 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
                               // reference layout the standing choice while it
                               // is open, which is what the tile already
                               // looked like it was doing.
+                              touched.current = true;
                               const opening = !isOpen;
                               setOpenFamilyKey(opening ? group.key : null);
                               if (opening && representative
@@ -608,8 +619,10 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
                                   <button
                                     key={c.id}
                                     type="button"
-                                    onClick={() =>
-                                      setColourwayByFamily((prev) => ({ ...prev, [openGroup.key]: c.id }))}
+                                    onClick={() => {
+                                      touched.current = true;
+                                      setColourwayByFamily((prev) => ({ ...prev, [openGroup.key]: c.id }));
+                                    }}
                                     title={`${c.name} · ${c.ground}`}
                                     aria-label={`${c.name}, ${c.ground} ground`}
                                     aria-pressed={active}
