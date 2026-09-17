@@ -11,6 +11,11 @@ import { compassSections, financialSections, COMPASS_PAGE_BAND, EDITORIAL_LABELS
 import { postProcessReportMarkdown } from '../_shared/compassPostProcessor.ts';
 import { demographicsStatBlocks } from '../_shared/reports/censusPromptBlocks.pure.ts';
 import { planningStatBlocks } from '../_shared/reports/planningPromptBlocks.pure.ts';
+import {
+  buildPlanningFacts,
+  planningFactBlocks,
+  renderPlanningControls,
+} from '../_shared/planning/planningFacts.pure.ts';
 import { crimeStatBlocks } from '../_shared/reports/crimePromptBlocks.pure.ts';
 import { climateStatBlocks } from '../_shared/reports/climatePromptBlocks.pure.ts';
 import { macroEconomicBlock } from '../_shared/reports/macroPromptBlocks.pure.ts';
@@ -2456,16 +2461,14 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     const modelledBeds = effectiveIsLandOnly ? 0 : (effectiveBeds ?? 3);
     const modelledBaths = effectiveIsLandOnly ? 0 : (effectiveBaths ?? 2);
     
-    // Zoning effective values
-    const effectiveZoningCode = mergedOverrides.zoningCode || null;
-    const effectiveZoningDescription = mergedOverrides.zoningDescription || null;
-    const effectivePermittedUses = mergedOverrides.permittedUses || null;
-    const effectiveDevelopmentPotential = mergedOverrides.developmentPotential || null;
-    const effectiveZoningOverlays = mergedOverrides.zoningOverlays || null;
-    const effectiveMinimumLotSize = mergedOverrides.minimumLotSize || null;
-    const effectiveMaximumHeight = mergedOverrides.maximumHeight || null;
-    const effectiveFloorSpaceRatio = mergedOverrides.floorSpaceRatio || null;
-    const hasZoningData = effectiveZoningCode || effectiveZoningDescription || effectivePermittedUses || effectiveDevelopmentPotential;
+    // Zoning is resolved from the planning enrichment AND the operator's
+    // overrides together, by `buildPlanningFacts` below — which runs after the
+    // enrichment rather than here, because this point in the run is before a
+    // coordinate has been verified and therefore before anything could have
+    // been retrieved. Eight `effectiveZoning*` constants used to be computed
+    // here from the overrides alone and handed to a prompt that had no other
+    // source, which is why a report on a property whose zone the state's own
+    // layer would have answered printed placeholders instead.
     
     console.log('📊 EFFECTIVE VALUES (after merging overrides):');
     console.log(`  Purchase Price: $${effectivePurchasePrice?.toLocaleString()} ${mergedOverrides.purchasePrice ? '(OVERRIDE)' : '(from property)'}`);
@@ -4597,6 +4600,43 @@ Produce a comprehensive statewide investment analysis following the structure ab
     // record holding 0.21. See `_shared/reports/schoolDistance.pure.ts`.
     const storedSchools = enhancedData.locationIntelligence?.schools?.topSchools;
 
+    // The planning record this report may state.
+    //
+    // `planning-data-service` has answered since 2026-09-06 and the fetch
+    // above has always stored its answer on `enhancedData.planningData` —
+    // but the zoning SECTION of this prompt read none of it. It was a
+    // template of bracketed placeholders (`[XX]%` site coverage, `[X]m`
+    // setbacks, "Refer to LEP", "typically 450m²") handed to a model with
+    // nothing to fill them from, so the model filled them: 450 m², 8.5 m and
+    // 0.5:1 reached a client's document as though they were measurements.
+    // It also named New South Wales instruments on a Queensland property.
+    //
+    // The table below is composed from what was retrieved, the operator's
+    // audited overrides outrank it, and a control nobody published prints
+    // which absence it is rather than a number.
+    const planningFacts = buildPlanningFacts({
+      planningData: enhancedData.planningData,
+      overrides: {
+        zoningCode: mergedOverrides.zoningCode,
+        zoningDescription: mergedOverrides.zoningDescription,
+        permittedUses: mergedOverrides.permittedUses,
+        developmentPotential: mergedOverrides.developmentPotential,
+        zoningOverlays: mergedOverrides.zoningOverlays,
+        minimumLotSize: mergedOverrides.minimumLotSize,
+        maximumHeight: mergedOverrides.maximumHeight,
+        floorSpaceRatio: mergedOverrides.floorSpaceRatio,
+      },
+    });
+    const planningControlsTable = renderPlanningControls(planningFacts);
+    const planningSectionRules = planningFactBlocks(planningFacts);
+    console.log('📐 Planning facts:', {
+      jurisdiction: planningFacts.jurisdiction,
+      council: planningFacts.council,
+      zone: planningFacts.zoning.value,
+      zoneStatus: planningFacts.zoning.status,
+      stated: planningFacts.anyStated,
+    });
+
     const _brandPp = await getBrandConfig();
     const propertyPrompt = `You are an expert Australian property investment analyst for ${_brandPp.companyName}.
 Your role is to produce comprehensive, professional-grade investment reports following the EXACT structure, length, and format of our reference template.
@@ -4952,107 +4992,9 @@ This valuation reflects typical [Suburb] [property type] prices for [configurati
 
 # Zoning & Planning Analysis
 
-${hasZoningData ? `**Zoning Classification:**
+${planningControlsTable}
 
-| Zoning Attribute | Details |
-|-----------------|---------|
-| Zoning Code | ${effectiveZoningCode || 'Not specified'} |
-| Category | ${effectiveZoningDescription || 'Not specified'} |
-| Permitted Uses | ${effectivePermittedUses ? effectivePermittedUses.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) : 'Standard residential uses'} |
-| Development Potential | ${effectiveDevelopmentPotential ? effectiveDevelopmentPotential.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) : 'Subject to council approval'} |
-| Planning Overlays | ${effectiveZoningOverlays ? effectiveZoningOverlays.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) : 'No significant overlays identified'} |
-| Heritage Status | [Confirm heritage overlay status with local council] |
-| Conservation Areas | [Identify any environmental conservation restrictions] |
-
-**Development Controls:**
-
-| Control | Value | Investment Implication |
-|---------|-------|------------------------|
-| Minimum Lot Size | ${effectiveMinimumLotSize ? effectiveMinimumLotSize + ' m²' : 'Refer to LEP'} | [Assess subdivision feasibility] |
-| Maximum Building Height | ${effectiveMaximumHeight ? effectiveMaximumHeight + ' m' : 'Refer to LEP'} | [Multi-storey development potential] |
-| Floor Space Ratio (FSR) | ${effectiveFloorSpaceRatio ? effectiveFloorSpaceRatio + ':1' : 'Refer to LEP'} | [Maximum buildable area ratio] |
-| Site Coverage | [XX]% | [Permissible building footprint] |
-| Setbacks (Front) | [X]m | [Building positioning constraints] |
-| Setbacks (Side/Rear) | [X]m / [X]m | [Side and rear boundary requirements] |
-| Landscaping Requirements | [XX]% minimum | [Green space allocation] |
-
-**Local Environmental Plan (LEP) Analysis:**
-
-The property falls under the [Council Name] Local Environmental Plan [Year]. Key considerations:
-
-- **Principal Permitted Uses:** Dwelling houses, secondary dwellings (granny flats), home occupations, home businesses
-- **Uses Requiring Consent:** Dual occupancy, attached dwellings, boarding houses, child care centres
-- **Prohibited Uses:** Commercial retail, industrial, intensive agriculture
-
-**Development Control Plan (DCP) Requirements:**
-
-- **Dwelling Design:** Character requirements, articulation, façade treatment
-- **Landscaping:** Deep soil zones, tree retention, canopy coverage targets
-- **Parking:** Minimum [X] off-street spaces per dwelling
-- **Stormwater:** On-site detention requirements, water sensitive urban design
-- **Private Open Space:** Minimum [XX]m² principal private open space
-
-**Strategic Planning Context:**
-
-- **Growth Corridor Status:** [Is the area within a designated growth corridor?]
-- **Urban Renewal Precinct:** [Proximity to renewal areas with potential upzoning]
-- **State Significant Development:** [Any state-level planning schemes affecting the area]
-- **Future Rezoning Potential:** [Analysis of strategic planning documents for potential uplift]
-
-**Zoning Investment Implications:**
-
-The ${effectiveZoningCode || 'residential'} zoning ${effectiveDevelopmentPotential && effectiveDevelopmentPotential !== 'none' ? 'provides potential for ' + effectiveDevelopmentPotential.replace(/_/g, ' ') + ', which could enhance long-term investment value through development upside' : 'is typical for the area and supports standard residential use, with limited immediate development potential'}. ${effectiveZoningOverlays && effectiveZoningOverlays !== 'none' ? 'The ' + effectiveZoningOverlays.replace(/_/g, ' ') + ' overlay may impact development options and should be factored into renovation or development plans. Additional consultant reports may be required for development applications.' : 'No significant planning overlays were identified that would restrict standard residential development.'}
-
-${effectivePermittedUses && (effectivePermittedUses.includes('dual') || effectivePermittedUses.includes('secondary') || effectivePermittedUses.includes('multi')) ? `**Value-Add Development Opportunities:**
-
-1. **Secondary Dwelling (Granny Flat):** Subject to lot size requirements, a secondary dwelling up to 60m² could provide rental income of approximately $[XXX]/week
-2. **Dual Occupancy Conversion:** If lot size permits, conversion to dual occupancy could increase property value by 30-50%
-3. **Subdivision Potential:** [Assess whether lot size supports Torrens title or strata subdivision]
-
-These development options require detailed feasibility analysis and council pre-lodgement consultation.` : ''}
-
-**Planning Risk Assessment:**
-
-| Risk Factor | Assessment | Mitigation Strategy |
-|-------------|------------|---------------------|
-| Rezoning Risk | Low/Medium/High | Monitor council strategic planning updates |
-| Heritage Overlay | [Confirm with council] | Obtain heritage impact assessment if required |
-| Bushfire Prone Land (mapping) | [Mapped: yes / no / not checked] — a bushfire-prone-land designation is NOT a BAL; a Bushfire Attack Level is a site-specific assessment and is stated only if one is held | Obtain a BAL assessment where the land is mapped; comply with AS3959 where a BAL applies |
-| Flood Affectation | [Check flood maps] | Obtain flood certificate, confirm habitable floor levels |
-
-**Recommendation:** Verify all zoning information with the [Council Name] planning portal before proceeding with any development applications. Obtain a Section 10.7 (formerly Section 149) Planning Certificate for comprehensive zoning confirmation.` : `**Zoning Information:**
-
-Specific zoning data was not provided for this property. For comprehensive investment analysis, verify the following with the local council:
-
-**Planning Certificate Requirements (Section 10.7):**
-
-| Certificate Type | Information Provided |
-|-----------------|---------------------|
-| Section 10.7(2) | Basic zoning classification |
-| Section 10.7(2)+(5) | Comprehensive: all planning restrictions, overlays, development contributions |
-
-**Key Zoning Verification Items:**
-
-1. **Current Zoning Classification:** Confirm zone code (e.g., R2, R3, R4 for residential)
-2. **Permitted Land Uses:** Primary and secondary dwelling entitlements
-3. **Development Controls:** Height limits, FSR, setbacks, minimum lot size
-4. **Planning Overlays:** Heritage, conservation, bushfire, flood, acoustic
-
-**Future Planning Considerations:**
-
-- Review council's Local Strategic Planning Statement (LSPS)
-- Check Housing Strategy for density targets
-- Identify proximity to nominated urban renewal precincts
-- Monitor state government planning initiatives (e.g., transit-oriented development, housing policy changes)
-
-**Development Potential Assessment:**
-
-- **Secondary Dwelling:** Check minimum lot size requirements (typically 450m²)
-- **Dual Occupancy:** Assess zoning permissions and lot size requirements
-- **Subdivision:** Review minimum lot sizes for new allotments
-- **Multi-Unit Development:** Confirm if R3/R4 rezoning potential exists
-
-**Note:** Zoning can significantly impact both development potential and long-term investment value. Strategic rezoning can deliver substantial capital uplift. We strongly recommend obtaining a Section 10.7(2)+(5) Planning Certificate and reviewing the council's strategic planning documents before finalising investment decisions.`}
+${planningSectionRules}
 
 ---
 
@@ -7098,8 +7040,14 @@ YOUR DEDICATED PROPERTY PARTNER
         baths: effectiveBaths,
         carSpaces: mergedOverrides.carSpaces ?? propertyDetails?.carSpaces,
         yearBuilt: mergedOverrides.yearBuilt ?? propertyDetails?.yearBuilt,
-        zoning: effectiveZoningCode ?? propertyDetails?.zoning,
-        councilArea: mergedOverrides.councilArea ?? propertyDetails?.councilArea,
+        // An operator's own record first, then what the jurisdiction's layer
+        // answered, then whatever the listing carried. `spec_zoning` and
+        // `spec_council` were null on every report ever generated because
+        // only the first of those three was ever consulted.
+        zoning: mergedOverrides.zoningCode
+          ?? (planningFacts.zoning.status === 'stated' ? planningFacts.zoning.value : null)
+          ?? propertyDetails?.zoning,
+        councilArea: mergedOverrides.councilArea ?? planningFacts.council ?? propertyDetails?.councilArea,
       });
       
       // Prepare data sources tracking. Every source the generation ATTEMPTED
@@ -7127,7 +7075,26 @@ YOUR DEDICATED PROPERTY PARTNER
         employment: enhancedData.employmentData ? sourceStamp('abs_employment', 0.9) : null,
         climate: enhancedData.climateData ? sourceStamp('climate_service', 0.8) : null,
         riskAssessment: enhancedData.riskAssessment ? sourceStamp('risk_assessment', 0.85) : null,
-        investmentScore: enhancedData.investmentScore ? sourceStamp('scoring_engine', 1.0) : null
+        investmentScore: enhancedData.investmentScore ? sourceStamp('scoring_engine', 1.0) : null,
+        // Planning was fetched on every report and named in none of them, so
+        // the coverage disclosure counted a source the run had spent. It
+        // carries its own provenance rather than a bare confidence: which
+        // jurisdiction answered, which council, whether a zone was retrieved,
+        // and the retrieval stamp the readings were taken under.
+        planning: enhancedData.planningData ? {
+          source: 'jurisdiction_planning_layers',
+          confidence: planningFacts.zoning.status === 'stated' ? 0.9 : 0.5,
+          timestamp: planningFacts.retrievedAt ?? new Date().toISOString(),
+          jurisdiction: planningFacts.jurisdiction,
+          council: planningFacts.council,
+          zoneStatus: planningFacts.zoning.status,
+          zone: planningFacts.zoning.value,
+          zoneSource: planningFacts.zoning.source,
+          zoneLicence: planningFacts.zoning.licence,
+          zoneEffectiveDate: planningFacts.zoning.effectiveDate,
+          verification: planningFacts.verification,
+          verificationUrl: planningFacts.zoning.sourceUrl,
+        } : null
       };
 
       // Fact reconciliation: does the written analysis agree with the record
