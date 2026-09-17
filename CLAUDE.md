@@ -1740,6 +1740,25 @@ prompt-blocks defect again, so it names `Not assessed` now in both mirrors),
 and `riskDashboardContract`'s `ASSESSED_ENTRY` does not match it — all three
 pinned by execution.
 
+**A total summed from part of a register is a FLOOR, and says so.** Read
+[`DA_REGISTER_RECONCILIATION.md`](./docs/reports/DA_REGISTER_RECONCILIATION.md)
+before changing `registerWalk`, `summariseDaRows`' class split or the pipeline
+paragraph. Two readings of one register — 680 dwellings / $808,649,729 as the
+report printed it, 1,410 / $1,175,556,030 now — reconcile exactly and into two
+independent halves. Applying the OLD counting rule to the COMPLETE walk gives
+3,442 and $2,364,004,211, so retrieval completeness is **+2,762 dwellings and
++$1.555bn** and the counting rule is **−2,032 and −$1.188bn**, which is the
+amendments bucket to the dwelling and to the dollar. Geography, window and
+publisher are identical. **The larger half is completeness, not definition**:
+the deployed service read **300 of the 650** applications the register stated,
+so the published figures were not a stale reading of the area but a third of
+the register presented as the register. `daActivityLine` had disclosed a
+partial walk since it was written; the PIPELINE paragraph, which is where the
+money is, had not. It does now — each figure a floor, because reading the rest
+can only raise it — with nothing drawn on a complete walk, `null` kept distinct
+from complete, and rule 4a telling the model to carry the qualification
+wherever it uses either figure.
+
 **The first regeneration then found that a rule can reach the model and its
 evidence not** (§6 of the same doc). Regenerated 17 Sep 2026 the placeholders
 were gone and the document still said *"low-density residential zoning"*,

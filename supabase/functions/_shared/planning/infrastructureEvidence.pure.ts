@@ -234,6 +234,22 @@ export interface InfrastructureEvidence {
   /** Aggregate stated investment, with how many rows stated one. */
   pipelineInvestment: { total: number; rowsStating: number } | null;
   /**
+   * How much of the register these totals were summed from.
+   *
+   * `daActivityLine` already discloses a partial walk on the planning
+   * controls line; the pipeline paragraph did not, and the pipeline paragraph
+   * is where the money is. The Kellyville report printed "680 new dwellings …
+   * $808,649,729" from **300 of the 650 applications the register stated**,
+   * with nothing on the page saying so. Reading the rest gives 3,442 and
+   * $2.364bn on the same counting rule — so the published figures were not
+   * merely stale, they were a little over a third of the register, presented
+   * as the register.
+   *
+   * Null where the reading carried no walk figures at all, which is a
+   * different statement from a complete walk.
+   */
+  registerWalk: { rowsRead: number; totalStated: number } | null;
+  /**
    * Why an empty list is empty, per register — as strings, for the persisted
    * record and for every caller that already reads it.
    */
@@ -425,6 +441,7 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
   const summary = act?.status === 'ok' && isRecord(act.summary) ? act.summary : null;
   let pipelineDwellings: InfrastructureEvidence['pipelineDwellings'] = null;
   let pipelineInvestment: InfrastructureEvidence['pipelineInvestment'] = null;
+  let registerWalk: InfrastructureEvidence['registerWalk'] = null;
   if (summary) {
     const source = str(act?.source) ?? 'the council development-application register';
     const licence = str(act?.licence);
@@ -456,6 +473,9 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
     if (cost !== null) {
       pipelineInvestment = { total: cost, rowsStating: num(newApps?.rowsWithCost) ?? 0 };
     }
+    const rowsRead = num(summary.rowsRead);
+    const totalStated = num(summary.totalInPeriod);
+    if (rowsRead !== null && totalStated !== null) registerWalk = { rowsRead, totalStated };
     // One entry per DEVELOPMENT. `summariseDaRows` resolves an amendment to
     // the parent application it amends (see `DaDevelopment`), because the
     // list used to rank ROWS: three of the five largest "projects" on the
@@ -511,6 +531,7 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
     // pushed, so the persisted record and every existing reader are unchanged.
     absences: readings.map((r) => r.note),
     readings,
+    registerWalk,
     coverageLimits: [...INFRASTRUCTURE_COVERAGE_LIMITS],
     retrievedAt,
     anyEvidenced: items.length > 0 || pipelineDwellings !== null,
@@ -567,6 +588,18 @@ function statusCell(item: InfrastructureItem): string {
   return read && read.toLowerCase() !== item.statedStatus.toLowerCase()
     ? `${item.statedStatus} (${read})`
     : item.statedStatus;
+}
+
+/**
+ * What part of the register a total was summed from, where that is not all of
+ * it. Empty on a complete walk — a sentence saying "all of it" on every
+ * complete reading is noise, and the figures then mean what they say.
+ */
+function walkNote(walk: InfrastructureEvidence['registerWalk']): string {
+  if (!walk || walk.rowsRead >= walk.totalStated) return '';
+  const n = (v: number) => v.toLocaleString('en-AU');
+  return `Both totals were summed from ${n(walk.rowsRead)} of the ${n(walk.totalStated)} applications the register `
+    + 'states for this window, so each is a FLOOR rather than a total: reading the remainder can only raise it. ';
 }
 
 /**
@@ -671,6 +704,18 @@ export function renderInfrastructureOutlook(evidence: InfrastructureEvidence): s
       + `${inv && inv.rowsStating !== d.rowsStating
         ? 'The two counts differ because an application need state neither figure, and many state only one. '
         : ''}`
+      /*
+       * And how much of the register they were summed from.
+       *
+       * A sum of non-negative figures over part of a set is a FLOOR, which is
+       * the honest word: reading the rest can only raise it. The rendered
+       * Kellyville report printed these two totals from 300 of 650 rows with
+       * nothing saying so, and the complete walk on the same counting rule is
+       * 3,442 dwellings and $2.364bn — so "680" and "$808,649,729" were not a
+       * stale reading of the area, they were a third of the register
+       * presented as the register.
+       */
+      + `${walkNote(evidence.registerWalk)}`
       + 'That is activity in the local government area, not at this address, and it reads both ways: it is a sign of '
       + 'confidence in the area and it is competing supply for a landlord letting a comparable dwelling.',
     );
@@ -797,6 +842,10 @@ export function infrastructureRules(evidence: InfrastructureEvidence): string {
     + 'horizon and this table carries none, so never place an item in "0-2y", "3-5y", "5y+" or any other future '
     + 'bucket: that states a completion the register did not publish. Where every date in the table is a decision '
     + 'date, draw no horizon timeline at all, and if the table carries no dates, draw no timeline.',
+    '4a. Where the paragraph under the table says the totals were summed from part of the register, say so '
+    + 'whenever you use either figure, and call it a floor rather than a total. Do NOT present a partial sum as '
+    + 'the area\u2019s development activity, and do not compare it with a figure read over a different share of '
+    + 'the register.',
     '5a. An amendment is NOT another project. A row reading "amended 3 times in this window" is ONE development '
     + 'the register was asked about again; the applications behind it share an address, a lot and a cost, and the '
     + 'register carries the WHOLE cost on each row rather than the change. Never turn an amendment count into a '
