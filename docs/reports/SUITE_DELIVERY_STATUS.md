@@ -46,11 +46,42 @@ counted anywhere in the table above.
 
 | remaining work | stage | why it is not done |
 | --- | --- | --- |
-| **Template-content integration** — the approved structure, explanations and bindings moved into the masters the generation and export paths actually use | S4 | The treatment lives in the projection and the review scripts. A user generating a report today gets the masters' own copy. |
+| **Template-content integration** — the approved structure, explanations and bindings moved into the masters the generation and export paths actually use | **S4, needs a decision** | The treatment lives in the projection and the review scripts. Part of it cannot live there: the Compass's KPI band draws the master's own literal `Weekly rent` with the note `{{financials.annualRent \| currency}} p.a.`, and the projection cannot reach a master's label or a literal suffix. Closing it edits `investmentCompass/blocks.ts` and re-runs `templates:library:seed`, which writes a migration covering **all 500 masters** — a production change under the release gate. See § What needs a decision. |
+| **Restored legacy coverage** — SWOT, suitability, strategy, monitoring, named facilities, key findings, suburb comparisons | **S4, needs a decision** | `sectionRegistry.pure.ts` already defines `swot`, `suitability`, `exitStrategy`, `amenityAccess`, `marketPosition` and `suburbCharacter`; the Compass's v4.0 list draws none of the first three, and there is no `monitoring` section at all. Adding them widens an approved structure and its 34-page budget. See § What needs a decision. |
 | ~~**Section navigation**~~ — a contents page and bookmarks naming SECTIONS, resolving correctly after pagination and conditional content | S4 | **Done on the template path.** Measured on the 36-page Chancery Compass: the contents prints 22 section rows whose 22 destinations resolve to the folios beside them, and the outline carries the same 22 with 26 subsections nested under them. The FLOWING renderer's documents still carry no internal links (S3 residual, below). |
 | **Full-document verification** — every page of all five reports, for both properties, read and reconciled | S5 | Four of the five have been seen on one composed page only. |
-| **Ten-year outlook sources** | S4, blocked | See `S4_INFRASTRUCTURE_SOURCE_COVERAGE.md`. Awaiting an owner decision on curation. |
+| **Ten-year outlook sources** | S4, needs a decision | See `S4_INFRASTRUCTURE_SOURCE_COVERAGE.md`. No free, keyless, openly licensed register publishes infrastructure PROJECTS resolvable to either subject locality. Awaiting an owner decision between curated official publications and a commercial provider. |
+| ~~**Planning and development evidence**~~ — the register read whole, one entry per development, the six per-project facts, and the evidence recorded on the row | S4 | **Done.** `S4_PLANNING_AND_DEVELOPMENT.md` carries the four defects and the measurements; `reports/pdf/s4-planning.pdf` is both subjects drawn through the supported template path, 13 pages, PDF/UA-1. |
 | **Frontend journey** — selection, editing, saving, reopening, preview, export, history, permissions | S5 | Not exercised end to end. |
+
+## What needs a decision
+
+Two items above are not blocked on work, they are blocked on a choice. Neither
+is started, and neither should be started on an assumption.
+
+**1 · Re-seeding the 500 masters.** Some of the approved treatment is master
+CONTENT rather than bound data — the Compass KPI band's `Weekly rent` label
+and its ` p.a.` suffix are literals in `investmentCompass/blocks.ts`, and no
+projection can reach them. The five tier pages already say *"Indicative weekly
+rent"*; the master does not. Closing it is a one-line source edit plus
+`npm run templates:library:seed`, which regenerates a migration covering all
+500 masters and every one of the ten formats they serve. That migration
+reaches production only through the release gate, and it is the same mechanism
+the chip `radius` and any other master-level wording would travel on — so it
+is worth doing once, deliberately, with the full list of wording changes
+agreed first.
+
+**2 · Widening the Compass's section list.** The brief asks for SWOT,
+suitability, strategy and monitoring to be restored. `sectionRegistry.pure.ts`
+already defines `swot`, `suitability` and `exitStrategy`; the Compass's v4.0
+list draws none of them, and `monitoring` does not exist as a section
+anywhere. Adding four sections to a document specified at **8,150 words across
+15 sections against a 34-page budget** changes both the structure and the
+budget, and the registry's own rule — *a section with nothing behind it should
+be merged; a section with a register behind it should not* — needs applying to
+each one before it is added. It also has to respect the Compass/Financial
+split, because `suitability` and `exitStrategy` both edge towards the
+modelling the Compass deliberately does not carry.
 
 ## The honest gaps
 
