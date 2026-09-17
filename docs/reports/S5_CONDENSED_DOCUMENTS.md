@@ -306,3 +306,56 @@ composition and the rendering — it is the composition that was untested, and
 it is now — but it is not the model, and the one thing it deliberately cannot
 do is the one thing a model might get wrong. That gap closes only by
 generating one of each for real.
+
+---
+
+## 6 · The relocated financial detail, verified at its destination
+
+The standing requirement is that financial detail moved out of the Compass be
+verified where it landed *before* the removal counts. Decision E withheld the
+modelling from the Compass and the Financial Analysis Report is where it went;
+until this stage both documents had never existed side by side for the same
+property, so the check could not be made. `scripts/reports/s5Relocation.py`
+makes it over all four documents.
+
+Ten items, both subjects, **no problems**: absent from the Compass, present in
+the Financial Analysis.
+
+| | Compass | Financial |
+| --- | --- | --- |
+| purchase-cost breakdown (incl. stamp duty) | absent | present |
+| gross yield · net yield | absent | present |
+| loan structure · LVR · repayments | absent | present |
+| sensitivity and scenario testing | absent | present |
+| ten-year projection · equity bridge | absent | present |
+| cash-on-cash return · year-1 net position | absent | present |
+
+And the two Decision E keeps on **every** tier — *"withholding the modelling
+is not withholding the price"* — are on the Compass: the purchase price and
+the indicative weekly rent, side by side in its dashboard band.
+
+### The measurement was wrong three times first, and that is the finding
+
+Every one of the first three attempts produced a confident wrong answer, and
+all three were the instrument rather than the documents:
+
+1. **A page-fill measure clamped by the running foot.** `min(ink, floor)` is
+   the floor whenever the foot draws below it, and a running foot draws on
+   every page — so every page measured 100% full. The band has to be
+   EXCLUDED, not clipped.
+2. **Tracked small caps.** The design letter-spaces its KPI labels, so
+   `pdftotext` renders "WEEKLY RENT" as `W E E K L Y  R E N T`. A
+   word-boundary regex cannot see it, and the first reading of this check
+   reported the indicative rent MISSING from both Compasses — a defect that
+   did not exist, against a rule the codebase states explicitly.
+3. **Hyphenation.** The documents write `Cash-on-cash return`; a search for
+   "Cash on cash" that folds whitespace still keeps the hyphen, so the figure
+   read as absent from the destination. It is in the sensitivity chapter's
+   year-1 table on both.
+
+Two of the three were false POSITIVES for a defect and one was a false
+negative, which is the worse direction: it would have reported a Compass
+carrying modelling it does not carry. The check folds case, whitespace and
+punctuation away now, and reads each document's own MARKDOWN as well as its
+printed text — the markdown is what the composition wrote, the PDF is what
+reached paper, and a claim about relocation has to hold in both.
