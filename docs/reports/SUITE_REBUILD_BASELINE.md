@@ -33,28 +33,64 @@ measurement.
 
 ## 3. Frontend build identity
 
-**A build marker already exists and needs no change.** `vite.config.ts`
-resolves a `BUILD_ID` (commit sha, 12 chars) and the
-`npc-build-version-manifest` plugin emits `/version.json` beside the bundle;
-`src/lib/buildVersion.ts` reads it at `VERSION_MANIFEST_PATH`.
+**Deployment record, established 17 Sep 2026 through the Lovable integration.**
+The frontend is not on Vercel; it is a Lovable project.
 
-**Open, with a one-step resolution.** This environment's network policy denies
-the NPC hosts, so `/version.json` cannot be fetched from here. The deployed
-build is identified by opening `https://<production host>/version.json`, which
-returns `{"buildId":"<12-char commit sha>"}`.
+| | |
+| --- | --- |
+| Lovable project | `7976d60b-c277-4851-889b-c170285f4be2` |
+| Workspace | `JqcsuFgT71nlgYSNsEMB` (Naidu / Lavan's Lovable) |
+| `latest_commit_sha` | **`1d71a8070ba4613aefcca242d6331a5e36926ac1`** — exactly `origin/main` |
+| `last_edited_at` | 2026-09-17 08:37:52 UTC |
+| `is_published` | true |
+| Canonical app host | `https://command-centre.npcservices.com.au` (`APP_URL`) |
+| Lovable default host | `https://npc-property-dashbord.lovable.app` (kept as an allowed origin) |
 
-**Bounded meanwhile:** the bundle predates commit `4717c10` (17 Sep 2026),
-proved by the pre-separation standfirst on the 17 Sep Annabelle cover. It is
-**at least** eight `src/` commits behind; whether more is unknown until
-`/version.json` is read.
+**So the project SOURCE is current.** The rendered Annabelle document
+(generated 08:57:31, twenty minutes after that sync) nevertheless printed the
+pre-`4717c10` standfirst.
+
+**Hypothesis, not a finding:** the source synced without a publish, so the
+served bundle is older than the project source. Lovable separates editing from
+publishing, and the record exposes no publish timestamp distinct from
+`last_edited_at`. A cached browser tab would produce the same symptom.
+
+**The one request that settles it:** open
+`https://command-centre.npcservices.com.au/version.json`. It returns
+`{"buildId":"<12-char commit sha>"}`.
+
+- Reads `1d71a807` → the bundle is current, and the stale standfirst was a
+  cached tab. No publish is owed.
+- Reads anything earlier → a publish is owed, and the value fixes the pending
+  release scope exactly.
+
+Blocked gate: **S6 only.** Every other milestone proceeds.
 
 ## 4. Template baseline
 
-500 seeded masters across ten design families and ten colourways; 50 masters
-per migrated report format. Active-master refresh verified in prior work.
+Verified **separately** from the bundle, because template versions live in the
+database and not in the build — a `buildId` says nothing about them.
 
-**Open:** which master version the deployed picker serves, for the same reason
-as §3.
+| Table | Rows | Active / published | Newest `updated_at` |
+| --- | --- | --- | --- |
+| `report_templates` | 114 | 17 active | 2026-09-17 08:43:32 UTC |
+| `template_library_entries` | 543 | 543 published | 2026-09-17 08:41:49 UTC |
+
+Both are current as of the baseline. The picker reads these rows at runtime,
+so the active template set does not depend on which bundle is served.
+
+## 4a. Isolated render harness
+
+Established 17 Sep 2026 so the programme can render and read documents without
+touching production.
+
+| | |
+| --- | --- |
+| Engine | WeasyPrint **69.0** — byte-identical to the container pin in `weasyprint-service/requirements.txt` |
+| Path | render spec → `reports/html/<archetype>.html` → `weasyprint` → `reports/pdf/<archetype>.pdf` → `measure_pages.py` → `judgeDocument` |
+| Proven | `investment-compass` renders 59 pages, A4, `Producer: WeasyPrint 69.0` |
+
+`reports/` is gitignored: these are local artefacts, not fixtures.
 
 ## 5. Baseline report set
 
