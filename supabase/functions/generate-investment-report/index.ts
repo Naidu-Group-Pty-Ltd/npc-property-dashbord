@@ -5111,7 +5111,7 @@ This valuation reflects typical [Suburb] [property type] prices for [configurati
 <!-- The planning controls and the infrastructure register are NOT here. They
      are pinned context, appended to every section prompt after this one is
      trimmed to fit, because this prompt is trimmed in the middle and that is
-     where they used to sit. See `pinnedPlanningContext`. -->
+     where they used to sit. See pinnedPlanningContext in the handler. -->
 
 # Purchase & Ongoing Costs (Annual)
 
