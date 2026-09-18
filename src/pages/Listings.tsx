@@ -59,6 +59,7 @@ import { BulkActionBar } from '@/components/aurixa';
 
 import { buildFullAddress, extractAUState, extractAUPostcode } from '@/lib/addressUtils';
 import { buildListingFacets } from '@/lib/listings/listingFacets.pure';
+import { hasListingUrl, openListingUrl } from '@/lib/listings/listingLinks.pure';
 import { getNearbySuburbs } from '@/lib/postcodeProximity';
 import { useIsMobile } from '@/hooks/use-mobile';
 import {
@@ -605,9 +606,9 @@ function ListingsMarketplace({
     }
   };
 
-  const openSourceUrl = (url: string) => {
-    window.open(url, '_blank', 'noopener,noreferrer');
-  };
+  // A stored link with no scheme resolves against this app's own origin, so
+  // "Open source listing" used to open a tab on a path we do not serve.
+  const openSourceUrl = (url: string) => { openListingUrl(url); };
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('en-AU', {
@@ -1172,7 +1173,7 @@ function ListingsMarketplace({
             selectedIds={selectedListings}
             onToggleSelect={(listing, checked) => handleSelectListing(listing.id, checked)}
             onOpenDetails={openDetailsModal}
-            onOpenSource={(listing) => listing.url && openSourceUrl(listing.url)}
+            onOpenSource={(listing) => openSourceUrl(listing.url ?? '')}
             onEmailAgent={openEmailAgent}
             onImagesFound={refreshListingImages}
             points={galleryPoints}
@@ -1211,7 +1212,7 @@ function ListingsMarketplace({
                 onOpenInvestmentReport={() => openInvestmentReportModal(listing)}
                 onCopyAddress={() => copyToClipboard(buildFullAddress(listing), 'Full address')}
                 onEmailAgent={() => openEmailAgent(listing)}
-                onOpenSource={listing.url ? () => openSourceUrl(listing.url!) : undefined}
+                onOpenSource={hasListingUrl(listing.url) ? () => openSourceUrl(listing.url!) : undefined}
                 formatCurrency={formatCurrency}
                 formatDate={formatDate}
                 images={listingImages[listing.id]}
@@ -1256,7 +1257,7 @@ function ListingsMarketplace({
                   onToggleSelect={() => handleSelectListing(listing.id, !selectedListings.has(listing.id))}
                   onOpenDetails={() => openDetailsModal(listing)}
                   onCopyAddress={() => copyToClipboard(buildFullAddress(listing), 'Full address')}
-                  onOpenSource={listing.url ? () => openSourceUrl(listing.url!) : undefined}
+                  onOpenSource={hasListingUrl(listing.url) ? () => openSourceUrl(listing.url!) : undefined}
                   onEmailAgent={listingContact(listing).email ? () => openEmailAgent(listing) : undefined}
                 >
                   <TableRow
@@ -1388,7 +1389,7 @@ function ListingsMarketplace({
                           label={listing.address || listing.location}
                           callbacks={{
                             onOpenDetails: () => openDetailsModal(listing),
-                            onOpenSource: listing.url ? () => openSourceUrl(listing.url!) : undefined,
+                            onOpenSource: hasListingUrl(listing.url) ? () => openSourceUrl(listing.url!) : undefined,
                             onCopyAddress: () => copyToClipboard(buildFullAddress(listing), 'Full address'),
                             onOpenGenerateModal: canEditListings ? () => openInvestmentReportModal(listing) : undefined,
                           }}

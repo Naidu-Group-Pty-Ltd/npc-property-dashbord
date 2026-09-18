@@ -188,3 +188,47 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+-- ── 3. The invitation ledger could only hold finance partners ───────────────
+--
+-- `appointment_secondary_recipients` is the record of who was invited to a
+-- booking. It is what the booking's detail panel lists, what a reschedule
+-- notice is addressed to, and what a cancellation reads back to know whom to
+-- tell — the command centre itself holds none of that.
+--
+-- The table was written for finance partners and never widened:
+-- `finance_contact_id UUID NOT NULL`. An additional contact has no finance
+-- contact id and the client has none either, so every insert for one of them
+-- violated the constraint and no row was written. The ledger therefore held
+-- finance partners and nobody else, which is why the 19 Sep 2026 clone audit
+-- found three symptoms of one fault: the booking's detail window listed no
+-- additional contact, a reschedule did not reach them, and a cancellation did
+-- not either.
+--
+-- The column becomes nullable and a `role` is recorded beside it, so the
+-- ledger says what each person was rather than leaving it to be inferred from
+-- whether an id happens to be present.
+ALTER TABLE public.appointment_secondary_recipients
+  ALTER COLUMN finance_contact_id DROP NOT NULL;
+
+ALTER TABLE public.appointment_secondary_recipients
+  ADD COLUMN IF NOT EXISTS recipient_role TEXT;
+
+DO $$ BEGIN
+  ALTER TABLE public.appointment_secondary_recipients
+    ADD CONSTRAINT appointment_secondary_recipients_role_check
+    CHECK (recipient_role IS NULL OR recipient_role IN ('client', 'additional_contact', 'finance_partner'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- Every row written so far is a finance partner, because no other kind could
+-- be written. Stamping them says so rather than leaving the column ambiguous
+-- between "a finance partner" and "written before this migration".
+UPDATE public.appointment_secondary_recipients
+   SET recipient_role = 'finance_partner'
+ WHERE recipient_role IS NULL
+   AND finance_contact_id IS NOT NULL;
+
+COMMENT ON COLUMN public.appointment_secondary_recipients.finance_contact_id IS
+  'The finance partner this invitation is for, when it is one. NULL for a client or an additional contact — they have no finance contact id, and requiring one meant they could never be recorded as invited at all.';
+COMMENT ON COLUMN public.appointment_secondary_recipients.recipient_role IS
+  'client | additional_contact | finance_partner. What this person is to the booking, recorded rather than inferred from whether finance_contact_id is set.';

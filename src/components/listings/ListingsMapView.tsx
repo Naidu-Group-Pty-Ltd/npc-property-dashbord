@@ -104,6 +104,7 @@ import { assessAuPostcodePoint } from '../../../supabase/functions/_shared/auPos
 import { BUILD_ID } from '@/lib/buildVersion';
 
 import type { StoredListingImage } from '@/lib/listingImages';
+import { hasListingUrl, openListingUrl } from '@/lib/listings/listingLinks.pure';
 
 export type { GeoPoint } from '@/lib/listingsMap';
 
@@ -1275,13 +1276,13 @@ function ListingPopupCard({
         <Button size="sm" className="flex-1" onClick={onOpenDetails}>
           Open details
         </Button>
-        {listing.url ? (
+        {hasListingUrl(listing.url) ? (
           <Button
             size="sm"
             variant="outline"
             className="shrink-0"
             aria-label="Open the source listing"
-            onClick={() => window.open(listing.url!, '_blank', 'noopener,noreferrer')}
+            onClick={() => openListingUrl(listing.url)}
           >
             <ExternalLink className="h-3.5 w-3.5" />
           </Button>
