@@ -24,7 +24,7 @@ import {
 import type { MarketFacts, MarketFactRow } from '../../../../supabase/functions/_shared/reports/market/marketFactBlocks.pure';
 import type { SubjectPrice } from '../investment/subjectPrice.pure';
 import { readScoreAssessment } from '../../../../supabase/functions/_shared/reports/market/scoreAssessmentReading.pure';
-import { ANNABELLE_SCORE } from './fixtures/annabelleScore';
+import { ANNABELLE_SCORE } from './fixtures/storedScores';
 
 const row = (over: Partial<MarketFactRow> & Pick<MarketFactRow, 'key' | 'label' | 'value'>): MarketFactRow => ({
   describes: 'postcode 2155, NSW — houses, 162 sales, 2026-03-31',

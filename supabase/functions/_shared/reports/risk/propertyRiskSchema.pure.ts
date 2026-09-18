@@ -52,6 +52,48 @@
  * nominal composite weight is 5%."* A schema that names what is missing is
  * worth more than a score that invents it, because it is also the acquisition
  * list.
+ *
+ * ## What changed upstream, and why it still does not score (18 Sep 2026)
+ *
+ * Two of the rows above have gone stale in the direction that matters. The
+ * planning programme closed the retrieval gap: `planning-data-service` reads
+ * the jurisdiction's own layers at the verified coordinate, and
+ * `PLANNING_CONTROLS_IN_THE_REPORT.md` §8 records the probe — NSW answers the
+ * LEP, the zone, heritage, bushfire, flood, landslide and acid sulfate soils,
+ * each with the clause that creates it and its own currency date; Victoria's
+ * overlays sit on the same endpoint as its zones; Queensland answers flood
+ * hazard and 26 MSES layers; Tasmania answers both overlay registers. On
+ * report `9bd41c05` that is a real reading — `R2 — Low Density Residential`
+ * from the NSW Planning Portal's Principal Planning Layers, CC BY 4.0,
+ * effective 2026-08-07, retrieved 2026-09-17T08:58:23.845Z. So
+ * `site_hazard_exposure` and `planning_constraints` ARE held at parcel grain.
+ *
+ * They still cannot answer their questions, for a reason that is not a gap in
+ * the data:
+ *
+ *   **A retrieved control is a fact; a 0-100 safety score is a rating, and no
+ *   publisher issues one.** Turning "Zone R2, no overlay returned at this
+ *   point" into `site_hazard_exposure: 78` invents the scale — which is §9's
+ *   defect exactly ("an absence may not be RATED"), committed under a
+ *   different heading. `assessPepEvidence`'s asymmetry is the same rule: a HIT
+ *   is a signal, a MISS is not a clearance.
+ *
+ * So they move to {@link EvidenceAvailability} `held_but_unscoreable`: named
+ * on the page as evidence, contributing nothing to a score, and off the
+ * acquisition backlog because what is still needed is a published scale
+ * rather than a retrieval. `unscoreableHoldings()` is that second list.
+ *
+ * And even were a scale published, Risk would not score for an established
+ * house on the strength of these two alone: hazard and planning are ONE
+ * independent category (`site`) in `riskModelD.pure.ts`, `MINIMUM_
+ * INDEPENDENT_CATEGORIES` is 2, and the only other category a house's schema
+ * offers is `building` — `condition_and_maintenance`, which needs a
+ * construction year or an inspection. Measured 18 Sep 2026 over all 1,230
+ * stored reports: `property_specs` carries `yearBuilt` on **0**, `buildYear`
+ * on **0**, `constructionYear` on **0** and `yearOfConstruction` on **0**.
+ * That grouping is deliberate and stays: two readings that are present or
+ * absent together — if the state's portal answers, both answer; if it does
+ * not, neither does — are one retrieval, not two independent observations.
  */
 
 /** The classes a stored property type maps onto. Selection only. */
@@ -99,6 +141,15 @@ export type EvidenceAvailability =
   | 'held_property_level'
   /** Held, but at an area grain that cannot speak about one property. */
   | 'held_area_level_only'
+  /**
+   * Held at property grain as a NAMED FACT, and still unable to answer this
+   * question, because no publisher issues a scale that converts the fact into
+   * a risk score. It reaches the reader as evidence — the planning and hazard
+   * sections print the control, its instrument and its currency date — and it
+   * contributes nothing here. What is outstanding is a published scale, not a
+   * retrieval, so it is not on the acquisition backlog.
+   */
+  | 'held_but_unscoreable'
   /** Another dimension already owns this signal; scoring it here double-counts. */
   | 'owned_by_another_dimension'
   /** Not held by this deployment in any form. */
@@ -125,9 +176,12 @@ const HAZARD: RiskQuestion = {
     + 'financeability, and is the single largest property-specific downside risk in Australian '
     + 'residential property.',
   evidenceRequired:
-    'A parcel-level hazard overlay: state planning-portal flood and bushfire-prone-land layers, '
-    + 'or an equivalent licensed hazard dataset, queried by coordinate.',
-  availability: 'not_held',
+    'RETRIEVED since the planning programme: the jurisdiction\'s own hazard layers at the verified '
+    + 'coordinate — NSW bushfire-prone land, flood, landslide and acid sulfate soils; Queensland flood '
+    + 'hazard; Victoria\'s and Tasmania\'s overlay registers — each with the instrument that creates it and '
+    + 'its own currency date. What is outstanding is a published scale that turns a named designation into a '
+    + 'risk score. There is none, and inventing one would rate an absence.',
+  availability: 'held_but_unscoreable',
 };
 
 const PLANNING: RiskQuestion = {
@@ -137,9 +191,11 @@ const PLANNING: RiskQuestion = {
     'Constraints bound the improvement and redevelopment options that underpin a long-hold '
     + 'thesis, and they are parcel-specific.',
   evidenceRequired:
-    'State planning-portal zoning and overlay layers by coordinate. `planning_data_cache` holds '
-    + 'two rows and is effectively empty.',
-  availability: 'not_held',
+    'RETRIEVED since the planning programme: state planning-portal zoning and overlay layers by '
+    + 'coordinate, with publisher, licence and the instrument\'s own currency date. Report 9bd41c05 carries '
+    + '`R2 — Low Density Residential` from the NSW Principal Planning Layers, CC BY 4.0, effective '
+    + '2026-08-07. What is outstanding is a published scale, exactly as for site hazard.',
+  availability: 'held_but_unscoreable',
 };
 
 const CONDITION: RiskQuestion = {
@@ -150,7 +206,10 @@ const CONDITION: RiskQuestion = {
     + 'specific to the building rather than the area.',
   evidenceRequired:
     'Building-inspection reports, construction year, or a condition assessment attached to the '
-    + 'property record. None is stored.',
+    + 'property record. Measured 18 September 2026 over all 1,230 stored reports: `property_specs` carries '
+    + '`yearBuilt` on 0, `buildYear` on 0, `constructionYear` on 0 and `yearOfConstruction` on 0. This is '
+    + 'the only other independent category an established house\'s schema offers, which is why retrieving '
+    + 'the two site controls above could not by itself make Risk scoreable.',
   availability: 'not_held',
 };
 
@@ -248,6 +307,69 @@ export function scoreableQuestions(cls: AssetClass): readonly RiskQuestion[] {
 /** How many of a class's own questions this deployment can answer today. */
 export function answerableCount(cls: AssetClass): number {
   return scoreableQuestions(cls).filter((q) => q.availability === 'held_property_level').length;
+}
+
+/**
+ * What would actually make Risk scoreable for one asset class, in a sentence.
+ *
+ * Derived from the schema rather than restated beside it. The literal it
+ * replaces read *"Answered property-risk questions from the per-class schema
+ * (hazard, planning, condition, strata)"* — which names hazard and planning as
+ * outstanding when the planning programme retrieves both, and names strata on
+ * a house that is never asked about one. A remedy that misdescribes the
+ * platform's own holdings sends an operator to buy what it already reads.
+ */
+export function riskRemedyFor(cls: AssetClass | null): string {
+  if (!cls) {
+    return 'A recorded property type, which selects the risk questions that apply. A placeholder '
+      + 'selects none.';
+  }
+  const applicable = scoreableQuestions(cls);
+  const name = (q: RiskQuestion) => q.id.replace(/_/g, ' ');
+  // Semicolons rather than commas where the list is a run of question names:
+  // three of them contain "and", and a comma list reads as two items where
+  // there are three. A pair inside a noun phrase still takes "and".
+  const list = (qs: readonly RiskQuestion[]) => qs.map(name).join('; ');
+  const phrase = (qs: readonly RiskQuestion[]) =>
+    qs.map(name).join(qs.length > 2 ? '; ' : ' and ');
+  const unretrieved = applicable.filter((q) => q.availability === 'not_held');
+  const retrieved = applicable.filter((q) => q.availability === 'held_but_unscoreable');
+  const parts: string[] = [];
+  if (unretrieved.length) {
+    parts.push(
+      `Evidence this deployment does not hold: ${list(unretrieved)}.`,
+    );
+  }
+  if (retrieved.length) {
+    const one = retrieved.length === 1;
+    parts.push(
+      `The ${phrase(retrieved)} control${one ? ' is' : 's are'} retrieved at parcel grain already; what is `
+      + `outstanding for ${one ? 'it' : 'them'} is a published scale that converts a named control into a risk `
+      + 'reading. There is none, and inventing one would rate the absence of a finding.',
+    );
+  }
+  parts.push(
+    'A score also needs observations spanning at least two independent categories — two readings of the same '
+    + 'site are one observation, not two.',
+  );
+  return parts.join(' ');
+}
+
+/**
+ * Held at parcel grain, and still not an answer — the SCALE backlog.
+ *
+ * Deliberately a separate list from {@link acquisitionBacklog}. Collapsing the
+ * two would say these controls are not retrieved, which is no longer true and
+ * would send somebody to buy a dataset the platform already reads.
+ */
+export function unscoreableHoldings(): readonly RiskQuestion[] {
+  const seen = new Map<string, RiskQuestion>();
+  for (const questions of Object.values(SCHEMA_BY_ASSET_CLASS)) {
+    for (const q of questions) {
+      if (q.availability === 'held_but_unscoreable' && !seen.has(q.id)) seen.set(q.id, q);
+    }
+  }
+  return [...seen.values()];
 }
 
 /** Everything the schema would need, deduplicated — the acquisition list. */

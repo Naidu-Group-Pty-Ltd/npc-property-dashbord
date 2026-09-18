@@ -1929,6 +1929,45 @@ and stage-proven readings count, a stampless legacy enrichment verifies
 nothing, and a request field asserting verification is never read; Risk stays
 null under `propertyRiskSchema.pure.ts`'s recorded decision.
 
+**A renormalised weight is not a nominal one, and all five dimensions are
+always drawn.** Read
+[`docs/reports/S5_CORRECTIONS.md`](./docs/reports/S5_CORRECTIONS.md) §3 and
+§3a before touching
+`_shared/reports/market/scoreAssessmentReading.pure.ts`,
+`composeScoreDimensionTable` or `_shared/reports/risk/propertyRiskSchema.pure.ts`.
+`breakdown[].weight` stores the **adjusted** weight as a whole percentage —
+57/21/21 on 18 Annabelle Crescent, not the nominal .40/.15/.15 — so a table
+printing it as "nominal points" hides the cap and produces arithmetic that
+does not foot (31.9 + 4.8 + 2.7 = 39.4 against a stored 40). The engine rounds
+**once, on the sum**, using exact fractions: 32.00 + 4.93 + 2.79 = 39.71 → 40 →
+C uncapped, against delivered points of 22.40 + 3.45 + 1.95 = 27.80 → F, which
+is the F issued. Four rules bite. **A reading names what the record does not
+retain** rather than substituting a coarser figure — `evidenceCoverage` (the
+57% S1 reported) and the growth eligibility ceiling are computed and not
+persisted, and `coverage.weightCovered` (0.70) is a different measure.
+**The assessment is DERIVED where the record is read**, never passed in, because
+a parameter a caller forgets takes the whole grade rationale off the page with
+nothing reporting it. **Location's exclusion is a defect of ours, not a reading
+about the area** — all nine stamped enrichments record `places: complete` and
+`commute: measured` and carry none of `walkScore`, `commute`,
+`schools.schoolsWithin3km`, because the Client-Safe Gate removes exactly those
+three and the generator persisted the gated object while the stamp survived
+untouched, so `assessEnrichmentReuse` re-served the stripped copy on every
+resume and the printed remedy ("regenerate the report") reproduced it; both
+halves are closed and the repair reaches a row only on its next generation.
+And **a retrieved control is a fact, never a rating**: the planning programme
+now answers `site_hazard_exposure` and `planning_constraints` at parcel grain,
+so both leave `not_held` for **`held_but_unscoreable`** — evidence on the page,
+zero points, off the acquisition backlog because what is outstanding is a
+published SCALE — and `answerableCount()` stays 0, because a capability nothing
+delivers may not be declared. Risk still cannot score even so: hazard and
+planning are ONE independent category (they answer or fail together),
+`MINIMUM_INDEPENDENT_CATEGORIES` is 2, and the only other category a house
+offers needs a construction year, held on **0 of 1,230** stored reports. Four
+of five scored is therefore the honest maximum until an acquisition lands, and
+`riskRemedyFor()` derives what is outstanding from the schema so a remedy can
+never name as missing something the platform already reads.
+
 **The Domain 403 is a portal setting, not a mystery.** Re-measured from the
 production egress on 15 Sep 2026: the key is set and recognised, and both
 Domain products answer 403 with Domain's own body *"Operation not permitted on

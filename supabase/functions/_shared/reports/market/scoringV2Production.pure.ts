@@ -99,6 +99,7 @@ import {
   type ScoredDimension,
 } from './scoringInputPolicy.pure.ts';
 import { dwellingTypeFor } from './domainEvidence.pure.ts';
+import { riskRemedyFor } from '../risk/propertyRiskSchema.pure.ts';
 
 export { dwellingTypeFor };
 
@@ -417,7 +418,9 @@ export function describeGaps(
       }
       case 'risk':
         detail = result.risk.eligibility.reason;
-        remedy = 'Answered property-risk questions from the per-class schema (hazard, planning, condition, strata).';
+        // Derived from the schema, so the remedy cannot name as outstanding
+        // something the platform already retrieves. See `riskRemedyFor`.
+        remedy = riskRemedyFor(result.risk.assetClass);
         break;
       default:
         detail = 'Not measured.';

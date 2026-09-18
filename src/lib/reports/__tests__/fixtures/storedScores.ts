@@ -1,5 +1,7 @@
 /**
- * The stored `investment_scores` object for 18 Annabelle Crescent, verbatim.
+ * Two stored `investment_score` objects, verbatim — the two S5 subjects.
+ *
+ * ## 18 Annabelle Crescent, Kellyville
  *
  * Read from `investment_reports.investment_score` on report
  * `9bd41c05-7f9b-41e8-819a-a029f4121369` (production project
@@ -102,4 +104,67 @@ export const ANNABELLE_SCORE = {
     },
   ],
   v2: { authority: 'v2' },
+} as const;
+
+/**
+ * The same, for 262 Pallas Street, Maryborough — report
+ * `3a4a3d9b-4d2d-4296-9e39-3fab0c2ae753`, read the same day.
+ *
+ * A second subject, because one row can be reproduced by a coincidence and two
+ * cannot. It is the same shape with different numbers and a different cap:
+ * 44.00 + 11.36 + 7.50 = 62.86 → 63 → B uncapped, against delivered points of
+ * 30.80 + 7.95 + 5.25 = 44.00 → C, which is the C issued.
+ */
+export const PALLAS_SCORE = {
+  grade: 'C',
+  totalScore: 63,
+  coverage: {
+    partialLabel: 'Partial score: 3 of 5 dimensions',
+    coverageRatio: 0.6,
+    weightCovered: 0.7,
+    totalDimensions: 5,
+    dimensionsScored: 3,
+  },
+  breakdown: {
+    growthScore: {
+      score: 77,
+      weight: 57,
+      details: 'Five-year capital growth: 14.6% per annum over five years. Three-year against five-year '
+        + 'trajectory: three-year rate 13.0% p.a. is 1.5 points behind the five-year rate of 14.6% p.a.. '
+        + 'Twelve-month movement: 14.7% over the last twelve months. Consistency of growth: 43 of 71 periods '
+        + 'rose, period-to-period spread 3.1 points. Performance against the wider market: +1.3 points against '
+        + 'QLD (all areas the publisher monitors) over the five-year window',
+      hasData: true,
+      excluded: false,
+      dataPoints: ['longTerm', 'trajectory', 'momentum', 'consistency', 'relative'],
+    },
+    locationScore: {
+      score: 0, weight: 0, hasData: false, excluded: true, dataPoints: [],
+      details: 'No location inputs could be measured for this property.',
+    },
+    yieldScore: {
+      score: 53,
+      weight: 21,
+      details: 'Gross yield (on purchase price): 4.52% gross yield on a $575,000 purchase price.',
+      hasData: true,
+      excluded: false,
+      dataPoints: ['propertyPrice', 'weeklyRent'],
+    },
+    demandScore: {
+      score: 35,
+      weight: 21,
+      details: 'Population growth: 0.7% annual population growth in Maryborough (Qld)',
+      hasData: true,
+      excluded: false,
+      dataPoints: ['populationDriver'],
+    },
+    riskScore: {
+      score: 0, weight: 0, hasData: false, excluded: true, dataPoints: [],
+      details: 'No property-specific risk measurement is available, so there is nothing to score.',
+    },
+  },
+  notAssessed: {
+    risk: 'Not assessed — insufficient verified property-risk evidence is available.',
+    location: 'Not assessed — the available location information does not meet the current verification standard.',
+  },
 } as const;

@@ -27,7 +27,7 @@ import {
 } from '../../../../supabase/functions/_shared/reports/market/marketFactBlocks.pure';
 import { transportCountReading } from '../../../../supabase/functions/_shared/transportReading.pure';
 import { readScoreAssessment } from '../../../../supabase/functions/_shared/reports/market/scoreAssessmentReading.pure';
-import { ANNABELLE_SCORE } from './fixtures/annabelleScore';
+import { ANNABELLE_SCORE } from './fixtures/storedScores';
 
 const src = (rel: string) => readFileSync(resolve(__dirname, '../../../../', rel), 'utf8');
 
