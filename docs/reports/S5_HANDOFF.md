@@ -374,9 +374,14 @@ Historical records are preserved throughout: nothing rewrites a stored
   mirrors the production print contract (pdf/ua-1, tagged, sRGB,
   `optimize_images`, custom metadata). Cinzel, Playfair Display, Inter and
   IBM Plex Mono are installed.
-* `propertyRiskSchema.pure.ts` carries one **pre-existing** eslint
-  `no-fallthrough` error (a comment between two `case` labels). It is on
-  `main`. Do not "fix" it as part of unrelated work.
+* **`npm run lint` is red on this repository and always has been.** Measured
+  18 Sep 2026 on `02e9d30`: **46 errors and 3,202 warnings across 32 files**.
+  None of them is in work done for this programme — the one intersection is
+  `propertyRiskSchema.pure.ts`'s `no-fallthrough` (a comment between two `case`
+  labels), which is on `main` and moved line only because text was added above
+  it. Judge a change by whether it ADDS to that baseline, the way
+  `npm run audit:style` is judged, and do not "fix" the baseline as part of
+  unrelated work.
 
 ---
 
