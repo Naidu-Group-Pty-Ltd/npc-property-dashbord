@@ -18,12 +18,19 @@ branch opens it. The sandbox's egress is a fixed proxy policy that denies
 
 Re-run today with the same tool against the same four hosts:
 
-| host | then | now, default | now, trusting the proxy CA |
+| host | then | now, default | now, validation bypassed (diagnostic) |
 | --- | --- | --- | --- |
 | `example.com/` | TUNNEL_CONNECTION_FAILED | CERT_AUTHORITY_INVALID | **HTTP 200** |
 | `…supabase.co/functions/v1/` | TUNNEL_CONNECTION_FAILED | CERT_AUTHORITY_INVALID | reached (redirects) |
 | `api.perplexity.ai/` | TUNNEL_CONNECTION_FAILED | CERT_AUTHORITY_INVALID | reached (HTTP error status) |
 | `ai.gateway.lovable.dev/` | TUNNEL_CONNECTION_FAILED | CERT_AUTHORITY_INVALID | reached (redirects) |
+
+The third column was measured with `ignoreHTTPSErrors: true`, which
+**bypasses certificate validation — it does not establish that the proxy CA
+is trusted**. An earlier draft of this section described that context as
+"trusting the proxy CA", and that description was wrong: the probe was a
+layer-isolation diagnostic (it proved the tunnel open and the failure to be
+TLS), never a trust configuration, and nothing authenticated may run in it.
 
 And from the shell, where curl already trusts the bundle, all three non-control
 hosts answer **HTTP 404** in under half a second — the correct answer for an
@@ -31,11 +38,22 @@ unauthenticated GET to a bare root. **No credential was sent to any of them**;
 reachability and what a provider does with a key are different questions and
 this probe asked only the first.
 
-So there is no CONNECT denial. What is left is narrower and has a remedy:
-**Chromium does not trust the agent proxy's CA by default**, which is why every
-default-context navigation fails `ERR_CERT_AUTHORITY_INVALID` and every one of
-them succeeds in a context that trusts the bundle. The proxy's own status
-endpoint now reports `selective: false` with no relay failures of that kind.
+So there is no CONNECT denial. What was left was narrower, and it is now
+resolved rather than worked around. `/root/.ccr/README.md` states the browser
+NSS store is "already set up"; measured with certutil, `~/.pki/nssdb` was
+**empty**, which is the whole reason default-context navigation failed
+`ERR_CERT_AUTHORITY_INVALID`. **The approved TLS configuration is that store
+actually loaded**: every certificate of the environment's own
+`/root/.ccr/ca-bundle.crt` imported as a trust anchor (`certutil -A -t "C,,"`,
+152 distinct anchors), so the browser trusts exactly what every other tool in
+this environment trusts and nothing else. Re-measured with a DEFAULT context —
+certificate validation ON — `example.com` answers **HTTP 200** and the
+Supabase functions root **HTTP 404**
+(`docs/reports/evidence/BROWSER_TLS_TRUST_2026-09-18.json`;
+`scripts/verify/probe-browser-tls.mjs`). `ignoreHTTPSErrors` is retired from
+the route. The import lives in the container, so a fresh session re-runs the
+two commands recorded in the probe's header. The proxy's own status
+endpoint reports `selective: false` with no relay failures of that kind.
 
 **The browser also needs its binary named.** `playwright@1.62.1` looks for
 `chromium_headless_shell-1234`; this image ships `chromium-1194`. That is a
@@ -80,7 +98,7 @@ a re-measurement date, not just a measurement date.
 | Set secrets on it | Supabase Management API | **Closed from here.** No MCP tool sets a function secret, and `api.supabase.com` is behind the same 403. |
 | Deploy candidate functions | `mcp__Supabase__deploy_edge_function` | **Open.** Runs through the MCP server. |
 | Invoke the authenticated handlers | `execute_sql` + `pg_net` | **Open.** `pg_net 0.14.0` is installed on the project and the HTTP call is made *by the database*, outside this sandbox. Every request id is recorded in `net._http_response` and disclosed. |
-| Exercise the frontend | headless Chromium | **Open**, with `executablePath` named and the proxy CA trusted. §1. What it still needs is an authorised isolated environment to point at. |
+| Exercise the frontend | headless Chromium | **Open**, with `executablePath` named and the CA bundle imported into the browser NSS store — certificate validation stays ON (§1). What it still needs is an authorised isolated environment to point at. |
 | Retrieve evidence | `execute_sql`, `query_logs` | **Blocked today** — the Supabase MCP authorisation lapsed in this session and `execute_sql` is denied by a permission rule. Open again once re-authorised. |
 
 ## 3. What that means for the ask

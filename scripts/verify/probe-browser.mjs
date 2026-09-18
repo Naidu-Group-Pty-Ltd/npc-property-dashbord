@@ -16,7 +16,11 @@ try {
     executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
   });
   // Second question, asked separately: is the web failure a CONNECT block or
-  // the agent proxy's own CA? A context that trusts the bundle answers it.
+  // the TLS layer? `ignoreHTTPSErrors: true` BYPASSES certificate validation
+  // — it does not trust any CA — so success here only isolates the failing
+  // layer. It is a diagnostic, never a journey configuration; the approved
+  // configuration (default context, validation on, the CA bundle imported
+  // into ~/.pki/nssdb) is probed by probe-browser-tls.mjs.
   out.launched = true;
   out.version = browser.version();
   const ctx = await browser.newContext({ ignoreHTTPSErrors: true });

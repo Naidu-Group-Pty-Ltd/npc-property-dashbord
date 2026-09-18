@@ -46,6 +46,26 @@
  * as well. A reader saw "no defect or hazard over the scope examined" on a
  * record that listed three.
  *
+ * ## v2.1.0 — the binding correction
+ *
+ * Two defects in how v2.0.0 bound a document to a property:
+ *
+ *   * **The address key DELETED road types.** `18 Annabelle Street` and
+ *     `18 Annabelle Crescent` reduced to one key, so a document about a
+ *     different street in the same suburb passed the subject check. The key
+ *     now EXPANDS a recognised abbreviation to its one canonical word
+ *     ({@link ROAD_TYPE_CANONICAL}) and compares every token, so `Cres`
+ *     still matches `Crescent` while a different road type stays a
+ *     different street.
+ *   * **A record with no subject passed the check silently.** The comparison
+ *     ran only where both the expectation and the record's subject were
+ *     present, so a document bound to nothing was admissible. The record
+ *     must now name its property (`subject_not_recorded`, refused whoever
+ *     calls), and where the assessment's subject is supplied the two must
+ *     share a comparable field (`subject_unresolved`) and agree on it
+ *     (`subject_mismatch`) — three refusals, because each sends an operator
+ *     to a different fix.
+ *
  * ## The rule that carries this module
  *
  * **A positive finding and a negative conclusion are not the same evidence.**
@@ -95,7 +115,7 @@
  */
 
 /** Bump on any change to the admissibility rules or the conversion basis. */
-export const CONDITION_RECORD_METHOD_VERSION = '2.0.0';
+export const CONDITION_RECORD_METHOD_VERSION = '2.1.0';
 
 /**
  * Document kinds whose contents may bear on `condition_and_maintenance`.
@@ -290,6 +310,10 @@ export type ConditionRefusal =
   | 'issued_in_future'
   | 'inspected_in_future'
   | 'inspected_after_issue'
+  /** The record names no property, so it cannot be bound to any assessment. */
+  | 'subject_not_recorded'
+  /** Record and assessment identify their property with no field in common. */
+  | 'subject_unresolved'
   | 'subject_mismatch'
   | 'scope_not_recorded'
   | 'scope_coverage_not_recorded'
@@ -408,17 +432,58 @@ function scopeIsRecorded(scope: string | undefined): boolean {
 }
 
 /**
+ * Road-type abbreviations, each expanded to its one canonical word.
+ *
+ * Expansion, never deletion. v2.0.0 DELETED the road type from the key, which
+ * read `18 Annabelle Street` and `18 Annabelle Crescent` as one property —
+ * two streets can share a number and a name and differ only in the road
+ * type, and removing the token removed the distinction. An abbreviation here
+ * maps onto exactly one canonical word; a token that could stand for two
+ * (`cr` is a crescent in one register and a circuit in another) is
+ * deliberately absent, because expanding a guess merges streets exactly the
+ * way deletion did. A token the map does not know compares as written, so
+ * ambiguity resolves toward a refusal a person reviews, never toward a merge
+ * nobody sees.
+ */
+const ROAD_TYPE_CANONICAL: Readonly<Record<string, string>> = Object.freeze({
+  st: 'street',
+  rd: 'road',
+  ave: 'avenue',
+  av: 'avenue',
+  cres: 'crescent',
+  dr: 'drive',
+  ct: 'court',
+  pl: 'place',
+  pde: 'parade',
+  blvd: 'boulevard',
+  bvd: 'boulevard',
+  tce: 'terrace',
+  hwy: 'highway',
+  cct: 'circuit',
+  cl: 'close',
+  ln: 'lane',
+  esp: 'esplanade',
+  gdns: 'gardens',
+  sq: 'square',
+});
+
+/**
  * Normalise the subject for comparison.
  *
  * Deliberately loose on punctuation and case and strict on the tokens
- * themselves: the point is to catch a record filed against the wrong property,
- * not to reject `St` against `Street`.
+ * themselves: the point is to catch a record filed against the wrong
+ * property, not to reject `Cres` against `Crescent` — and never the reverse.
+ * Every token survives; recognised abbreviations are spelled out and the
+ * whole address must agree.
  */
 function addressKey(a: string): string {
   return a.toLowerCase()
-    .replace(/\b(street|st|road|rd|avenue|ave|crescent|cres|drive|dr|court|ct|place|pl)\b/g, '')
     .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t.length > 0)
+    .map((t) => ROAD_TYPE_CANONICAL[t] ?? t)
+    .join(' ');
 }
 
 export interface AssessOptions {
@@ -531,12 +596,40 @@ export function assessConditionRecord(
   }
 
   // --- whose property is this ------------------------------------------
+  // The identity contract: the record must name its property, and where the
+  // assessment's subject is supplied the two must share a comparable field
+  // and agree on it. Three failures, three refusals, because each sends an
+  // operator to a different fix: record the subject, record a comparable
+  // identifier, or take the document off the wrong property's file.
+  const subject = record.subject as ConditionSubject | undefined;
+  const subjectAddress = subject?.propertyAddress?.trim() ?? '';
+  const subjectId = subject?.propertyId ?? null;
+  if (!subjectAddress && !subjectId) {
+    return refuse(
+      'subject_not_recorded',
+      'The condition record does not name the property its document is about, so it cannot be '
+      + 'bound to the dwelling being assessed and is not read as evidence about it.',
+      examinedAge,
+    );
+  }
   const expected = opts.expectedSubject;
-  if (expected && record.subject) {
-    const idsDisagree = Boolean(expected.propertyId && record.subject.propertyId)
-      && expected.propertyId !== record.subject.propertyId;
-    const addressesDisagree = Boolean(expected.propertyAddress && record.subject.propertyAddress)
-      && addressKey(expected.propertyAddress) !== addressKey(record.subject.propertyAddress);
+  if (expected) {
+    const expectedAddress = expected.propertyAddress?.trim() ?? '';
+    const expectedId = expected.propertyId ?? null;
+    const idsComparable = Boolean(expectedId && subjectId);
+    const addressesComparable = Boolean(expectedAddress && subjectAddress);
+    if (!idsComparable && !addressesComparable) {
+      return refuse(
+        'subject_unresolved',
+        'The condition record and this assessment identify their property in ways that cannot be '
+        + 'compared, so whether the document describes the dwelling being assessed cannot be '
+        + 'established. It is not read as evidence about this dwelling.',
+        examinedAge,
+      );
+    }
+    const idsDisagree = idsComparable && expectedId !== subjectId;
+    const addressesDisagree = addressesComparable
+      && addressKey(expectedAddress) !== addressKey(subjectAddress);
     if (idsDisagree || addressesDisagree) {
       return refuse(
         'subject_mismatch',

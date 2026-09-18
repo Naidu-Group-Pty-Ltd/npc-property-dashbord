@@ -6,6 +6,18 @@
 -- `property_condition_records`, and `list_migrations` does not carry this
 -- version.
 --
+-- APPLIED AND PROBED in an isolated PostgreSQL cluster on 18 September 2026
+-- (`scripts/verify/migration-isolated/run.sh`; transcript at
+-- `docs/reports/evidence/MIGRATION_ISOLATED_TEST_2026-09-18.txt`): the
+-- original inline-subquery CHECK reproduced its 0A000 apply-time refusal,
+-- this file then applied verbatim, and 30 probes exercised valid and invalid
+-- records, the manual_stats absent-key trap, document/report linkage with
+-- ON DELETE SET NULL, the RLS matrix for admin/recorder/plain users, the
+-- absence of any DELETE path, and correction behaviour under the trigger.
+-- The cluster was PostgreSQL 16.13 against production's 17.4; nothing probed
+-- differs between those majors, and the difference is recorded in the
+-- transcript rather than assumed away.
+--
 -- The version is 20261204000000 and not the same-day 20260918nnnnnn it was
 -- first written as. Production has 980 migrations applied and its highest is
 -- 20261203010000; two same-day neighbours, 20260918090000 and 20260918100000,
@@ -34,7 +46,7 @@
 -- existing input, generation, editing or Templates workflow, and Template
 -- Builder stays out of the customer journey.
 --
--- ## The constraints mirror `conditionRecord.pure.ts` v2.0.0
+-- ## The constraints mirror `conditionRecord.pure.ts` v2.1.0
 --
 -- Held at the column so a direct write cannot store what the validator would
 -- refuse — the same reason `manual_stats` and the manual-screening rule are
@@ -45,17 +57,58 @@
 --     written.
 --   * A date in the FUTURE cannot be a CHECK, because `now()` is not
 --     IMMUTABLE and Postgres refuses it there. It is a trigger instead.
---   * `findings` is JSONB and its shape constraint asserts key PRESENCE before
---     it dereferences anything. A CHECK passes on NULL and fails only on
---     FALSE, and `->` on an absent key is SQL NULL — so a shape test that
---     dereferences first evaluates to NULL and Postgres ACCEPTS the row.
---     `manual_stats` shipped exactly that fault for a day.
+--   * `findings` is JSONB, and walking an array takes a subquery — which a
+--     CHECK constraint cannot contain: Postgres refuses `EXISTS (SELECT …)`
+--     inside a CHECK at apply time (0A000), an error no static guard here
+--     could see because the guards read the file and never apply it. The
+--     walk therefore lives in `condition_findings_shape_ok`, an IMMUTABLE
+--     function of the VALUE ALONE, and the CHECK calls it — the supported
+--     mechanism for a validation a CHECK expression cannot spell. Inside the
+--     walk, key PRESENCE is asserted before any dereference: `->` on an
+--     absent key is SQL NULL, and a NULL that reaches the top of a CHECK
+--     ACCEPTS the row. `manual_stats` shipped exactly that fault for a day.
+--     Here the walk's verdicts are also NULL-proof by construction — a
+--     malformed element makes the WHERE clause TRUE (never NULL) whichever
+--     operand evaluates first, so the row is refused, not waved through.
 --
 -- ## What it does not touch
 --
 -- No existing table, column, policy or row. No backfill. No historical
 -- assessment is rewritten — a stored score keeps the grade its own run issued,
 -- and a new assessment is produced by the supported regeneration path.
+
+-- `findings` must be an ARRAY of objects, each carrying `element` and
+-- `severity`, and every severity one the method can weigh. Defined BEFORE the
+-- table because the table's CHECK names it. IMMUTABLE is honest here — the
+-- answer depends on the argument and on nothing else — and STRICT makes a
+-- NULL argument answer NULL rather than erroring; the column is NOT NULL, so
+-- one never arrives. `search_path` is pinned to `pg_catalog` because every
+-- name in the body is a built-in and a constraint function must not resolve
+-- through whatever path the writing session carries.
+CREATE OR REPLACE FUNCTION public.condition_findings_shape_ok(findings jsonb)
+RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+SET search_path = pg_catalog
+AS $$
+  SELECT jsonb_typeof(findings) = 'array'
+    AND NOT EXISTS (
+      SELECT 1 FROM jsonb_array_elements(findings) AS f
+      WHERE jsonb_typeof(f) <> 'object'
+         OR NOT (f ? 'element')
+         OR NOT (f ? 'severity')
+         OR jsonb_typeof(f -> 'severity') <> 'string'
+         OR (f ->> 'severity') NOT IN (
+              'safety_hazard', 'major_defect', 'minor_defect', 'unfunded_liability')
+    );
+$$;
+
+COMMENT ON FUNCTION public.condition_findings_shape_ok(jsonb) IS
+  'Shape validation for property_condition_records.findings: an array of '
+  'objects each naming element and a recognised severity. Lives in a function '
+  'because a CHECK constraint cannot contain the subquery the walk needs.';
 
 CREATE TABLE IF NOT EXISTS public.property_condition_records (
   id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -118,22 +171,11 @@ CREATE TABLE IF NOT EXISTS public.property_condition_records (
   CONSTRAINT property_condition_records_verified_needs_file
     CHECK (verification = 'transcribed_only' OR file_id IS NOT NULL),
 
-  -- `findings` is an ARRAY of objects, each carrying `element` and `severity`,
-  -- and the severity is one this method can weigh. Key presence is asserted
-  -- BEFORE any dereference, because `and` short-circuits left to right and a
-  -- NULL anywhere in the chain makes the whole constraint accept the row.
-  CONSTRAINT property_condition_records_findings_shape CHECK (
-    jsonb_typeof(findings) = 'array'
-    AND NOT EXISTS (
-      SELECT 1 FROM jsonb_array_elements(findings) AS f
-      WHERE jsonb_typeof(f) <> 'object'
-         OR NOT (f ? 'element')
-         OR NOT (f ? 'severity')
-         OR jsonb_typeof(f -> 'severity') <> 'string'
-         OR (f ->> 'severity') NOT IN (
-              'safety_hazard', 'major_defect', 'minor_defect', 'unfunded_liability')
-    )
-  )
+  -- The walk over the findings array lives in `condition_findings_shape_ok`,
+  -- because a CHECK constraint cannot contain a subquery. Key presence is
+  -- asserted inside it BEFORE any dereference — the `manual_stats` rule.
+  CONSTRAINT property_condition_records_findings_shape
+    CHECK (public.condition_findings_shape_ok(findings))
 );
 
 COMMENT ON TABLE public.property_condition_records IS

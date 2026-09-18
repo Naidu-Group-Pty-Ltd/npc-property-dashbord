@@ -1,0 +1,130 @@
+== Isolated migration test: 20261204000000_property_condition_records.sql ==
+date (UTC):     2026-09-18T07:15:47Z
+server:         postgres (PostgreSQL) 16.13 (Ubuntu 16.13-0ubuntu0.24.04.1)
+client:         psql (PostgreSQL) 16.13 (Ubuntu 16.13-0ubuntu0.24.04.1)
+production is:  PostgreSQL 17.4 (this run is 16.x — see header of run.sh)
+cluster:        /home/user/npc-property-dashbord/.verify/pg-iso/data (isolated; listen_addresses=''; socket /tmp/tmp.ETBd76DEiz)
+migration:      applied VERBATIM from the repository file
+stand-ins:      scripts/verify/migration-isolated/setup.sql (auth.uid() is a stub;
+                app_role / user_roles / has_role are verbatim from 20251224033443)
+
+server:  PostgreSQL 16.13 (Ubuntu 16.13-0ubuntu0.24.04.1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit
+server:  
+
+-- setup: production stand-ins --
+stand-ins applied
+
+== PROBE 0: the inline-subquery CHECK is refused by Postgres at apply time ==
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probe-0-subquery-refused.sql:33: NOTICE:  PROBE 0 PASS — refused with 0A000: cannot use subquery in check constraint
+DO
+
+-- applying the migration verbatim --
+psql:/home/user/npc-property-dashbord/supabase/migrations/20261204000000_property_condition_records.sql:205: NOTICE:  trigger "property_condition_records_guard" for relation "public.property_condition_records" does not exist, skipping
+applied without error
+
+== SECTION 1: the shape function itself ==
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:54: NOTICE:  PROBES 1a-1i PASS: shape verdicts, including the absent-key trap, all refuse or accept as declared
+DO
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:66: NOTICE:  PROBE 1j PASS: condition_findings_shape_ok is IMMUTABLE STRICT in the catalog
+DO
+
+== SECTION 2: valid and invalid records, written as the admin ==
+              set_config              
+--------------------------------------
+ 00000000-0000-4000-8000-000000000001
+(1 row)
+
+SET
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:90: NOTICE:  PROBE 2a PASS: a valid whole-dwelling inspection is accepted (3667e316-8000-4708-92f0-3b8187d9e90f)
+DO
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:104: NOTICE:  PROBE 2b PASS — future issued_on refused by the trigger (23514): A condition document cannot be issued in the future (issued_on = 2027-06-02)
+DO
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:118: NOTICE:  PROBE 2c PASS — inspected_on after issued_on refused: new row for relation "property_condition_records" violates check constraint "property_condition_records_inspection_order"
+DO
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:132: NOTICE:  PROBE 2d PASS — non-array findings refused: new row for relation "property_condition_records" violates check constraint "property_condition_records_findings_shape"
+DO
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:147: NOTICE:  PROBE 2e PASS — absent severity key refused at the row, not NULLed through: new row for relation "property_condition_records" violates check constraint "property_condition_records_findings_shape"
+DO
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:162: NOTICE:  PROBE 2f PASS — unrecognised severity refused: new row for relation "property_condition_records" violates check constraint "property_condition_records_findings_shape"
+DO
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:175: NOTICE:  PROBE 2g PASS — a record that names no property is refused: new row for relation "property_condition_records" violates check constraint "property_condition_records_property_address_check"
+DO
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:189: NOTICE:  PROBE 2h PASS — document kind outside the vocabulary refused: new row for relation "property_condition_records" violates check constraint "property_condition_records_document_kind_check"
+DO
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:203: NOTICE:  PROBE 2i PASS — a verification claim needs the file it claims: new row for relation "property_condition_records" violates check constraint "property_condition_records_verified_needs_file"
+DO
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:223: NOTICE:  PROBE 2j PASS: all four recognised severities accepted in one findings array (ab8b4cf4-df67-45af-bfaf-68ee01b44ae7)
+DO
+RESET
+
+== SECTION 3: linkage to the document store and the report ==
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:284: NOTICE:  PROBE 3a PASS: document_held with a real client_files row and a real report accepted (eeab0e5b-77f8-4096-976c-bcbeffe36d81)
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:284: NOTICE:  PROBE 3b PASS — file_id must name a real client_files row: insert or update on table "property_condition_records" violates foreign key constraint "property_condition_records_file_id_fkey"
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:284: NOTICE:  PROBE 3c PASS — report_id must name a real investment_reports row: insert or update on table "property_condition_records" violates foreign key constraint "property_condition_records_report_id_fkey"
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:284: NOTICE:  PROBE 3d PASS: deleting the linked report severs the link and keeps the record
+DO
+
+== SECTION 4: row-level security — who may read, write and change ==
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:295: NOTICE:  Baseline (RLS-exempt owner): 3 rows stored
+DO
+              set_config              
+--------------------------------------
+ 00000000-0000-4000-8000-000000000001
+(1 row)
+
+SET
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:308: NOTICE:  PROBE 4a PASS: an admin reads the full register (3 rows)
+DO
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:323: NOTICE:  PROBE 4b PASS — recorded_by must be the acting user (42501): new row violates row-level security policy for table "property_condition_records"
+DO
+RESET
+              set_config              
+--------------------------------------
+ 00000000-0000-4000-8000-000000000002
+(1 row)
+
+SET
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:350: NOTICE:  PROBE 4c PASS: the recorder sees exactly their own rows (1) and nobody else's
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:350: NOTICE:  PROBE 4d PASS — insert needs the admin or superadmin role (42501): new row violates row-level security policy for table "property_condition_records"
+DO
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:362: NOTICE:  PROBE 4e PASS: the recorder may read their row and may not change it (0 rows updated)
+DO
+RESET
+              set_config              
+--------------------------------------
+ 00000000-0000-4000-8000-000000000003
+(1 row)
+
+SET
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:387: NOTICE:  PROBE 4f PASS: a plain authenticated user sees no rows
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:387: NOTICE:  PROBE 4g PASS — insert refused for a plain user (42501): new row violates row-level security policy for table "property_condition_records"
+DO
+RESET
+              set_config              
+--------------------------------------
+ 00000000-0000-4000-8000-000000000001
+(1 row)
+
+SET
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:403: NOTICE:  PROBE 4h PASS: even an admin deletes nothing — there is no DELETE policy
+DO
+RESET
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:422: NOTICE:  PROBE 4i PASS: RLS enabled; SELECT/INSERT/UPDATE policies exist and no DELETE policy does
+DO
+
+== SECTION 5: correction and history behaviour ==
+              set_config              
+--------------------------------------
+ 00000000-0000-4000-8000-000000000001
+(1 row)
+
+SET
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:462: NOTICE:  PROBE 5a PASS: an admin correction lands and updated_at advances (2026-09-18 07:15:48.604979+00 -> 2026-09-18 07:15:48.619734+00)
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:462: NOTICE:  PROBE 5b PASS — the findings shape holds on UPDATE as well: new row for relation "property_condition_records" violates check constraint "property_condition_records_findings_shape"
+psql:/home/user/npc-property-dashbord/scripts/verify/migration-isolated/probes.sql:462: NOTICE:  PROBE 5c PASS — the future-date guard holds on UPDATE as well: A condition document cannot be issued in the future (issued_on = 2027-06-02)
+DO
+RESET
+
+== All probes passed ==
+
+== RESULT: migration applied verbatim and every probe passed ==

@@ -59,7 +59,17 @@ not common availability.
 ## 3. The recommended method — a recorded condition record
 
 **`supabase/functions/_shared/reports/risk/conditionRecord.pure.ts`**, version
-`1.0.0`. Implemented, tested, and **not activated**.
+`2.1.0`. Implemented, tested, and **not activated**.
+
+The version history matters to a reviewer: v1.0.0 admitted a record on four
+checks a useless document satisfies; v2.0.0 added the date-order,
+conclusion-vs-empty-findings, scope-coverage and severity rules (its header
+records each case v1 wrongly accepted); v2.1.0 corrected the property
+BINDING — the v2.0.0 address key deleted road types, which read
+`18 Annabelle Street` and `18 Annabelle Crescent` as one property, and a
+record with no subject passed the check silently. The key now expands
+recognised abbreviations to one canonical word and compares every token, and
+a record that names no property is refused whoever calls.
 
 A `building`-category observation derived from a **submitted, sourced,
 verified condition document**: a building inspection report, a strata report, a
@@ -87,18 +97,28 @@ class where the miss is itself an observation.
 
 ### 3.2 The admissibility rules
 
-`assessConditionRecord(record, asOf)` returns one of six named refusals, each a
-different remedy:
+`assessConditionRecord(record, asOf, { expectedSubject })` returns one of
+seventeen named refusals, each a different remedy:
 
 | refusal | what it means | remedy |
 | --- | --- | --- |
 | `no_record` | nothing has been submitted | ask for the inspection report |
 | `inadmissible_source` | not a document an issuer is accountable for | as above |
 | `unattributed` | the document names no issuer | obtain the issued copy |
-| `undated` | no usable date | obtain the issued copy |
+| `undated` | no usable issue or inspection date | obtain the issued copy |
+| `issued_in_future` | dated after the assessment | correct the date or the record |
+| `inspected_in_future` | inspection dated after the assessment | as above |
+| `inspected_after_issue` | report dated before the examination it reports | as above |
+| `subject_not_recorded` | the record names no property at all | record the subject |
+| `subject_unresolved` | record and assessment share no comparable field | record a comparable identifier |
+| `subject_mismatch` | it identifies a different property | file it on the right property |
 | `scope_not_recorded` | it does not say what was examined | record the scope |
+| `scope_coverage_not_recorded` | how much of the dwelling is not recorded | record the coverage |
+| `unrecognised_severity` | a finding this method cannot weigh | correct the severity vocabulary |
+| `conclusion_not_stated` | empty findings and no stated conclusion | record the document's conclusion |
+| `scope_too_narrow_for_conclusion` | a clean bill from a document that cannot give one | obtain a whole-dwelling inspection |
 | `not_verified` | transcribed without the document | attach the document |
-| `out_of_currency` | older than `CONDITION_MAX_AGE_MONTHS` (36) | re-inspect |
+| `out_of_currency` | older than `CONDITION_MAX_AGE_MONTHS` (36, PROPOSED) | re-inspect |
 
 `INADMISSIBLE_SOURCES` **names** what is refused rather than leaving it absent —
 a typed construction year, an agent's marketing copy, a model's inference from
@@ -203,7 +223,15 @@ rather than an acquisition:
 
 1. a `property_condition_records` table — document kind, issuer, licence,
    issue and inspection dates, reference, scope, findings, verification state,
-   recorded-by and recorded-at;
+   recorded-by and recorded-at. **Prepared**: migration
+   `20261204000000_property_condition_records.sql`, applied verbatim and
+   probed in an isolated PostgreSQL cluster
+   (`docs/reports/evidence/MIGRATION_ISOLATED_TEST_2026-09-18.txt` — the
+   original inline-subquery CHECK reproduced its 0A000 apply-time refusal,
+   the corrected form applied, and 30 probes covered valid/invalid rows,
+   linkage, the RLS matrix and correction behaviour). Not applied to
+   production; DDL reaches production only through `apply-migration.yml` on a
+   merged file;
 2. a submission surface on the property, taking the document and its findings;
 3. a verification step that records whether the document itself is held and
    whether the issuer was checked;
@@ -285,8 +313,10 @@ grade, or any stored row.
 | `_shared/reports/risk/conditionRecord.pure.ts` | **new** — the recommended method |
 | `_shared/reports/risk/constructionAgeCandidate.pure.ts` | **new** — the candidate, unwired, not recommended |
 | `_shared/reports/risk/propertyRiskSchema.pure.ts` | the "published scale" premise corrected; the `year_built` measurement corrected; the category-grouping reason corrected; `riskRemedyFor` no longer tells an operator to go and find a published scale |
-| `src/lib/reports/__tests__/conditionRecord.spec.ts` | **new** — 20 tests |
+| `src/lib/reports/__tests__/conditionRecord.spec.ts` | **new** — 38 tests, including the binding cases: different streets never equivalent, missing subject refused, no-comparable-field refused |
 | `src/lib/reports/__tests__/constructionAgeCandidate.spec.ts` | **new** — 15 tests, including demonstration 6 by execution |
+| `supabase/migrations/20261204000000_property_condition_records.sql` | **new, prepared not applied** — the evidence table; findings shape validated by `condition_findings_shape_ok` (a CHECK cannot contain a subquery) |
+| `scripts/verify/migration-isolated/` | **new** — the isolated-cluster apply-and-probe harness behind the evidence transcript |
 
 No score, grade, stored row or client document changes. `scorePropertyRisk`
 itself is untouched: its rules were right, and it is the evidence reaching it

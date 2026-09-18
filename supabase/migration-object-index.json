@@ -110,6 +110,7 @@
     "function:public.compute_audit_row_hash",
     "function:public.compute_legal_audit_row_hash",
     "function:public.compute_partner_audit_row_hash",
+    "function:public.condition_findings_shape_ok",
     "function:public.consume_client_portal_reset_attempt",
     "function:public.consume_finance_portal_reset_attempt",
     "function:public.consume_mfa_recovery_code",

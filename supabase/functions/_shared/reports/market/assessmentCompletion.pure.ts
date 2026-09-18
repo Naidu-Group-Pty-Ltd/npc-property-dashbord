@@ -128,7 +128,27 @@ export interface AssessmentCompletion {
   readonly statement: string;
 }
 
-export const ASSESSMENT_COMPLETION_VERSION = '1.0.0';
+/**
+ * The approved contract for a dimension score: a finite number from 0 to 100.
+ *
+ * `scored: true` alone is a CLAIM, and v1.0.0 trusted it — a dimension
+ * reporting `scored: true, score: NaN` (or `Infinity`, `-5`, `150`, or no
+ * score at all) counted towards the five and could have issued a completed
+ * grade over a value no reader could print. Now the claim and the value must
+ * both satisfy the contract before a dimension is complete.
+ *
+ * Two rules. **A genuine zero is a score** — 0 is inside the contract and a
+ * dimension that measured rock bottom is measured. And **an invalid value is
+ * never clamped into an apparently valid one**: clamping `150` to `100` or
+ * `NaN` to `0` manufactures a measurement nobody took, so the dimension is
+ * reported as not complete with the defect named, and the score published for
+ * it is null.
+ */
+export function isValidDimensionScore(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 100;
+}
+
+export const ASSESSMENT_COMPLETION_VERSION = '1.1.0';
 
 /**
  * How many automatic re-acquisition attempts a run may make.
@@ -167,6 +187,14 @@ export interface CompletionInput {
  * status is a gap in the run's own reporting, and reporting it as "still
  * acquiring" would hide that for ever.
  */
+/** An invalid score is a run defect; re-fetching evidence cannot repair it. */
+const INVALID_SCORE: RecoveryAction = Object.freeze({
+  actor: 'operator',
+  action: 'Regenerate the assessment — this run recorded an invalid score for this dimension, '
+    + 'so the value on file is a defect of the record and not a measurement.',
+  retryable: false,
+});
+
 const UNREPORTED: RecoveryAction = Object.freeze({
   actor: 'operator',
   action: 'Regenerate the assessment — this run recorded no outcome for this dimension, so what '
@@ -187,14 +215,25 @@ export function assessCompletion(input: CompletionInput): AssessmentCompletion {
         recovery: UNREPORTED,
       };
     }
+    // The claim and the value must BOTH satisfy the contract. `scored: true`
+    // beside NaN, Infinity, a negative, a value above 100 or no value at all
+    // is a defect of the run's own record, and it completes nothing.
+    const valid = d.scored === true && isValidDimensionScore(d.score);
+    const invalidClaim = d.scored === true && !valid;
     return {
       dimension,
       label: DIMENSION_PROSE[dimension],
-      scored: d.scored === true,
-      // A score travels only where the dimension scored. Nothing substitutes.
-      score: d.scored === true && typeof d.score === 'number' ? d.score : null,
-      reason: d.scored === true ? null : (d.reason ?? 'Not measured on this run.'),
-      recovery: d.scored === true ? null : (d.recovery ?? UNREPORTED),
+      scored: valid,
+      // A score travels only where the dimension validly scored. Nothing
+      // substitutes, and nothing is clamped.
+      score: valid ? d.score as number : null,
+      reason: valid
+        ? null
+        : invalidClaim
+          ? `This run recorded the dimension as scored with an invalid value (${String(d.score)}), `
+            + 'which is a defect of the record rather than a measurement.'
+          : (d.reason ?? 'Not measured on this run.'),
+      recovery: valid ? null : invalidClaim ? INVALID_SCORE : (d.recovery ?? UNREPORTED),
     };
   });
 
@@ -209,13 +248,21 @@ export function assessCompletion(input: CompletionInput): AssessmentCompletion {
   const anyRetryable = outstanding.some((d) => d.recovery?.retryable === true);
   const complete = scoredCount === totalCount;
 
+  // `inFlight` is the caller's claim about the CURRENT invocation and must
+  // never be persisted: a stored copy of it is exactly the stale flag this
+  // guards against. Even taken at its word, `acquisition` is honoured only
+  // while attempts remain — a resumed or reopened assessment whose attempts
+  // are spent reads `evidence_required` whatever the flag says, so a stale
+  // flag cannot leave it acquiring indefinitely.
+  const mayStillAcquire = attemptsRemaining > 0
+    && (input.inFlight === 'acquisition' || anyRetryable);
   const state: AssessmentState = input.historical === true
     ? 'historical'
     : complete
       ? 'completed'
       : input.inFlight === 'processing'
         ? 'processing'
-        : input.inFlight === 'acquisition' || (anyRetryable && attemptsRemaining > 0)
+        : mayStillAcquire
           ? 'acquisition'
           : 'evidence_required';
 

@@ -19,6 +19,7 @@ import {
   MAX_ACQUISITION_ATTEMPTS,
   assessCompletion,
   completionDiffersFromCoverage,
+  isValidDimensionScore,
   type CompletionInput,
 } from '../../../../supabase/functions/_shared/reports/market/assessmentCompletion.pure.ts';
 
@@ -219,5 +220,110 @@ describe('dimension completion is not evidence coverage', () => {
     expect(completionDiffersFromCoverage(assessCompletion(all5()).evidenceCoverage === null
       ? assessCompletion(all5())
       : assessCompletion({ dimensions: all5().dimensions }))).toBe(false);
+  });
+});
+
+describe('scored: true is a claim, and the value must satisfy the contract', () => {
+  // v1.0.0 trusted the flag: a dimension reporting `scored: true, score: NaN`
+  // counted towards the five, so a completed grade could have issued over a
+  // value no reader could print.
+  const withRisk = (score: unknown): CompletionInput => {
+    const input = all5();
+    (input.dimensions as Record<string, unknown>).risk = { scored: true, score };
+    return input;
+  };
+
+  it.each([
+    ['missing', undefined],
+    ['null', null],
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['-Infinity', Number.NEGATIVE_INFINITY],
+    ['negative', -5],
+    ['above 100', 150],
+    ['a numeric string', '61' as never],
+  ])('an invalid score (%s) does not complete the dimension or the assessment', (_label, v) => {
+    const c = assessCompletion(withRisk(v));
+    const risk = c.dimensions.find((d) => d.dimension === 'risk')!;
+    expect(risk.scored).toBe(false);
+    expect(c.scoredCount).toBe(4);
+    expect(c.mayIssueCompletedGrade).toBe(false);
+    expect(c.state).toBe('evidence_required');
+  });
+
+  it('never clamps an invalid value into an apparently valid score', () => {
+    for (const v of [Number.NaN, 150, -5, Number.POSITIVE_INFINITY]) {
+      const risk = assessCompletion(withRisk(v)).dimensions.find((d) => d.dimension === 'risk')!;
+      expect(risk.score, `no substitute for ${v}`).toBeNull();
+    }
+  });
+
+  it('names the invalid value as a defect of the record, with a non-retryable recovery', () => {
+    const risk = assessCompletion(withRisk(Number.NaN)).dimensions.find((d) => d.dimension === 'risk')!;
+    expect(risk.reason).toContain('invalid value (NaN)');
+    expect(risk.reason).toContain('defect of the record');
+    expect(risk.recovery!.retryable).toBe(false);
+  });
+
+  it('keeps a genuine zero admissible — rock bottom is still measured', () => {
+    const c = assessCompletion(withRisk(0));
+    const risk = c.dimensions.find((d) => d.dimension === 'risk')!;
+    expect(risk.scored).toBe(true);
+    expect(risk.score).toBe(0);
+    expect(c.mayIssueCompletedGrade).toBe(true);
+  });
+
+  it('admits both boundary values, 0 and 100, and nothing beyond them', () => {
+    expect(isValidDimensionScore(0)).toBe(true);
+    expect(isValidDimensionScore(100)).toBe(true);
+    expect(isValidDimensionScore(100.0001)).toBe(false);
+    expect(isValidDimensionScore(-0.0001)).toBe(false);
+  });
+
+  it('keeps score validity distinct from the reason vocabulary of admissibility', () => {
+    // An invalid VALUE is a record defect; inadmissible EVIDENCE is a
+    // different statement and keeps its own reason. The two must not blur.
+    const evidence = assessCompletion({
+      dimensions: {
+        ...all5().dimensions,
+        risk: { scored: false, reason: 'No condition record has been submitted.' },
+      },
+    }).dimensions.find((d) => d.dimension === 'risk')!;
+    expect(evidence.reason).not.toContain('invalid value');
+  });
+});
+
+describe('a stale in-flight flag cannot leave an assessment acquiring for ever', () => {
+  it('honours a live acquisition claim only while attempts remain', () => {
+    const c = assessCompletion({ ...THREE_OF_FIVE, inFlight: 'acquisition', attemptsUsed: 1 });
+    expect(c.state).toBe('acquisition');
+  });
+
+  it('reads evidence_required on resume once the attempts are spent, whatever the flag says', () => {
+    // The reopen/resume case: a run persisted (or replayed) an in-flight flag
+    // and died. The next reading must not report "still working" for ever.
+    const c = assessCompletion({
+      ...THREE_OF_FIVE, inFlight: 'acquisition', attemptsUsed: MAX_ACQUISITION_ATTEMPTS,
+    });
+    expect(c.state).toBe('evidence_required');
+    expect(c.attemptsRemaining).toBe(0);
+  });
+
+  it('lets completion beat every in-flight claim on reopen', () => {
+    expect(assessCompletion({ ...all5(), inFlight: 'acquisition' }).state).toBe('completed');
+    expect(assessCompletion({ ...all5(), inFlight: 'processing' }).state).toBe('completed');
+  });
+
+  it('lets history beat every in-flight claim on reopen', () => {
+    expect(assessCompletion({ ...THREE_OF_FIVE, historical: true, inFlight: 'acquisition' }).state)
+      .toBe('historical');
+  });
+
+  it('walks the full transition: acquisition → evidence_required as attempts are consumed', () => {
+    const states = [0, 1, 2, 3, 4].map((attemptsUsed) =>
+      assessCompletion({ ...THREE_OF_FIVE, attemptsUsed }).state);
+    expect(states).toEqual([
+      'acquisition', 'acquisition', 'acquisition', 'evidence_required', 'evidence_required',
+    ]);
   });
 });

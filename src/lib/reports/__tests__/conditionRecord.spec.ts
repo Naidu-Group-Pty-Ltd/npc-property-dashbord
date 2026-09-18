@@ -259,7 +259,76 @@ describe('the record belongs to a property, and it is checked', () => {
     })).toBeNull();
   });
 
-  it('checks nothing when no subject was supplied — the caller decides', () => {
+  it('tolerates the abbreviations an operator actually types, in either case', () => {
+    for (const written of [
+      '18 Annabelle Cres., Kellyville, NSW 2155',
+      '18 ANNABELLE CRESCENT KELLYVILLE NSW 2155',
+    ]) {
+      expect(refusalOf(inspection(), { expectedSubject: { propertyAddress: written } }), written)
+        .toBeNull();
+    }
+  });
+
+  it('never reads two different streets as one property — a road type is normalised, not removed', () => {
+    // v2.0.0 DELETED the road type from the comparison key, so a document
+    // about 18 Annabelle STREET satisfied the check for 18 Annabelle
+    // CRESCENT. Two streets can differ only in their road type.
+    expect(refusalOf(inspection({
+      subject: { propertyAddress: '18 Annabelle Street, Kellyville NSW 2155' },
+    }), { expectedSubject: { propertyAddress: '18 Annabelle Crescent, Kellyville NSW 2155' } }))
+      .toBe('subject_mismatch');
+  });
+
+  it('does not let expansion itself merge two different roads', () => {
+    // `St` expands to `street` and `Rd` to `road` — the tokens survive, so
+    // the abbreviated spellings of two different roads stay different.
+    expect(refusalOf(inspection({
+      subject: { propertyAddress: '18 Annabelle Rd, Kellyville NSW 2155' },
+    }), { expectedSubject: { propertyAddress: '18 Annabelle St, Kellyville NSW 2155' } }))
+      .toBe('subject_mismatch');
+  });
+
+  it('refuses on a wrong street number — a neighbour is a different property', () => {
+    expect(refusalOf(inspection({
+      subject: { propertyAddress: '20 Annabelle Crescent, Kellyville NSW 2155' },
+    }), { expectedSubject: { propertyAddress: '18 Annabelle Crescent, Kellyville NSW 2155' } }))
+      .toBe('subject_mismatch');
+  });
+
+  it('still refuses when the ids agree and the addresses name different streets', () => {
+    // An id is an assertion by whoever filed the record; the document's own
+    // address contradicting the assessed property is a conflict, not noise.
+    expect(refusalOf(inspection({
+      subject: { ...SUBJECT, propertyAddress: '18 Annabelle Street, Kellyville NSW 2155' },
+    }), { expectedSubject: SUBJECT })).toBe('subject_mismatch');
+  });
+
+  it('refuses when the linked property row disagrees, even where the addresses read the same', () => {
+    expect(refusalOf(inspection({
+      subject: { ...SUBJECT, propertyId: 'prop-a-different-row' },
+    }), { expectedSubject: SUBJECT })).toBe('subject_mismatch');
+  });
+
+  it('refuses a record that names no property at all, whoever calls', () => {
+    // The v2.0.0 check ran only where BOTH sides were present, so a document
+    // bound to nothing passed silently — and a caller that forgot to supply
+    // the expected subject admitted it. The record-side requirement does not
+    // depend on the caller.
+    const unbound = inspection({ subject: { propertyAddress: '  ' } });
+    expect(refusalOf(unbound)).toBe('subject_not_recorded');
+    expect(refusalOf(unbound, { expectedSubject: SUBJECT })).toBe('subject_not_recorded');
+  });
+
+  it('refuses a pair with no comparable field rather than waving it through', () => {
+    // The record knows only an internal id; the assessment supplies only an
+    // address. Nothing connects them, and "could not check" is not "checked".
+    expect(refusalOf(inspection({
+      subject: { propertyAddress: '', propertyId: 'prop-somewhere' },
+    }), { expectedSubject: { propertyAddress: '18 Annabelle Crescent, Kellyville NSW 2155' } }))
+      .toBe('subject_unresolved');
+  });
+
+  it('checks nothing beyond the record itself when no subject was supplied — the caller decides', () => {
     expect(refusalOf(inspection())).toBeNull();
   });
 });
@@ -335,7 +404,7 @@ describe('preparing a method is not activating it', () => {
   });
 
   it('carries the version that names these rules', () => {
-    expect(CONDITION_RECORD_METHOD_VERSION).toBe('2.0.0');
+    expect(CONDITION_RECORD_METHOD_VERSION).toBe('2.1.0');
     expect(assessConditionRecord(inspection(), ASOF).version)
       .toBe(CONDITION_RECORD_METHOD_VERSION);
   });
