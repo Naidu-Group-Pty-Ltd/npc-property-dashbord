@@ -142,6 +142,7 @@ import {
   PROGRAMME_RADIUS_KM as PROGRAMME_RADIUS_KM_FALLBACK,
   stageSentence,
 } from './investmentProgramme.pure.ts';
+import { ABSENCE_GUIDE, guidesForKinds } from './infrastructureGuide.pure.ts';
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -1277,6 +1278,39 @@ export function renderInfrastructureOutlook(evidence: InfrastructureEvidence): s
     + 'not a start on site, and a date recorded above is the date something was decided or declared — not a '
     + 'completion date. No delivery date is stated here unless a publisher stated one.',
   );
+
+  /*
+   * What each KIND of finding means, what it does not tell a reader, and what
+   * to do about it (S5/S6 §4, the Lot 20427 treatment).
+   *
+   * The two paragraphs above explain the VOCABULARY and the COVERAGE, which
+   * are both true and neither of which is what to DO. A reader handed a row
+   * reading "Development application · Determined · $93,180,778" has a
+   * retrieval and no way to act on it.
+   *
+   * Only the kinds the table actually drew, because a guide to an entry the
+   * reader is not looking at is noise and the page budget is real. Nothing in
+   * it is about this property — see the head of `infrastructureGuide`.
+   */
+  const guides = guidesForKinds(evidence.items.map((i) => i.kind));
+  if (guides.length) {
+    lines.push('');
+    lines.push('**What these findings mean, and what to do about them.**');
+    lines.push('');
+    for (const [kind, g] of guides) {
+      lines.push(`*${kind}.* ${g.what} **What it does not tell you:** ${g.limits} `
+        + `**Next step:** ${g.next}`);
+      lines.push('');
+    }
+  }
+  // An absence is a finding too, and it is the one a reader is most often
+  // given with nothing to do about it.
+  if (evidence.readings.some((r) => r.reading === 'not_searched')) {
+    if (!guides.length) lines.push('', '**What these findings mean, and what to do about them.**', '');
+    lines.push(`*A register that was not searched.* ${ABSENCE_GUIDE.what} `
+      + `**What it does not tell you:** ${ABSENCE_GUIDE.limits} **Next step:** ${ABSENCE_GUIDE.next}`);
+  }
+
 
   return lines.join('\n');
 }

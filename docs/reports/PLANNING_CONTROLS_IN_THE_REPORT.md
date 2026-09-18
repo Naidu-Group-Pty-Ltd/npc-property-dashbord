@@ -1307,3 +1307,59 @@ sentence ended — so the finding survived its own correction, which is exactly
 the drift the one-declaration rule exists to prevent. `findPortalSourcedClearances`
 now reads `sentencesOf`, line by line, skipping anything `isProseLine` rejects
 so a table row or a directive cannot be mistaken for prose.
+
+### 13.6 What each finding MEANS — the Lot 20427 treatment
+
+§4: *"Complete the educational treatment inspired by Lot 20427: explain what
+each material table or finding means, its limitations and the practical next
+action."*
+
+`planningControlGuide.pure.ts` has done this for planning controls since §8.
+The outlook table had the other half of the problem. A reader handed
+
+> `PAN-619414 · Development application · Determined Jul 2026 · $93,180,778`
+
+has a retrieval and no way to act on it. The two paragraphs beside the table
+explain the **vocabulary** (*an approval is not funding*) and the **coverage**
+(*what these registers do not reach*) — both true, and neither of them what to
+DO.
+
+`infrastructureGuide.pure.ts` answers three questions per kind of entry:
+
+| | |
+| --- | --- |
+| **what** | what this kind of entry IS, in one sentence |
+| **limits** | what it does NOT tell a reader |
+| **next** | the specific thing to obtain, and of whom |
+
+Eight kinds are explained — development application, approved development,
+committed and planned government investment, priority development area, state
+development area, coordinated project, infrastructure designation — plus the
+one that is not a kind at all: **a register that was not searched**. That last
+one exists because §9's rule (*an absence may not be rated*) has an
+educational counterpart. A reader told *"Not searched. No question was put to
+this register"* has been told something true and given nothing to do, and
+there is a real next action: the council's own DA tracker and adopted capital
+works programme, and the state's budget infrastructure statement, are public
+and cover most of what the table does not.
+
+Three rules carry it, and a spec asserts each rather than trusting it.
+
+**Everything is true of the KIND, never of the property.** It says what a
+development application obliges a reader to check; it never says this property
+is affected by one, never quantifies an effect on value and never rates
+anything. That is what lets every word be written in advance and still be true
+on every property in the country — `planningControlGuide`'s own rule, and the
+separation the legacy report did not have (its zoning section was fluent,
+specific, and contradicted itself three times in one document).
+
+**No number reaches it.** The spec refuses any currency amount, percentage,
+measurement, year, or bare digit in any of the three fields, on all nine
+entries. A number in a guide is a number about a property.
+
+**Only the kinds the table drew.** A guide to an entry the reader is not
+looking at is noise, and the page budget is real; `guidesForKinds` reads the
+kind through `kindCell`'s amendment suffix and de-duplicates. A separate
+assertion reads every `kind:` literal the evidence builder writes — and every
+value of its `INSTRUMENT_LABEL` map — and fails if one has no guide, so a new
+finding kind cannot ship unexplained.
