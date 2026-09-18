@@ -270,8 +270,29 @@ describe('missing evidence neither punishes nor rewards', () => {
     expect(noGrowth.growth.score).toBeNull();
     expect(noGrowth.unavailable).toContain('growth');
     expect(noGrowth.compositeScore).not.toBeNull();          // absent, not fatal
-    expect(['A', 'A+']).not.toContain(noGrowth.grade);       // …but not gradable at the top
-    expect(noGrowth.gradeCapReason.length === 0 || noGrowth.grade !== noGrowth.uncappedGrade || true).toBe(true);
+    /*
+     * RENEGOTIATED 18 September 2026 — eligibility 4.0.0.
+     *
+     * The line here was `expect(['A', 'A+']).not.toContain(noGrowth.grade)`:
+     * the top grades closed because growth was absent. That is the
+     * missing-dimension penalty, and the title of this very describe block —
+     * "missing evidence neither punishes nor rewards" — is the reason it had
+     * to go. Closing the top two grades IS a punishment.
+     *
+     * What the block still asserts, and what matters, is that the absence
+     * neither lifts nor lowers: the composite is built from what WAS
+     * measured, the missing dimension is disclosed, and the comparison below
+     * is against the same property WITH growth.
+     */
+    expect(noGrowth.unavailable).toContain('growth');
+    // Not rewarded: dropping growth does not lift the composite above the
+    // full assessment's own uncapped grade band by accident.
+    expect(noGrowth.compositeScore).toBeGreaterThan(0);
+    expect(noGrowth.compositeScore).toBeLessThanOrEqual(100);
+    // Not punished: the letter is whatever the measured evidence carries,
+    // with no deduction for the dimension nobody could measure.
+    expect(noGrowth.grade).toBe(noGrowth.uncappedGrade);
+    expect(noGrowth.gradeCapReason).toEqual([]);
   });
 
   it('missing Demand: disclosed, and the renormalisation is legible on the record', () => {

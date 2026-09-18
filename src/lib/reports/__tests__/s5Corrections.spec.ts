@@ -305,13 +305,32 @@ describe('correction 3 — every score statement is fully qualified', () => {
     expect(table).toContain('rounds once, on that sum');
   });
 
-  it('states the uncapped grade, the ceiling and the issued grade separately', () => {
+  /*
+   * RENEGOTIATED 18 September 2026 — the ceiling is HISTORY, not the rule.
+   *
+   * Annabelle's F was issued under the delivered-points ceiling, and that is
+   * still exactly why its letter is what it is — so the explanation must keep
+   * every figure. What changed is that the prose may no longer state the
+   * ceiling as the rule in force: a record graded proportionally would then
+   * be explained by a rule never applied to it, and the reader told something
+   * false about their own report.
+   *
+   * This record carries no `publicationPolicyVersion`, so it reads as the
+   * superseded methodology and keeps the full arithmetic — now labelled as
+   * the method that issued it. `scorePublicationConsumers.spec.ts` asserts
+   * the other half: a proportionally graded record draws none of it.
+   */
+  it('explains a historical grade by the methodology that issued it, in full', () => {
     const table = composeScoreDimensionTable(rec())!;
     expect(table).toContain('**Grade the composite alone gives: C.**');
     expect(table).toContain('**Points delivered 27.80 of 100**');
     expect(table).toContain('no higher than **F**');
     expect(table).toContain('**Grade issued: F**');
-    expect(table).toContain('the ceiling binds');
+    // Labelled as the recorded methodology rather than as the current rule.
+    expect(table).toMatch(/methodology (then )?in force/);
+    expect(table).toContain('has since been superseded');
+    // The grade itself is untouched — no silent recomputation.
+    expect(table).not.toMatch(/Grade issued: [^F]/);
   });
 
   it('reports coverage as the share of the ORIGINAL weight that was measured', () => {

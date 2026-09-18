@@ -758,22 +758,51 @@ export function composeScoreDimensionTable(rec: StrategyRecord): string | null {
 
   const pctOf = (v: number) => `${Math.round(v * 100)}%`;
   const lines: string[] = ['### How this grade was reached', ''];
+  /*
+   * The intro describes the method that graded THIS record.
+   *
+   * It used to state the delivered-points ceiling as the live rule —
+   * "it sets a ceiling the grade may not exceed. Unmeasured weight discloses
+   * and caps; it never lifts" — on every record, including ones graded after
+   * that ceiling was removed (S5/S6 §8). A document explaining a proportional
+   * grade by a rule that was not applied to it is telling the reader
+   * something false about their own report, and the same sentence on a
+   * historical record is telling them the truth. So the reading carries which
+   * methodology issued the grade, and the prose follows it.
+   *
+   * The delivered-points COLUMN goes with it: it is the superseded method's
+   * own arithmetic, and on a proportional record the reading returns null for
+   * every cell of it, so drawing the column would print a row of dashes
+   * labelled as a measurement.
+   */
+  const legacyCeiling = a.methodology === 'delivered_points_ceiling';
   lines.push(
-    'Five dimensions carry the method. Each has an **original weight**; where a dimension could not be scored its '
-    + 'weight is redistributed across the ones that could, giving the **adjusted weight** the composite is built '
-    + 'from. The composite answers *how strong is what we measured*. A second reading — the **points delivered** '
-    + 'at the ORIGINAL weights — answers *how much did the evidence deliver*, and it sets a ceiling the grade may '
-    + 'not exceed. Unmeasured weight discloses and caps; it never lifts.',
+    legacyCeiling
+      ? 'Five dimensions carry the method. Each has an **original weight**; where a dimension could not be scored '
+        + 'its weight is redistributed across the ones that could, giving the **adjusted weight** the composite is '
+        + 'built from. This grade was issued under the methodology in force at the time, which read a second '
+        + 'figure — the **points delivered** at the ORIGINAL weights — as a ceiling the letter could not exceed. '
+        + 'That rule has since been superseded; it is stated here because it is what produced this grade.'
+      : 'Five dimensions carry the method. Each has an **original weight**; where a dimension could not be scored '
+        + 'its weight is redistributed across the ones that could, giving the **adjusted weight** the composite is '
+        + 'built from. The composite answers *how strong is what we measured*, over the original weights of the '
+        + 'dimensions that were measured. A dimension that could not be assessed is disclosed rather than '
+        + 'deducted: it lowers no score and caps no grade, and the scope of the assessment is stated with the '
+        + 'result instead.',
     '',
-    '| Dimension | Score | Original weight | Adjusted weight | Contribution | Points delivered |',
-    '|---|---|---|---|---|---|',
+    legacyCeiling
+      ? '| Dimension | Score | Original weight | Adjusted weight | Contribution | Points delivered |'
+      : '| Dimension | Score | Original weight | Adjusted weight | Contribution |',
+    legacyCeiling ? '|---|---|---|---|---|---|' : '|---|---|---|---|---|',
   );
   for (const d of a.dimensions) {
     const score = d.score === null ? '—' : `${d.score} / 100`;
     const adjusted = d.score === null ? '— (not scored)' : pctOf(d.adjustedWeight);
     const contribution = d.contribution === null ? '—' : d.contribution.toFixed(2);
     const delivered = d.deliveredPoints === null ? '—' : d.deliveredPoints.toFixed(2);
-    lines.push(`| ${d.label} | ${score} | ${pctOf(d.nominalWeight)} | ${adjusted} | ${contribution} | ${delivered} |`);
+    lines.push(legacyCeiling
+      ? `| ${d.label} | ${score} | ${pctOf(d.nominalWeight)} | ${adjusted} | ${contribution} | ${delivered} |`
+      : `| ${d.label} | ${score} | ${pctOf(d.nominalWeight)} | ${adjusted} | ${contribution} |`);
   }
   lines.push('');
 
@@ -814,18 +843,27 @@ export function composeScoreDimensionTable(rec: StrategyRecord): string | null {
   if (a.uncappedGrade) {
     steps.push(`**Grade the composite alone gives: ${a.uncappedGrade}.**`);
   }
-  if (a.deliveredPoints !== null && a.nominalCeiling) {
+  if (legacyCeiling && a.deliveredPoints !== null && a.nominalCeiling) {
     steps.push(
-      `**Points delivered ${a.deliveredPoints.toFixed(2)} of 100**, which supports a grade no higher than `
-      + `**${a.nominalCeiling}**. This is the ceiling: the ${pctOf(1 - a.measuredNominalWeight)} of the method that `
-      + 'was not measured contributes nothing toward a better grade.',
+      `**Points delivered ${a.deliveredPoints.toFixed(2)} of 100**, which under the methodology then in force `
+      + `supported a grade no higher than **${a.nominalCeiling}**. That ceiling has since been superseded: an `
+      + 'unavailable dimension is now disclosed with the result rather than deducted from it. This record keeps '
+      + 'the grade it was issued, explained by the rule that issued it.',
+    );
+  } else if (!legacyCeiling && a.dimensionsMeasured < a.totalDimensions) {
+    // The scope replaces the ceiling: the same fact, disclosed rather than deducted.
+    steps.push(
+      `**Assessed on ${a.dimensionsMeasured} of the ${a.totalDimensions} dimensions**, carrying `
+      + `${pctOf(a.measuredNominalWeight)} of the method's original weight. The dimensions that could not be `
+      + 'assessed are named above with what would restore each one; none of them lowers this result.',
     );
   }
   if (a.issuedGrade) {
     steps.push(a.capped
-      ? `**Grade issued: ${a.issuedGrade}** — the ceiling binds, and the grade is held below what the composite `
-        + 'alone would allow. That is the cap working as designed, not a fault in the property.'
-      : `**Grade issued: ${a.issuedGrade}**, which the composite and the ceiling both support.`);
+      ? `**Grade issued: ${a.issuedGrade}** — held below what the composite alone would allow, because the `
+        + 'evidence behind the assessed dimensions does not carry the higher letter. That is an over-claim guard '
+        + 'working as designed, not a fault in the property.'
+      : `**Grade issued: ${a.issuedGrade}**, which the composite and the evidence behind it both support.`);
   }
   // Labelled, because an unlabelled bulleted list directly under another one
   // reads as its continuation — and these are a different KIND of statement:

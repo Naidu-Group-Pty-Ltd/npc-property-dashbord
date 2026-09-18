@@ -52,11 +52,36 @@
  * `persistedAssessment()` is what closes both, forward-only: the engine has
  * both figures at the moment it grades, and writing them costs nothing.
  *
+ * ## Two rules this reading answers to since the publication policy
+ *
+ * **It never publishes an overall the policy would withhold.** It
+ * reconstructs a composite from whatever the row carries, and a row carrying
+ * one or two valid dimensions would therefore get a composite, a grade and a
+ * ceiling — a reconstructed overall on evidence the policy says may not carry
+ * one. `MIN_VALID_DIMENSIONS_TO_PUBLISH` is the same constant the engine
+ * uses, so the reading and the engine cannot disagree: below it, the
+ * arithmetic fields are NULL and `withheldReason` says which rule withheld
+ * them. The per-dimension rows are still returned, because what WAS measured
+ * is a fact worth explaining; only the overall is withheld.
+ *
+ * **It explains the recorded methodology and never relabels a grade under a
+ * newer one.** A record graded before the publication policy was capped by
+ * the delivered points at the ORIGINAL weights, and that is why its letter
+ * is what it is. Recomputing it under today's rule would tell a reader their
+ * historical report was wrong. So `deliveredPoints` and `nominalCeiling` are
+ * returned **only for a record graded under the superseded methodology**
+ * (`methodology: 'delivered_points_ceiling'`), where they are the honest
+ * explanation of a grade that was issued; for a record graded under the
+ * proportional policy they are null, because no such ceiling was applied.
+ * `methodology` is read from the record rather than assumed.
+ *
  * Pure: no fetch, no Deno, no clock. It reads a stored object and arithmetic.
  */
 
 import { COMPOSITE_WEIGHTS, type DimensionKey } from './shadowScorer.pure.ts';
 import { gradeFor, GRADE_THRESHOLDS } from './gradeEligibility.pure.ts';
+import { isValidDimensionScore } from './proportionalWeighting.pure.ts';
+import { MIN_VALID_DIMENSIONS_TO_PUBLISH } from './scorePublicationPolicy.pure.ts';
 
 /** `breakdown`'s key for each dimension, and the label a reader meets. */
 const DIMENSIONS: ReadonlyArray<{ field: string; key: DimensionKey; label: string }> = [
@@ -97,8 +122,33 @@ export interface AssessmentDimension {
   inputs: string[];
 }
 
+/**
+ * Which publication methodology produced the grade this reading explains.
+ *
+ * `proportional` — weighted over the original weights of the validly scored
+ * dimensions, rounded once, with no ceiling. `delivered_points_ceiling` — the
+ * superseded rule, where the delivered points at the ORIGINAL weights capped
+ * the letter. Read from the record's own stamp, never assumed, so a
+ * historical grade is explained by the method that issued it.
+ */
+export type AssessmentMethodology = 'proportional' | 'delivered_points_ceiling';
+
 export interface ScoreAssessmentReading {
   dimensions: AssessmentDimension[];
+  /** Which methodology graded this record. See `AssessmentMethodology`. */
+  methodology: AssessmentMethodology;
+  /** The stamped version, or null on a record that predates the policy. */
+  publicationPolicyVersion: string | null;
+  /** How many dimensions carry a finite 0–100 score. */
+  validDimensions: number;
+  /**
+   * Whether an OVERALL may be stated for this record at all. False below
+   * `MIN_VALID_DIMENSIONS_TO_PUBLISH`, where every overall field is null —
+   * the per-dimension rows are still populated.
+   */
+  publishable: boolean;
+  /** Why the overall was withheld, in the reader's terms. Null when published. */
+  withheldReason: string | null;
   /** The nominal weight that was measured at all, 0–1. `coverage.weightCovered`. */
   measuredNominalWeight: number;
   /** How many of the five were scored. */
@@ -246,11 +296,45 @@ export function readScoreAssessment(storedScore: unknown): ScoreAssessmentReadin
     };
   });
 
-  const anyMeasured = measured.length > 0;
-  const compositeExact = anyMeasured
+  /*
+   * Which methodology graded this record, read from the record itself.
+   *
+   * A stamped `publicationPolicyVersion` means proportional weighting with no
+   * delivered-points ceiling. Its absence means the record predates the policy
+   * and was graded under the superseded rule — so the ceiling is the honest
+   * explanation of ITS letter, and must not be applied to, or recomputed for,
+   * anything graded since.
+   */
+  const policyStamp = rec(s.policy);
+  const publicationPolicyVersion = policyStamp ? text(policyStamp.publicationPolicyVersion) : null;
+  const methodology: AssessmentMethodology = publicationPolicyVersion
+    ? 'proportional' : 'delivered_points_ceiling';
+
+  /*
+   * An overall the publication policy would withhold is never reconstructed.
+   *
+   * `measured.length > 0` would hand a one-dimension record a composite, a
+   * grade and a ceiling — a whole-property verdict on a fifth of the method,
+   * which is exactly what §4 refuses. The count uses the same validity test
+   * and the same minimum as the engine, imported rather than restated, so the
+   * two cannot drift. Only the OVERALL is withheld: the per-dimension rows
+   * still describe what was measured, because that is a fact worth explaining.
+   */
+  const validCount = raw.filter((d) => isValidDimensionScore(d.score)).length;
+  const publishable = validCount >= MIN_VALID_DIMENSIONS_TO_PUBLISH;
+  const withheldReason = publishable ? null
+    : `${validCount} of ${DIMENSIONS.length} dimensions carry a valid score; an overall assessment `
+      + `needs at least ${MIN_VALID_DIMENSIONS_TO_PUBLISH}. The dimensions that were measured are `
+      + 'described individually below.';
+
+  const compositeExact = publishable
     ? dimensions.reduce((t, d) => t + (d.contribution ?? 0), 0)
     : null;
-  const deliveredPoints = anyMeasured
+  // The delivered points and the ceiling they set are the SUPERSEDED
+  // methodology's own arithmetic. They explain a grade that was issued under
+  // it and are not computed for a record graded proportionally, where no such
+  // ceiling was ever applied.
+  const deliveredPoints = publishable && methodology === 'delivered_points_ceiling'
     ? dimensions.reduce((t, d) => t + (d.deliveredPoints ?? 0), 0)
     : null;
   // Rounded ONCE, on the sum — which is what the engine does and what the
@@ -282,6 +366,11 @@ export function readScoreAssessment(storedScore: unknown): ScoreAssessmentReadin
 
   return {
     dimensions,
+    methodology,
+    publicationPolicyVersion,
+    validDimensions: validCount,
+    publishable,
+    withheldReason,
     measuredNominalWeight: num(coverage.weightCovered) ?? measuredNominalWeight,
     dimensionsMeasured: num(coverage.dimensionsScored) ?? measured.length,
     totalDimensions: num(coverage.totalDimensions) ?? DIMENSIONS.length,

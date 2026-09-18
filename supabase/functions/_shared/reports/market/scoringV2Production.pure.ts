@@ -254,6 +254,20 @@ export interface ScoringV2PolicyStamp {
   scoringSystem: 'scoring-v2';
   inputPolicyVersion: string;
   methodologyVersion: string;
+  /**
+   * Which publication methodology graded this record.
+   *
+   * Version-aware by construction: a record stamped with this was graded
+   * PROPORTIONALLY, over the original weights of the dimensions that were
+   * validly scored, with no delivered-points ceiling. A record WITHOUT it
+   * predates the policy and was graded under the superseded rule, where the
+   * delivered points at the original weights capped the letter.
+   *
+   * `scoreAssessmentReading` reads its presence to decide which explanation to
+   * give, so a historical grade is explained by the method that produced it
+   * rather than silently recomputed under a newer one.
+   */
+  publicationPolicyVersion: string;
   authority: 'v2';
   dimensionScoresAuthoritative: true;
   gradeIssued: boolean;
@@ -801,6 +815,7 @@ export function scoreForProduction(input: ProductionScoringInput): ProductionSco
     scoringSystem: 'scoring-v2',
     inputPolicyVersion: SCORING_INPUT_POLICY_VERSION,
     methodologyVersion: result.methodologyVersion,
+    publicationPolicyVersion: SCORE_PUBLICATION_POLICY_VERSION,
     authority: 'v2',
     dimensionScoresAuthoritative: true,
     gradeIssued,

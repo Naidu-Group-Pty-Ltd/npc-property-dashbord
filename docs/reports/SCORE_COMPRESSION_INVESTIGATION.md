@@ -33,7 +33,60 @@ That is a small sample and it is not presented as a distribution. What makes it
 diagnostic is that **the mechanism producing both numbers is derivable, and the
 derivation reproduces them to the point**.
 
-## 2. The dominant mechanism, derived and then checked
+## 1a. CORRECTION, 18 September 2026 — there are TWO cohorts, not one
+
+*Raised by the platform owner and confirmed by execution against the stored
+records. The correction matters because the original §3.1 generalised one
+cohort's shape to the whole corpus, and the two cohorts fail in opposite
+directions.*
+
+**"Growth is unmeasured on every record" is false.** Growth is measured, and is
+the DOMINANT weight, on the two S5 subjects:
+
+| record | measured | excluded | weight covered | growth | composite |
+| --- | --- | --- | ---: | ---: | ---: |
+| **18 Annabelle Cr, Kellyville NSW** | growth · yield · demand | location · risk | 0.70 | **56** | 39.71 → **40** (F) |
+| **262 Pallas St, Maryborough QLD** | growth · yield · demand | location · risk | 0.70 | **77** | 62.86 → **63** (C) |
+| 48 Redfern St, Cowra NSW | yield only | the other four | 0.15 | — | withheld |
+| 1/27D Mitchell St, Muswellbrook NSW | location · yield · risk | growth · demand | 0.45 | — | 62.22 → **62** |
+| 23 MACKAY St, Moranbah QLD | location · yield · risk | growth · demand | 0.45 | — | 57.56 → **58** |
+
+Every composite above is reproduced to the point from the record's own stored
+component scores, so the two patterns are established rather than inferred:
+
+| pattern | records | weight covered | the dimension that dominates |
+| --- | --- | ---: | --- |
+| **A** | Annabelle, Pallas | 0.70 | **Growth at 57.1%** (0.40 ÷ 0.70) |
+| **B** | Mitchell St, Moranbah | 0.45 | **Location at 55.6%** (0.25 ÷ 0.45) |
+
+Three consequences, each correcting something stated below:
+
+1. **The 55.6% takes BOTH absences.** Location reaches 0.5556 only because
+   Growth *and* Demand are excluded (0.25 ÷ 0.45). With Growth alone absent the
+   remaining weight is 0.60 and Location is **41.7%**. Any sentence attributing
+   the 55.6% to Growth's absence on its own is wrong.
+2. **The corpus is not clustered at 60.** Deduplicated by property, the four
+   graded records are **40, 58, 62, 63** — a 23-point spread. The clustering is
+   real *within pattern B* and is not a property of the corpus.
+3. **Growth evidence does arrive for some properties**, so the operational
+   question in §3.1 is not "is the register populated" but "for which
+   geographies". Both cohorts span NSW and QLD, so **state alone does not
+   explain the split** — §3.1a states the query that would.
+
+**Pattern A's Location exclusion is a defect already diagnosed and closed.**
+`S5_CORRECTIONS.md` §3a records it: the Client-Safe Gate strips `walkScore`,
+`commute` and `schools.schoolsWithin3km`, the generator persisted the gated
+object while the acquisition stamp survived untouched, and `assessEnrichmentReuse`
+re-served the stripped copy on every resume. Both halves are closed and **the
+repair reaches a row only on its next generation** — so Annabelle and Pallas are
+the *pre-repair* cohort for Location, and their 3-of-5 is expected to become
+4-of-5 when §10 regenerates them. That is a prediction this release can be
+measured against.
+
+## 2. The dominant mechanism in pattern B, derived and then checked
+
+*This section describes **pattern B** — Mitchell Street and Moranbah. §1a above
+records why it is not the whole corpus.*
 
 With Growth and Demand unmeasured, the surviving nominal weights are Location
 0.25, Yield 0.15 and Risk 0.05, summing to 0.45. Renormalised:
@@ -77,18 +130,68 @@ rather than a matter of where any single anchor sits.
 
 ### 3.1 Lost or mis-mapped evidence — **CONFIRMED, and it is the largest single cause**
 
-Growth carries 0.40 of the matrix, and on every record measured it is
-unmeasured. That is not a calibration problem; it is the input never arriving.
+Growth carries 0.40 of the matrix and is **unmeasured on the three pattern-B
+records and measured on the two pattern-A ones** (§1a). Where it is absent that
+is not a calibration problem; it is the input not arriving for that property.
 
 The code path is correct and wired: `generate-investment-report` reads
 `market_sales_medians` through `readSalesRegister` for the trusted geography's
 LGA, postcode, suburb or state, and reports its own failure precisely —
 *"the register holds no rows for &lt;grain&gt; &lt;area&gt; (load it with
-market-sales-ingest)"*. So the remaining question is operational rather than a
-defect in this repository: **has `market-sales-ingest` populated the register
-for the states these properties sit in?** That needs a production read this
-session does not have, and it is the first thing to check, because nothing else
-in this document moves the score as far.
+market-sales-ingest)"*. Pattern A proves the path delivers: Growth 56 and 77
+are real readings, so the register is populated for **some** geographies.
+
+### 3.1a Which geographies — the query, and why state is not the answer
+
+The split is **not** by state. Both cohorts span NSW and QLD:
+
+| pattern | NSW | QLD |
+| --- | --- | --- |
+| A — growth measured | Kellyville (Sydney, The Hills Shire) | Maryborough (Fraser Coast) |
+| B — growth absent | Cowra, Muswellbrook | Moranbah (Isaac) |
+
+What separates them is more likely the **grain the publisher offers for that
+area**. `OPEN_DATA_GROWTH_EVIDENCE.md` records the two loaders: NSW DCJ Rent
+and Sales publishes by **postcode and LGA**, the Queensland Statistician by
+**LGA**, and `readSalesRegister` asks for the cadastre's council or the trusted
+postcode in that order. A metropolitan LGA and a large regional one are not
+equally likely to carry a continuous quarterly series with enough sales to
+publish, and DCJ suppresses a median where thirty or fewer sold.
+
+That is a hypothesis about coverage, and it is settled by one read-only
+statement, not by reasoning. Prepared against the schema
+(`market_sales_medians` as `market-sales-ingest` writes it):
+
+```sql
+-- Coverage of the growth register, by publisher, state, grain and currency.
+select   source, state, area_grain, dwelling_type,
+         count(*)                        as rows,
+         count(distinct area_code)       as areas,
+         min(period_start)               as earliest,
+         max(period_end)                 as latest,
+         count(*) filter (where median_price is null) as suppressed
+from     market_sales_medians
+group by source, state, area_grain, dwelling_type
+order by state, area_grain, source;
+
+-- And the five subjects' own areas, to settle the split directly.
+select   area_grain, area_code, area_name, state, dwelling_type,
+         count(*) as periods, min(period_start), max(period_end)
+from     market_sales_medians
+where    lower(area_name) in
+         ('the hills shire','fraser coast','cowra','muswellbrook','isaac')
+group by area_grain, area_code, area_name, state, dwelling_type
+order by area_name;
+```
+
+**Access standing.** Both statements are `SELECT`-only and touch no client
+data. The Supabase SQL tool is unavailable or denied in this session, and that
+restriction is respected rather than routed around — no Lovable path, no
+deployed function, no alternative credential. The remaining action is
+therefore exactly one: **run the two statements above against production and
+paste the two result tables.** Nothing else in this document is blocked on
+them, and §1a already corrects what the missing answer had been allowed to
+imply.
 
 Magnitude, computed rather than asserted — the same property with Location 52,
 Yield 50, Demand 55 and Risk 75, scored across all five dimensions:

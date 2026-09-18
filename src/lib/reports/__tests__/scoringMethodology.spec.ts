@@ -99,8 +99,15 @@ describe('the methodology document agrees with the code', () => {
     expect(DOC).toMatch(/solely because a dimension was unavailable/);
     // And the rule that replaced it is stated as a SELECTION rule.
     expect(DOC).toMatch(/never omit a low-scoring dimension to\s+improve the result/);
-    expect(DOC).toContain('`gradeEligibility.pure.ts`, version `3.0.0`');
-    expect(ELIGIBILITY_VERSION).toBe('3.0.0');
+    expect(DOC).toContain('`gradeEligibility.pure.ts`, version `4.0.0`');
+    expect(ELIGIBILITY_VERSION).toBe('4.0.0');
+    // 4.0.0 — the third hiding place of the same penalty. The doc must say
+    // which absence stopped capping and which quality floor still does, or
+    // the `hasGrowth &&` comes back on the next edit.
+    expect(DOC).toMatch(/4\.0\.0/);
+    // Newline-tolerant: the doc is wrapped, so `.` would stop at the break.
+    expect(DOC.replace(/\s+/g, ' ')).toMatch(/an absence is no longer a cap/i);
+    expect(DOC).toMatch(/evidenceQualityCoverage/);
   });
 
   it('states the publication policy the five-dimension gate was superseded by', () => {

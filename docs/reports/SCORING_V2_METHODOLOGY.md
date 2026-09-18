@@ -202,7 +202,7 @@ backtest unable to attribute any change to either.
 
 ## 2. Grades
 
-`gradeEligibility.pure.ts`, version `3.0.0`.
+`gradeEligibility.pure.ts`, version `4.0.0`.
 
 | grade | floor |
 | --- | ---: |
@@ -284,6 +284,38 @@ saturates at 91, location reaches 95, yield 100, demand 93), so **A+ remains
 reachable on genuinely exceptional evidence**, which is what the badge is
 supposed to mean.
 
+### 4.0.0 — the third hiding place of the same penalty
+
+3.0.0 removed the delivered-points ceiling and believed what remained was a
+guard on evidence quality. It was not, quite. **Both** A and A+ gates opened
+with `hasGrowth &&`, so a property with *no* growth reading failed both
+however strong and however well evidenced its other dimensions were, and the
+ceiling fell to **B+**. That is the missing-dimension penalty for the third
+time: the grade lowered *because a dimension was unavailable*, which is what
+proportional weighting already accounts for by renormalising. It was easy to
+miss because it reads as a statement about growth evidence, and it is a
+statement about the absence of any.
+
+4.0.0 draws the line where the evidence is:
+
+| | what it means | does it cap? |
+| --- | --- | --- |
+| growth **present**, confidence or coverage under the threshold | evidence this report holds cannot carry the claim | **yes** — unchanged |
+| growth **absent** | nothing measured, no weight, no contribution, no growth claim made | **no** (4.0.0) |
+| `evidenceQualityCoverage` under the floor | the dimensions that *did* answer are thinly evidenced | **yes** — always |
+
+So the growth thresholds bind **only where growth evidence exists**, and
+`evidenceQualityCoverage` binds always. Stated once, plainly: **an absence is
+no longer a cap.** The module's opening case is
+untouched: growth 93 on 10% coverage at low confidence still cannot print A+,
+because that evidence is present and cannot carry the letter.
+
+The consequence is real and intended. A three-dimension assessment whose three
+dimensions are strongly evidenced can now reach A. What tells the reader its
+scope is the **qualification** — *"based on 3 of the 5 assessment
+dimensions"* — carried on every surface by §3a's publication policy. Absence
+is disclosed with the result, never deducted from it.
+
 ## 3a. Publication — when a score and grade reach a client
 
 `scorePublicationPolicy.pure.ts`, version `1.0.0`
@@ -316,10 +348,14 @@ than tidied away:
   complete" and the wrong answer to "may a client be told what we measured";
 - the **Growth-required publication rule** (ME-8, 15 September 2026), whose
   premise was the delivered-points ceiling above. With no ceiling, three
-  dimensions without Growth are scored across the three they have — and the
-  Growth-centred evidence ceiling still holds the letter to B+ where no
-  capital-growth evidence exists, which is the safeguard that was actually
-  doing the work.
+  dimensions without Growth are scored across the three they have.
+
+  This bullet previously ended *"and the Growth-centred evidence ceiling still
+  holds the letter to B+ where no capital-growth evidence exists, which is the
+  safeguard that was actually doing the work."* That was wrong, and eligibility
+  `4.0.0` corrects it: a ceiling triggered by a dimension being **absent** is
+  the penalty this policy removes, not a safeguard it keeps. The safeguard that
+  genuinely survives is the quality floor over the dimensions that answered.
 
 ## 4. The dimensions
 

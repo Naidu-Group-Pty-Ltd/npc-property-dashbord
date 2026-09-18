@@ -370,7 +370,21 @@ describe('closure: the missing-evidence matrix', () => {
     }
   });
 
-  it('sparse but strong evidence keeps a high composite and a capped badge, with reasons', () => {
+  /*
+   * RENEGOTIATED 18 September 2026 — eligibility 4.0.0.
+   *
+   * This asserted the grade was CAPPED at B+ on sparse-but-strong evidence,
+   * for two stated reasons: "the growth ceiling is B+; the delivered points
+   * on 0.55 of the nominal weight cap it harder still". Both were the
+   * missing-dimension penalty — the second was removed in 3.0.0, the first
+   * in 4.0.0, and neither was a statement about evidence this report holds.
+   *
+   * What replaces it is the honest pair: strong evidence on what was measured
+   * produces a strong letter, AND the scope of the assessment travels with it
+   * so no reader mistakes three dimensions for five. Disclosure rather than
+   * deduction is the whole change.
+   */
+  it('sparse but strong evidence keeps a high composite and a strong badge, with the scope disclosed', () => {
     const sparse = run({
       evidence: ev({ ...demandBlock('strong') }),
       yieldInputs: { basis: 'purchase', basisAmount: 450_000, weeklyRent: 780 },
@@ -378,10 +392,12 @@ describe('closure: the missing-evidence matrix', () => {
     });
     expect(sparse.measured).toEqual(['location', 'yield', 'demand']);
     expect(sparse.compositeScore!).toBeGreaterThanOrEqual(75); // strong on what was measured
-    // No growth evidence: the growth ceiling is B+; the delivered points on
-    // 0.55 of the nominal weight cap it harder still.
-    expect(idx(sparse.grade)).toBeLessThanOrEqual(idx('B+'));
-    expect(sparse.gradeCapReason.length).toBeGreaterThan(0);
+    // The letter follows the composite: nothing deducts for the two
+    // dimensions nobody could measure.
+    expect(idx(sparse.grade)).toBeGreaterThanOrEqual(idx('A'));
+    expect(sparse.gradeCapReason).toEqual([]);
+    // …and the scope is never silent. Two dimensions are named as unmeasured.
+    expect([...sparse.unavailable].sort()).toEqual(['growth', 'risk']);
     assertIntegrity('sparse-strong', sparse, ev({ ...demandBlock('strong') }));
   });
 

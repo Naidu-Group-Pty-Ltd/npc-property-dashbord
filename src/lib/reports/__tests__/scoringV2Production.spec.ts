@@ -405,10 +405,24 @@ describe('Growth is no longer required before a grade is issued', () => {
     const risk = record.gradeGaps.find((g) => g.dimension === 'risk')!;
     expect(risk.withholdsGrade).toBe(false);
 
-    // And the evidence safeguard that DID survive still binds: with no
-    // capital-growth evidence the letter cannot reach A or A+ however
-    // strong the three assessed dimensions are.
-    expect(record.v2.gradeEligibility!.ceiling).toBe('B+');
+    /*
+     * RENEGOTIATED 18 September 2026 — eligibility 4.0.0.
+     *
+     * This asserted `ceiling === 'B+'` and called it "the evidence safeguard
+     * that DID survive". It was not a safeguard about evidence: both gates
+     * opened `hasGrowth &&`, so the cap was triggered by the ABSENCE of a
+     * dimension — the same penalty §8 had just removed from two other
+     * modules, reappearing in a third.
+     *
+     * The safeguard that genuinely survives is the quality floor over the
+     * dimensions that answered, and it is asserted as such.
+     */
+    const elig = record.v2.gradeEligibility!;
+    expect(elig.ceiling, 'absence of growth must not cap the letter').not.toBe('B+');
+    // The quality floor is what decides, and it decided on evidence held.
+    expect(['A', 'A+']).toContain(elig.ceiling);
+    // The scope still travels with the result — disclosure, not deduction.
+    expect(record.coverage.partialLabel).toContain('3 of 5 assessed dimensions');
   });
 
   it('but two valid dimensions still publish nothing at all', () => {

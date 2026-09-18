@@ -353,10 +353,42 @@ describe('a grade is capped by the evidence behind it, never raised', () => {
     expect(r.grade).toBe('A+');
   });
 
-  it('refuses A+ when no growth evidence exists at all', () => {
+  /*
+   * RENEGOTIATED 18 September 2026 — eligibility 4.0.0.
+   *
+   * This asserted that ABSENCE of growth evidence refuses A+. That was the
+   * missing-dimension penalty in its third hiding place: both gates opened
+   * `hasGrowth &&`, so a property with no growth reading failed them however
+   * strong and however well evidenced its other dimensions were, and the
+   * ceiling fell to B+ — the delivered-points rule under another name, after
+   * it had been removed from the other two modules.
+   *
+   * The invariant that survives is about the QUALITY of evidence the report
+   * actually holds, which is what this module exists for. Both halves are
+   * asserted below so the distinction cannot quietly collapse again.
+   */
+  it('absence of growth evidence alone no longer refuses A+', () => {
     const r = eligible(90, 'noEvidence', 0.75);
+    expect(r.grade).toBe('A+');
+    // And it is not explained away as a growth failure, because it is not one.
+    expect(r.reasons.join(' ')).not.toMatch(/capital-growth evidence/);
+  });
+
+  it('…but thin evidence on the dimensions that DID answer still refuses it', () => {
+    // Same absent growth, same score; the measured dimensions are now only
+    // 60% evidenced, under the 70% A+ floor. This is the safeguard: a
+    // statement about evidence we hold, never about evidence we do not.
+    const r = eligible(90, 'noEvidence', 0.60);
     expect(r.grade).not.toBe('A+');
-    expect(r.reasons.join(' ')).toMatch(/No capital-growth evidence/);
+    expect(r.reasons.join(' ')).toMatch(/assessed dimensions are 60% evidenced/);
+  });
+
+  it('growth evidence that EXISTS and is weak still caps, which is the point', () => {
+    // The module's opening case, untouched by 4.0.0: a strong score on thin,
+    // low-confidence growth evidence cannot print A+.
+    const r = eligible(90, 'thinButStrong', 0.95);
+    expect(r.grade).not.toBe('A+');
+    expect(r.reasons.join(' ')).toMatch(/Growth evidence confidence|growth methodology could be measured/);
   });
 
   it('never raises a grade', () => {
