@@ -128,8 +128,17 @@ const embeddedCount = fonts.filter((f) => f.embedded).length;
 // 60 characters sits with real margin either side of the measured cases: a
 // placeholder label ("N/A", "Not available", "Not provided") is under 20, and
 // a sentence carrying a subject, a verb and a subordinate clause is over 90.
+//
+// `VERIFY-EDIT` is a marker this repository's own journey harness types into a
+// report to prove the edit path persists. It reached all five documents that
+// were put forward for acceptance, because the run that proved the edit was
+// also the run that finalised the PDF. The harness now resets the fixture
+// between the two; this line is the check that would have caught it either
+// way, and it is deliberately anywhere-matching and case-sensitive — a
+// document that carries it is test scaffolding, whatever length the line is.
 const SENTINELS_ANYWHERE = [
   /(?<![A-Za-z])(NA|TBD|TBC|null|undefined|NaN|\[object Object\])(?![A-Za-z])|\{\{[^}]{1,80}\}\}/,
+  /\[VERIFY-EDIT\b/,
 ];
 const SENTINELS_IN_A_VALUE_SLOT = [
   /(?<![A-Za-z])(n\/a|not available|unavailable|not provided|data unavailable|no data available)(?![A-Za-z])/i,

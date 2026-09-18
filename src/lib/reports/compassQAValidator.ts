@@ -67,6 +67,7 @@ import {
   findUnpublishedHorizons,
   PORTAL_SOURCE_RE,
 } from './investment/evidenceClaims.pure';
+import { findDocumentContradictions } from './investment/documentConsistency.pure';
 
 /**
  * The prompt asks for at most 4 `###` a section; this flags at 6+.
@@ -588,6 +589,26 @@ export function runQAValidation(
         + 'price, the advertised configuration — and is not evidence for a market statistic, a planning '
         + 'control or a hazard. Check each one carries only what the listing itself states.',
     });
+  }
+
+  /*
+   * ── 14. Does the document agree with ITSELF? ──────────────────────────
+   *
+   * Rules 1-13 ask whether the document is well formed and whether its claims
+   * rest on anything. This one asks whether page 12 agrees with page 17, which
+   * is the shape four of the defects read off the supplied PDFs actually took:
+   * a $467 weekly shortfall beside a $450 one, an interest-only loan beside an
+   * amortising repayment, B/62 beside 60/100, and a bedroom count both stated
+   * and withheld.
+   *
+   * It lives in `documentConsistency.pure.ts` and is imported rather than
+   * restated, for rule 12's reason. It compares figures the document already
+   * printed and computes nothing — there is no second financial calculator
+   * here, and a contradiction is never repaired by deleting one side of it,
+   * because which side is right is a question about the producer.
+   */
+  for (const c of findDocumentContradictions(markdown)) {
+    findings.push({ rule: c.rule, severity: c.severity, message: c.message });
   }
 
   const passed = findings.every((f) => f.severity !== 'error');

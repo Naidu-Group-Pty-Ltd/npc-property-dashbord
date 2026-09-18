@@ -172,7 +172,8 @@ describe('the two copies of the validator agree', () => {
     const strip = (src: string) => src.replace(/\.ts'/g, "'");
     const edge = strip(read('supabase/functions/_shared/compassQAValidator.ts'))
       .replace("'./reports/investment/scoreClaims.pure'", "'./investment/scoreClaims.pure'")
-      .replace("'./reports/investment/evidenceClaims.pure'", "'./investment/evidenceClaims.pure'");
+      .replace("'./reports/investment/evidenceClaims.pure'", "'./investment/evidenceClaims.pure'")
+      .replace("'./reports/investment/documentConsistency.pure'", "'./investment/documentConsistency.pure'");
     expect(strip(read('src/lib/reports/compassQAValidator.ts'))).toBe(edge);
   });
 });
