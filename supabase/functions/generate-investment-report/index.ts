@@ -76,6 +76,7 @@ import {
   readStrategyRecord,
   strategySectionRules,
 } from '../_shared/reports/investment/strategyPositions.pure.ts';
+import { transportCountReading } from '../_shared/transportReading.pure.ts';
 import { readSalesRegister } from '../_shared/reports/market/salesRegisterRead.ts';
 import type { SalesRegisterState } from '../_shared/reports/market/openData/salesRegister.pure.ts';
 import { describeLandArea } from '../_shared/reports/investment/landAreaScope.pure.ts';
@@ -4901,7 +4902,16 @@ Produce a comprehensive statewide investment analysis following the structure ab
         dataSources,
         locationIntelligence: measuredLocationIntelligence ?? enhancedData.locationIntelligence,
       },
-      { market: marketFacts, price: subjectPrice, carriesModelling: false },
+      {
+        market: marketFacts,
+        price: subjectPrice,
+        carriesModelling: false,
+        // The count with a radius that is TRUE of it. The stored key is
+        // `stopsWithin1km` and its value is the count within 1,600 m.
+        transport: transportCountReading(
+          (measuredLocationIntelligence ?? enhancedData.locationIntelligence)?.transport,
+        ),
+      },
     );
     const compassStrategySections = composeStrategySections(compassStrategyRecord, [
       { id: 'exitStrategy', heading: 'Resale Liquidity & Exit Outlook' },

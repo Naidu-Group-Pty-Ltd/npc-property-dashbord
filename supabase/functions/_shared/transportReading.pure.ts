@@ -74,6 +74,15 @@ export interface StoredStop {
   readonly parent_station: string | null;
   readonly route_type: number | null;
   readonly source_label: string;
+  /**
+   * When this feed was last loaded into `transport_stops`, ISO.
+   *
+   * Optional because the column exists and the projection did not carry it:
+   * a reading stated its source and its radius and never said WHEN the data
+   * behind it was current, so a report could print a stop count from a feed
+   * loaded at any time and a reader had no way to ask how old it was.
+   */
+  readonly loaded_at?: string | null;
 }
 
 export interface NearbyStop {
@@ -163,6 +172,12 @@ export interface TransportReading {
    * populated: mode and frequency are absent for every feed loaded.
    */
   readonly notMeasured: string[];
+  /**
+   * The newest load stamp among the feeds that contributed, ISO, or null
+   * where the rows carry none. A reading's own currency: the count is as at
+   * this date and not as at the day the report was produced.
+   */
+  readonly feedLoadedAt: string | null;
 }
 
 /** Stops a passenger could actually board at or would recognise as a station. */
@@ -266,6 +281,7 @@ export function readTransport(
       feeds: [],
       sources: [],
       notMeasured,
+      feedLoadedAt: null,
     };
   }
 
@@ -282,6 +298,7 @@ export function readTransport(
       feeds: [measured[0].feed],
       sources: [measured[0].sourceLabel],
       notMeasured,
+      feedLoadedAt: newestLoad(candidates, [measured[0].feed]),
     };
   }
 
@@ -295,7 +312,20 @@ export function readTransport(
     feeds: [...new Set(within.map((s) => s.feed))].sort(),
     sources: [...new Set(within.map((s) => s.sourceLabel))].sort(),
     notMeasured,
+    feedLoadedAt: newestLoad(candidates, within.map((s) => s.feed)),
   };
+}
+
+/** The newest load stamp among the named feeds, or null where none is carried. */
+function newestLoad(candidates: readonly StoredStop[], feeds: readonly string[]): string | null {
+  const wanted = new Set(feeds);
+  let newest: string | null = null;
+  for (const s of candidates) {
+    if (!wanted.has(s.feed)) continue;
+    const at = typeof s.loaded_at === 'string' && s.loaded_at ? s.loaded_at : null;
+    if (at && (newest === null || at > newest)) newest = at;
+  }
+  return newest;
 }
 
 /**
@@ -342,6 +372,8 @@ export interface StoredTransportBlock {
   readonly sources: string[];
   readonly notMeasured: string[];
   readonly source: 'gtfs';
+  /** When the contributing feed was last loaded, ISO; null on a legacy row. */
+  readonly feedLoadedAt: string | null;
 }
 
 /**
@@ -411,6 +443,7 @@ export function projectTransportForLocationIntelligence(
     sources: reading.sources,
     notMeasured: reading.notMeasured,
     source: 'gtfs',
+    feedLoadedAt: reading.feedLoadedAt,
   };
 }
 

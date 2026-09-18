@@ -267,14 +267,26 @@ const STRATEGY: StrategyRecord = {
     retrievedAt: '2026-09-17T08:58:23.845Z',
   },
   transport: {
-    source: 'gtfs', verdict: 'stops_nearby', stopsWithin1km: 117, nearestKm: 0.1,
-    nearestName: 'Windsor Rd Before President Rd',
+    source: 'gtfs', verdict: 'stops_nearby',
+    countReading: { count: 117, radiusMetres: 1600, label: '117 boarding places within 1.6 km', radiusAssumed: false },
+    nearestKm: 0.1, nearestName: 'Windsor Rd Before President Rd',
+    sources: ['Transport for NSW Open Data (CC BY 4.0)'],
+    feedLoadedAt: '2026-09-07T05:22:15.603Z',
     notMeasured: ['Mode of transport is not published per stop.'],
   },
   score: {
     grade: 'F', total: 40, gaps: [],
-    strengths: [], weaknesses: ['Measured demand in this market is soft'],
-    opportunities: [], risks: [],
+    dimensions: [
+      { key: 'growth', label: 'Capital growth', score: 56, nominalPoints: 57, deliveredPoints: 31.92,
+        evidence: 'Five-year capital growth: 6.2% per annum over five years.',
+        inputs: ['longTerm'], excluded: false },
+      { key: 'risk', label: 'Property risk', score: null, nominalPoints: 0, deliveredPoints: null,
+        evidence: null, inputs: [], excluded: true },
+    ],
+    coverageLabel: 'Partial score: 3 of 5 dimensions',
+    weightCovered: 0.7,
+    notAssessed: { risk: 'Not assessed — insufficient verified property-risk evidence is available.' },
+    authority: null,
   },
 };
 

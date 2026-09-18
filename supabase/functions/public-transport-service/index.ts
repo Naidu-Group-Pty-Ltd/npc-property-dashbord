@@ -58,7 +58,10 @@ const corsHeaders = {
   'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
 };
 
-const STOP_COLUMNS = 'feed, stop_id, stop_name, lat, lon, location_type, parent_station, route_type, source_label';
+// `loaded_at` is the reading's own currency: without it a report states a
+// stop count and its source and never says WHEN the feed behind it was
+// current. The column has always existed; nothing selected it.
+const STOP_COLUMNS = 'feed, stop_id, stop_name, lat, lon, location_type, parent_station, route_type, source_label, loaded_at';
 
 /**
  * How many rows the far query takes when nothing is close. Enough to name the

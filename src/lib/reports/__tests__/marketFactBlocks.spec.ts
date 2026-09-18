@@ -90,8 +90,28 @@ describe('the evidence reaches the page', () => {
     expect(drawn.slice(drawn.indexOf('The wider market'))).toContain('Rest of NSW');
   });
 
-  it('names a provider that was asked and could not answer, with its reason', () => {
-    expect(renderMarketFacts(facts)).toMatch(/\*\*Asked and could not answer\.\*\* Domain: .*no API package attached/);
+  it('names a provider that was asked and could not answer, WITHOUT its reason', () => {
+    /*
+     * The reason is a vendor's own refusal string — an engineering diagnostic.
+     * Rendered on a client page it read "Domain: Operation not permitted on
+     * project — no API package is attached to the Domain project this key
+     * belongs to", which tells a reader nothing and discloses the shape of
+     * this deployment's credentials. The fact a reader needs is that a source
+     * was asked and did not answer; the reason stays on the evidence record.
+     */
+    const facts = buildMarketFacts({
+      marketEvidence: {
+        points: { subject: {} },
+        providersConsulted: ['domain'],
+        providersUnavailable: [{ provider: 'domain', reason: 'Operation not permitted on project' }],
+      },
+    });
+    const block = renderMarketFacts(facts);
+    expect(block).toMatch(/\*\*Asked and could not answer\.\*\*/);
+    expect(block).toContain('Domain');
+    expect(block).not.toContain('Operation not permitted on project');
+    expect(block).toContain("recorded on this report's evidence record");
+    expect(facts.unavailable[0].reason).toBe('Operation not permitted on project');
   });
 
   it('lists the measures nothing published, so a short table reads as a short search', () => {

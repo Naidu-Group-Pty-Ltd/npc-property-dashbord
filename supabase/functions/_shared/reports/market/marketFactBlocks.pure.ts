@@ -176,6 +176,12 @@ export interface MarketFacts {
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 
+/** "Domain", "Domain and Cotality", "Domain, Cotality and the ABS". */
+const listWords = (items: readonly string[]): string =>
+  (items.length <= 1
+    ? (items[0] ?? '')
+    : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`);
+
 export function buildMarketFacts(input: MarketFactsInput): MarketFacts {
   const raw = isRecord(input.marketEvidence) ? input.marketEvidence : null;
   // The generator stores `{ points, providersConsulted, providersUnavailable }`;
@@ -293,13 +299,37 @@ export function renderMarketFacts(facts: MarketFacts): string {
   }
 
   for (const w of facts.withheld) {
-    lines.push(`**Held but not published.** ${w.label} was measured by ${w.publisher} and is not printed here: `
-      + `${w.reason}. It is used to grade the property and is withheld from this document.`);
+    lines.push(`**Held but not published.** ${w.label} was measured by ${w.publisher} and is not printed here, `
+      + 'because the right to publish that measure in a client document is not confirmed. It is used to grade the '
+      + 'property and is withheld from this document.');
     lines.push('');
   }
 
-  for (const u of facts.unavailable) {
-    lines.push(`**Asked and could not answer.** ${u.publisher}: ${u.reason}`);
+  /*
+   * A provider's own error text is an ENGINEERING DIAGNOSTIC and does not
+   * belong in a client's document.
+   *
+   * The first render of this block printed, on a client page:
+   *
+   * > **Asked and could not answer.** Domain: Operation not permitted on
+   * > project — no API package is attached to the Domain project this key
+   * > belongs to
+   *
+   * Three things in one sentence that mean nothing to a reader and one that
+   * should not be shown to them at all: a vendor's internal refusal string, a
+   * statement about an API package, and the existence of a key. The FACT a
+   * reader needs is that a source was asked and did not answer, which is why
+   * the measures below are not held. The reason stays on the evidence record,
+   * where an operator reads it.
+   */
+  if (facts.unavailable.length) {
+    const names = [...new Set(facts.unavailable.map((u) => u.publisher))];
+    lines.push(
+      `**Asked and could not answer.** ${listWords(names)} ${names.length === 1 ? 'was' : 'were'} asked for this `
+      + 'market and did not return a figure, so nothing from '
+      + `${names.length === 1 ? 'it' : 'them'} is stated below. The reason is recorded on this report's evidence `
+      + 'record.',
+    );
     lines.push('');
   }
 

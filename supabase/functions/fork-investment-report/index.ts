@@ -37,6 +37,7 @@ import { variantScoreUnderPolicy } from '../_shared/reports/market/variantScoreP
 import { internalError } from '../_shared/errorResponse.ts';
 import { readPropertyFacts } from '../_shared/reports/investment/propertyRecord.pure.ts';
 import { readStrategyRecord } from '../_shared/reports/investment/strategyPositions.pure.ts';
+import { transportCountReading } from '../_shared/transportReading.pure.ts';
 import { buildMarketFacts } from '../_shared/reports/market/marketFactBlocks.pure.ts';
 import { describeSubjectPrice } from '../_shared/reports/investment/subjectPrice.pure.ts';
 async function loadComposite(supabase: any, id: string) {
@@ -382,6 +383,7 @@ Deno.serve(async (req) => {
           listingPrice: (parent.property_specs as any)?.price,
         }),
         carriesModelling: true,
+        transport: transportCountReading((parent.location_intelligence as any)?.transport),
       },
     );
 

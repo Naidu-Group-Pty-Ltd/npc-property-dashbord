@@ -79,13 +79,47 @@ const base = (over: Partial<StrategyRecord> = {}): StrategyRecord => ({
     retrievedAt: '2026-09-17T08:58:23.845Z',
   },
   transport: {
-    source: 'gtfs', verdict: 'stops_nearby', stopsWithin1km: 117, nearestKm: 0.1,
+    source: 'gtfs', verdict: 'stops_nearby',
+    // What `transportCountReading` returns for the real Annabelle row: the
+    // count is within 1,600 m, whatever the stored key is called.
+    countReading: { count: 117, radiusMetres: 1600, label: '117 boarding places within 1.6 km', radiusAssumed: false },
+    nearestKm: 0.1,
     nearestName: 'Windsor Rd Before President Rd',
+    sources: ['Transport for NSW Open Data (CC BY 4.0)'],
+    feedLoadedAt: '2026-09-07T05:22:15.603Z',
     notMeasured: ['Mode of transport is not published per stop.'],
   },
-  score: { grade: 'F', total: 40, gaps: [], strengths: [], weaknesses: ['Measured demand in this market is soft'], opportunities: [], risks: [] },
+  score: SCORE,
   ...over,
 });
+
+/** The production breakdown for 18 Annabelle Crescent, read 18 Sep 2026. */
+const SCORE: StrategyRecord['score'] = {
+  grade: 'F', total: 40, gaps: [],
+  dimensions: [
+    { key: 'growth', label: 'Capital growth', score: 56, nominalPoints: 57, deliveredPoints: 31.92,
+      evidence: 'Five-year capital growth: 6.2% per annum over five years.',
+      inputs: ['longTerm', 'trajectory', 'momentum', 'consistency', 'relative'], excluded: false },
+    { key: 'yield', label: 'Rental yield', score: 23, nominalPoints: 21, deliveredPoints: 4.83,
+      evidence: 'Gross yield (on purchase price): 2.97% gross yield on a $1,490,000 purchase price.',
+      inputs: ['propertyPrice', 'weeklyRent'], excluded: false },
+    { key: 'demand', label: 'Demand', score: 13, nominalPoints: 21, deliveredPoints: 2.73,
+      evidence: 'Population growth: -0.4% annual population growth in Kellyville - East',
+      inputs: ['populationDriver'], excluded: false },
+    { key: 'risk', label: 'Property risk', score: null, nominalPoints: 0, deliveredPoints: null,
+      evidence: 'No property-specific risk measurement is available, so there is nothing to score.',
+      inputs: [], excluded: true },
+    { key: 'location', label: 'Location', score: null, nominalPoints: 0, deliveredPoints: null,
+      evidence: 'No location inputs could be measured for this property.', inputs: [], excluded: true },
+  ],
+  coverageLabel: 'Partial score: 3 of 5 dimensions',
+  weightCovered: 0.7,
+  notAssessed: {
+    risk: 'Not assessed — insufficient verified property-risk evidence is available.',
+    location: 'Not assessed — the available location information does not meet the current verification standard.',
+  },
+  authority: null,
+};
 
 describe('the key names are read from the evidence union', () => {
   /*
@@ -146,7 +180,7 @@ describe('rule 2 — an absence is coverage, never a quadrant entry', () => {
 
   it('never reports a property outside every loaded transport feed as poorly served', () => {
     const rec = base({
-      transport: { source: 'gtfs', verdict: 'outside_loaded_networks', stopsWithin1km: null, nearestKm: null, nearestName: null, notMeasured: [] },
+      transport: { source: 'gtfs', verdict: 'outside_loaded_networks', countReading: null, nearestKm: null, nearestName: null, sources: [], feedLoadedAt: null, notMeasured: [] },
     });
     const swot = buildSwot(rec);
     const quadrants = JSON.stringify([swot.strengths, swot.weaknesses, swot.opportunities, swot.threats]);
@@ -156,9 +190,10 @@ describe('rule 2 — an absence is coverage, never a quadrant entry', () => {
 
   it('names an empty quadrant as a statement about the record, never as a clearance', () => {
     const bare = base({
-      market: market([]), finance: null, score: { grade: null, total: null, gaps: [], strengths: [], weaknesses: [], opportunities: [], risks: [] },
+      market: market([]), finance: null,
+      score: { grade: null, total: null, gaps: [], dimensions: [], coverageLabel: null, weightCovered: null, notAssessed: {}, authority: null },
       planning: { zone: null, zoneStatus: null, zoneSource: null, zoneEffectiveDate: null, council: null, verification: null, retrievedAt: null },
-      transport: { source: null, verdict: null, stopsWithin1km: null, nearestKm: null, nearestName: null, notMeasured: [] },
+      transport: { source: null, verdict: null, countReading: null, nearestKm: null, nearestName: null, sources: [], feedLoadedAt: null, notMeasured: [] },
     });
     const text = composeSwot(bare, 'SWOT');
     expect(text).toContain('not the same as there being none');
@@ -168,7 +203,26 @@ describe('rule 2 — an absence is coverage, never a quadrant entry', () => {
 });
 
 describe('rule 3 — the modelling travels only where the tier carries it', () => {
-  const NUMERIC_FINANCE = [/\$363,537/, /\$926 a week/, /2\.97%/, /2\.18%/, /\$1,192,000/, /80% lending/];
+  /*
+   * `2.97%` is deliberately NOT in this list.
+   *
+   * The approved allocation permits the Compass "one authorised gross-yield
+   * reference within the grade rationale, if required" — and the grade
+   * rationale is the score-dimension table, where the yield dimension carries
+   * 21 of the score's 100 nominal points. Dropping the row would misstate the
+   * score; stating it anywhere else would breach the allocation. The test
+   * below pins exactly that: once, and only in the table.
+   */
+  const NUMERIC_FINANCE = [/\$363,537/, /\$926 a week/, /2\.18% net/, /\$1,192,000/, /80% lending/];
+
+  it('permits exactly one gross-yield reference on the Compass, inside the grade rationale', () => {
+    const doc = composeSwot(base({ finance: null }), 'SWOT');
+    const hits = doc.match(/2\.97%/g) ?? [];
+    expect(hits, 'the allocation permits one gross-yield reference, not several').toHaveLength(1);
+    const table = doc.indexOf('What the investment score measured');
+    expect(table, 'the grade rationale table must be present').toBeGreaterThan(-1);
+    expect(doc.indexOf('2.97%')).toBeGreaterThan(table);
+  });
 
   it('states no yield, cash position, loan or equity figure where finance is null', () => {
     const rec = base({ finance: null });

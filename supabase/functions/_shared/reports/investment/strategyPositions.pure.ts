@@ -137,30 +137,132 @@ export interface StrategyPlanning {
   retrievedAt: string | null;
 }
 
-/** What the transport feeds answered. */
+/**
+ * What `_shared/transportReading.pure.ts`'s `transportCountReading` returns.
+ *
+ * Declared structurally rather than imported: a canonical investment module
+ * may not reach into `_shared/` (`investmentSourceOfTruth.spec.ts`), so the
+ * CALLER reads it and passes it in, exactly as it does the market facts and
+ * the subject price.
+ */
+export interface StrategyTransportCount {
+  /** Boarding places within `radiusMetres`, stations counted once. */
+  count: number | null;
+  radiusMetres: number;
+  /** e.g. "117 boarding places within 1.6 km". */
+  label: string | null;
+  /** True where the radius had to be assumed from a legacy row. */
+  radiusAssumed: boolean;
+}
+
+/**
+ * What the transport feeds answered.
+ *
+ * ## The defect this shape exists to end
+ *
+ * The first version read `stopsWithin1km` straight off the stored block and
+ * printed "117 public transport stops within one kilometre". That field's own
+ * documentation says, in `transportReading.pure.ts`:
+ *
+ * > DEPRECATED NAME, KEPT FOR COMPATIBILITY. The value is the count within
+ * > `radiusMetres`, which is 1,600 — not within one kilometre. … Nothing new
+ * > should read it: ask `transportCountReading()`.
+ *
+ * Re-measured against `transport_stops` at 18 Annabelle Crescent's verified
+ * coordinate (-33.7115485, 150.9586199) on 18 Sep 2026:
+ *
+ * | reading | value |
+ * | --- | ---: |
+ * | boarding places within **1,000 m** | **51** |
+ * | boarding places within **1,600 m** | 116 (the row stores 117) |
+ * | raw stop rows within 1,600 m | 239 |
+ * | nearest boardable stop | 105.9 m |
+ *
+ * So the sentence overstated the density within its own stated radius by
+ * **2.3 times**. The count is of PLACES rather than platforms — 239 rows
+ * become 116 places — which is why it may never be called "stops" either.
+ */
 export interface StrategyTransport {
   /** `gtfs` where a loaded feed answered; anything else is a different source. */
   source: string | null;
-  /** `stops_nearby` | `no_stops_within_radius` | `outside_loaded_networks` | null. */
+  /** `stops_nearby` | `none_within_radius` | `outside_loaded_networks` | null. */
   verdict: string | null;
-  stopsWithin1km: number | null;
-  /** Kilometres to the nearest stop. */
+  /** The count, its true radius and a label that is true of both. */
+  countReading: StrategyTransportCount | null;
+  /** Straight-line kilometres to the nearest boarding place. Never a walk. */
   nearestKm: number | null;
   nearestName: string | null;
+  /** The publisher and licence of every feed that contributed. */
+  sources: string[];
+  /** When the contributing feed was last loaded, ISO; null on a legacy row. */
+  feedLoadedAt: string | null;
   /** The things the feeds do not publish — carried verbatim. */
   notMeasured: string[];
 }
 
-/** The stored score, read for its grade, its gaps and its own four lists. */
+/**
+ * One dimension of the investment score, fully qualified.
+ *
+ * ## The defect this exists to end
+ *
+ * `investment_score.{strengths, weaknesses, opportunities, risks}` are
+ * unqualified one-liners — "Measured demand in this market is soft",
+ * "Measured capital growth in this suburb is strong", "Below average rental
+ * yield may require owner contribution". None names its dimension, its score,
+ * the nominal points at stake, the evidence behind it, who calculated it, or
+ * how the grade treats it. A reader cannot tell whether "soft" is 13 out of
+ * 100 or 45, nor that the dimension carries 21 of the score's 100 points, nor
+ * that two of the five dimensions were not scored at all.
+ *
+ * `investment_score.breakdown` holds every one of those facts and no surface
+ * read it. On 18 Annabelle Crescent, measured 18 Sep 2026:
+ *
+ * | dimension | score | nominal | delivered | evidence |
+ * | --- | ---: | ---: | ---: | --- |
+ * | growth   | 56/100 | 57 | 31.9 | five-year 6.2% p.a., three-year 4.4%, twelve-month 6.3% |
+ * | yield    | 23/100 | 21 |  4.8 | 2.97% gross on $1,490,000 |
+ * | demand   | 13/100 | 21 |  2.7 | −0.4% annual population growth, Kellyville – East |
+ * | risk     |      — |  0 |    — | excluded: no property-specific risk measurement |
+ * | location |      — |  0 |    — | excluded: no location input met the verification standard |
+ *
+ * 31.9 + 4.8 + 2.7 = 39.4, which is the stored total of 40. So the whole score
+ * is reconstructible from the breakdown, and the four lists add nothing a
+ * qualified reading does not say better.
+ */
+export interface ScoreDimensionReading {
+  /** `growth`, `yield`, `demand`, `risk`, `location` — the engine's own key. */
+  key: string;
+  label: string;
+  /** Out of 100 for this dimension, or null where it was not scored. */
+  score: number | null;
+  /** The dimension's nominal points out of the score's 100. */
+  nominalPoints: number;
+  /** `score% × nominalPoints`, or null where not scored. */
+  deliveredPoints: number | null;
+  /** The evidence the engine recorded, verbatim. */
+  evidence: string | null;
+  /** The named inputs the engine used. */
+  inputs: string[];
+  /** True where the engine excluded the dimension rather than scoring it low. */
+  excluded: boolean;
+}
+
+/** The stored score, read for its grade, its gaps and its per-dimension detail. */
 export interface StrategyScore {
   grade: string | null;
   total: number | null;
   /** Reasons the grade was withheld or capped, as the scorer wrote them. */
   gaps: string[];
-  strengths: string[];
-  weaknesses: string[];
-  opportunities: string[];
-  risks: string[];
+  /** Every dimension, qualified. Replaces the four unqualified lists. */
+  dimensions: ScoreDimensionReading[];
+  /** e.g. "Partial score: 3 of 5 dimensions". */
+  coverageLabel: string | null;
+  /** The share of the nominal 100 points the scored dimensions carry, 0–1. */
+  weightCovered: number | null;
+  /** What the engine said about a dimension it did not score, by key. */
+  notAssessed: Record<string, string>;
+  /** The engine that calculated it, where the row records one. */
+  authority: string | null;
 }
 
 /** The property's own recorded attributes. */
@@ -240,6 +342,47 @@ function subjectRow(market: MarketFacts, key: EvidenceKey): MarketFactRow | null
 /** "the NSW Department of … median sale price of houses, postcode 2155, March 2026 quarter". */
 function citeRow(row: MarketFactRow): string {
   return `${row.publisher} — ${row.describes}`;
+}
+
+/**
+ * The count, in the radius it was actually measured over.
+ *
+ * "Boarding places" rather than "stops", because the count groups a station
+ * and its platforms into one; and the radius comes from the reading rather
+ * than from a field name, because the field name is wrong.
+ */
+function transportCountPhrase(t: StrategyTransportCount): string {
+  const km = t.radiusMetres / 1000;
+  const distance = Number.isInteger(km) ? `${km} km` : `${km.toFixed(1)} km`;
+  return `${t.count} boarding ${t.count === 1 ? 'place' : 'places'} within ${distance} straight-line`;
+}
+
+/**
+ * Everything the owner's correction requires a transport reading to state:
+ * the exact source, the radius, the unit, the date and the measurement
+ * definition — followed by what it does not establish.
+ */
+function transportBasis(t: StrategyTransport): string {
+  const parts: string[] = [];
+  if (t.sources.length) parts.push(t.sources.join('; ') + '.');
+  parts.push(
+    'Counted from the operator\'s own published stop file: straight-line distance from this property\'s '
+    + 'verified coordinate, with a station and its platforms counted as one place.',
+  );
+  if (t.countReading?.radiusAssumed) {
+    parts.push('The radius is not recorded on this reading and is taken as the platform default.');
+  }
+  parts.push(t.feedLoadedAt
+    ? `The feed was last loaded on ${t.feedLoadedAt.slice(0, 10)}; the count is as at that date.`
+    : 'When the feed behind this count was loaded is not recorded on this reading.');
+  if (t.nearestName && isNum(t.nearestKm)) {
+    parts.push(`Nearest boarding place: ${t.nearestName}, ${t.nearestKm} km straight-line.`);
+  }
+  parts.push(
+    'It does not establish mode, service frequency, walking distance or travel time'
+    + (t.notMeasured.length ? ` — ${t.notMeasured.join(' ')}` : '.'),
+  );
+  return parts.join(' ');
 }
 
 // ─── 1. SWOT ────────────────────────────────────────────────────────────────
@@ -346,16 +489,11 @@ export function buildSwot(rec: StrategyRecord): Swot {
   }
 
   // ── Transport ──
-  if (rec.transport.verdict === 'stops_nearby' && isNum(rec.transport.stopsWithin1km) && rec.transport.stopsWithin1km > 0) {
+  const tCount = rec.transport.countReading;
+  if (rec.transport.verdict === 'stops_nearby' && tCount && isNum(tCount.count) && tCount.count > 0) {
     s.push({
-      claim: `${rec.transport.stopsWithin1km} public transport stops within one kilometre`
-        + (isNum(rec.transport.nearestKm) ? `, the nearest ${rec.transport.nearestKm} km away` : '')
-        + '.',
-      basis: (rec.transport.nearestName ? `Nearest stop: ${rec.transport.nearestName}. ` : '')
-        + 'Counted from the operator\'s own published stop file. '
-        + (rec.transport.notMeasured.length
-          ? `Two things it does not settle — ${rec.transport.notMeasured.join(' ')}`
-          : ''),
+      claim: `${transportCountPhrase(tCount)}.`,
+      basis: transportBasis(rec.transport),
     });
   } else if (rec.transport.verdict === 'outside_loaded_networks') {
     coverage.push(
@@ -364,9 +502,18 @@ export function buildSwot(rec: StrategyRecord): Swot {
       + 'section counts it either way.',
     );
   } else if (rec.transport.source && rec.transport.source !== 'gtfs') {
+    /*
+     * A register count of STATIONS is not a measure of public transport
+     * access, and must never be described as one. On 262 Pallas Street the
+     * stored block is `{ source: 'osm_amenity_register', stationsWithin2km: 0,
+     * nearestStation: null }` — a count of one amenity CATEGORY from a
+     * community-edited register, not the operator's own stop file, and no
+     * loaded timetable feed reaches Queensland outside the south-east.
+     */
     coverage.push(
-      `Public transport was read from \`${rec.transport.source}\` rather than an operator timetable feed, so stop `
-      + 'counts here are not the operator\'s own and no conclusion is drawn from them.',
+      `Public transport was **not read from an operator's own stop file** for this property. The reading came from `
+      + `\`${rec.transport.source}\`, which counts one amenity category rather than boarding places, so nothing `
+      + 'here states how this property is served and no conclusion is drawn either way.',
     );
   }
 
@@ -418,16 +565,35 @@ export function buildSwot(rec: StrategyRecord): Swot {
           + 'This is arithmetic on the recorded loan, not a prediction about values.',
       });
     }
-    if (isNum(f.capitalGrowth) && longest && longest.value) {
-      const modelled = f.capitalGrowth;
+    /*
+     * The accepted CGR is NEVER described as the measured market rate.
+     *
+     * The first version said "The projection runs on the measured rate rather
+     * than an assumed one" whenever the two agreed to within 0.05 points. They
+     * agree on both subject properties — and agreement is not derivation. The
+     * accepted CGR is an input recorded through the override workflow before
+     * the report is generated; the register figure is a measurement of what
+     * this market did. Nothing on the record says the first was taken from the
+     * second, and a report that says so has invented a provenance.
+     *
+     * So the two are stated under the two labels the owner set, side by side,
+     * and their relationship is described as agreement rather than as source.
+     */
+    if (isNum(f.capitalGrowth) && longest?.value) {
       const measured = parseFloat(longest.value);
-      if (Number.isFinite(measured) && Math.abs(modelled - measured) < 0.05) {
-        o.push({
-          claim: `The projection runs on the measured rate rather than an assumed one: ${pct(modelled, 1)} a year.`,
-          basis: `${citeRow(longest)}. Past growth is the only growth anything here can measure; it is carried `
-            + 'forward as a base case and is not a forecast.',
-        });
-      }
+      const agrees = Number.isFinite(measured) && Math.abs(f.capitalGrowth - measured) < 0.05;
+      o.push({
+        claim: agrees
+          ? `The accepted CGR assumption and the observed market rate agree at ${pct(f.capitalGrowth, 1)} a year.`
+          : `The accepted CGR assumption is ${pct(f.capitalGrowth, 1)} a year; the observed market rate is `
+            + `${longest.value} a year.`,
+        basis: `**Accepted CGR assumption used by the financial model:** ${pct(f.capitalGrowth, 1)} a year, recorded `
+          + 'through the override workflow before this report was generated and carried unchanged into the loan, '
+          + 'the cash flow and the ten-year projection. **Historical market growth observed in the approved '
+          + `register:** ${longest.value} a year — ${citeRow(longest)}. They are separate facts from separate `
+          + 'sources; nothing on this record states that the assumption was derived from the measurement, and '
+          + (agrees ? 'the two agreeing does not make it so.' : 'the difference is information rather than an error.'),
+      });
     }
   } else {
     coverage.push(
@@ -436,13 +602,15 @@ export function buildSwot(rec: StrategyRecord): Swot {
     );
   }
 
-  // ── The score's own four lists, absorbed rather than replaced ──
-  const fromScore = (x: string): PositionEntry =>
-    ({ claim: /[.!?]$/.test(x.trim()) ? x.trim() : `${x.trim()}.`, basis: 'Recorded on the investment score for this report.' });
-  for (const x of rec.score.strengths) s.push(fromScore(x));
-  for (const x of rec.score.weaknesses) w.push(fromScore(x));
-  for (const x of rec.score.opportunities) o.push(fromScore(x));
-  for (const x of rec.score.risks) t.push(fromScore(x));
+  /*
+   * The score's four free-text lists are NOT quadrant entries.
+   *
+   * "Measured demand in this market is soft" names no dimension, no score, no
+   * nominal points, no evidence, no calculator and no grade treatment — and
+   * rendered into a client's Weaknesses column it reads as a finding about
+   * the market rather than a reading of one input. Every fact it gestures at
+   * is in `breakdown`, qualified, and the section below states it there.
+   */
 
   // ── What was not held ──
   const notHeld = (['vacancyRate', 'daysOnMarket', 'medianRent', 'auctionClearanceRate', 'vendorDiscount'] as const)
@@ -458,6 +626,15 @@ export function buildSwot(rec: StrategyRecord): Swot {
     coverage.push(
       `The investment score itself records ${rec.score.gaps.length === 1 ? 'a gap' : `${rec.score.gaps.length} gaps`}: `
       + `${rec.score.gaps.join('; ')}.`,
+    );
+  }
+  if (rec.score.coverageLabel) {
+    coverage.push(
+      `${rec.score.coverageLabel}`
+      + (rec.score.weightCovered !== null
+        ? `, carrying ${pct(rec.score.weightCovered * 100, 0)} of the score's nominal points`
+        : '')
+      + '. The dimensions and what each one rested on are tabled below.',
     );
   }
 
@@ -497,6 +674,59 @@ export function composeSwot(rec: StrategyRecord, heading: string): string {
     lines.push('### What this rests on', '');
     for (const c of swot.coverage) lines.push(`- ${c}`);
     lines.push('');
+  }
+  const dimensions = composeScoreDimensionTable(rec);
+  if (dimensions) lines.push(dimensions, '');
+  return lines.join('\n').trimEnd();
+}
+
+/**
+ * Every score dimension, with everything a reader needs to weigh it.
+ *
+ * Nothing here is derived: the score, the nominal points, the evidence and the
+ * inputs are the engine's own, and the delivered points are the product of two
+ * of them. A dimension the engine EXCLUDED is listed with the engine's own
+ * reason rather than omitted — excluding is a statement, and a table that
+ * silently drops two of five rows reads as a complete score.
+ */
+export function composeScoreDimensionTable(rec: StrategyRecord): string | null {
+  const dims = rec.score.dimensions;
+  if (!dims.length) return null;
+  const lines: string[] = ['### What the investment score measured', ''];
+  lines.push(
+    'Each row is one dimension of the score, as the scoring engine recorded it. **Score** is out of 100 for that '
+    + 'dimension; **nominal points** is its share of the score\'s own 100; **delivered** is the first applied to '
+    + 'the second, and the delivered column sums to the total.',
+    '',
+    '| Dimension | Score | Nominal points | Delivered | What it rested on | Inputs |',
+    '|---|---|---|---|---|---|',
+  );
+  for (const d of dims) {
+    const score = d.excluded || d.score === null ? '—' : `${d.score} / 100`;
+    const delivered = d.excluded || d.deliveredPoints === null ? '—' : d.deliveredPoints.toFixed(1);
+    const nominal = d.excluded ? '— (excluded)' : String(d.nominalPoints);
+    const evidence = d.evidence ?? rec.score.notAssessed[d.key] ?? 'Not recorded.';
+    lines.push(`| ${d.label} | ${score} | ${nominal} | ${delivered} | ${evidence} | ${d.inputs.join(', ') || '—'} |`);
+  }
+  lines.push('');
+  const total = rec.score.total;
+  const parts: string[] = [];
+  if (total !== null) parts.push(`The delivered points total **${total}**`);
+  if (rec.score.grade) parts.push(`and the grade recorded for this report is **${rec.score.grade}**`);
+  else parts.push('and no grade was issued');
+  lines.push(
+    `${parts.join(' ')}. Calculated by this platform's investment scoring service`
+    + (rec.score.authority ? ` (${rec.score.authority})` : '')
+    + '; no figure in this table is re-derived by this report.',
+    '',
+  );
+  if (rec.score.coverageLabel) {
+    lines.push(
+      `**${rec.score.coverageLabel}.** A dimension the engine excluded scores nothing and carries no nominal `
+      + 'points — it is not a low score, and the grade is a reading of the dimensions that were measured rather '
+      + 'than of all five.',
+      '',
+    );
   }
   return lines.join('\n').trimEnd();
 }
@@ -573,24 +803,26 @@ export function composeSuitability(rec: StrategyRecord, heading: string): string
   const longest = g10 ?? g5 ?? g3;
   if (longest) {
     const years = longest === g10 ? 10 : longest === g5 ? 5 : 3;
+    /*
+     * An evidence window is a RISK AND MONITORING consideration, never a hold
+     * requirement. The first version wrote "A horizon at least as long as the
+     * evidence: 5 years", which turns the length of a published series into an
+     * instruction to a person — and no report here holds the circumstances
+     * that could support one.
+     */
     reqs.push({
-      claim: `A horizon at least as long as the evidence: ${years} years.`,
-      basis: `${citeRow(longest)}. The measured rate is an average across that window and includes the periods `
-        + 'inside it that went the other way. A hold shorter than the measurement is exposed to one of those periods '
-        + 'rather than to the average.',
+      claim: `Awareness that the growth evidence covers ${years} years, and no longer.`,
+      basis: `${citeRow(longest)}. The rate is an average across that window and includes the periods inside it `
+        + 'that went the other way, so a shorter holding period is exposed to one of those periods rather than to '
+        + 'the average. That is a risk and monitoring consideration about the EVIDENCE. This report does not '
+        + 'establish how long anybody should hold the asset, and nothing here should be read as saying so.',
     });
   }
-  const volume = subjectRow(rec.market, 'salesCount');
-  if (volume?.value) {
-    // Stated, never graded: how deep the market is, is the reader's judgement
-    // against a market they know, and no threshold here is published anywhere.
-    reqs.push({
-      claim: 'Tolerance for however long an exit takes in a market of this depth.',
-      basis: `${volume.value} comparable dwellings settled in the latest published quarter — ${citeRow(volume)}. `
-        + 'A sale is agreed between two parties at a time neither fully controls; nothing in this record says how '
-        + 'long one takes here, because days on market was not published for this market.',
-    });
-  }
+  /*
+   * A sales count is NOT a measure of liquidity, buyer depth or time to sell,
+   * so it raises no requirement. It is stated as a count in the exit section
+   * and nowhere converted into a tolerance an owner must have.
+   */
 
   if (reqs.length) {
     lines.push('### What holding this asset requires', '');
@@ -648,17 +880,21 @@ export function composeHoldingStrategy(rec: StrategyRecord, heading: string): st
 
   if (f && isNum(f.capitalGrowth)) {
     holds.push({
-      claim: `The base case grows value at ${pct(f.capitalGrowth, 1)} a year.`,
-      basis: longest
-        ? `Taken from ${citeRow(longest)} — the measured rate for this market over the longest window the register `
-          + 'holds. It is carried forward unchanged, which is a modelling choice and not a forecast.'
-        : 'Recorded on this report\'s assumptions.',
+      claim: `The base case grows value at the accepted CGR assumption of ${pct(f.capitalGrowth, 1)} a year.`,
+      basis: 'Recorded on this report\'s assumptions through the override workflow, before generation, and carried '
+        + 'unchanged into the loan, the cash flow and the ten-year projection. It is a modelling input, not a '
+        + 'forecast, and not a measurement of this market'
+        + (longest?.value
+          ? `. For comparison, historical market growth observed in the approved register is ${longest.value} a `
+            + `year — ${citeRow(longest)}; that is a separate fact from a separate source.`
+          : '.'),
     });
   } else if (longest?.value) {
     holds.push({
-      claim: `This market's measured growth over the longest published window is ${longest.value} a year.`,
-      basis: `${citeRow(longest)}. What a projection does with that rate is the Financial Analysis Report's subject; `
-        + 'the rate itself is a measurement of what this market did, and it is the thing that has to keep holding.',
+      claim: `Historical market growth observed in the approved register is ${longest.value} a year.`,
+      basis: `${citeRow(longest)}. This is a measurement of what this market DID over that window. The accepted CGR `
+        + 'assumption the financial model runs on is a separate, recorded input and is the Financial Analysis '
+        + 'Report\'s subject; the two are never the same statement.',
     });
   }
   // The growth ladder, stated and not graded. Both figures, no verdict.
@@ -727,8 +963,10 @@ export function composeHoldingStrategy(rec: StrategyRecord, heading: string): st
       + `${money(f.loanAmount * 0.01)} a year on the recorded balance.`);
   }
   if (longest) {
-    breaks.push(`Measured growth for this market stops resembling ${longest.value} a year. The register behind that `
-      + `figure (${longest.publisher}) republishes and can be re-read; the section below says when.`);
+    breaks.push(`Historical market growth observed in the approved register stops resembling ${longest.value} a `
+      + `year. The register behind that figure (${longest.publisher}) republishes and can be re-read; the section `
+      + 'below says when. This is the market measurement, not the accepted CGR assumption — the assumption changes '
+      + 'only when somebody records a new one.');
   }
   if (breaks.length) {
     lines.push('### What would break it', '');
@@ -756,9 +994,12 @@ export function composeExitOutlook(rec: StrategyRecord, heading: string): string
   const f = rec.finance;
   const lines: string[] = [`## ${heading}`, ''];
   lines.push(
-    'Two different questions, answered from two different kinds of evidence. **How easily this sells** is measured '
-    + 'from a published register. **What the position looks like at a future year** is an output of this report\'s '
-    + 'own projection under a recorded growth rate. The first is a fact; the second is a model.',
+    'Two different questions, answered from two different kinds of evidence. **What the market recorded** comes from '
+    + 'a published register. **What the position looks like at a future year** is an output of this report\'s own '
+    + 'projection under the accepted CGR assumption. The first is a count of what happened; the second is a model.',
+    '',
+    'Neither answers *how easily this sells*. Days on market, time to sell and buyer depth are not measured '
+    + 'anywhere in this report, and no figure below should be read as standing in for them.',
     '',
   );
 
@@ -767,11 +1008,21 @@ export function composeExitOutlook(rec: StrategyRecord, heading: string): string
   const median = subjectRow(rec.market, 'medianPrice');
   const series = subjectRow(rec.market, 'priceSeries');
   if (volume?.value) {
+    /*
+     * The count, and only the count.
+     *
+     * The first version called it "the depth of the buyer pool an exit would
+     * be tested against" — which is a liquidity claim, and a settled-sales
+     * count is not one. It says how many transactions COMPLETED in a published
+     * period; it says nothing about how many buyers were competing, how long
+     * any sale took to agree, or how long one would take now.
+     */
     liquidity.push({
-      claim: `${volume.value} comparable dwellings settled in the latest published quarter.`,
-      basis: `${citeRow(volume)}. That is the depth of the buyer pool an exit would be tested against, at the `
-        + 'geography and dwelling split named — not at this street. It is stated rather than graded: no publisher '
-        + 'sets a threshold at which a market becomes liquid or thin, and this report does not invent one.',
+      claim: `${volume.value} dwellings settled in the latest published quarter.`,
+      basis: `${citeRow(volume)}. That is a count of completed transactions at the geography and dwelling split `
+        + 'named — not at this street, and not a measure of liquidity. **Days on market, time to sell and buyer '
+        + 'depth were not measured for this market**: no publisher in the approved register issues them at this '
+        + 'geography, and nothing here estimates them.',
     });
   }
   if (median?.value) {
@@ -788,23 +1039,23 @@ export function composeExitOutlook(rec: StrategyRecord, heading: string): string
         + 'and it is re-read each time this report is produced.',
     });
   }
-  if (rec.property.landSqm) {
-    liquidity.push({
-      claim: `The land is ${rec.property.landSqm} m².`,
-      basis: 'Recorded on the property. Land size is one of the attributes a median cannot see, and it is among the '
-        + 'first things a comparison against one has to account for.',
-    });
-  }
-
   if (liquidity.length) {
-    lines.push('### Resale liquidity — measured', '');
+    lines.push('### What the market recorded', '');
     lines.push(...writeEntries(liquidity));
     lines.push('');
+    if (rec.property.landSqm) {
+      lines.push(
+        `*This property's land is ${rec.property.landSqm} m² — recorded on the property rather than by any `
+        + 'register above. Land size is one of the attributes a median cannot see, and it is among the first '
+        + 'things a comparison against one has to account for.*',
+        '',
+      );
+    }
   } else {
     lines.push(
-      '### Resale liquidity — measured', '',
-      '*No sales volume, median or series was published for this market, so liquidity is not described. It is not '
-      + 'estimated in their place.*',
+      '### What the market recorded', '',
+      '*No sales count, median or series was published for this market. Nothing is estimated in their place, and '
+      + 'their absence is not evidence that the market is thin, deep, slow or fast.*',
       '',
     );
   }
@@ -815,9 +1066,9 @@ export function composeExitOutlook(rec: StrategyRecord, heading: string): string
     const at = (y: number) => p * Math.pow(1 + rate, y);
     lines.push('### The modelled position — projection, not measurement', '');
     lines.push(
-      `Value compounds from ${money(p)} at ${pct(f.capitalGrowth, 1)} a year, the rate recorded on this report's `
-      + 'assumptions. Selling costs are not deducted; agent commission, marketing and legal costs all fall between '
-      + 'these figures and a net result.',
+      `Value compounds from ${money(p)} at the **accepted CGR assumption** of ${pct(f.capitalGrowth, 1)} a year — `
+      + 'the rate recorded on this report\'s assumptions, not a market measurement. Selling costs are not deducted; '
+      + 'agent commission, marketing and legal costs all fall between these figures and a net result.',
       '',
       '| Year | Modelled value | Growth since settlement |',
       '|---|---|---|',
@@ -908,14 +1159,19 @@ export function buildMonitorRows(rec: StrategyRecord): MonitorRow[] {
         + 'a planning certificate is the way to obtain it.',
     });
   }
-  if (rec.transport.verdict === 'stops_nearby') {
+  if (rec.transport.verdict === 'stops_nearby' && rec.transport.countReading?.count !== null) {
     rows.push({
-      what: 'Public transport serving the property',
-      register: 'The operator\'s published stop file',
+      what: 'Boarding places near the property',
+      register: rec.transport.sources.length
+        ? rec.transport.sources.join('; ')
+        : 'The operator\'s published stop file',
       cadence: 'Each time the feed is reloaded on this platform',
-      lastRead: isNum(rec.transport.stopsWithin1km) ? `${rec.transport.stopsWithin1km} stops within 1 km` : '—',
-      changesIf: 'A stop count changes when the network changes. Service frequency and mode are not measured at all '
-        + 'here, and a change in either would not show in this reading.',
+      lastRead: rec.transport.countReading
+        ? transportCountPhrase(rec.transport.countReading)
+          + (rec.transport.feedLoadedAt ? `, feed loaded ${rec.transport.feedLoadedAt.slice(0, 10)}` : '')
+        : '—',
+      changesIf: 'A count changes when the network changes. Mode, service frequency, walking distance and travel '
+        + 'time are not measured at all here, so a change in any of them would not show in this reading.',
     });
   }
   if (rec.finance && isNum(rec.finance.interestRate)) {
@@ -1044,6 +1300,13 @@ export interface StrategyRowOptions {
    * makes `finance` null and every modelled entry simply not produced.
    */
   carriesModelling: boolean;
+  /**
+   * `transportCountReading(location_intelligence.transport)`, read by the
+   * caller because a canonical investment module may not import `_shared/`.
+   * Null where the caller has none, and then no transport entry is produced —
+   * an absence, never a count read off the deprecated field.
+   */
+  transport?: StrategyTransportCount | null;
 }
 
 const rec = (v: unknown): Record<string, unknown> | null =>
@@ -1054,6 +1317,50 @@ const text = (v: unknown): string | null =>
   (typeof v === 'string' && v.trim() ? v.trim() : null);
 const strings = (v: unknown): string[] =>
   (Array.isArray(v) ? v.map((x) => text(x)).filter((x): x is string => x !== null) : []);
+
+/** The engine's dimension keys, in the order a reader should meet them. */
+const SCORE_DIMENSIONS: ReadonlyArray<{ field: string; key: string; label: string }> = [
+  { field: 'growthScore', key: 'growth', label: 'Capital growth' },
+  { field: 'yieldScore', key: 'yield', label: 'Rental yield' },
+  { field: 'demandScore', key: 'demand', label: 'Demand' },
+  { field: 'riskScore', key: 'risk', label: 'Property risk' },
+  { field: 'locationScore', key: 'location', label: 'Location' },
+];
+
+function readScoreDimensions(breakdown: unknown): ScoreDimensionReading[] {
+  const b = rec(breakdown);
+  if (!b) return [];
+  const out: ScoreDimensionReading[] = [];
+  for (const { field, key, label } of SCORE_DIMENSIONS) {
+    const d = rec(b[field]);
+    if (!d) continue;
+    const excluded = d.excluded === true || d.hasData === false;
+    const score = excluded ? null : num(d.score);
+    const nominalPoints = num(d.weight) ?? 0;
+    out.push({
+      key,
+      label,
+      score,
+      nominalPoints,
+      deliveredPoints: score === null ? null : (score / 100) * nominalPoints,
+      evidence: text(d.details),
+      inputs: strings(d.dataPoints),
+      excluded,
+    });
+  }
+  return out;
+}
+
+function readNotAssessed(value: unknown): Record<string, string> {
+  const n = rec(value);
+  if (!n) return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(n)) {
+    const t = text(v);
+    if (t) out[k] = t;
+  }
+  return out;
+}
 
 export function readStrategyRecord(row: StrategyRowInput, opts: StrategyRowOptions): StrategyRecord {
   const specs = rec(row.propertySpecs) ?? {};
@@ -1113,9 +1420,14 @@ export function readStrategyRecord(row: StrategyRowInput, opts: StrategyRowOptio
     transport: {
       source: text(transport.source),
       verdict: text(transport.verdict),
-      stopsWithin1km: num(transport.stopsWithin1km),
+      // Never `stopsWithin1km`. The caller reads `transportCountReading`,
+      // which prefers `stopsWithinRadius` and hands back a radius and a label
+      // that are true of the value.
+      countReading: opts.transport ?? null,
       nearestKm: num(transport.distanceToStation),
       nearestName: text(transport.nearestStation),
+      sources: strings(transport.sources),
+      feedLoadedAt: text(transport.feedLoadedAt),
       notMeasured: strings(transport.notMeasured),
     },
     score: {
@@ -1130,10 +1442,11 @@ export function readStrategyRecord(row: StrategyRowInput, opts: StrategyRowOptio
             return reason ? [reason] : [];
           })
           : []),
-      strengths: strings(score.strengths),
-      weaknesses: strings(score.weaknesses),
-      opportunities: strings(score.opportunities),
-      risks: strings(score.risks),
+      dimensions: readScoreDimensions(score.breakdown),
+      coverageLabel: text(rec(score.coverage)?.partialLabel),
+      weightCovered: num(rec(score.coverage)?.weightCovered),
+      notAssessed: readNotAssessed(score.notAssessed),
+      authority: text(rec(score.v2)?.authority),
     },
   };
 }
