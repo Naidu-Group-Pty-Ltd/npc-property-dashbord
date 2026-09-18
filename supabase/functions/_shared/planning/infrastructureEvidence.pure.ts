@@ -78,6 +78,18 @@
  *    cannot be searched — no state-wide feed is published for the
  *    jurisdiction. `absences` was a flat list of strings, so the prose had no
  *    way to tell them apart.
+ * 10. **One designation, one row — and identity is confirmed before anything
+ *    is merged.** The two Queensland sources read the SAME MapServer: the
+ *    instruments probe asks layers 25/30/35/40 one at a time, the constraint
+ *    register calls `identify` with `layers: all` on the same service. So a
+ *    property inside a priority development area got two rows that disagreed
+ *    on every cell but the name (executed 18 Sep 2026). Merging is on the
+ *    publisher's own source string plus the publisher's own name, equal after
+ *    trim, case-fold and whitespace collapse — never on token overlap, edit
+ *    distance or a shared word. Two projects that read alike are two
+ *    projects, and merging them deletes one; nothing merges across sources at
+ *    all. The layer-specific reading wins, because it parses that layer's own
+ *    fields where the identify-all row parses whatever the server offered.
  *
  * Pure: no fetch, no Deno, no clock.
  */
@@ -322,6 +334,42 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
     });
   };
 
+  /*
+   * ── one designation, one row (rule 10) ───────────────────────────────────
+   *
+   * The two Queensland sources overlap, and the overlap is exact rather than
+   * incidental. `QLD_INSTRUMENT_LAYERS` queries layers 25, 30, 35 and 40 of
+   * `PlanningCadastre/StatePlanning/MapServer` one at a time; the constraint
+   * register calls `identify` on the SAME MapServer with `layers: all`, so a
+   * priority development area at the point comes back from both, and
+   * `classify()` files the second copy under `growthArea` / `context`.
+   *
+   * Executed 18 Sep 2026: one designation produced two rows disagreeing on
+   * every cell but the name — `Priority development area` / `Declared` /
+   * `PLA-MBH` beside `Growth / priority area` / `Statutory` / `Wide Bay
+   * Burnett Regional Plan`. That is the legacy report's own failure, the one
+   * `compassDocumentContract` was written against: three copies of one zoning
+   * section on one lot disagreeing on every control.
+   *
+   * §9's rule is **confirm project identity before deduplication**, so this
+   * merges on identity and never on resemblance: the SAME publisher's source
+   * string, and the publisher's own name equal after trimming, case-folding
+   * and collapsing internal whitespace. No token overlap, no edit distance,
+   * no stemming — two projects that merely read alike are two projects, and
+   * a report that merged them would have deleted one.
+   *
+   * The instrument reading wins because it is the more specific read: it
+   * queries the named layer and parses that layer's own fields (`pda_name`,
+   * `pda_status`, `gazetted_date`), where the identify-all row is a generic
+   * parse of whatever the server volunteered. Nothing is merged across
+   * sources — a council development application and a state instrument are
+   * never one item however alike their names — and the suppression is silent,
+   * because a client document does not narrate its own production.
+   */
+  const identityOf = (name: string, source: string | null): string =>
+    `${(source ?? '').trim().toLowerCase()}\u0000${name.trim().toLowerCase().replace(/\s+/g, ' ')}`;
+  const instrumentIdentities = new Set<string>();
+
   // ── state development instruments, at the property's own coordinate ───────
   const inst = isRecord(data?.developmentInstruments) ? data!.developmentInstruments : null;
   if (inst?.status === 'ok' && Array.isArray(inst.instruments)) {
@@ -332,6 +380,7 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
       const name = str(raw.name);
       if (!name) continue;
       const statedStatus = str(raw.status);
+      instrumentIdentities.add(identityOf(name, source));
       items.push({
         name,
         kind: INSTRUMENT_LABEL[str(raw.kind) ?? ''] ?? (str(raw.kind) ?? 'Instrument'),
@@ -389,6 +438,10 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
     if (str(raw.kind) !== 'context') continue;
     const name = str(raw.label);
     if (!name) continue;
+    // Rule 10: the same publisher's same designation, already carried by the
+    // layer-specific read above.
+    const contextSource = str(raw.source) ?? 'state planning layers';
+    if (instrumentIdentities.has(identityOf(name, contextSource))) continue;
     const family = str(raw.family);
     items.push({
       name,
@@ -430,7 +483,7 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
       statedCost: null,
       statedDelivery: null,
       applications: null,
-      source: str(raw.source) ?? 'state planning layers',
+      source: contextSource,
       licence: str(raw.licence),
       retrievedAt,
     });

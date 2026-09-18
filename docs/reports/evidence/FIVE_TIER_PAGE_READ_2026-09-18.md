@@ -153,8 +153,71 @@ the original". It is left alone deliberately: it is a DB-overridable default, it
 says "the original" rather than "the original report", and the load-bearing ban
 is in the code-built user prompt, which no deployment can override.
 
+## The ten-year infrastructure outlook — §9's four requirements, measured
+
+`infrastructureEvidence.pure.ts` was checked against §9's wording line by line.
+Three of the four requirements were already met and are named in the module's
+own rules: attributable evidence (rule 1 — a project is named only where a
+register named it), the proposal/approval/funding/commencement/completion
+distinction (rule 2 — a status is the publisher's own word, and an unrecognised
+word is printed rather than forced into a category), and unknown dates and
+funding staying unknown (rule 3 — a gazettal or determination date is labelled
+as a date something HAPPENED; `statedDelivery` is null per entry rather than
+once at the foot).
+
+**"Confirm project identity before deduplication" was met on one of two paths
+and missing on the other.** The council development-application half already
+does it properly — `summariseDaRows` resolves an amendment to the parent
+application it amends by the register's own reference, which is why
+`1382/2025/JP/A`, `/B` and `/C` stopped being three $93m data centres.
+
+The state-instrument half had no identity handling at all, and the overlap it
+needed one for is exact rather than incidental: `QLD_INSTRUMENT_LAYERS` queries
+layers **25, 30, 35 and 40** of `PlanningCadastre/StatePlanning/MapServer` one
+at a time, while `buildQldStatePlanningIdentify` calls `identify` on **the same
+MapServer** with `layers: all`. Those four layers answer both.
+
+Executed 18 Sep 2026 — no retained fixture carries `planningData`, so this
+class cannot be found by replaying them:
+
+| name | kind | status | reference |
+| --- | --- | --- | --- |
+| Maryborough Priority Living Area | Priority development area | Declared | PLA-MBH |
+| Maryborough Priority Living Area | Growth / priority area | Statutory | Wide Bay Burnett Regional Plan |
+
+One designation, two rows, disagreeing on every cell but the name — the legacy
+report's own failure, which `compassDocumentContract` was written against
+(*three copies of one zoning section on one lot, disagreeing on every control*).
+
+**Rule 10** closes it, and closes it narrowly because §9's wording is a warning
+rather than an instruction to merge. Identity is the publisher's own source
+string plus the publisher's own name, equal after trim, case-fold and
+whitespace collapse. No token overlap, no edit distance, no shared word:
+*Maryborough Priority Living Area* and *Hervey Bay Priority Living Area* stay
+two designations, and nothing merges across sources at all. The layer-specific
+reading wins, because it parses that layer's own fields (`pda_name`,
+`pda_status`, `gazetted_date`) where the identify-all row parses whatever the
+server volunteered. The suppression is silent — a duplicate that was never
+printed is not something a reader lost, and narrating it would be the same
+mistake as the two findings above. Eight tests, including the four that assert
+what must NOT merge.
+
+One thing checked and found not to be a defect: the first probe printed the raw
+register key `priorityDevelopmentArea` in the client-facing Kind cell, which
+looked like database vocabulary reaching a client. It was the probe's own
+artefact — `planningSources.pure.ts` emits `priority_development_area`, which
+`INSTRUMENT_LABEL` maps. Recorded because the wrong conclusion was one step
+away.
+
 ## What this does not cover
 
 - §10's ten PDFs through real generation for Annabelle and Pallas.
-- The ten-year infrastructure outlook sourcing gap (§9), still open.
+- The **coverage** half of the infrastructure outlook, which is unchanged and
+  is a sourcing question rather than a correctness one: council capital works
+  programmes, state and federal budget programmes, and transport, water,
+  energy and health agency announcements are not read by either register.
+  `INFRASTRUCTURE_COVERAGE_LIMITS` already states all four on the page, on a
+  full reading as well as an empty one, so a short list reads as a short search
+  rather than a quiet area. Closing it means acquiring registers, not changing
+  this module.
 - The navigation and educational treatment from the Lot 20427 reference (§9).
