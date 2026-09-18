@@ -9,6 +9,31 @@ that date; nothing is estimated.
 
 ---
 
+## 0. Status — the building half is DEFERRED from this release (S5/S6 §1)
+
+**Read this before anything below.** On 18 September 2026 the platform owner
+narrowed the release scope: *"Exclude the new ConditionEvidencePanel,
+condition-entry dialog and AssessmentCompletionCard from this release.
+Preserve that work separately in git and remove dependencies that exist solely
+to support the deferred functionality."*
+
+| part of this recommendation | state |
+| --- | --- |
+| §1–§5 — the finding, the arithmetic, why `building` is the blocker | **stands.** It is a reading of the schema and the corpus, unaffected by what ships. |
+| §6 — the **condition record** method, its submission surface, the migration and the two edge operations | **DEFERRED.** Preserved on `claude/deferred-condition-evidence-s5`, removed from the release branch. |
+| §6a — the **site** half (`parcelGeometry.pure.ts`, `riskEvidenceConnection.pure.ts`) | **RETAINED.** It is an independently useful data-correctness repair and it is what §3's parcel-identity rule asks for. Still no conversion: `CONVERSIONS` is frozen empty and test-asserted. |
+| the five-dimension completion gate this fed | **SUPERSEDED** by the proportional publication policy (`scorePublicationPolicy.pure.ts`, S5/S6 §4, §7 and §8). |
+
+What the deferral changes about the conclusion below: **nothing about whether
+the method is right, and everything about when it arrives.** Risk remains
+unscoreable in this deployment for the reason §2 gives, and that is now
+disclosed rather than blocking — a four-dimension assessment receives a
+qualified score and grade covering 95% of the matrix by its original weights,
+with Risk named as unassessed and the reason given. Reviving §6 means restoring
+that branch; nothing in the release branch has to be undone first.
+
+---
+
 ## 1. The finding, in one paragraph
 
 Property Risk is **not blocked by a methodology limit.** It is blocked by one

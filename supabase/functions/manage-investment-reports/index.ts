@@ -7,15 +7,6 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { internalError } from '../_shared/errorResponse.ts';
 import { applyDisplayOverrides, buildCalculatorInput, overridesAffectModel } from '../_shared/reports/investment/overrides.pure.ts';
 import { healFinanceIdentity } from '../_shared/reports/investment/financialEngine.pure.ts';
-import {
-  TABLE_NOT_APPLIED,
-  decideConditionSubmission,
-  isMissingTableError,
-  parseConditionSubmission,
-  recordFromRow,
-  rowFromRecord,
-} from '../_shared/reports/risk/conditionRecordSubmission.pure.ts';
-import { assessConditionRecord, bestConditionRecord } from '../_shared/reports/risk/conditionRecord.pure.ts';
 // Dynamic CORS headers for credential-based requests
 function createCorsHeaders(origin: string | null): Record<string, string> {
   // Support Lovable preview + published domains for credentialed requests
@@ -42,7 +33,7 @@ const isRecord = (v: unknown): v is Record<string, any> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 
 interface RequestBody {
-  action: 'insert' | 'update' | 'delete' | 'archive' | 'unarchive' | 'archivePackage' | 'unarchivePackage' | 'bulkDelete' | 'getVersion' | 'submitConditionRecord' | 'getConditionRecords';
+  action: 'insert' | 'update' | 'delete' | 'archive' | 'unarchive' | 'archivePackage' | 'unarchivePackage' | 'bulkDelete' | 'getVersion';
   reportId?: string;
   reportIds?: string[];
   data?: Record<string, any>;
@@ -84,7 +75,7 @@ Deno.serve(async (req) => {
     // Updates run through a service-role client and can trigger billing side
     // effects (including releasing a failed report's token reservation), so
     // authentication alone is not sufficient authorization.
-    if (action === 'update' || action === 'archivePackage' || action === 'unarchivePackage' || action === 'submitConditionRecord') {
+    if (action === 'update' || action === 'archivePackage' || action === 'unarchivePackage') {
       const permission = await requireModulePermission(
         supabase,
         { userId, authMethod },
@@ -468,202 +459,6 @@ Deno.serve(async (req) => {
 
         return new Response(
           JSON.stringify({ success: true, version }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      case 'submitConditionRecord': {
-        // The Property Risk `building` evidence path (Approval A). One rule,
-        // rendered and enforced: the dialog validates with the same pure
-        // module this refuses with, and a refusal carries the validator's
-        // own sentence. Storage is decided by decideConditionSubmission —
-        // an inadmissible-for-scoring document can still be evidence, but a
-        // document the table's constraints would refuse, or one identifying
-        // a different property, is refused HERE with a named reason rather
-        // than surfacing as a raw constraint violation. Nothing on this
-        // path writes a score, a grade or an activation.
-        if (!reportId || !isRecord(data)) {
-          return new Response(
-            JSON.stringify({ error: 'reportId and data are required for submitConditionRecord' }),
-            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          );
-        }
-        // `recorded_by` is the record's provenance; a submission with no
-        // resolved identity is refused rather than attributed to nobody.
-        if (!userId) {
-          return createUnauthorizedResponse('Authentication required', corsHeaders);
-        }
-
-        const { data: subjectRow, error: subjectError } = await supabase
-          .from('investment_reports')
-          .select('id, property_address, canonical_property_key, client_property_id')
-          .eq('id', reportId)
-          .maybeSingle();
-        if (subjectError) {
-          console.error('Condition record subject read failed:', subjectError);
-          return new Response(
-            JSON.stringify({ error: 'The report this record is for could not be read. Retry.' }),
-            { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          );
-        }
-        if (!subjectRow) {
-          return new Response(
-            JSON.stringify({ error: 'Report not found' }),
-            { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          );
-        }
-
-        const parsed = parseConditionSubmission(data, {
-          reportId,
-          propertyId: subjectRow.client_property_id,
-        });
-        if (!parsed.ok) {
-          return new Response(
-            JSON.stringify({ error: parsed.refusal.statement, reason: parsed.refusal.reason }),
-            { status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          );
-        }
-
-        const decision = decideConditionSubmission(parsed.record, {
-          propertyAddress: subjectRow.property_address,
-          propertyId: subjectRow.client_property_id,
-          reportId,
-        }, new Date().toISOString());
-        if (!decision.storable) {
-          return new Response(
-            JSON.stringify({
-              error: decision.refusal!.statement,
-              reason: decision.refusal!.reason,
-              reading: decision.reading,
-            }),
-            { status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          );
-        }
-
-        const fileId = typeof data.fileId === 'string' && data.fileId.trim() ? data.fileId.trim() : null;
-        const { data: storedRecord, error: conditionInsertError } = await supabase
-          .from('property_condition_records')
-          .insert(rowFromRecord(parsed.record, {
-            reportId,
-            canonicalPropertyKey: subjectRow.canonical_property_key,
-            clientPropertyId: subjectRow.client_property_id,
-            fileId,
-            recordedBy: userId,
-          }))
-          .select()
-          .single();
-
-        if (conditionInsertError) {
-          if (isMissingTableError(conditionInsertError)) {
-            return new Response(
-              JSON.stringify({ error: TABLE_NOT_APPLIED, tableApplied: false }),
-              { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-            );
-          }
-          if (conditionInsertError.code === '23503') {
-            return new Response(
-              JSON.stringify({
-                error: 'The attached file or the report this record names no longer exists, so the '
-                  + 'record was not stored.',
-              }),
-              { status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-            );
-          }
-          console.error('Condition record insert failed:', conditionInsertError);
-          return new Response(
-            JSON.stringify({ error: 'Failed to store the condition record', details: conditionInsertError.message }),
-            { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          );
-        }
-
-        return new Response(
-          JSON.stringify({ success: true, record: storedRecord, reading: decision.reading }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      case 'getConditionRecords': {
-        if (!reportId) {
-          return new Response(
-            JSON.stringify({ error: 'reportId is required for getConditionRecords' }),
-            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          );
-        }
-
-        const { data: subjectRow, error: subjectError } = await supabase
-          .from('investment_reports')
-          .select('id, property_address, canonical_property_key, client_property_id')
-          .eq('id', reportId)
-          .maybeSingle();
-        if (subjectError) {
-          console.error('Condition record subject read failed:', subjectError);
-          return new Response(
-            JSON.stringify({ error: 'The report could not be read. Retry.' }),
-            { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          );
-        }
-        if (!subjectRow) {
-          return new Response(
-            JSON.stringify({ error: 'Report not found' }),
-            { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          );
-        }
-
-        // A condition record describes the PROPERTY, so the register is read
-        // by the report's linkage AND by the property key — two plain
-        // equality queries merged by id, never a composed .or() string.
-        const byReport = await supabase
-          .from('property_condition_records')
-          .select('*')
-          .eq('report_id', reportId)
-          .order('created_at', { ascending: false });
-        if (byReport.error) {
-          if (isMissingTableError(byReport.error)) {
-            // The honest state, not an empty register: the table is not on
-            // this deployment yet, and saying "no records" would be false.
-            return new Response(
-              JSON.stringify({ success: true, tableApplied: false, reason: TABLE_NOT_APPLIED, records: [] }),
-              { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-            );
-          }
-          console.error('Condition record read failed:', byReport.error);
-          return new Response(
-            JSON.stringify({ error: 'The condition records could not be read. Retry.' }),
-            { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          );
-        }
-
-        const rows = new Map<string, Record<string, unknown>>();
-        for (const row of byReport.data ?? []) rows.set(String(row.id), row);
-        if (subjectRow.canonical_property_key) {
-          const byProperty = await supabase
-            .from('property_condition_records')
-            .select('*')
-            .eq('canonical_property_key', subjectRow.canonical_property_key)
-            .order('created_at', { ascending: false });
-          if (!byProperty.error) {
-            for (const row of byProperty.data ?? []) rows.set(String(row.id), row);
-          }
-        }
-
-        const asOf = new Date().toISOString();
-        const expectedSubject = {
-          propertyAddress: subjectRow.property_address,
-          propertyId: subjectRow.client_property_id,
-          reportId,
-        };
-        const stored = [...rows.values()];
-        const records = stored.map((row) => ({
-          row,
-          reading: assessConditionRecord(recordFromRow(row), asOf, { expectedSubject }),
-        }));
-        const best = bestConditionRecord(stored.map(recordFromRow));
-        const bestReading = best
-          ? assessConditionRecord(best, asOf, { expectedSubject })
-          : assessConditionRecord(null, asOf);
-
-        return new Response(
-          JSON.stringify({ success: true, tableApplied: true, records, bestReading }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }

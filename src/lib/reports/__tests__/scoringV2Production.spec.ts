@@ -4,22 +4,28 @@
  * What this pins that the engine's own suites do not: the ACTIVATION record
  * and the projection onto the record every reader already understands. The
  * engine's arithmetic is the closure suite's business; this file asserts that
- * a grade the engine forms reaches the record with a `v2` stamp, that a grade
- * it cannot form is withheld with its gaps NAMED, that Growth is required
- * before a grade is issued, that the input policy still refuses the unrepaired
- * Location inputs, and that every frontend and document reader resolves the
- * stamp the way the activation intends.
+ * a grade the engine forms reaches the record with a `v2` stamp, that a
+ * qualified score carries its qualification onto every surface, that an
+ * assessment below the publication floor is withheld with its gaps NAMED, that
+ * the input policy still refuses the unrepaired Location inputs, and that
+ * every frontend and document reader resolves the stamp the way the
+ * activation intends.
  */
 import { describe, expect, it } from 'vitest';
 
 import {
   RECOMMENDATION_BY_GRADE,
+  SCORE_PUBLICATION_GATE,
   SCORING_V2_ACTIVATION,
   SCORING_V2_PRODUCTION_VERSION,
   assembleEngineInput,
   scoreForProduction,
   type ProductionScoringInput,
 } from '../market/scoringV2Production.pure';
+import {
+  SCORE_PUBLICATION_POLICY_VERSION,
+  publishedScoreLine,
+} from '../market/scorePublicationPolicy.pure';
 import { SHADOW_METHODOLOGY_VERSION, SCORING_V2_METHODOLOGY_VERSION } from '../market/shadowScorer.pure';
 import {
   NOT_ASSESSED_REASON,
@@ -91,12 +97,26 @@ const base = (over: Partial<ProductionScoringInput> = {}): ProductionScoringInpu
 });
 
 describe('the activation record', () => {
-  it('is approved, dated, referenced, and requires Growth', () => {
+  it('is approved, dated, referenced, and requires no particular dimension', () => {
     expect(SCORING_V2_ACTIVATION.approved).toBe(true);
     expect(SCORING_V2_ACTIVATION.approvedOn).toBe('2026-09-15');
     expect(SCORING_V2_ACTIVATION.reference).toBe('ME-8');
-    expect(SCORING_V2_ACTIVATION.requiredDimensions).toContain('growth');
     expect(SCORING_V2_ACTIVATION.minDimensions).toBe(3);
+    // RENEGOTIATED 18 Sep 2026 — S5/S6 §8: "do not retain a blanket
+    // Growth-required publication rule that prevents a valid three- or
+    // four-dimension assessment receiving a qualified score and grade."
+    // The field survives so the supersession is legible; it names nothing.
+    expect(SCORING_V2_ACTIVATION.requiredDimensions).toEqual([]);
+  });
+
+  it('records the publication gate that superseded the five-dimension one', () => {
+    expect(SCORE_PUBLICATION_GATE.minValidDimensions).toBe(3);
+    expect(SCORE_PUBLICATION_GATE.policyVersion).toBe(SCORE_PUBLICATION_POLICY_VERSION);
+    expect(SCORE_PUBLICATION_GATE.supersedes).toMatch(/five-dimension completion gate/);
+    expect(SCORE_PUBLICATION_GATE.supersedes).toMatch(/Growth-required/);
+    // It changes WHEN a score publishes, never what it is.
+    expect(SCORE_PUBLICATION_GATE.changes)
+      .toMatch(/No weight, anchor, threshold or measurement changes/);
   });
 
   it('the composition version dropped its shadow suffix and is the one the record names', () => {
@@ -107,31 +127,31 @@ describe('the activation record', () => {
 });
 
 /*
- * RENEGOTIATED 18 September 2026 — S5/S6 §4.
+ * RENEGOTIATED TWICE, and the second time reverses the first.
  *
- * This block was titled "a graded property" and asserted an ISSUED grade on a
- * fixture that measures three dimensions of five. Under
- * `FIVE_DIMENSION_COMPLETION_GATE` that property is no longer graded: a
- * completed final investment grade issues only when all five dimensions have
- * valid scores, and appending a basis clause to the verdict was the thing the
- * instruction rejected.
+ * 18 September 2026 (morning) — the five-dimension completion gate. This block
+ * was inverted to assert that a three-of-five property is NOT graded: the
+ * engine would have issued and the gate withheld.
  *
- * The assertions are not deleted, they are inverted and sharpened — the
- * valuable fact is now that the ENGINE would have issued and the GATE is what
- * withheld it, which is a different state from the engine failing to form a
- * grade and must not be reported as the same one. The issuing path keeps its
- * coverage in `assessmentCompletion.spec.ts`, where a five-of-five input is
- * constructible; it is not constructible here, because Risk cannot score until
- * both halves of its method are approved, and that is the finding rather than
- * a gap in the test.
+ * 18 September 2026 (S5/S6 §4) — that gate is superseded. Three validly
+ * assessed dimensions now receive a QUALIFIED score and grade computed
+ * proportionally over their original weights, and withholding a real finding
+ * about 70% of the matrix told the reader less than the evidence supported.
+ * So the block returns to asserting an issued grade, with what is new being
+ * the qualification that must travel with it — the dimension count, the
+ * original weight coverage, and a verdict sentence that cannot claim a
+ * breadth the run did not reach.
+ *
+ * The withheld path keeps its coverage below, on a fixture that genuinely
+ * falls under three.
  */
-describe('a property measured on three of five — the engine forms a grade, the gate withholds it', () => {
+describe('a property measured on three of five — a qualified score and grade issue', () => {
   const record = scoreForProduction(base());
 
-  it('keeps the v2 stamp and withholds the completed grade', () => {
+  it('keeps the v2 stamp and issues the qualified grade', () => {
     expect(record.policy.scoringSystem).toBe('scoring-v2');
     expect(record.policy.authority).toBe('v2');
-    expect(record.policy.gradeIssued).toBe(false);
+    expect(record.policy.gradeIssued).toBe(true);
     expect(record.policy.dimensionScoresAuthoritative).toBe(true);
     expect(record.policy.methodologyVersion).toBe('2.1.0');
     expect(record.policy.activation).toEqual({ reference: 'ME-8', approvedOn: '2026-09-15', productionVersion: SCORING_V2_PRODUCTION_VERSION });
@@ -139,46 +159,64 @@ describe('a property measured on three of five — the engine forms a grade, the
     expect(authorityOf(record)).toBe('v2');
   });
 
-  it('records that the ENGINE would have issued — the gate is the cause, not missing evidence', () => {
-    // `withheldBy` is the engine's own verdict and stays null: it formed a
-    // composite the floor admits. The completion gate is what stopped the
-    // letter, and the label says so rather than reporting insufficient
-    // evidence, which would send an operator looking for the wrong thing.
+  it('carries the publication decision: three valid, two unassessed, weights renormalised', () => {
+    const pub = record.publication;
+    expect(pub.publishes).toBe(true);
+    expect(pub.qualified).toBe(true);
+    expect(pub.validCount).toBe(3);
+    expect(pub.totalCount).toBe(5);
+    expect(pub.assessed.map((d) => d.dimension).sort()).toEqual(['demand', 'growth', 'yield']);
+    expect(pub.unassessed.map((d) => d.dimension).sort()).toEqual(['location', 'risk']);
     expect(record.v2.withheldBy).toBeNull();
-    expect(record.completion.mayIssueCompletedGrade).toBe(false);
-    // On a FIRST run the state is `acquisition`, and that is right: Location's
-    // gap is closed by regenerating with an acquisition stamp, which is a
-    // retryable act, and attempts remain. It becomes `evidence_required` only
-    // once retrying can no longer help — the distinction that stops a
-    // permanently blocked assessment looking like a slow one for ever.
-    expect(record.completion.state).toBe('acquisition');
-    expect(record.completion.attemptsRemaining).toBeGreaterThan(0);
-    const spent = scoreForProduction({ ...base(), acquisitionAttempts: 3 });
-    expect(spent.completion.state).toBe('evidence_required');
-    expect(spent.completion.attemptsRemaining).toBe(0);
-    expect(record.coverage.partialLabel).toContain('Assessment incomplete');
-    expect(record.coverage.partialLabel).toContain('5 dimensions');
-  });
 
-  it('names a specific act and an actor for each of the two outstanding dimensions', () => {
-    expect(record.completion.outstanding.map((d) => d.dimension).sort()).toEqual(['location', 'risk']);
-    for (const d of record.completion.outstanding) {
-      expect(d.recovery, d.dimension).toBeTruthy();
-      expect(d.recovery!.action.length).toBeGreaterThan(25);
-      expect(d.score, 'no substitute value').toBeNull();
+    // ORIGINAL weight coverage: growth .40 + yield .15 + demand .15 = .70.
+    expect(pub.nominalWeightCovered).toBeCloseTo(0.70, 6);
+    // Effective weights renormalise to 1 across the three.
+    const effSum = pub.assessed.reduce((s, d) => s + (d.effectiveWeight ?? 0), 0);
+    expect(effSum).toBeCloseTo(1, 4);
+    expect(pub.assessed.find((d) => d.dimension === 'growth')!.effectiveWeight)
+      .toBeCloseTo(0.40 / 0.70, 4);
+    // An unassessed dimension carries NO effective weight and no substitute score.
+    for (const d of pub.unassessed) {
+      expect(d.effectiveWeight, d.dimension).toBeNull();
+      expect(d.score, d.dimension).toBeNull();
+      expect(d.reason, d.dimension).toBeTruthy();
+      // …and keeps its ORIGINAL weight on the record, so coverage is legible.
+      expect(d.weight, d.dimension).toBeGreaterThan(0);
     }
-    // Re-running a fetch cannot produce a building inspection report.
-    expect(record.completion.outstanding.find((d) => d.dimension === 'risk')!.recovery!.retryable)
-      .toBe(false);
   });
 
-  it('publishes no letter and no total, and keeps the engine\'s own figures on `v2`', () => {
-    expect(record.grade).toBeNull();
-    expect(record.totalScore).toBeNull();
-    // The engine's figures are retained — withholding the letter is not
-    // withholding the measurement, and a reviewer can still see what it formed.
-    expect(typeof record.v2.score).toBe('number');
-    expect(record.v2.grade).toMatch(/^(A\+|A|B\+|B|C\+|C|D|F)$/);
+  it('the qualification travels on the one text field every surface already reads', () => {
+    expect(record.coverage.partialLabel).toContain('Qualified score');
+    expect(record.coverage.partialLabel).toContain('3 of 5 assessed dimensions');
+    // Dimension COUNT and original WEIGHT coverage are stated separately —
+    // S5/S6 §8 keeps them apart, and 3-of-5 is not 70% and neither is a
+    // statement about how well the three were evidenced.
+    expect(record.coverage.partialLabel).toContain('70%');
+    expect(record.coverage.dimensionsScored).toBe(3);
+    expect(record.coverage.weightCovered).toBeCloseTo(0.70, 2);
+    expect(record.coverage.dataInsufficient).toBe(false);
+    // The policy's own published line, for the surfaces that print it whole.
+    expect(publishedScoreLine(record.publication))
+      .toBe(`Investment score: ${record.totalScore}/100 — based on 3 of 5 assessed dimensions.`);
+  });
+
+  it('publishes the engine\'s own figure — one number, not a second arithmetic', () => {
+    expect(record.grade).toMatch(/^(A\+|A|B\+|B|C\+|C|D|F)$/);
+    expect(typeof record.totalScore).toBe('number');
+    // §7's identity, checked against the formula rather than the engine: the
+    // score is Σ(score × original weight) / Σ(original weights of valid),
+    // rounded ONCE. The engine and the publication policy compute it through
+    // the same leaf, so the two must agree exactly — if they ever diverge a
+    // report and its assessment page would print different numbers.
+    const pub = record.publication;
+    const manual = pub.assessed.reduce((s, d) => s + (d.score as number) * d.weight, 0)
+      / pub.assessed.reduce((s, d) => s + d.weight, 0);
+    expect(pub.overallScoreExact).toBeCloseTo(manual, 9);
+    expect(pub.overallScore).toBe(Math.round(manual));
+    expect(record.totalScore).toBe(pub.overallScore);
+    expect(record.v2.score).toBe(record.totalScore);
+    expect(record.v2.grade).toBe(record.grade);
     // RENEGOTIATED 18 Sep 2026. This asserted the recommendation was EXACTLY
     // `RECOMMENDATION_BY_GRADE[grade]`, which pinned the defect: this fixture
     // measures three dimensions of five, and those sentences are written as
@@ -192,12 +230,15 @@ describe('a property measured on three of five — the engine forms a grade, the
     // The sentence still LEADS with the table's wording — that is asserted —
     // and now names the basis. `withheldAssessmentReading.spec.ts` pins the
     // rule itself, including that a full assessment is not qualified at all.
-    // No verdict sentence is published either: a recommendation keyed on a
-    // letter nobody issued is the caveat-instead-of-a-gate defect again.
-    for (const base of Object.values(RECOMMENDATION_BY_GRADE)) {
-      expect(record.recommendation).not.toContain(base);
-    }
-    expect(record.coverage.dataInsufficient).toBe(true);
+    // The verdict leads with the table's own wording and names the basis …
+    expect(record.recommendation).toMatch(/^[A-Z/ ]+ - /);
+    expect(record.recommendation).toContain('Assessed on 3 of 5 dimensions');
+    expect(record.recommendation).toMatch(/capital growth|rental yield|demand/);
+    // … and never claims a breadth the run did not reach. Those two phrases
+    // are written as though every dimension had been measured, and beside
+    // "assessed on 3 of 5" they contradict the sentence they sit in.
+    expect(record.recommendation).not.toContain('across all metrics');
+    expect(record.recommendation).not.toContain('in most areas');
     expect(record.coverage.dimensionsScored).toBe(3);
     expect(record.coverage.totalDimensions).toBe(5);
   });
@@ -218,10 +259,10 @@ describe('a property measured on three of five — the engine forms a grade, the
     expect(b.yieldScore.details).toMatch(/yield/i);
   });
 
-  it('names the dimensions it did NOT measure, and the engine still does not count them against itself', () => {
-    // `withholdsGrade` is the ENGINE's field and stays false — its own floor
-    // was met. The completion gate is a separate, later decision, which is why
-    // it is read from `completion` and not from here.
+  it('names the dimensions it did NOT measure, and counts none of them against itself', () => {
+    // `withholdsGrade` is false because nothing was withheld: under §7 an
+    // unassessed dimension is disclosed and excluded from the weighting, not
+    // a reason to publish nothing and not a penalty on what was measured.
     expect(record.gradeGaps.map((g) => g.dimension).sort()).toEqual(['location', 'risk']);
     for (const gap of record.gradeGaps) {
       expect(gap.withholdsGrade).toBe(false);
@@ -231,19 +272,22 @@ describe('a property measured on three of five — the engine forms a grade, the
     expect(record.notAssessed).toEqual({ location: NOT_ASSESSED_REASON.location, risk: NOT_ASSESSED_REASON.risk });
   });
 
-  it('is what the document and the page draw as a withheld grade', () => {
-    expect(publishableGrade(record)).toBeFalsy();
+  it('reaches the document and the page as an issued grade, with the qualification', () => {
+    expect(publishableGrade(record)).toBeTruthy();
     const summary = getInvestmentScoreSummary({ investment_score: record } as never);
-    expect(summary.grade).toBeNull();
-    expect(summary.withheld).toBeTruthy();
+    expect(summary.grade).toBe(record.grade);
+    expect(summary.withheld).toBeFalsy();
+    // The qualification is not optional on the way to a shorter surface.
+    expect(summary.partialLabel).toContain('3 of 5 assessed dimensions');
     const resolved = resolveInvestmentGrade([{ id: 'r1', created_at: NOW.toISOString(), status: 'completed', investment_score: record } as never]);
-    expect(resolved.grade).toBeNull();
+    expect(resolved.grade).toBe(record.grade);
+    expect(resolved.partialLabel).toContain('3 of 5 assessed dimensions');
   });
 
-  it('the report fact contract reads the grade as withheld under v2', () => {
+  it('the report fact contract reads the grade as issued under v2', () => {
     const facts = buildReportFactContract({ report: { investment_score: record }, observedAt: NOW });
     expect(facts.scoring.authority).toBe('v2');
-    expect(facts.scoring.gradeIssued).toBe(false);
+    expect(facts.scoring.gradeIssued).toBe(true);
     // The dimension scores are still authoritative — withholding the letter
     // does not demote the measurements underneath it.
     expect(facts.scoring.dimensionScoresAuthoritative).toBe(true);
@@ -278,10 +322,18 @@ describe('the withheld grade — the 291 Stone Mason Drive shape', () => {
     expect(record.grade).toBeNull();
     expect(record.totalScore).toBeNull();
     expect(record.recommendation).toBe(OVERALL_GRADE_UNAVAILABLE.explanation);
+    // §4: the report is produced without a score and says BRIEFLY why. The
+    // generic "insufficient verified evidence" sentence read as a fault and
+    // sent an operator looking for one; the policy's sentence names how many
+    // dimensions were needed and which one was actually assessed.
+    expect(record.evidenceStatement!.explanation)
+      .toBe(record.publication.withheldReason);
+    expect(record.evidenceStatement!.explanation).toContain('at least 3 of the 5');
+    expect(record.evidenceStatement!.explanation).toContain('rental yield');
     expect(record.evidenceStatement).toEqual({
       heading: OVERALL_GRADE_UNAVAILABLE.heading,
       value: OVERALL_GRADE_UNAVAILABLE.value,
-      explanation: OVERALL_GRADE_UNAVAILABLE.explanation,
+      explanation: record.publication.withheldReason,
     });
     expect(record.coverage.dataInsufficient).toBe(true);
     expect(record.coverage.dimensionsScored).toBe(1);
@@ -322,24 +374,63 @@ describe('the withheld grade — the 291 Stone Mason Drive shape', () => {
   });
 });
 
-describe('Growth is required before a grade is issued', () => {
-  it('three measured dimensions without Growth withhold under the activation condition, with the reason named', () => {
+describe('Growth is no longer required before a grade is issued', () => {
+  // RENEGOTIATED 18 Sep 2026 — S5/S6 §8 forbids "a blanket Growth-required
+  // publication rule that prevents a valid three- or four-dimension
+  // assessment receiving a qualified score and grade". The rule rested on the
+  // delivered-points ceiling, which the same section removed; with no ceiling
+  // the premise is gone and three dimensions without Growth are scored across
+  // the three they have.
+  it('three measured dimensions without Growth receive a qualified score, with the gap still named', () => {
     const record = scoreForProduction(base({
       market: { points: { ...demandPoints() }, providersConsulted: ['domain', 'abs_erp'], providersUnavailable: [{ provider: 'domain', reason: 'HTTP 404 — no suburb-performance series for that state, suburb and postcode' }] },
       location: { walkScore: 72, commuteTimeCBD: 38, schoolsNearby: 5 },
       verifiedInputs: ['walkScore', 'commuteTimeCBD', 'schoolsNearby'],
     }));
     expect(record.policy.measuredDimensions.sort()).toEqual(['demand', 'location', 'yield']);
-    expect(record.v2.score).not.toBeNull(); // the engine formed a composite…
-    expect(record.policy.gradeIssued).toBe(false); // …and the activation withholds it
-    expect(record.v2.withheldBy).toBe('required_dimension');
-    expect(record.totalScore).toBeNull();
-    expect(record.grade).toBeNull();
-    expect(record.coverage.partialLabel).toMatch(/^Grade withheld — growth not measured \(3 of 5 dimensions measured\)/);
+    expect(record.v2.score).not.toBeNull();
+    expect(record.policy.gradeIssued).toBe(true);
+    expect(record.v2.withheldBy).toBeNull();
+    expect(record.totalScore).toBe(record.publication.overallScore);
+    expect(record.grade).toMatch(/^(A\+|A|B\+|B|C\+|C|D|F)$/);
+    expect(record.coverage.partialLabel).toContain('3 of 5 assessed dimensions');
+    // Location .25 + yield .15 + demand .15 = .55 of the original matrix.
+    expect(record.publication.nominalWeightCovered).toBeCloseTo(0.55, 6);
+
+    // Growth is DISCLOSED as unassessed, with what would close it, and
+    // withholds nothing — which is the whole change.
     const growth = record.gradeGaps.find((g) => g.dimension === 'growth')!;
-    expect(growth.withholdsGrade).toBe(true);
+    expect(growth.withholdsGrade).toBe(false);
+    expect(growth.remedy.length).toBeGreaterThan(20);
     const risk = record.gradeGaps.find((g) => g.dimension === 'risk')!;
     expect(risk.withholdsGrade).toBe(false);
+
+    // And the evidence safeguard that DID survive still binds: with no
+    // capital-growth evidence the letter cannot reach A or A+ however
+    // strong the three assessed dimensions are.
+    expect(record.v2.gradeEligibility!.ceiling).toBe('B+');
+  });
+
+  it('but two valid dimensions still publish nothing at all', () => {
+    // Below the floor: no score, no grade, no verdict — and a sentence that
+    // says which dimensions were assessed rather than "insufficient evidence".
+    const record = scoreForProduction(base({
+      market: { points: {}, providersConsulted: [], providersUnavailable: [] },
+      location: { walkScore: 72, commuteTimeCBD: 38, schoolsNearby: 5 },
+      verifiedInputs: ['walkScore', 'commuteTimeCBD', 'schoolsNearby'],
+    }));
+    expect(record.policy.measuredDimensions.sort()).toEqual(['location', 'yield']);
+    expect(record.publication.publishes).toBe(false);
+    expect(record.publication.validCount).toBe(2);
+    expect(record.totalScore).toBeNull();
+    expect(record.grade).toBeNull();
+    expect(record.coverage.dataInsufficient).toBe(true);
+    expect(publishableGrade(record)).toBeFalsy();
+    expect(gradedLine(record)).toBeUndefined();
+    // §4: "briefly explaining why".
+    expect(record.evidenceStatement!.explanation).toContain('at least 3');
+    expect(record.evidenceStatement!.explanation).toMatch(/location and rental yield|rental yield and location/);
+    expect(record.recommendation).toBe(OVERALL_GRADE_UNAVAILABLE.explanation);
   });
 });
 
@@ -385,54 +476,5 @@ describe('invariants the activation must keep', () => {
     const weak = scoreForProduction(base({ market: { points: { ...growthPoints(1.0), ...demandPoints() }, providersConsulted: ['domain', 'abs_erp'], providersUnavailable: [] } }));
     const strong = scoreForProduction(base({ market: { points: { ...growthPoints(8.0), ...demandPoints() }, providersConsulted: ['domain', 'abs_erp'], providersUnavailable: [] } }));
     expect(order.indexOf(strong.grade as string)).toBeGreaterThanOrEqual(order.indexOf(weak.grade as string));
-  });
-});
-
-/*
- * S5/S6 §3 — condition evidence reaches the assessment as EVIDENCE.
- *
- * The generator reads the property's best subject-bound condition record and
- * passes its reading in; the risk gap names what is on file. Nothing scores:
- * `CONDITION_METHOD_ACTIVATION` is null, and the whole record apart from the
- * risk gap's sentence must be unchanged by the input.
- */
-describe('condition evidence rides the risk gap and moves no score', () => {
-  const baseline = scoreForProduction(base());
-
-  it('is unchanged when no reading is supplied — null and absent are one state', () => {
-    expect(JSON.stringify(scoreForProduction(base({ conditionReading: null }))))
-      .toBe(JSON.stringify(baseline));
-  });
-
-  it('names an admissible record on file, awaiting activation, and moves nothing', () => {
-    const record = scoreForProduction(base({
-      conditionReading: {
-        admissible: true,
-        refusal: null,
-        statement: 'A building inspection report issued by Hunter Building Consultants…',
-      },
-    }));
-    const gap = record.gradeGaps.find((g) => g.dimension === 'risk')!;
-    expect(gap.detail).toContain('admissible for the building question is on file');
-    expect(gap.detail).toContain('contributes no points');
-    // Everything that scores is byte-identical to the baseline.
-    expect(record.grade).toBe(baseline.grade);
-    expect(record.totalScore).toBe(baseline.totalScore);
-    expect(record.breakdown).toEqual(baseline.breakdown);
-    expect(record.completion.scoredCount).toBe(baseline.completion.scoredCount);
-    expect(record.completion.mayIssueCompletedGrade).toBe(baseline.completion.mayIssueCompletedGrade);
-  });
-
-  it("carries the validator's own sentence for evidence that cannot clear the dwelling", () => {
-    const statement = 'A building inspection report issued by X on 2026-06-02, over part of the '
-      + 'dwelling, records 1 major defect. It is shown as evidence; no condition scale is '
-      + 'authorised for this deployment yet, so it contributes no points.';
-    const record = scoreForProduction(base({
-      conditionReading: { admissible: false, refusal: 'not_verified', statement },
-    }));
-    const gap = record.gradeGaps.find((g) => g.dimension === 'risk')!;
-    expect(gap.detail).toContain('Condition evidence on file:');
-    expect(gap.detail).toContain(statement);
-    expect(record.breakdown).toEqual(baseline.breakdown);
   });
 });
