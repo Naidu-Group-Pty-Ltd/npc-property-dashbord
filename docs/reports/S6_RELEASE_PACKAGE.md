@@ -2,7 +2,7 @@
 
 *Prepared 18 September 2026 on `claude/adoring-hopper-g02tdt` (PR
 [#2692](https://github.com/Naidu-Group-Pty-Ltd/npc-property-dashbord/pull/2692),
-draft). Release-candidate head **`861315972ab3f3f3d6a0a14bd92225f4ccade300`**;
+draft). Release-candidate head **`f1fe4d5f01c4f1b9d91c7d081d22f9cdd032eecb`**;
 its CI is read green in §6. **The stamp is re-checked against the PR's final
 head before merge** — a release is claimed only against a head whose CI has been
 read green, never one still running.*
@@ -71,11 +71,27 @@ isolated-cluster harness.
 `docs/reports/RISK_METHOD_RECOMMENDATION.md` §0 records which half of that
 recommendation stands and which is deferred.
 
+**Nothing else is deferred.** This section covers the condition-evidence path
+and the completion card under §1, and those alone. The §4 content work
+(infrastructure, the educational treatment, the calibration conclusion) and the
+§5 acceptance run are **in** this release — §9.1 states each one's evidence, and
+§9.4 states what is genuinely blocked and on what.
+
 ## 3. Schema dependencies
 
-**None.** There is no migration in this release. The only one this branch ever
-carried left with the deferred work, so `apply-migration.yml` is not part of
-this deploy.
+**None**, and for the forward investment programme that is a **design decision
+rather than a leftover**.
+
+The one migration this branch ever carried left with the deferred work. The
+programme added afterwards (§4 of S5/S6) could have been a table, an ingest
+function and a pg_cron schedule in the shape of `amenity_register` — and it is
+not, because `datastore_search_sql` with a bounding box answered the production
+egress in **0.59 seconds** for a 25 km query. A live read in
+`planning-data-service`, beside every other register, is both cheaper to
+operate and the thing §4 asked for: *"prefer existing acquisition,
+evidence-storage and composition mechanisms."*
+
+`apply-migration.yml` is therefore not part of this deploy.
 
 ## 4. Deploy order
 
@@ -107,8 +123,42 @@ this deploy.
    bundle is the step that makes the two rendering fixes real; until it runs,
    new documents are drawn by the previously published compiler.
 
-4. **Nothing else.** No migration, no template re-seed, no render-container
+4. **The planning cache invalidates itself — nothing to run.**
+   `planningAnswerVersion` goes **`c2` → `c3`** because the answer now carries
+   `investmentProgramme`. The version is part of the cache key, so a `c2` row
+   simply stops matching and ages out under the TTL it already has: nothing is
+   migrated, deleted or rewritten, and a miss costs one re-fetch of a free,
+   open-licensed register. Serving a `c2` row would report a property as having
+   no funded investment near it when the programme was never asked — which is
+   the fault `c2` itself exists for.
+
+5. **Nothing else.** No migration, no template re-seed, no render-container
    change, no secret, no cron.
+
+### 4.1 Every changed report-rendering dependency, traced
+
+§6 asks for all of them, not only the cover and contents fixes. This is the
+complete set, by where it takes effect.
+
+| change | module | takes effect at |
+| --- | --- | --- |
+| the PDF/UA cover `<h1>` is no longer painted | `src/lib/reportTemplate/htmlRenderer.ts` | **bundle publish** |
+| a contents tier is a level whose sections open more than one page | `src/lib/reportTemplate/narrativeIndex.ts`, `blocks/toc.html.ts` | **bundle publish** |
+| unsupported claims corrected before a document is stored | `_shared/reports/investment/evidenceClaims.pure.ts` | edge deploy — `generate-investment-report`, `fork-investment-report`, `condenseCompose` |
+| a gap cell removed from an at-a-glance strip on READ | `_shared/reports/investment/derivedHygiene.pure.ts` | edge deploy — and it reaches **already-stored** documents, because `presentStoredMarkdown` runs where content is read |
+| the sentence splitter is total, and a citation stays with its claim | `_shared/reports/investment/scoreClaims.pure.ts` | edge deploy — changes what the existing score guard removes |
+| `strategic` admitted as a QA tier; the fork validates its children | `_shared/compassQAValidator.ts` (+ the `src/lib/reports` mirror) | edge deploy; the mirror at bundle publish |
+| the forward investment programme, read live | `_shared/planning/investmentProgramme.pure.ts`, `planning-data-service` | edge deploy |
+| what each infrastructure finding means | `_shared/planning/infrastructureGuide.pure.ts`, `infrastructureEvidence.pure.ts` | edge deploy |
+| an instrument's own reference preserved at the parser boundary | `_shared/planning/planningSources.pure.ts` | edge deploy |
+| the Briefing stops composing the financial chapters | `sectionRegistry.pure.ts`, `condenseCompose.pure.ts` | edge deploy |
+
+**Two of these reach documents that already exist**, which is unusual and is
+stated so it is expected: `stripOwnGapCells` and the healed sentence splitter
+both run on the READ path, so a stored report re-rendered after this release
+loses a gap cell it used to draw. Nothing stored is rewritten — the change is
+to what a reader is shown, which is §8 of `RUNTIME_CONSOLIDATION.md`'s rule and
+the same judgement the publication-policy disclosure was recorded under.
 
 ## 5. Rollback
 
@@ -131,9 +181,10 @@ The claim standard: checks are read on the **exact release-candidate head**
 after the last push, and a check still running is reported as running, never as
 passed.
 
-**Read 18 September 2026 11:53 UTC on head
-`861315972ab3f3f3d6a0a14bd92225f4ccade300`** — all six checks completed
-`success`:
+**Read 18 September 2026 16:41 UTC on head
+`f1fe4d5f01c4f1b9d91c7d081d22f9cdd032eecb`** — CI run 6944, `head_sha` confirmed
+against the run record rather than inferred from timing. All six checks
+completed `success`:
 
 | check | conclusion |
 | --- | --- |
@@ -144,8 +195,19 @@ passed.
 | `pdf-import-regression` | success |
 | `pdf-import-release-gate` | success |
 
-Local full suite on this head's parent set: **1,270 files / 23,576 tests
-passed, 25 skipped, 0 failed**.
+Local full suite on this head's lineage: **1,279 files / 23,752 tests passed,
+25 skipped, 0 failed**, plus 5,744 in `src/lib/reports` re-run after the
+acceptance-run fixes.
+
+One check went red on the way and is recorded rather than smoothed over: on
+head `02efd6edf` the `security` job failed because `deno check` found two new
+type errors in `fork-investment-report` — the fork passed `'financial'` and
+`'strategic'` to `runQAValidation`, and neither is a member of `QATier`. The
+repository's own `tsc` covers `src` and cannot see `supabase/functions`, which
+is exactly why that gate exists; it was invisible to every local check until
+Deno was run (it is installed at `/root/.deno/bin/deno` and is not on `PATH`,
+which is why an earlier local run reported `spawnSync deno ENOENT` and passed).
+Fixed on `0143ea285`; green since.
 
 ## 7. Verification standing
 
@@ -165,9 +227,30 @@ Separately, per output: **implemented / tested / visually verified / released.**
 | Ownership matrix (§9) | n/a — analysis | generated from the registry by execution | n/a | n/a |
 | Cover heading duplicate (§9) | yes | pinned by the renderer spec | **yes** — text layer measured on all five tiers; nothing at the origin | no |
 | Contents tier rule (§9) | yes | 8 specs carrying all three measured narrative shapes | **yes** — strategic 1→12 rows, financial 1→11, Compass unchanged at 16 | no |
-| Absence never drawn as a finding (§9) | yes | 4 specs | **yes** — 4 of 194 glance cells measured across the seven retained reports | no |
+| Absence never drawn as a finding (§9) — **PARTLY, corrected 18 Sep** | prevention yes, correction added later | 4 specs + 13 on the corrector | **yes, twice** — 4 of 194 glance cells measured across the seven retained reports; then **the same defect found again on two rendered documents** in the acceptance run | no |
 | The document never names its source (§9) | yes | 5 specs incl. a scan of every prompt line | **yes** — Briefing p4, and 4 occurrences on row `89b451f6` | no |
 | Infrastructure identity before dedup (§9) | yes | 8 specs, 4 asserting what must NOT merge | n/a — no fixture carries `planningData`; found by execution | no |
+
+### One row in that table was wrong, and this is the correction
+
+**"Absence never drawn as a finding" was reported as done and was not.** The
+earlier entry recorded a rule added to `compassDocumentContract` — which
+forbids `⚠ Exact bed/bath/car details not provided` by name and quotes it
+verbatim — and 4 of 194 glance cells measured. That is a **detection and a
+prevention**, and the row read as a repair.
+
+It is not the same thing. The rule reaches the MODEL, so it governs prose
+written after it shipped and does nothing for a document already stored. The
+acceptance run rendered nine documents and **two of them still drew exactly the
+forbidden string**, because both were generated before the rule existed. The
+scrub that was supposed to catch it, `stripPlaceholderRows`, could not see
+them: they are neither a table row nor a bullet but cells inside a
+`{{glance:}}` payload.
+
+`stripOwnGapCells` is the correction, added 18 Sep and running on the READ
+path. The row above now says "partly" and names both measurements, because a
+release package that reports a detected defect as repaired is the specific
+thing S5/S6 §6 asks to be corrected — and this is the instance of it.
 
 **Genuinely remaining, and why — stated rather than implied:**
 
@@ -235,22 +318,87 @@ Separately, per output: **implemented / tested / visually verified / released.**
 | [`RISK_METHOD_RECOMMENDATION.md`](./RISK_METHOD_RECOMMENDATION.md) | §0 records what is deferred and what stands |
 | [`evidence/FIVE_TIER_PAGE_READ_2026-09-18.md`](./evidence/FIVE_TIER_PAGE_READ_2026-09-18.md) | §9/§10 — all five tiers rendered and read page by page; three defects fixed at the producer; the two short Compass pages diagnosed |
 | [`evidence/COVER_HEADING_DUPLICATE_2026-09-18.md`](./evidence/COVER_HEADING_DUPLICATE_2026-09-18.md) | the cover and contents defects, measured before and after |
+| [`S6_ACCEPTANCE_RUN.md`](./S6_ACCEPTANCE_RUN.md) | §5 — the acceptance run: what was executed and what could not be, the two blockers with their minimum actions, nine documents and 207 pages measured, the two defects the page read found |
+| [`evidence/nsw-dcj-gross-yield-distribution-2026Q2.json`](./evidence/nsw-dcj-gross-yield-distribution-2026Q2.json) | §4 — the published benchmark the calibration conclusion rests on, all 398 rows with their limitations |
+| [`evidence/s6-acceptance/`](./evidence/s6-acceptance/) | the per-document journey and measurement records for all nine |
 
-## 9. Closeout estimate
+## 9. The closeout
 
-Stated as work, not as a date, because three of the five items are blocked on
-something outside this branch and an estimate that hides that is not an
-estimate.
+Rewritten 18 September 2026. The estimate this replaces is kept nowhere,
+because three of its five rows have been answered and a stale estimate beside a
+finished item is worse than none.
 
-| item | shape | blocked on | estimate once unblocked |
-| --- | --- | --- | --- |
-| **Merge this release** | approval + one CI read on the final head | the owner's gate | same day |
-| **§10 — ten PDFs, every page read** | drive Annabelle and Pallas through real generation on five tiers each, read all ~150 pages, complete R1–R12 on disposable records | **the authorised environment.** Generation spends a forwarded vendor credential and writes production rows; the A$25 test budget is untouched (A$0.00 spent) | 1 working day for the runs and the page read, plus whatever the environment takes to provision |
-| **The Growth data question** | one production `SELECT` against `market_sales_medians` per corpus state | **a production read I cannot make** — the SQL tool is unavailable or denied in this session, and that restriction is not to be routed around | minutes to answer; if empty, the ingest is a day's work and it is the single highest-impact item in the programme |
-| **The two disputed anchors** (§6) | move `GROSS_YIELD_ANCHORS` and `WALK_ANCHORS` off corpus medians onto published external distributions | **a published benchmark carrying its geography, dwelling type, period and sample limits** — and the Growth question above, because calibrating while Growth is missing fits the *absence of Growth* into the anchors | 1–2 days per anchor once the distribution is in hand |
-| **§9 residue** (infrastructure coverage, the two short pages, the educational voice) | register acquisition; a packer re-calibration against the pinned engine; a document-wide explanatory pass | nothing — but each is a separate piece of work rather than the tail of this one | ~1 day, ~2–3 days, ~2 days respectively |
+### 9.1 Requirement → evidence
 
-**What that means in one line.** The release itself is ready for the gate now.
-§10 is a day's work the moment an authorised environment exists. Everything
-else is either a single production read away from being answerable or is
-honest, separable follow-on work that should not hold this release.
+| requirement (S5/S6) | state | evidence |
+| --- | --- | --- |
+| §1 preserve scope, repairs, journey, financials, history | held | no screen, form, mandatory input or workflow added; no stored row rewritten; `reconcileStoredFinancials`, the loan ledger, CGR inputs and the Cash Flow connection untouched — §7's table and the full suite |
+| §1 the approved scoring policy (5 sought, 3–4 qualified, none below 3) | held | `scorePublicationPolicy` 1.0.0 + `proportionalWeighting`, 30 specs over all 32 availability subsets |
+| §2 clear the actual CI failure without skipping ownership or committing customer data | **done** | `syntheticTierRows.ts`; `tierOwnership.spec.ts` split into a committed synthetic half and a `skipIf` replay half, with an arrangement guard that the two carry identical key sets; 14 pass / 6 skip with fixtures hidden; a guard test forbids any unguarded `.verify/` read |
+| §3 deduplication — identifiers confirm, absence never does | **done** | `compareIdentity` (`confirmed`/`contradicted`/`unconfirmed`); only `confirmed` suppresses; `unconfirmedDuplicateOf` retains and discloses; `id_reference` preserved at the parser boundary; 25 specs |
+| §3 rule 13 — a listing is not a planning authority, but is authoritative for identity facts | **done** | split into `portal-sourced-hazard-clearance` (error) and `listing-portal-as-source` (warning); 15 specs with positive and negative cases; fork and condensation paths asserted |
+| §3 a detected error is not a corrected report | **done** | `evidenceClaims.pure.ts` corrects on all three generation paths, correcting **before** validating; 21 specs; every removal filed on the row, the fork response and the hygiene block |
+| §4 infrastructure from current official sources, reconciled first | **done** | QTRIP re-measured: the 2024 edition is two behind, the current one dropped `Local Government` for a midpoint, the newest is published and **empty**; live read, no migration; `investmentProgramme.spec.ts`, 37 assertions against the publisher's own committed answer |
+| §4 "no equivalent dataset" ≠ "no programme" | **done** | `PROGRAMME_PUBLISHERS` names a publisher and programme for all eight jurisdictions; a test rejects any note readable as a jurisdiction publishing nothing |
+| §4 distinguish relevance, proposal, approval, funding, construction, delivery | **done** | measured distance from the subject; `programmeStanding` maps narrowly and never reads funding as a start on site; `stageSentence` says a construction start is a start; `horizonCaveat` states the window |
+| §4 the Lot 20427 educational treatment | **done** | `infrastructureGuide.pure.ts` — what / limitations / next action for eight finding kinds plus the not-searched absence; 12 specs, no number admitted |
+| §4 conclude the calibration | **done** | benchmark sourced (NSW DCJ, 398 postcodes, median 3.41%); **anchors retained**, both reasons and both reopening conditions recorded; 398 rows on file |
+| §5 ten PDFs, every page read | **nine produced, every page read; the tenth and the two named subjects are blocked** | [`S6_ACCEPTANCE_RUN.md`](./S6_ACCEPTANCE_RUN.md) — 207 pages measured, two real defects found and fixed |
+| §6 one release package | this document + `S6_ACCEPTANCE_RUN.md` | — |
+
+### 9.2 Scoring — before and after
+
+**No score changed in this release, and that is the result rather than an
+omission.**
+
+| | before | after |
+| --- | --- | --- |
+| a 5-dimension assessment | published | published, unchanged |
+| a 3- or 4-dimension assessment | **grade withheld** | published, **qualified** — "3 of the 5 assessment dimensions", with the proportional arithmetic |
+| a 1- or 2-dimension assessment | withheld | withheld |
+| `GROSS_YIELD_ANCHORS` | 4.36% at 50 points | **4.36% at 50 points — retained**, now against a published benchmark rather than a deferral |
+| `WALK_ANCHORS` | corpus median mid-range | **retained**; no published distribution exists to move to |
+| a stored report's score | as issued | **as issued** — nothing is recomputed or rewritten |
+
+The expected movement on the two named subjects is **a prediction, not a
+result**, exactly as §5 requires: it cannot be tested until their rows are
+reachable (§9.4).
+
+### 9.3 Preservation
+
+| | result |
+| --- | --- |
+| stored scores, grades, financials | untouched — the policy applies to new generations and regenerations only, and every score keeps its own stamp |
+| user edits | untouched; the journey harness asserts an edit persists through the broker on every run |
+| issued PDFs | untouched; nothing republishes |
+| historical rows | no migration, no backfill, no `UPDATE` |
+| the one deliberate change to an existing document | a **re-rendered** report loses a gap cell it used to draw, and a re-rendered report carries the score qualification. Both are changes to what a reader is SHOWN, never to a stored byte, and both are recorded rather than left to be discovered |
+
+### 9.4 Remaining limitations, their effect, and their disposition
+
+| limitation | effect | disposition |
+| --- | --- | --- |
+| **The two subject rows are unreachable** — no `execute_sql` on the Supabase MCP server, and neither subject is among the 44 local fixtures | §5's ten PDFs on Annabelle and Pallas cannot be produced; nine on other production rows were | **blocked, one action**: expose `execute_sql`, or place the two rows under `.verify/fixtures/`. Either is sufficient. Not follow-on work — it is this requirement, waiting on access |
+| **The candidate is not deployed** | fresh generation through the candidate cannot be exercised anywhere | **sequencing**: it becomes possible the moment this release is deployed, which is what the gate decides |
+| **Growth is still absent on most records** | a 0.25-weight dimension carries 56% of the answer, which is the dominant cause of the clustering | **named and unblocked by this release**; it is an ingest, not a scoring change, and the calibration conclusion records that fitting anchors while it holds would fit an absence |
+| **The yield benchmark is one state** | the anchor retention rests on a NSW distribution, not a national one | **stated with the decision**; a second state's published rent-and-price pair reopens it |
+| **Victoria's transport feed is declared but unloaded; foreign PEP office-holders are uncovered** | pre-existing, unchanged by this release | unchanged — named here so the package is complete |
+
+**None of these is optional follow-on work.** The first is this release's own
+requirement waiting on one access change; the second resolves on deployment;
+the third and fourth are named acquisitions with their impact stated. The
+earlier version of this section called some of them "separable follow-on work
+that should not hold this release", and that framing is withdrawn.
+
+### 9.5 The request
+
+The release is ready for the gate on head
+`f1fe4d5f01c4f1b9d91c7d081d22f9cdd032eecb`, whose six checks are read green in
+§6, with the deploy order in §4 and the rollback in §5 — **including the
+browser bundle publish, which is required rather than optional** and which two
+of the rendering changes depend on.
+
+What approval does **not** cover, and is not being asked for: the ten PDFs on
+the two named subjects. Those need §9.4's first row resolved, and until then
+the nine documents in `S6_ACCEPTANCE_RUN.md` are what the render and
+composition work is judged on.
