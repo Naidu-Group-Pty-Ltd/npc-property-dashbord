@@ -62,46 +62,53 @@ export function narrativeIndexFrom(data: unknown): NarrativeIndex {
 /**
  * The heading level a contents list should name.
  *
- * Normally the run's own TOP level: the Compass's narrative carries 18 `h2`
- * sections and 26 `h3` subsections, and listing both is 51 rows on a page
+ * Normally the run's own shallowest level: the Compass's narrative carries 18
+ * `h2` sections and 26 `h3` subsections, and listing both is 51 rows on a page
  * fitting about 30 — `fitTocEntries` would then omit the tail, losing the END
  * of the document rather than its detail.
  *
- * **But a narrative that wraps everything in one `h1` has a top level with a
- * single member, and that member is the document's own title.** Measured 18
- * September 2026 on a real Financial Analysis render: the body carries 21
- * headings — one `h1` (*Client Investment Feasibility & Financial Performance
- * Report*) over six `h2` sections and fourteen `h3` subsections — so the top
- * level was level 1, level 1 held exactly one row, and a nineteen-page
- * document's contents read:
+ * **But the shallowest level is often not a section tier at all.** Measured
+ * 18 September 2026 across the seven retained production fixtures, three
+ * distinct shapes appear and two of them put title matter at the top:
  *
- * ```
- * 1. Cover                                                            1
- * 2. Contents                                                         2
- * 3. Executive dashboard                                              3
- * 4. Client Investment Feasibility & Financial Performance Report     4
- * 5. Important information                                           19
- * ```
+ * | shape | level 1 | level 2 | what level 1 holds |
+ * | --- | --- | --- | --- |
+ * | Compass | — | 17–29 | nothing; `h2` is the tier |
+ * | Financial Analysis | 1 | 7–8 | the document's own title |
+ * | Investment Report | 2 | 11 | `# NAIDU PROPERTY CONSULTING SERVICES` and `# Investment Report: <address>` |
  *
- * Five rows for nineteen pages, one of them covering fifteen. Every section a
- * reader opens a contents page to find — the yield positioning, the risk
- * dashboard, the recommendation — was inside row 4 and reachable only by
- * turning pages. That is the same defect the section index was built to close,
- * surviving in the one shape it does not catch.
+ * The third is the instructive one. Both of its `h1`s are masthead — the
+ * issuer's name and the document's title — and they sit together at the top of
+ * the body, so a nineteen-to-thirty-six page report listed **two** contents
+ * rows, one of them the company name, while eleven real sections were
+ * reachable only by turning pages.
  *
- * So a level holding a single section is a TITLE rather than a tier, and the
- * list descends past it. The descent stops at the first level with more than
- * one section, which is the shallowest level that is actually a section list;
- * where no level has more than one, the top level stands, because a document
- * with one section has one section.
+ * ## The rule
  *
- * A master that wants more than this level still sets `sectionDepth`.
+ * **A level is a section tier only if its sections open more than one page.**
+ * A contents entry exists to send a reader somewhere; a tier whose entries all
+ * point at the same page sends them nowhere, whether it holds one heading or
+ * five. So the list takes the shallowest level whose sections open at least
+ * two distinct pages, and where no level does, the shallowest stands — a
+ * document that never turns a page has one entry, which is correct.
+ *
+ * This subsumes the narrower rule it replaces (a level holding a single
+ * section opens a single page, so it is skipped either way) and additionally
+ * catches masthead, which that rule did not: measured, it moves the Financial
+ * Analysis from 1 listed row to 7, the Investment Report from 2 to 11, and
+ * leaves the Compass shape at exactly the level it already used.
+ *
+ * A master that wants more than one level still sets `sectionDepth`.
  */
 export function listedSectionLevel(sections: readonly NarrativeIndexSection[]): number {
   if (!sections.length) return 0;
-  const countByLevel = new Map<number, number>();
-  for (const s of sections) countByLevel.set(s.level, (countByLevel.get(s.level) ?? 0) + 1);
-  const levels = [...countByLevel.keys()].sort((a, b) => a - b);
-  for (const level of levels) if ((countByLevel.get(level) ?? 0) > 1) return level;
+  const pagesByLevel = new Map<number, Set<number>>();
+  for (const s of sections) {
+    const seen = pagesByLevel.get(s.level);
+    if (seen) seen.add(s.pageIndex);
+    else pagesByLevel.set(s.level, new Set([s.pageIndex]));
+  }
+  const levels = [...pagesByLevel.keys()].sort((a, b) => a - b);
+  for (const level of levels) if ((pagesByLevel.get(level)?.size ?? 0) > 1) return level;
   return levels[0];
 }

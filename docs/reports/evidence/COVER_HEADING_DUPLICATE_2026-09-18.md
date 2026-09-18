@@ -151,16 +151,42 @@ Five rows for nineteen pages, one covering fifteen. The yield positioning, the
 risk dashboard and the recommendation were all inside row 4, reachable only by
 turning pages.
 
-**The rule, in `listedSectionLevel`:** a level holding a single section is a
-TITLE rather than a tier, so the list descends past it, stopping at the first
-level with more than one section. Where no level has more than one, the top
-level stands — a document with one section has one section. A level shallower
-than the listed one is then excluded, because listing the title beside the
-sections it introduces gives one page two rows, the second of which is the
-first section on it.
+**The first rule tried was too narrow, and checking it against the other
+fixtures rather than assuming it generalised is what found that.** It read:
+a level holding a SINGLE section is a title, so descend past it. That fixed
+the Financial Analysis and left three of the seven fixtures untouched — because
+their narratives open with **two** `h1`s:
 
-The Compass is untouched by construction: its shallowest level already holds
-eighteen sections, so the descent never starts and the exclusion never fires.
+```
+# NAIDU PROPERTY CONSULTING SERVICES
+# Investment Report: 48 Redfern Street, Cowra NSW 2794
+```
+
+The issuer's name and the document's title, sitting together at the top of the
+body. Level 1 held two sections, so the narrow rule left it alone, and a
+35-page Investment Compass listed **two** contents rows — one of them the
+company name — while eleven real sections stayed unreachable.
+
+**The rule that ships, in `listedSectionLevel`: a level is a section tier only
+if its sections open more than one PAGE.** A contents entry exists to send a
+reader somewhere; a tier whose entries all point at the same page sends them
+nowhere, whether it holds one heading or five. The list takes the shallowest
+level whose sections open at least two distinct pages; where no level does, the
+shallowest stands, because a document that never turns a page has one entry and
+that is correct. A level shallower than the listed one is then excluded, so the
+title is not printed beside the sections it introduces.
+
+This subsumes the narrow rule — a level with one section opens one page, so it
+is skipped either way — and catches masthead, which the narrow rule did not.
+
+Measured across all seven retained fixtures, three narrative shapes and what
+each now lists:
+
+| shape | level 1 | level 2 | listed before | listed now |
+| --- | ---: | ---: | ---: | ---: |
+| Compass (`h2` top) | — | 17–29 | level 2 | level 2 — **unchanged** |
+| Financial Analysis | 1 (title) | 7–8 | level 1 → 1 row | level 2 → 7–8 rows |
+| Investment Report | 2 (masthead) | 11 | level 1 → 2 rows | level 2 → 11 rows |
 
 **After**, same record, same harness, same engine:
 
@@ -182,3 +208,30 @@ Eleven entries across nineteen pages, each naming the page it opens on, each
 linking to the heading's own id rather than the top of the sheet. The contents
 page's largest empty band falls from **67.7% to 51.2%** as a side effect — still
 airy, which is what a contents page should be.
+
+
+### Verified on a second document, a different shape
+
+`09f8569e` — 48 Redfern Street, Cowra NSW 2794, a 35-page Investment Compass
+whose body opens with the two `h1`s above. Its contents listed the company name
+and the document title. After:
+
+```
+ 1. Cover                                      1      9. Market Positioning              16
+ 2. Contents                                   2     10. Property Fit Within the Suburb  17
+ 3. Executive dashboard                        3     11. Risk Dashboard                  20
+ 4. Executive Verdict                          4     12. Due Diligence Checklist         26
+ 5. Property & Locality Snapshot               6     13. Final Recommendation            29
+ 6. Why This Location Matters                  9     14. Appendix, Source Notes …        29
+ 7. Demand Drivers                            12     15. Sources and methodology         34
+ 8. Amenity & Access                          12     16. Important information           35
+```
+
+Sixteen entries across thirty-five pages. Its cover measures clean as well — no
+ILLEGIBLE and no OVERLAP, so the heading fix holds on this shape too.
+
+**Two SPARSE pages remain on it and are recorded rather than fixed here**:
+page 3 (the executive dashboard) at 68.3% and page 33 at 77.9%. Neither is the
+contents, so neither is explained by an airy-by-design list; they are
+master-geometry findings of their own and belong with the page-level work
+rather than alongside a navigation change.
