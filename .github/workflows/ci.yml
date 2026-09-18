@@ -253,6 +253,18 @@ jobs:
       - name: Unit tests (Cash Flow analysis)
         run: npx vitest run src/lib/cashFlow src/components/cash-flow
 
+      # Exactly the failure the comment above describes, on the feature with
+      # money attached. `paymentGate.spec.ts` and `paymentGateWiring.spec.ts`
+      # have existed since the gate shipped and no step's filter has ever
+      # reached them — every assertion in both (fail-open parsing, both
+      # dashboard breakpoints gated, the provider inside AuthProvider, exactly
+      # one `status === "locked"` expression, `verify_jwt = false` on
+      # mission-control-gate, and now the rules that decide whether a customer
+      # is ever shown a way to pay) has been reading as coverage while running
+      # nowhere.
+      - name: Unit tests (activation payment gate)
+        run: npx vitest run src/lib/paymentGate
+
       # An identifier that does not exist is not type debt, and `npm run build`
       # cannot see it — Vite strips types instead of checking them, and the
       # obvious `tsc -p tsconfig.json` compiles nothing because that file
