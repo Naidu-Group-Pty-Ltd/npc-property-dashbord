@@ -488,6 +488,11 @@ Deno.serve(async (req) => {
             { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
           );
         }
+        // `recorded_by` is the record's provenance; a submission with no
+        // resolved identity is refused rather than attributed to nobody.
+        if (!userId) {
+          return createUnauthorizedResponse('Authentication required', corsHeaders);
+        }
 
         const { data: subjectRow, error: subjectError } = await supabase
           .from('investment_reports')
