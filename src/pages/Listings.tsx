@@ -57,7 +57,8 @@ import { BulkActionBar } from '@/components/aurixa';
 
 
 
-import { buildFullAddress, extractAUState, extractPostcode } from '@/lib/addressUtils';
+import { buildFullAddress, extractAUState, extractAUPostcode } from '@/lib/addressUtils';
+import { buildListingFacets } from '@/lib/listings/listingFacets.pure';
 import { getNearbySuburbs } from '@/lib/postcodeProximity';
 import { useIsMobile } from '@/hooks/use-mobile';
 import {
@@ -648,17 +649,11 @@ function ListingsMarketplace({
     const intents = [...new Set(listings.map(l => l.intent).filter(Boolean))].sort() as string[];
     const sectors = [...new Set(listings.map(l => l.sector).filter(Boolean))].sort() as string[];
     
-    // Extract states from both field and address — AU states only
-    const states = [...new Set(listings.map(l => {
-      if (l.state) return l.state;
-      return extractAUState(l.address || '');
-    }).filter(Boolean))].sort() as string[];
+    // State and postcode come from `lib/listings/listingFacets`, which the
+    // Overview reads too — the two pages offered different state lists off the
+    // same data until they did.
+    const { states, postcodes: zipCodes } = buildListingFacets(listings);
 
-    const zipCodes = [...new Set(listings.map(l => {
-      if (l.zipCode) return l.zipCode;
-      return extractPostcode(l.address || '');
-    }).filter(Boolean))].sort() as string[];
-    
     return { propertyTypes, suburbs, states, zipCodes, sourceHosts, agencies, intents, sectors };
   }, [listings]);
 
@@ -697,8 +692,10 @@ function ListingsMarketplace({
         matchesListingFilters(listing, withoutPhotoFilter, {
           searchQuery,
           nearbySuburbs: nearbySuburbsList,
+          // The predicate must read a listing exactly as the option list did,
+          // or a filter selects nothing. Both go through `listingFacets`.
           extractState: (address) => extractAUState(address),
-          extractPostcode: (address) => extractPostcode(address),
+          extractPostcode: (address) => extractAUPostcode(address) ?? undefined,
         }),
       )
       .sort(byRecency);
@@ -735,7 +732,7 @@ function ListingsMarketplace({
       const queryByScope: Record<ReportScope, string> = {
         address: buildFullAddress(listing),
         suburb: listing.suburb || listing.location || '',
-        zipcode: extractPostcode(buildFullAddress(listing)) || '',
+        zipcode: extractAUPostcode(buildFullAddress(listing)) || '',
         state: extractAUState(buildFullAddress(listing)) || '',
       };
       const q = queryByScope[scope];
