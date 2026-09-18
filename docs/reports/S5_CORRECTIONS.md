@@ -221,28 +221,58 @@ Residential`, NSW Principal Planning Layers, CC BY 4.0, effective 2026-08-07,
 retrieved 2026-09-17T08:58:23.845Z. So `site_hazard_exposure` and
 `planning_constraints` **are** held at parcel grain.
 
-**Why that is still not an answer.** A retrieved control is a fact; a 0-100
-safety score is a rating, and no publisher issues one. Turning "Zone R2, no
-overlay returned at this point" into `site_hazard_exposure: 78` invents the
-scale — which is `PLANNING_CONTROLS_IN_THE_REPORT.md` § 9's defect exactly
-("an absence may not be RATED"), committed under a different heading. The two
-questions therefore move to a new `EvidenceAvailability` of
-**`held_but_unscoreable`**: named on the page as evidence, contributing nothing
-to a score, and off the acquisition backlog because what is outstanding is a
-published scale rather than a dataset. `unscoreableHoldings()` is that second
-list, and `answerableCount()` stays **0** for all four asset classes — a
-capability nothing delivers may not be declared.
+**Why that is still not an answer — THE REASON GIVEN HERE WAS WRONG, corrected
+18 September 2026.** This read: *"a 0-100 safety score is a rating, and no
+publisher issues one … what is outstanding is a published scale rather than a
+dataset."* **An internal methodology does not need a government publisher to
+supply a ready-made score.** It needs a defensible, documented and versioned
+basis, which this platform writes routinely — `OVERHEATING_ANCHORS` in the risk
+engine itself, `SEVERITY_DEDUCTION` in `conditionRecord.pure.ts`. The claim put
+a whole evidence class permanently out of reach on an untested premise, and it
+is why this dimension was reported as a methodology limit when it is an
+evidence gap.
 
-**And a scale alone would not be enough.** Hazard and planning are ONE
+The real obstacle is narrower and survives: the retrieval is an **identify at a
+single coordinate**, and an address-point query is never clearance for a
+parcel. A layer that misses the point may still cross the lot, and a hazard the
+publisher has not mapped is not a hazard the parcel lacks — so scoring the
+absence would still be `PLANNING_CONTROLS_IN_THE_REPORT.md` § 9's defect ("an
+absence may not be RATED"). That is a defect of the QUERY rather than of the
+evidence class, and it is closeable: measured 18 September 2026 from the
+sandbox egress, Queensland's cadastre answers a parcel polygon (`2RP87802`,
+HTTP 200, 1.6 s at the Pallas coordinate); NSW's `NSW_Cadastre/9 (Lot)`
+declares `Query`, answers its metadata in 1.2 s, and returned nothing within
+40 s on two attempts — **not tested from the production egress**.
+
+The two questions therefore stay `held_but_unscoreable`: named on the page as
+evidence, contributing nothing to a score. `unscoreableHoldings()` is that
+second list, and `answerableCount()` stays **0** for all four asset classes — a
+capability nothing delivers may not be declared. What is outstanding for them
+is a **parcel-grain query**, not a published scale.
+
+**And the parcel query alone would not be enough.** Hazard and planning are ONE
 independent category (`site`) in `riskModelD.pure.ts`, and
-`MINIMUM_INDEPENDENT_CATEGORIES` is 2. That grouping is deliberate and stays:
-two readings that are present or absent together — if the state's portal
-answers, both answer; if it does not, neither does — are one retrieval, not two
-independent observations. The only other category an established house's schema
-offers is `building`, which needs a construction year or an inspection.
-Measured 18 September 2026 over all **1,230** stored reports, `property_specs`
-carries `yearBuilt` on **0**, `buildYear` on **0**, `constructionYear` on **0**
-and `yearOfConstruction` on **0**.
+`MINIMUM_INDEPENDENT_CATEGORIES` is 2. **The reason recorded for that grouping
+was also wrong** — it read *"if the state's portal answers, both answer; if it
+does not, neither does"*, and the probe disproves it: on 18 September 2026 NSW's
+Principal Planning Layers answered with an intersection while its Hazard and
+Protection services answered with none, from three endpoints that fail
+independently. The grouping is right for a different reason and stays: both
+readings describe **the same site**, so they are two facts about one thing
+rather than two independent observations. Common subject is the test, not
+common availability.
+
+The only other category an established house's schema offers is `building`.
+**The construction-year measurement recorded here was incomplete**: it checked
+`yearBuilt`, `buildYear`, `constructionYear` and `yearOfConstruction` and never
+checked **`year_built`**, the snake_case spelling the platform actually writes,
+which is present on **1,102 of 1,230** rows. The conclusion survives — it is an
+explicit JSON null on every one, so 0 carry a value — but *"construction years
+are absent everywhere"* does not: **32 rows across 19 properties** carry
+`manual_overrides.constructionYear`, **none** with a source or reason field, and
+31 of them are a completion expectation (`2025`, `2026`, one `2031`) rather than
+an observed build date. The single historical value, `1941`, is on 262 Pallas
+Street and nothing else in the corpus.
 
 **What the report says instead.** `riskRemedyFor()` derives the remedy from the
 schema rather than restating it. The literal it replaces read *"Answered
@@ -252,22 +282,31 @@ are retrieved, and naming strata on a house that is never asked about an owners
 corporation. A remedy that misdescribes the platform's own holdings sends
 somebody to buy what it already reads.
 
-**The decision, which is the owner's.** Reaching five scored dimensions needs
-one of:
+**The decision — SUPERSEDED 18 September 2026 by
+[`RISK_METHOD_RECOMMENDATION.md`](./RISK_METHOD_RECOMMENDATION.md).** This
+offered a menu of three routes and closed *"the honest maximum is four of five
+scored"*. **Four scored dimensions is not an accepted final outcome**, and a
+menu is not a recommendation; both are replaced by ONE recommended method with
+its implementation, validation evidence and limitations.
 
-1. a **building-condition signal** at property grain (construction year is the
-   cheapest — it is a cadastral/valuation attribute, not an inspection), which
-   opens the `building` category and makes Risk scoreable for houses and units
-   alike; or
-2. a **published scale** for the site controls, plus a second category anyway;
-   or
-3. a deliberate change to `MINIMUM_INDEPENDENT_CATEGORIES`, which would let one
-   site observation become the whole Risk dimension — the renormalisation
-   `riskModelD.pure.ts` exists to prevent.
+Recommended: a **recorded condition record** — a building inspection report,
+strata report, building certificate or vendor's statement, with its issuer, its
+date and what it examined. It is the one class of property-level condition
+evidence whose *negative* is admissible, because a qualified person examined a
+recorded scope and reported.
 
-Nothing here takes that decision. Until one is taken, the honest maximum is
-**four of five scored**, with Risk present on every page carrying its original
-5% weight, its reason and what would close it.
+Route 1 was built and tested as a separately named candidate
+(`constructionAgeCandidate.pure.ts`) and is **not recommended**: four of the six
+required demonstrations are not met, and activating it would complete 262 Pallas
+Street's fifth dimension and not 18 Annabelle Crescent's, on an unsourced typed
+number that exists on exactly one property in 1,230. Route 3 stays refused.
+
+What the owner is asked for is in § 7 of that document: **Approval A**, build
+the evidence-submission path; **Approval B**, activate the conversion.
+`CONDITION_METHOD_ACTIVATION` ships as `null`, asserted by a test. Until a
+record exists **for a given property**, that property's Risk is not assessable
+and four scored dimensions is correct *for that property* — a named, closeable,
+per-property reason rather than a platform-wide limit.
 
 ---
 

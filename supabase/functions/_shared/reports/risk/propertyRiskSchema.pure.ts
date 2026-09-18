@@ -68,32 +68,63 @@
  * effective 2026-08-07, retrieved 2026-09-17T08:58:23.845Z. So
  * `site_hazard_exposure` and `planning_constraints` ARE held at parcel grain.
  *
- * They still cannot answer their questions, for a reason that is not a gap in
- * the data:
+ * They still cannot answer their questions — but the reason recorded here
+ * first was WRONG, and it is corrected rather than quietly dropped.
  *
- *   **A retrieved control is a fact; a 0-100 safety score is a rating, and no
- *   publisher issues one.** Turning "Zone R2, no overlay returned at this
- *   point" into `site_hazard_exposure: 78` invents the scale — which is §9's
- *   defect exactly ("an absence may not be RATED"), committed under a
- *   different heading. `assessPepEvidence`'s asymmetry is the same rule: a HIT
- *   is a signal, a MISS is not a clearance.
+ * It read: *"a 0-100 safety score is a rating, and no publisher issues one"*,
+ * concluding that what was outstanding was a published scale. That is not the
+ * bar. **An internal methodology does not need a government publisher to
+ * supply a ready-made score; it needs a defensible, documented and versioned
+ * basis.** The platform writes such bases routinely — `OVERHEATING_ANCHORS`
+ * below is one, `SEVERITY_DEDUCTION` in `conditionRecord.pure.ts` is another.
+ * Saying otherwise put a whole class of evidence permanently out of reach on a
+ * premise nobody had tested, and it is the reason this dimension was reported
+ * as a methodology limit when it is an evidence gap.
  *
- * So they move to {@link EvidenceAvailability} `held_but_unscoreable`: named
- * on the page as evidence, contributing nothing to a score, and off the
- * acquisition backlog because what is still needed is a published scale
- * rather than a retrieval. `unscoreableHoldings()` is that second list.
+ * The real reason is narrower and survives the correction:
  *
- * And even were a scale published, Risk would not score for an established
+ *   **The retrieval is an identify at a single COORDINATE, and an
+ *   address-point query is never clearance for a parcel.** A layer that misses
+ *   the point may still cross the lot, so `answered, no intersection` cannot
+ *   become a reading — and a hazard the publisher has not mapped is not a
+ *   hazard the parcel lacks. Scoring the absence would be §9's defect exactly
+ *   ("an absence may not be RATED"). `assessPepEvidence`'s asymmetry is the
+ *   same rule: a HIT is a signal, a MISS is not a clearance.
+ *
+ * That is a defect of the QUERY rather than of the evidence class, and it is
+ * closeable: a parcel-polygon query against the cadastre would make a negative
+ * a determination about the lot. Measured 18 September 2026 from this
+ * sandbox's egress, Queensland's cadastre answers one — `2RP87802`, with
+ * geometry, HTTP 200 in 1.6 s at the Pallas coordinate. New South Wales'
+ * `NSW_Cadastre/9 (Lot)` declares `Query` and its service metadata answers in
+ * 1.2 s, while the query operation itself returned nothing within 40 s on two
+ * attempts; it has not been tested from the production egress. So this is an
+ * acquisition with a known first step, not a wall.
+ *
+ * They therefore stay {@link EvidenceAvailability} `held_but_unscoreable` —
+ * named on the page as evidence and contributing nothing — and
+ * `unscoreableHoldings()` is that second list. What is outstanding for them is
+ * a parcel-grain query, not a published scale.
+ *
+ * And even with the parcel query done, Risk would not score for an established
  * house on the strength of these two alone: hazard and planning are ONE
- * independent category (`site`) in `riskModelD.pure.ts`, `MINIMUM_
- * INDEPENDENT_CATEGORIES` is 2, and the only other category a house's schema
- * offers is `building` — `condition_and_maintenance`, which needs a
- * construction year or an inspection. Measured 18 Sep 2026 over all 1,230
- * stored reports: `property_specs` carries `yearBuilt` on **0**, `buildYear`
- * on **0**, `constructionYear` on **0** and `yearOfConstruction` on **0**.
- * That grouping is deliberate and stays: two readings that are present or
- * absent together — if the state's portal answers, both answer; if it does
- * not, neither does — are one retrieval, not two independent observations.
+ * independent category (`site`) in `riskModelD.pure.ts`,
+ * `MINIMUM_INDEPENDENT_CATEGORIES` is 2, and the only other category a house's
+ * schema offers is `building` — `condition_and_maintenance`. **Every route to
+ * a fifth scored dimension therefore runs through a condition record**, which
+ * is why `conditionRecord.pure.ts` is the recommended method rather than a
+ * preference among several.
+ *
+ * That grouping stays, and its stated reason is corrected too. It read: *"two
+ * readings that are present or absent together — if the state's portal
+ * answers, both answer"*. The probe disproves that as a fact — on 18 Sep 2026
+ * NSW's Principal Planning Layers answered WITH an intersection while its
+ * Hazard and Protection services answered with none, from three separate
+ * endpoints that fail independently. The grouping is right for a different
+ * reason, and it is the reason `QUESTION_CATEGORY` gives: both readings
+ * describe **the same site**, so they are two facts about one thing rather
+ * than two independent observations. Common availability was never the test;
+ * common subject is.
  */
 
 /** The classes a stored property type maps onto. Selection only. */
@@ -205,11 +236,16 @@ const CONDITION: RiskQuestion = {
     'Capital expenditure is a direct claim on an established dwelling’s net return, and it is '
     + 'specific to the building rather than the area.',
   evidenceRequired:
-    'Building-inspection reports, construction year, or a condition assessment attached to the '
-    + 'property record. Measured 18 September 2026 over all 1,230 stored reports: `property_specs` carries '
-    + '`yearBuilt` on 0, `buildYear` on 0, `constructionYear` on 0 and `yearOfConstruction` on 0. This is '
-    + 'the only other independent category an established house\'s schema offers, which is why retrieving '
-    + 'the two site controls above could not by itself make Risk scoreable.',
+    'A CONDITION RECORD — a building inspection report, strata report, building certificate or '
+    + 'vendor\'s statement, with its issuer, its date and what it examined. `conditionRecord.pure.ts` is '
+    + 'the recommended method and holds the admissibility rules. Measured 18 September 2026 over all 1,230 '
+    + 'stored reports, `property_specs` carries a construction year on 0: `year_built` is present as an '
+    + 'explicit JSON null on 1,102 rows and holds a value on none, and `yearBuilt`, `buildYear`, '
+    + '`constructionYear` and `yearOfConstruction` are absent entirely. The 32 years the platform does hold '
+    + 'are operator-typed `manual_overrides.constructionYear`, none carrying a source or reason, and 31 of '
+    + 'them a completion expectation rather than a build date — see `constructionAgeCandidate.pure.ts`. '
+    + 'This is the only other independent category an established house\'s schema offers, which is why '
+    + 'retrieving the two site controls above could not by itself make Risk scoreable.',
   availability: 'not_held',
 };
 
@@ -343,9 +379,10 @@ export function riskRemedyFor(cls: AssetClass | null): string {
   if (retrieved.length) {
     const one = retrieved.length === 1;
     parts.push(
-      `The ${phrase(retrieved)} control${one ? ' is' : 's are'} retrieved at parcel grain already; what is `
-      + `outstanding for ${one ? 'it' : 'them'} is a published scale that converts a named control into a risk `
-      + 'reading. There is none, and inventing one would rate the absence of a finding.',
+      `The ${phrase(retrieved)} control${one ? ' is' : 's are'} retrieved already, at a single coordinate; `
+      + `what is outstanding for ${one ? 'it' : 'them'} is a query against the parcel rather than the address `
+      + 'point. A layer that misses the point may still cross the lot, so nothing found at the point is not a '
+      + 'finding about the property, and scoring it would rate an absence.',
     );
   }
   parts.push(

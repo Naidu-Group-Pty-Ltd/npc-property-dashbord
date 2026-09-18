@@ -86,7 +86,6 @@ import {
   type ScoreAssessmentReading,
 } from '../market/scoreAssessmentReading.pure.ts';
 import type { SubjectPrice } from './subjectPrice.pure.ts';
-import { ENRICHMENT_STAMP } from '../location/locationEnrichmentReuse.pure.ts';
 
 // ─── What the sections rest on ──────────────────────────────────────────────
 
@@ -1458,6 +1457,18 @@ export interface StrategyRowOptions {
    * an absence, never a count read off the deprecated field.
    */
   transport?: StrategyTransportCount | null;
+  /**
+   * `location_intelligence.__acquisition.acquiredAt` — when the readings on
+   * this row were taken, read by the caller for the same reason `transport`
+   * is: a canonical investment module may not import `_shared/`, and
+   * `ENRICHMENT_STAMP` is the location domain's own storage key.
+   *
+   * Null where the caller has none, and then the transport sentence says the
+   * date is not recorded rather than implying the feed-load date is it. A
+   * caller that forgets it degrades to exactly the wording that shipped
+   * before this option existed.
+   */
+  measuredAt?: string | null;
 }
 
 const rec = (v: unknown): Record<string, unknown> | null =>
@@ -1579,9 +1590,9 @@ export function readStrategyRecord(row: StrategyRowInput, opts: StrategyRowOptio
       nearestName: text(transport.nearestStation),
       sources: strings(transport.sources),
       feedLoadedAt: text(transport.feedLoadedAt),
-      // The enrichment's own stamp — when the readings on this row were
-      // taken. Read through ENRICHMENT_STAMP so the key is named once.
-      measuredAt: text(rec(rec(row.locationIntelligence)?.[ENRICHMENT_STAMP])?.acquiredAt),
+      // The enrichment's own stamp — when the readings on this row were taken.
+      // Handed in by the caller; see `StrategyRowOptions.measuredAt`.
+      measuredAt: text(opts.measuredAt),
       notMeasured: strings(transport.notMeasured),
     },
     score: {

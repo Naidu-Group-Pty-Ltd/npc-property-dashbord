@@ -275,39 +275,83 @@ CC BY 4.0, effective 2026-08-07, retrieved 2026-09-17T08:58:23.845Z,
 confidence 0.9, `zoneStatus: stated`. (Pallas reads `zoneStatus: not_served`
 for QLD — *not searched*, which is a different sentence from *nothing found*.)
 
-**Why it still does not score.** Turning "Zone R2, no overlay returned at this
-point" into `site_hazard_exposure: 78` invents a scale no publisher issues —
-`PLANNING_CONTROLS_IN_THE_REPORT.md` § 9's "an absence may not be RATED"
-committed under a different heading. Both questions therefore moved to a new
-`EvidenceAvailability` of **`held_but_unscoreable`**: evidence on the page,
-zero points, and off the acquisition backlog because what is outstanding is a
-published **scale**, not a dataset. `unscoreableHoldings()` is that second
-list; `answerableCount()` stays **0** for all four asset classes, because a
-capability nothing delivers may not be declared.
+**Why it still does not score — CORRECTED 18 Sep 2026.** This section first
+read that the obstacle was a scale *"no publisher issues"*, and that what was
+outstanding was a published **scale** rather than a dataset. **That was wrong.**
+An internal methodology does not need a government publisher to supply a
+ready-made 0-100 score; it needs a defensible, documented and versioned basis,
+and this platform writes those routinely (`OVERHEATING_ANCHORS`,
+`SEVERITY_DEDUCTION`). Stating otherwise put a whole evidence class
+permanently out of reach on a premise nobody had tested, and it is why this
+dimension was reported as a methodology limit when it is an evidence gap.
 
-**A scale alone would not be enough.** Hazard and planning are ONE independent
-category (`site`) — they answer or fail together, so two readings of one
-retrieval are one observation. `MINIMUM_INDEPENDENT_CATEGORIES` is 2 and is
-untouched. The only other category an established house's schema offers is
-`building` → `condition_and_maintenance`, which needs a construction year.
-**Measured over all 1,230 stored reports: `property_specs` carries `yearBuilt`
-on 0, `buildYear` on 0, `constructionYear` on 0 and `yearOfConstruction` on 0.**
+The real obstacle is narrower and survives: the retrieval is an **identify at a
+single coordinate**, and an address-point query is never clearance for a
+parcel. A layer that misses the point may still cross the lot, and a hazard the
+publisher has not mapped is not a hazard the parcel lacks — so scoring the
+absence would be § 9's "an absence may not be RATED". That is a defect of the
+QUERY, not of the evidence class, and it is closeable: measured 18 Sep 2026,
+Queensland's cadastre answers a parcel polygon (`2RP87802`, HTTP 200, 1.6 s at
+the Pallas coordinate) while NSW's `NSW_Cadastre/9 (Lot)` declares `Query`,
+answers metadata in 1.2 s and returned nothing within 40 s on two attempts —
+not tested from the production egress.
 
-**The decision (task #115, blocked on the owner).** Five *scored* dimensions
-needs one of:
+Both questions therefore stay `held_but_unscoreable`: evidence on the page,
+zero points. `unscoreableHoldings()` is that second list; `answerableCount()`
+stays **0** for all four asset classes, because a capability nothing delivers
+may not be declared. What is outstanding for them is a **parcel-grain query**,
+not a published scale.
 
-1. a **building-condition signal** at property grain — construction year is
-   cheapest, being a cadastral/valuation attribute rather than an inspection —
-   which opens the `building` category for houses and units alike;
-2. a **published scale** for the site controls, *plus* a second category
-   anyway;
-3. a deliberate change to `MINIMUM_INDEPENDENT_CATEGORIES`, which would let one
-   site observation become the whole Risk dimension — the renormalisation
-   `riskModelD.pure.ts` exists to prevent.
+**The parcel query alone would not be enough.** Hazard and planning are ONE
+independent category (`site`). The reason given here was *"they answer or fail
+together"* — **also corrected**: the probe disproves it, since NSW's Principal
+Planning Layers answered with an intersection on 18 Sep 2026 while its Hazard
+and Protection services answered with none, from three endpoints that fail
+independently. The grouping is right for a different reason and stays: both
+readings describe **the same site**, so they are two facts about one thing
+rather than two independent observations. `MINIMUM_INDEPENDENT_CATEGORIES` is 2
+and is untouched.
 
-**Take none of them without the owner.** Until one is taken, **four of five
-scored is the honest maximum**, with Risk drawn on every page carrying its
-original 5 % weight, its reason and what would close it.
+The only other category an established house's schema offers is `building` →
+`condition_and_maintenance`. **The construction-year measurement here was also
+incomplete**: it checked `yearBuilt`, `buildYear`, `constructionYear` and
+`yearOfConstruction` and never checked **`year_built`**, the snake_case
+spelling the platform actually writes — present on **1,102 of 1,230** rows. The
+conclusion survives (it is an explicit JSON null on every one of them, so 0
+carry a value), but the claim that construction years are *absent everywhere*
+does not: **32 rows across 19 properties carry
+`manual_overrides.constructionYear`**, none with a source or reason field, 31 of
+them a completion expectation (`2025`, `2026`, one `2031`) rather than an
+observed build date. The single historical value, `1941`, is on 262 Pallas
+Street and nothing else in the corpus.
+
+**The decision — SUPERSEDED 18 Sep 2026 by
+[`RISK_METHOD_RECOMMENDATION.md`](./RISK_METHOD_RECOMMENDATION.md).** This
+section offered a menu of three routes and said *"four of five scored is the
+honest maximum"*. **Four scored dimensions is not an accepted final outcome**,
+and the menu is replaced by ONE recommended method with its implementation,
+validation evidence and limitations.
+
+The recommendation is a **recorded condition record** — a building inspection
+report, strata report, building certificate or vendor's statement, with its
+issuer, its date and what it examined — because it is the one class of
+property-level condition evidence whose *negative* is admissible: a qualified
+person examined a recorded scope and reported, so "no major defect recorded" is
+a determination about the dwelling rather than a silence in a register.
+
+The construction-year route was **built and tested as a separately named
+candidate** (`constructionAgeCandidate.pure.ts`) and is **not recommended**:
+four of the six required demonstrations are not met, and activating it would
+complete 262 Pallas Street's fifth dimension and not 18 Annabelle Crescent's,
+on an unsourced typed number. Route 3 — lowering
+`MINIMUM_INDEPENDENT_CATEGORIES` — remains refused.
+
+What is asked of the owner is in § 7 of that document: **Approval A**, build the
+evidence-submission path; **Approval B**, activate the conversion.
+`CONDITION_METHOD_ACTIVATION` ships as `null` and a test asserts it. Until a
+record exists **for a given property**, that property's Risk is not assessable
+and four scored dimensions is correct *for that property*, with a named,
+closeable reason — not a platform-wide limit.
 
 ---
 
@@ -349,7 +393,8 @@ Historical records are preserved throughout: nothing rewrites a stored
 | fact | value | how established |
 | --- | --- | --- |
 | stored `breakdown[].weight` | the **adjusted** weight × 100 | traced through `shadowScorer.pure.ts` + reproduced on two production rows |
-| construction year in the corpus | **0 of 1,230** reports | SQL over `investment_reports.property_specs` |
+| construction year in `property_specs` | **0 of 1,230** carry a value (`year_built` present as JSON null on 1,102) | SQL over `investment_reports.property_specs`, 18 Sep 2026 |
+| construction year anywhere | **32 rows / 19 properties** in `manual_overrides.constructionYear`, 0 with provenance, 31 completion expectations | SQL over `investment_reports.manual_overrides`, 18 Sep 2026 |
 | stamped enrichments missing all three location readings | **9 of 9** | SQL over `location_intelligence` |
 | `NEARBY_RADIUS_M` | **1,600 m** | `transportReading.pure.ts` |
 | `stopsWithin1km` | a **deprecated name** holding the 1,600 m count | same |
@@ -362,11 +407,14 @@ Historical records are preserved throughout: nothing rewrites a stored
 
 ### Environment traps
 
-* **The sandbox has no web egress.** The proxy denies CONNECT to every web
-  host (403), `example.com` included. Playwright's Chromium at
-  `/opt/pw-browsers/chromium-1194/chrome-linux/chrome` fails identically.
-  `noProxy` covers package registries only. **MCP servers work** because they
-  run outside the sandbox — that is how production is reached.
+* **~~The sandbox has no web egress.~~ CORRECTED 18 Sep 2026 — it does.**
+  This read that the proxy denied CONNECT to every web host (403),
+  `example.com` included, and that was why the register probes had never been
+  run. Re-measured: `example.com`, all six state planning services, the
+  Queensland cadastre and the NSW cadastre's service metadata all answer
+  **HTTP 200**. The six-register probe in
+  `docs/reports/evidence/PLANNING_PROBE_2026-09-18.json` was run from here.
+  **MCP servers still work** and remain how production is reached.
 * Consequently **`npm run security:edge-check` cannot run here** — it needs
   `deno.land`. CI runs it. Say so rather than claiming it passed.
 * `npm run lint` takes several minutes; run it in the background.

@@ -37,6 +37,7 @@ import { variantScoreUnderPolicy } from '../_shared/reports/market/variantScoreP
 import { internalError } from '../_shared/errorResponse.ts';
 import { readPropertyFacts } from '../_shared/reports/investment/propertyRecord.pure.ts';
 import { readStrategyRecord } from '../_shared/reports/investment/strategyPositions.pure.ts';
+import { ENRICHMENT_STAMP } from '../_shared/reports/location/locationEnrichmentReuse.pure.ts';
 import { transportCountReading } from '../_shared/transportReading.pure.ts';
 import { buildMarketFacts } from '../_shared/reports/market/marketFactBlocks.pure.ts';
 import { describeSubjectPrice } from '../_shared/reports/investment/subjectPrice.pure.ts';
@@ -377,6 +378,7 @@ Deno.serve(async (req) => {
         locationIntelligence: parent.location_intelligence,
       },
       {
+        measuredAt: (parent.location_intelligence as any)?.[ENRICHMENT_STAMP]?.acquiredAt ?? null,
         market: buildMarketFacts({ marketEvidence: (parent.data_sources as any)?.marketEvidence }),
         price: describeSubjectPrice({
           overridePurchasePrice: (parent.manual_overrides as any)?.purchasePrice,

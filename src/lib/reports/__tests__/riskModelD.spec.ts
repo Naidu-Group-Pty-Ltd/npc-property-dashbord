@@ -194,13 +194,26 @@ describe('property risk: type selects, never scores', () => {
      * naming strata on a house that is never asked about one. A remedy that
      * misdescribes the platform's own holdings sends somebody to buy what it
      * already reads.
+     *
+     * RENEGOTIATED 18 Sep 2026. This used to assert the remedy contained the
+     * words "published scale", pinning the claim that what was outstanding for
+     * hazard and planning was a scale no publisher issues. That claim is
+     * WRONG — an internal methodology needs a defensible, documented and
+     * versioned basis, not a publisher-issued score — so the assertion was
+     * holding a false statement in place. The remedy now names the real
+     * obstacle, a query against the PARCEL rather than the address point, and
+     * this test asserts the corrected rule in both directions: the parcel
+     * query is named, and nobody is sent to look for a published scale.
+     * `RISK_METHOD_RECOMMENDATION.md` carries the reasoning.
      */
     it('derives a remedy that names only what is genuinely outstanding', () => {
       const house = riskRemedyFor('established_house');
       expect(house).toContain('condition and maintenance');
       expect(house, 'a house is never asked about an owners corporation').not.toContain('strata');
-      expect(house).toContain('retrieved at parcel grain already');
-      expect(house).toContain('published scale');
+      expect(house).toContain('retrieved already, at a single coordinate');
+      expect(house).toContain('query against the parcel');
+      expect(house, 'never send an operator to find a scale no publisher issues')
+        .not.toContain('published scale');
       expect(house).toContain('two independent categories');
 
       const strata = riskRemedyFor('strata_dwelling');

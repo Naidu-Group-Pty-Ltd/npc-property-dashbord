@@ -37,7 +37,7 @@ const BRIDGE_SHAPE =
  * like the others here — eleven routes each carried a private copy.
  */
 const ALLOWED_IMPORT =
-  /^(?:\.\/[\w.]+\.pure\.ts|\.\.\/\.\.\/reportDesign\/[\w.]+\.(?:pure|generated)\.ts|\.\.\/(?:text|markdown|vizDirectives|vizFigures|reportDate)\.pure\.ts|\.\.\/market\/(?:marketFactBlocks|marketEvidence)\.pure\.ts|\.\.\/\.\.\/(?:reportSplitRegistry|compassPostProcessor)\.ts)$/;
+  /^(?:\.\/[\w.]+\.pure\.ts|\.\.\/\.\.\/reportDesign\/[\w.]+\.(?:pure|generated)\.ts|\.\.\/(?:text|markdown|vizDirectives|vizFigures|reportDate)\.pure\.ts|\.\.\/market\/(?:marketFactBlocks|marketEvidence|scoreAssessmentReading)\.pure\.ts|\.\.\/\.\.\/(?:reportSplitRegistry|compassPostProcessor)\.ts)$/;
 
 /**
  * The two market modules a canonical investment module may name, and they may
@@ -55,7 +55,25 @@ const ALLOWED_IMPORT =
  * is erased at build time and no runtime edge is created between the two
  * domains.
  */
-const TYPE_ONLY_IMPORTS = /^\.\.\/market\//;
+const TYPE_ONLY_IMPORTS = /^\.\.\/market\/(?!scoreAssessmentReading\.pure\.ts$)/;
+
+/**
+ * The one market module admitted for a VALUE, and why the rule above bends
+ * exactly once.
+ *
+ * `scoreAssessmentReading.pure.ts` exports `readScoreAssessment`, and
+ * `CLAUDE.md` § S5_CORRECTIONS §3a records the decision it serves: **the
+ * assessment is DERIVED where the record is read, never passed in, because a
+ * parameter a caller forgets takes the whole grade rationale off the page with
+ * nothing reporting it.** Holding it to `import type` would force the opposite
+ * of a decision made deliberately after that failure.
+ *
+ * The distinction against `StrategyRowOptions.measuredAt`, which IS passed in,
+ * is the failure mode rather than the direction of travel: a forgotten
+ * assessment loses the reason a grade was given and says nothing; a forgotten
+ * measurement date degrades to a sentence that states the date is not
+ * recorded. One is silent, the other is visible and honest.
+ */
 
 /**
  * Two modules next door that are not named `.pure.ts` and are admitted anyway.

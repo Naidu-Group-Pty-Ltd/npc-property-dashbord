@@ -76,6 +76,7 @@ import {
   readStrategyRecord,
   strategySectionRules,
 } from '../_shared/reports/investment/strategyPositions.pure.ts';
+import { ENRICHMENT_STAMP } from '../_shared/reports/location/locationEnrichmentReuse.pure.ts';
 import { transportCountReading } from '../_shared/transportReading.pure.ts';
 import { readSalesRegister } from '../_shared/reports/market/salesRegisterRead.ts';
 import type { SalesRegisterState } from '../_shared/reports/market/openData/salesRegister.pure.ts';
@@ -4906,6 +4907,8 @@ Produce a comprehensive statewide investment analysis following the structure ab
         market: marketFacts,
         price: subjectPrice,
         carriesModelling: false,
+        measuredAt: (measuredLocationIntelligence ?? enhancedData.locationIntelligence)
+          ?.[ENRICHMENT_STAMP]?.acquiredAt ?? null,
         // The count with a radius that is TRUE of it. The stored key is
         // `stopsWithin1km` and its value is the count within 1,600 m.
         transport: transportCountReading(
