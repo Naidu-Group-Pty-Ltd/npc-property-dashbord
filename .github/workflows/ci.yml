@@ -513,6 +513,12 @@ jobs:
       - name: Every security gate is wired (WP-16)
         run: node scripts/security/check-gates-wired.mjs
 
+      # Wired is not armed. A gate that decides whether to assert from the
+      # environment is starved, not skipped, when the step running it never
+      # maps the variable — and it then asserts, which is the failing side.
+      - name: Every stand-down is handed the value that arms it
+        run: node scripts/security/check-gate-env-wiring.mjs
+
       # WP-17: the database layer had no gate of its own, and it was the layer
       # that regressed. Three weeks after the July hardening closed at 3/116/9
       # -> 0/9/0, the live advisor read 2 SECURITY DEFINER views, 96 over-broad
@@ -549,6 +555,15 @@ jobs:
       # so asserting it there stopped every cascade pull request on all three
       # clones at once over a file nothing on that side reads.
       - name: The migration object index is current
+        # A repository variable is NOT a process environment variable until a
+        # step maps it. `indexIsCarriedNotAuthored` reads
+        # `process.env.BACKEND_DEPLOYED_BY`, so without this block it read
+        # `undefined`, failed closed exactly as designed, and asserted on every
+        # clone — which stopped the cascade pull request on all three of them
+        # from 17 Sep 2026 over a file nothing on that side reads.
+        # `check-gate-env-wiring.mjs` fails if this mapping goes again.
+        env:
+          BACKEND_DEPLOYED_BY: ${{ vars.BACKEND_DEPLOYED_BY }}
         run: npm run migrations:index:check
 
       # WP-18: 329 catch blocks across 275 functions returned the caught error
