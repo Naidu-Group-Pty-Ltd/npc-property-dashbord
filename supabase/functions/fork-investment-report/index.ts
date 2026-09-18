@@ -43,6 +43,7 @@ import { ENRICHMENT_STAMP } from '../_shared/reports/location/locationEnrichment
 import { transportCountReading } from '../_shared/transportReading.pure.ts';
 import { buildMarketFacts } from '../_shared/reports/market/marketFactBlocks.pure.ts';
 import { describeSubjectPrice } from '../_shared/reports/investment/subjectPrice.pure.ts';
+import { reconcileStoredFinancials } from '../_shared/reports/investment/financialEngine.pure.ts';
 async function loadComposite(supabase: any, id: string) {
   const { data, error } = await supabase
     .from('investment_reports')
@@ -370,11 +371,36 @@ Deno.serve(async (req) => {
      * simply produces the entries that do not need it — which is the honest
      * outcome and not an empty heading.
      */
+    /*
+     * One record, so the tables and the prose state one figure.
+     *
+     * Measured on the stored Financial Analysis for 48 Redfern Street, Cowra
+     * (18 Sep 2026), by executing both paths against the real row:
+     *
+     *   stored    keyMetrics: annualNet -23,383  weeklyNet -450
+     *   reconciled keyMetrics: annualNet -24,273  weeklyNet -467
+     *   weeklyRent 445, occupancyWeeks 50 -> contractual 23,140, occupied
+     *   22,250; the gap is 890 a year, which is 17.12 a week.
+     *
+     * `reconcileStoredFinancials` RE-BASES the metrics from the contractual
+     * rent onto `weeklyRent x occupancyWeeks`, which is `calculateKeyMetrics`'
+     * own definition. `composeFinancialChapters` calls it and printed
+     * `| Weekly net position | -$467 |` twice; `readStrategyRecord` did not,
+     * and the prose two pages later said "$450 a week - $23,383 a year".
+     *
+     * Both figures are defensible and the document named them the same thing,
+     * which is the defect. Nothing here changes an assumption or a formula: it
+     * hands the SAME record to both producers, so a reader is given one
+     * quantity — and the row that prints it now names the basis it rests on.
+     */
+    const reconciledFinancials =
+      reconcileStoredFinancials(parent.financial_calculations).fin ?? parent.financial_calculations;
+
     const strategyRecord = readStrategyRecord(
       {
         propertyAddress: parent.property_address,
         propertySpecs: parent.property_specs,
-        financialCalculations: parent.financial_calculations,
+        financialCalculations: reconciledFinancials,
         investmentScore: parent.investment_score,
         dataSources: parent.data_sources,
         locationIntelligence: parent.location_intelligence,
@@ -395,7 +421,7 @@ Deno.serve(async (req) => {
       registry,
       parentContent: parent.report_content || '',
       propertyAddress: parent.property_address,
-      financialCalculations: parent.financial_calculations,
+      financialCalculations: reconciledFinancials,
       financialScore,
       composeFinancial: variants.includes('financial'),
       strategy: strategyRecord,

@@ -138,31 +138,60 @@ const clip = (s: string, n = 170) => (s.length > n ? `${s.slice(0, n - 1)}…` :
 // ── 1. the weekly cash position ───────────────────────────────────────────
 
 /**
- * The vocabulary of a weekly CASH POSITION, and nothing else.
+ * A weekly cash position, in the two shapes a document actually writes it.
  *
- * Deliberately excludes rent (`weekly rent`, `rent of $N a week`), debt service
- * (`weekly repayment`, `a week in repayments`) and the break-even rent the
- * strategy section computes — three quantities that also print as "$N a week"
- * and are not this one.
+ * Both were measured on the stored Financial Analysis for 48 Redfern Street,
+ * Cowra, which states the SAME quantity three times and disagrees with itself:
+ *
+ *   | Weekly net position | -$467 |          (twice, in two chapter tables)
+ *   - **$450 a week — $23,383 a year — of income from outside the property.**
+ *   … the position is $450 a week short, so that is a 101% rise in rent …
+ *
+ * `keyMetrics` holds `annualNet: -23383` and `weeklyNet: -450`, and −23383/52
+ * is −450 while −23383/50 is −467. The prose is right and the two table rows
+ * are a composition frozen before the record was healed.
+ *
+ * A first version of this rule found neither: it wanted exactly one money
+ * value on the line, and the sentence states the same position in two units
+ * ("$450 a week — $23,383 a year"), which is one claim rather than a
+ * comparison. So the figure is chosen by its UNIT rather than by being alone.
  */
-const WEEKLY_CASH_LABEL =
-  /\b(?:weekly\s+(?:net\s+position|cash\s+(?:position|flow|shortfall)|shortfall|deficit|surplus)|(?:net\s+position|cash\s+position|cash\s+shortfall|shortfall|out\s+of\s+pocket|cash\s+flow)\b[^.|]{0,40}\b(?:a|per)\s+week|\ba\s+week\s+short\b)/i;
+
+/** `$450 a week`, `$450 per week`, `$450/week`. */
+const MONEY_A_WEEK = /\(?[-−]?\$\s?([0-9][0-9,]*(?:\.[0-9]+)?)\)?\s*(?:a|per|\/)\s*week\b/gi;
+
+/** `weekly shortfall of $450`, `weekly net position is -$467`. */
+const WEEKLY_NOUN_THEN_MONEY =
+  /\bweekly\s+(?:net\s+position|cash\s+(?:position|flow|shortfall)|shortfall|deficit|surplus)\b[^.$|]{0,24}\(?[-−]?\$\s?([0-9][0-9,]*(?:\.[0-9]+)?)/gi;
+
+/** A table row's LABEL cell, when the row is the weekly cash position. */
+const WEEKLY_CASH_CELL =
+  /^\s*weekly\s+(?:net\s+position|cash\s+(?:position|flow|shortfall)|shortfall|deficit|surplus)\b/i;
+
+/**
+ * A cash-position noun somewhere on the line.
+ *
+ * Required for the prose shapes, because `$895 a week of rent` and `$648 a
+ * week in repayments` are weekly money and are not this quantity. It is not
+ * required for a table row, whose label cell has already said so.
+ */
+const CASH_POSITION_NOUN =
+  /\b(?:net\s+position|cash\s+position|cash\s+flow|position|shortfall|deficit|surplus|out\s+of\s+pocket|funded|contribut)/i;
 
 /**
  * A weekly figure that is NOT the cash position, however it is worded.
  *
- * Judged over the SPAN between the label and the figure rather than over the
- * whole line, which is the difference between excluding a rent row and
- * excluding the sentence *"On the contractual rent, before the vacancy
- * allowance, the weekly shortfall is $450"* — a cash position that happens to
- * name the rent basis it rests on, and exactly the sentence this rule most
- * needs to read.
+ * Judged over the span between the label and the figure plus a short tail,
+ * never over the whole line — which is the difference between excluding a rent
+ * row and excluding *"On the contractual rent, before the vacancy allowance,
+ * the weekly shortfall is $450"*, a cash position that names the rent basis it
+ * rests on and exactly the sentence this rule most needs to read.
  */
 const NOT_THE_CASH_POSITION =
   /\b(?:rent|rental|repayment|repayments|interest|mortgage|break[-\s]?even|gross|management\s+fee|letting|insurance|rates|body\s+corporate|strata)\b/i;
 
 /** How far past the figure a disqualifying noun still describes it. */
-const SPAN_TAIL_CHARS = 12;
+const SPAN_TAIL_CHARS = 14;
 
 /**
  * Words that say a figure is on a stated, different basis.
@@ -178,20 +207,44 @@ const BASIS_LABEL =
 /** Two weekly cash figures within a dollar of one another are one figure. */
 const WEEKLY_TOLERANCE = 1;
 
+const splitCells = (line: string): string[] | null => {
+  const t = line.trim();
+  if (!t.startsWith('|') || !t.endsWith('|') || t.length < 2) return null;
+  return t.slice(1, -1).split('|').map((c) => c.trim());
+};
+
+/** The weekly cash figure a line states, or undefined. */
+function weeklyCashFigureIn(line: string): number | undefined {
+  const cells = splitCells(line);
+  if (cells) {
+    const at = cells.findIndex((c) => WEEKLY_CASH_CELL.test(c));
+    if (at < 0) return undefined;
+    for (const cell of cells.slice(at + 1)) {
+      const hits = moneyHitsIn(cell);
+      if (hits.length) return Math.abs(hits[0].value);
+    }
+    return undefined;
+  }
+  if (!CASH_POSITION_NOUN.test(line)) return undefined;
+  for (const re of [MONEY_A_WEEK, WEEKLY_NOUN_THEN_MONEY]) {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(line)) !== null) {
+      const span = line.slice(Math.max(0, m.index - 18), m.index + m[0].length + SPAN_TAIL_CHARS);
+      if (NOT_THE_CASH_POSITION.test(span)) continue;
+      const v = Number(m[1].replace(/,/g, ''));
+      if (Number.isFinite(v)) return Math.abs(v);
+    }
+  }
+  return undefined;
+}
+
 export function findWeeklyCashDisagreements(markdown: string): ConsistencyFinding[] {
   const seen: Array<{ value: number; line: string; labelled: boolean }> = [];
   for (const line of statementLines(markdown)) {
-    const label = WEEKLY_CASH_LABEL.exec(line);
-    if (!label) continue;
-    const hits = moneyHitsIn(line);
-    if (hits.length !== 1) continue; // two figures on one line is a comparison, not a claim
-    const [hit] = hits;
-    const span = line.slice(
-      Math.min(label.index, hit.start),
-      Math.max(label.index + label[0].length, hit.end) + SPAN_TAIL_CHARS,
-    );
-    if (NOT_THE_CASH_POSITION.test(span)) continue;
-    seen.push({ value: Math.abs(hit.value), line: trim(line), labelled: BASIS_LABEL.test(line) });
+    const value = weeklyCashFigureIn(line);
+    if (value === undefined) continue;
+    seen.push({ value, line: trim(line), labelled: BASIS_LABEL.test(line) });
   }
   if (seen.length < 2) return [];
 
@@ -304,6 +357,9 @@ const OVERALL_LABEL =
   /\b(?:overall\s+(?:investment\s+)?(?:score|assessment|grade|rating)|investment\s+(?:score|grade)|total\s+score|composite\s+score)\b/i;
 /** `62/100`, `62 out of 100`. Unambiguous wherever it appears. */
 const SCORE_OUT_OF = /\b([0-9]{1,3})\s*(?:\/|out of)\s*100\b/;
+/** A metric that is NOT the investment assessment, however it is drawn. */
+const OTHER_METRIC =
+  /\b(?:risk|property[- ]fit|fit|investor[- ]readiness|readiness|confidence|affordability|suitability|liveability|walk)\s+(?:score|rating|index)\b/i;
 /** A bare figure, read only where the label puts it: `Score: 62`, `B · 62`. */
 const SCORE_BARE = /(?<![$\d.,])\b([0-9]{1,3})\b(?!\s*(?:%|per cent)|[\d.,])/;
 /**
@@ -355,7 +411,39 @@ export function findOverallAssessmentDisagreements(markdown: string): Consistenc
     if (g) grades.push({ value: (g[1] ?? g[2]).toUpperCase(), line: trim(line) });
   }
 
+  /*
+   * A figure presented AS the canonical assessment while naming a different
+   * metric. Measured on the stored Executive Briefing for 1/27D Mitchell
+   * Street, verbatim:
+   *
+   *   - Total Score: 60/100 (Overall Risk Score)
+   *
+   * One line, two claims, and a reader takes the first. A risk score, a
+   * property-fit reading and an investor-readiness figure are all legitimate
+   * metrics — they are simply not the investment assessment, and printed under
+   * its label they read as a second opinion about the same question.
+   */
+  const misnamed: Array<{ metric: string; line: string }> = [];
+  for (const line of statementLines(markdown)) {
+    if (!OVERALL_LABEL.test(line)) continue;
+    const m = line.match(OTHER_METRIC);
+    if (m) misnamed.push({ metric: m[0], line: trim(line) });
+  }
+
   const findings: ConsistencyFinding[] = [];
+  if (misnamed.length) {
+    const named = [...new Set(misnamed.map((x) => x.metric.toLowerCase()))];
+    findings.push({
+      rule: 'overall-assessment-disagrees',
+      severity: 'error',
+      message:
+        `A figure is published under the overall assessment's own label while naming a different `
+        + `metric (${named.join(', ')}). One canonical investment assessment reaches a client `
+        + 'document. A separate metric is legitimate and must be named as what it is, in its own '
+        + 'place, rather than under the label a reader takes for the property\'s grade.',
+      statements: misnamed.map((x) => clip(x.line)),
+    });
+  }
   const distinctScores = scores.filter((s, i) => scores.findIndex((x) => x.value === s.value) === i);
   if (distinctScores.length >= 2) {
     findings.push({
