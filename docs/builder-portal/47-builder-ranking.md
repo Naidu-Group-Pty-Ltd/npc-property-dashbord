@@ -297,6 +297,51 @@ is recorded in the capture migration's header and deliberately **not** fixed
 there — a capture that silently repairs what it captures is no longer a capture,
 and the fix belongs in its own change with its own test.
 
+## What the gates caught, and why the local checks could not
+
+Four defects in this work reached CI. Each is worth recording, because none of
+them was visible to anything short of the real gate, and two of them would have
+shipped a broken page.
+
+**A composed select string is a row type nothing can read.** supabase-js derives
+a query's row type by parsing the select *at the type level*, which it can only
+do while that string has a literal type. Two forms broke it — `'a, ' + 'b'` in
+the network's recompute, and `${STOCK_ITEM_SELECT.trim()}` in the clone's
+projection — and both widen the template to `string`, after which the row type
+degrades to `GenericStringError` and collides with every concrete row
+interface. It fails *silently* wherever the row is typed `Record<string, any>`,
+because `GenericStringError[]` is assignable to that: the reads that were
+hardest to get right were the only ones that reported it. Both selects are
+single unbroken literals now, and `builderMarketplaceOrder.spec.ts` fails on any
+substitution in `RANKED_ITEM_SELECT` — with a second test asserting the
+duplication that buys back cannot drift from `STOCK_ITEM_SELECT`.
+
+**A shadowed name is a `ReferenceError`, not a type complaint.** The clone's
+`list_stock` bound its unpinned rows to `const body`, which shadows the request
+payload for the whole block — so the five reads of `body.search`,
+`body.organisation_id` and the rest, sitting five lines into that block,
+resolved to a declaration two hundred lines below them. Every marketplace read
+would have thrown before composing a query. This is the class `CLAUDE.md`
+already names: an identifier that does not resolve is never type debt, and a
+parse check cannot see it.
+
+**A view without `security_invoker` is an RLS bypass.** `builder_network_stock_ranked`
+resolved its base tables with the *owner's* rights, so the caller's policies on
+`builder_network_stock_items` never applied to anyone who could reach the view —
+silently, looking exactly like a view that works. The policies on the base table
+are the access rule; a sort over it must not be a way around it.
+
+**An export with no call site is not a feature.** `explainNetworkRanking` was
+written, typechecked, and described in this work's own summary as an affordance
+on every row, and nothing called it — the third time this programme has shipped
+that shape, after `DimensionRail`, `TitleBlock` and `bd-chip`. An unused export
+compiles, lints and builds. It is mounted under the confidence figure it
+explains, because that percentage is exactly what it is short for.
+
+The two that generalise: **a string the compiler must read cannot be composed**,
+and **the gate is the evidence**. Three of these four passed a parse check, a
+lint and a local build.
+
 ## Operating it
 
 - **Recompute** runs hourly (`builder-ranking-recompute-hourly`, minute 7).
