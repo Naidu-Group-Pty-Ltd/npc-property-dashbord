@@ -91,15 +91,18 @@
  *   ("an absence may not be RATED"). `assessPepEvidence`'s asymmetry is the
  *   same rule: a HIT is a signal, a MISS is not a clearance.
  *
- * That is a defect of the QUERY rather than of the evidence class, and it is
- * closeable: a parcel-polygon query against the cadastre would make a negative
- * a determination about the lot. Measured 18 September 2026 from this
- * sandbox's egress, Queensland's cadastre answers one — `2RP87802`, with
- * geometry, HTTP 200 in 1.6 s at the Pallas coordinate. New South Wales'
- * `NSW_Cadastre/9 (Lot)` declares `Query` and its service metadata answers in
- * 1.2 s, while the query operation itself returned nothing within 40 s on two
- * attempts; it has not been tested from the production egress. So this is an
- * acquisition with a known first step, not a wall.
+ * That is a defect of the QUERY rather than of the evidence class, and the
+ * first step is now BUILT: `parcelGeometry.pure.ts` resolves a parcel
+ * CANDIDATE from the cadastre and re-asks the registers with the lot polygon
+ * (`docs/reports/evidence/PARCEL_PROBE_2026-09-18.json` — QLD layer 4
+ * answers the polygon in ~240 ms and FloodCheck accepts it as the query
+ * geometry). Two measured cautions travel with it: two geocodes of one
+ * address resolved two DIFFERENT lots, so a coordinate-selected parcel is a
+ * candidate until a person confirms the lot/plan; and NSW's cadastre now
+ * answers its query in ~420 ms while the stored NSW subject coordinate lies
+ * on no lot at all (`no_lot_at_point` — a fact about the coordinate). A
+ * completed negative exists only at parcel grain over a complete sweep, and
+ * no conversion turns any of it into a score.
  *
  * They therefore stay {@link EvidenceAvailability} `held_but_unscoreable` —
  * named on the page as evidence and contributing nothing — and

@@ -263,19 +263,65 @@ operator can act on and most purchasers already hold the answer to.
 - **Strata is served, houses are the common case.** `unfunded_liability` exists
   for strata reports; a house's record will usually carry the AS 4349.1
   severities alone.
-- **The site half stays unscored.** Correcting the "published scale" premise
-  does not by itself make hazard scoreable — the point-versus-parcel problem
-  does that, and it is a defect of the *query* rather than of the evidence
-  class. Measured from this sandbox's egress on 18 September 2026:
-  Queensland's cadastre answers a parcel polygon (`2RP87802`, HTTP 200, 1.6 s
-  at the Pallas coordinate); New South Wales' `NSW_Cadastre/9 (Lot)` declares
-  `Query` and its metadata answers in 1.2 s while the query operation returned
-  nothing within 40 s on two attempts. **Not tested from the production
-  egress.** So the site half has a known first step and is not part of this
-  recommendation.
+- **The site half stays unscored — and its acquisition is now BUILT to the
+  same standard** (§6a below, added later the same day). Correcting the
+  "published scale" premise does not by itself make hazard scoreable — the
+  point-versus-parcel problem does that, and it is a defect of the *query*
+  rather than of the evidence class. The earlier measurement (a parcel
+  polygon `2RP87802` in 1.6 s at the Pallas coordinate; NSW metadata in
+  1.2 s with the query returning nothing within 40 s) is superseded by the
+  fuller probe in §6a.
 - **Even with the parcel query done, the site half alone cannot make Risk
-  score**, because it is one category. It would improve what the report can
+  score**, because it is one category. It improves what the report can
   *state*, not what it can *score*.
+
+### 6a. The site half — parcel identity and geometry, implemented not activated
+
+`_shared/reports/risk/parcelGeometry.pure.ts` (1.0.0), with 15 executable
+tests (`parcelGeometry.spec.ts`) and a fresh live probe
+(`docs/reports/evidence/PARCEL_PROBE_2026-09-18.json`, run from this egress
+the same day). What the probe established, and what each finding forced:
+
+- **Queensland's cadastre answers the lot polygon**: layer 4 (`Cadastral
+  parcels`) of `LandParcelPropertyFramework`, HTTP 200 in ~240 ms, fields
+  `lot`/`plan`/`lotplan`/`tenure`/`lot_area`/`locality`. Layers 3 and 8 also
+  answer; 4 is pinned.
+- **A register accepts the parcel polygon as its query geometry**:
+  FloodCheck answered the same subject at point and at parcel (POST,
+  HTTP 200, ~320 ms) — the sweep can move to parcel grain with no new
+  provider. `buildParcelIdentify` builds that request; a polygon never
+  travels in a URL.
+- **A coordinate yields a parcel CANDIDATE, never an identity.** Probed at
+  nominally the same subject, two geocodes of 262 Pallas Street resolved two
+  DIFFERENT lots — `2RP87802` earlier, `3SP239114` now — so at least one
+  coordinate selects a neighbouring parcel. `resolveParcelCandidate`
+  therefore returns `resolved_candidate` with the caveat in the sentence,
+  and confirming the lot/plan against the contract or title is an operator
+  act the module deliberately cannot perform.
+- **NSW re-measured honestly**: `NSW_Cadastre/9 (Lot)` now answers its query
+  in ~420 ms — the 40-second stall was not the service's steady state — and
+  the stored enrichment coordinate for the NSW validation subject lies on
+  **no lot**. `no_lot_at_point` is its own resolution: a fact about the
+  coordinate, never about the parcel, and never clearance.
+
+**What a sweep may conclude** (`assessSiteSweep`): a positive
+(`constraint_intersects`) is valid at either grain; a **completed negative**
+(`completed_negative_at_parcel`) exists only where the sweep ran at parcel
+grain and every consulted register completed — and even then it is a
+statement about the registers consulted, never about hazards no register
+maps; a point-grain sweep that found nothing is `negative_at_point_only`,
+stated as what it is; everything else is `incomplete`. The coverage rides
+the reading whole, so incompleteness is never inferred from a verdict.
+
+**Nothing here scores.** `CONVERSIONS` stays frozen empty and a test
+asserts it; no site conversion is proposed in this document, because a
+score derived from a parcel that might be the neighbour's would be worse
+than the absence it replaces — the candidate problem is the gate, and it is
+closed by confirmation, not arithmetic. The combined position: the
+`building` half may score under Approval B once records exist; the `site`
+half contributes verdicts the report can STATE at parcel grain, and a site
+conversion is a separate future decision that becomes proposable only once
+parcel identity is confirmed rather than candidate-grade.
 
 ---
 
@@ -317,6 +363,9 @@ grade, or any stored row.
 | `src/lib/reports/__tests__/constructionAgeCandidate.spec.ts` | **new** — 15 tests, including demonstration 6 by execution |
 | `supabase/migrations/20261204000000_property_condition_records.sql` | **new, prepared not applied** — the evidence table; findings shape validated by `condition_findings_shape_ok` (a CHECK cannot contain a subquery) |
 | `scripts/verify/migration-isolated/` | **new** — the isolated-cluster apply-and-probe harness behind the evidence transcript |
+| `_shared/reports/risk/parcelGeometry.pure.ts` | **new** — the site half's acquisition: parcel candidates, parcel-geometry identify, the three-way sweep verdict (§6a) |
+| `src/lib/reports/__tests__/parcelGeometry.spec.ts` | **new** — 15 tests: candidate-not-identity, no-lot-at-point, point-negative never clearance, conversions frozen |
+| `scripts/verify/parcel-probe.mjs` | **new** — the live measurement behind §6a (`PARCEL_PROBE_2026-09-18.json`) |
 
 No score, grade, stored row or client document changes. `scorePropertyRisk`
 itself is untouched: its rules were right, and it is the evidence reaching it
