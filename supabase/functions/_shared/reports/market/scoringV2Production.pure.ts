@@ -70,6 +70,11 @@
  */
 
 import {
+  connectRiskEvidence,
+  readStoredRiskReadings,
+  type RiskEvidenceConnection,
+} from '../risk/riskEvidenceConnection.pure.ts';
+import {
   type EvidenceKey,
   type EvidencePoint,
   type EvidenceProvider,
@@ -176,6 +181,15 @@ export interface ProductionScoringInput {
    * postcode. Named so the gap can say so rather than "provider unavailable".
    */
   evidenceWithheldReason?: string | null;
+  /**
+   * What the planning and hazard registers answered FOR THIS ASSESSMENT, as
+   * stored on the record. Absent means no register was queried for this run,
+   * which is a different state from every register answering and finding
+   * nothing — `connectRiskEvidence` keeps the two apart.
+   */
+  riskEvidence?: unknown;
+  /** The questions the subject's asset class actually asks, from the schema. */
+  riskQuestionIds?: readonly string[];
   now: Date;
 }
 
@@ -318,6 +332,20 @@ export function assembleEvidence(subject: EvidenceSubject, market: ProductionMar
   return ev as MarketEvidence;
 }
 
+/**
+ * The risk answer set for this assessment, with its audit.
+ *
+ * Derived here rather than passed in, for the reason
+ * `scoreAssessmentReading` records: a parameter a caller forgets takes a whole
+ * dimension off the page with nothing reporting it.
+ */
+export function riskConnection(input: ProductionScoringInput): RiskEvidenceConnection {
+  return connectRiskEvidence(
+    input.riskQuestionIds ?? [],
+    readStoredRiskReadings(input.riskEvidence),
+  );
+}
+
 /** The engine input, with the policy ruling on Location's inputs. */
 export function assembleEngineInput(input: ProductionScoringInput): ShadowScoreInput {
   const evidence = assembleEvidence(input.subject, input.market);
@@ -345,7 +373,14 @@ export function assembleEngineInput(input: ProductionScoringInput): ShadowScoreI
     },
     propertyRisk: {
       propertyType: input.property.propertyType,
-      answers: {},
+      // Was a hardcoded `{}`, which made Property Risk structurally null on
+      // every report this platform has ever produced — an unwired input, not a
+      // methodology limit. The connection reads what the registers actually
+      // answered for THIS assessment and produces an answer wherever an
+      // approved, versioned conversion applies. None is approved yet, so the
+      // set is still empty today; the difference is that it is now empty for a
+      // recorded reason per question rather than by construction.
+      answers: riskConnection(input).answers,
       growth1Year: evidence.growth1Year?.value ?? null,
     },
     finance: {
