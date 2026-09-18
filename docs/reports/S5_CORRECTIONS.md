@@ -243,6 +243,13 @@ sandbox egress, Queensland's cadastre answers a parcel polygon (`2RP87802`,
 HTTP 200, 1.6 s at the Pallas coordinate); NSW's `NSW_Cadastre/9 (Lot)`
 declares `Query`, answers its metadata in 1.2 s, and returned nothing within
 40 s on two attempts — **not tested from the production egress**.
+*(Superseded later the same day: the fuller probe behind
+`parcelGeometry.pure.ts` — `PARCEL_PROBE_2026-09-18.json` — pinned QLD
+layer 4 at ~240 ms, showed FloodCheck accepting the parcel polygon, found
+NSW's query answering in ~420 ms with NO lot at the stored coordinate, and
+resolved a DIFFERENT lot, `3SP239114`, at a second geocode of the same
+address — which is why a coordinate yields a parcel candidate, never an
+identity. `RISK_METHOD_RECOMMENDATION.md` §6a is the current record.)*
 
 The two questions therefore stay `held_but_unscoreable`: named on the page as
 evidence, contributing nothing to a score. `unscoreableHoldings()` is that

@@ -294,7 +294,11 @@ QUERY, not of the evidence class, and it is closeable: measured 18 Sep 2026,
 Queensland's cadastre answers a parcel polygon (`2RP87802`, HTTP 200, 1.6 s at
 the Pallas coordinate) while NSW's `NSW_Cadastre/9 (Lot)` declares `Query`,
 answers metadata in 1.2 s and returned nothing within 40 s on two attempts —
-not tested from the production egress.
+not tested from the production egress. *(Superseded later the same day by
+the fuller probe behind `parcelGeometry.pure.ts` —
+`RISK_METHOD_RECOMMENDATION.md` §6a and `PARCEL_PROBE_2026-09-18.json` are
+the current record, including the finding that two geocodes of one address
+resolved two different lots.)*
 
 Both questions therefore stay `held_but_unscoreable`: evidence on the page,
 zero points. `unscoreableHoldings()` is that second list; `answerableCount()`
