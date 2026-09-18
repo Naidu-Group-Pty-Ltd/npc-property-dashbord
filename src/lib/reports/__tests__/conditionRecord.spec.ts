@@ -1,12 +1,22 @@
 /**
- * The recommended Property Risk method — admissibility, the conversion, and
- * the fact that it is prepared and NOT switched on.
+ * The condition-record validator — what it must refuse before the method can
+ * be put up for activation.
  *
- * Every refusal below is a different remedy, which is the point of having six
- * of them: "nobody has sent us an inspection" and "the inspection does not say
- * what it inspected" send an operator to different places.
+ * Each `describe` below corresponds to a case v1.0.0 accepted and should not
+ * have. v1 admitted a record on four checks — an admissible `kind`, a
+ * non-empty `issuer`, a parseable date and a non-empty `scope` string — and
+ * every one of those is satisfiable by a document that establishes nothing
+ * about the dwelling, at which point it took the reference score.
+ *
+ * The rule the whole file is about: **a recorded defect is admissible from any
+ * accountable document; a stated absence of defects is a determination, and
+ * only a dwelling inspection over a wide enough recorded scope may supply
+ * one.** A document TYPE, an issuer NAME and a non-empty scope FIELD do not
+ * establish that a qualified person inspected the dwelling.
  */
 
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   ADMISSIBLE_SOURCES,
@@ -14,17 +24,26 @@ import {
   CONDITION_MAX_AGE_MONTHS,
   CONDITION_RECORD_METHOD_VERSION,
   CONDITION_REFERENCE,
+  ESTABLISHES,
+  FINDING_SEVERITIES,
   INADMISSIBLE_SOURCES,
   MAX_MINOR_DEDUCTION,
   SEVERITY_DEDUCTION,
   assessConditionRecord,
   bestConditionRecord,
   convertFindings,
+  isFindingSeverity,
   type ConditionRecord,
 } from '../../../../supabase/functions/_shared/reports/risk/conditionRecord.pure.ts';
 
 const ASOF = '2026-09-18T00:00:00.000Z';
 
+const SUBJECT = {
+  propertyAddress: '18 Annabelle Crescent, Kellyville NSW 2155',
+  propertyId: 'prop-annabelle',
+};
+
+/** A record that clears every rule — the control the refusals are measured against. */
 const inspection = (over: Partial<ConditionRecord> = {}): ConditionRecord => ({
   document: {
     kind: 'building_inspection',
@@ -34,7 +53,11 @@ const inspection = (over: Partial<ConditionRecord> = {}): ConditionRecord => ({
     inspectedOn: '2026-05-29',
     reference: 'HBC-2026-4417',
   },
+  subject: SUBJECT,
   scope: 'Interior, exterior, roof void and subfloor of the dwelling, and the detached garage.',
+  scopeCoverage: 'whole_dwelling',
+  exclusions: ['Areas concealed by stored goods in the garage.'],
+  conclusion: 'no_defects_identified',
   findings: [],
   verification: 'document_held',
   recordedBy: 'operator',
@@ -42,161 +65,289 @@ const inspection = (over: Partial<ConditionRecord> = {}): ConditionRecord => ({
   ...over,
 });
 
-describe('a record needs a document somebody is accountable for', () => {
-  it('names the absence rather than scoring it', () => {
+const refusalOf = (r: ConditionRecord | null, over: Parameters<typeof assessConditionRecord>[2] = {}) =>
+  assessConditionRecord(r, ASOF, over).refusal;
+
+describe('the control record is admissible, so every refusal below is the rule and not the fixture', () => {
+  it('accepts a whole-dwelling inspection that concluded no defects', () => {
+    const r = assessConditionRecord(inspection(), ASOF, { expectedSubject: SUBJECT });
+    expect(r.refusal).toBeNull();
+    expect(r.admissible).toBe(true);
+    expect(r.scopeCoverage).toBe('whole_dwelling');
+    expect(r.exclusions).toHaveLength(1);
+    expect(r.statement).toContain('the whole dwelling');
+  });
+});
+
+describe('dates must describe one examination that has happened', () => {
+  it('refuses a document issued after the assessment', () => {
+    expect(refusalOf(inspection({
+      document: { ...inspection().document, issuedOn: '2027-06-02', inspectedOn: '2027-05-29' },
+    }))).toBe('issued_in_future');
+  });
+
+  it('refuses an inspection dated after the assessment, and says which fault it is', () => {
+    // Both faults are present here — the inspection is in the future AND after
+    // the issue. The future reading is the more specific diagnosis and is
+    // checked first, so an operator is sent to the date that cannot be right
+    // rather than to the ordering.
+    expect(refusalOf(inspection({
+      document: { ...inspection().document, issuedOn: '2026-06-02', inspectedOn: '2027-01-04' },
+    }))).toBe('inspected_in_future');
+  });
+
+  it('refuses an inspection recorded AFTER the report on it', () => {
+    // A report cannot describe an examination that had not happened when it
+    // was written. This is a transcription error or a document describing
+    // something it did not see; either way it is not one examination.
+    expect(refusalOf(inspection({
+      document: { ...inspection().document, issuedOn: '2026-03-01', inspectedOn: '2026-05-29' },
+    }))).toBe('inspected_after_issue');
+  });
+
+  it('refuses an unreadable inspection date rather than falling back to the issue date', () => {
+    expect(refusalOf(inspection({
+      document: { ...inspection().document, inspectedOn: 'last autumn' },
+    }))).toBe('undated');
+  });
+
+  it('measures age from the EXAMINATION, not the issue', () => {
+    const r = assessConditionRecord(inspection({
+      document: { ...inspection().document, issuedOn: '2024-01-10', inspectedOn: '2023-06-01' },
+    }), ASOF);
+    expect(r.refusal).toBe('out_of_currency');
+    // 2023-06-01 → 2026-09-18 is over three years; the issue date alone is not.
+    expect(r.ageMonths!).toBeGreaterThan(CONDITION_MAX_AGE_MONTHS);
+  });
+});
+
+describe('an empty findings list is not a conclusion', () => {
+  it('refuses a record whose findings are empty because nothing was extracted', () => {
+    // The exact shape a failed extraction produces: a real document, a real
+    // scope, and an empty array nobody concluded anything from.
+    expect(refusalOf(inspection({ conclusion: undefined }))).toBe('conclusion_not_stated');
+    expect(refusalOf(inspection({ conclusion: 'not_concluded' }))).toBe('conclusion_not_stated');
+  });
+
+  it('accepts findings from a record with no conclusion — a defect is a defect', () => {
+    // The asymmetry: the document recorded a problem. Its silence on a
+    // conclusion limits what else it can say, not whether the finding is real.
+    const r = assessConditionRecord(inspection({
+      conclusion: undefined,
+      findings: [{ element: 'Subfloor bearer', severity: 'major_defect' }],
+    }), ASOF);
+    expect(r.refusal).toBeNull();
+    expect(r.admissible).toBe(true);
+  });
+
+  it('will not read a scope LABEL as a recorded scope', () => {
+    for (const scope of ['n/a', 'N/A', '-', 'TBC', 'unknown', 'inspection']) {
+      expect(refusalOf(inspection({ scope })), scope).toBe('scope_not_recorded');
+    }
+  });
+
+  it('refuses a document whose coverage is not recorded at all', () => {
+    expect(refusalOf(inspection({ scopeCoverage: undefined }))).toBe('scope_coverage_not_recorded');
+  });
+});
+
+describe('a document establishes only what its kind and scope can establish', () => {
+  it('refuses a clean vendor statement — disclosure is not inspection', () => {
+    const r = assessConditionRecord(inspection({
+      document: { kind: 'vendor_statement', issuer: 'The vendor', issuedOn: '2026-06-02' },
+      scope: 'Matters known to the vendor at the date of this statement.',
+      scopeCoverage: 'disclosure_only',
+      conclusion: 'no_defects_identified',
+      findings: [],
+    }), ASOF);
+    expect(r.refusal).toBe('scope_too_narrow_for_conclusion');
+    expect(r.statement).toContain('what the vendor disclosed');
+  });
+
+  it('refuses a clean strata report — the scheme is not the dwelling', () => {
+    expect(refusalOf(inspection({
+      document: { kind: 'strata_report', issuer: 'Strata Search Co', issuedOn: '2026-06-02' },
+      scope: 'Levies, sinking fund, disclosed defects and litigation of the scheme.',
+      scopeCoverage: 'common_property',
+      conclusion: 'no_defects_identified',
+      findings: [],
+    }))).toBe('scope_too_narrow_for_conclusion');
+  });
+
+  it('refuses a clean building certificate — it certifies the works, not the dwelling', () => {
+    expect(refusalOf(inspection({
+      document: { kind: 'building_certificate', issuer: 'Council certifier', issuedOn: '2026-06-02' },
+      scope: 'The carport erected under the development consent granted in 2025.',
+      scopeCoverage: 'specified_works',
+      conclusion: 'no_defects_identified',
+      findings: [],
+    }))).toBe('scope_too_narrow_for_conclusion');
+  });
+
+  it('refuses a clean PART-dwelling inspection, and accepts the same document with a finding', () => {
+    const partial = inspection({
+      scope: 'Interior only. The roof space and subfloor were not accessible.',
+      scopeCoverage: 'partial_dwelling',
+      exclusions: ['Roof space', 'Subfloor'],
+    });
+    expect(refusalOf(partial)).toBe('scope_too_narrow_for_conclusion');
+    // ...and the same narrow document CAN carry a defect it did find.
+    expect(refusalOf({
+      ...partial, findings: [{ element: 'Bathroom waterproofing', severity: 'major_defect' }],
+    })).toBeNull();
+  });
+
+  it('takes those three verdicts from the establishes table rather than a second list', () => {
+    for (const kind of ADMISSIBLE_SOURCES) {
+      const rule = ESTABLISHES[kind];
+      expect(rule.establishes.length).toBeGreaterThan(40);
+      if (!rule.supportsNegativeConclusion) expect(rule.coverageForNegative).toHaveLength(0);
+    }
+    // Exactly one kind can clear a dwelling, and only over the whole of it.
+    const clearing = ADMISSIBLE_SOURCES.filter((k) => ESTABLISHES[k].supportsNegativeConclusion);
+    expect(clearing).toEqual(['building_inspection']);
+    expect(ESTABLISHES.building_inspection.coverageForNegative).toEqual(['whole_dwelling']);
+  });
+});
+
+describe('a severity this method cannot weigh is never silently dropped', () => {
+  it('refuses the record and names the severities', () => {
+    const r = assessConditionRecord(inspection({
+      conclusion: 'defects_identified',
+      findings: [
+        { element: 'Render cracking', severity: 'moderate' as never },
+        { element: 'Fascia', severity: 'cosmetic' as never },
+      ],
+    }), ASOF);
+    expect(r.refusal).toBe('unrecognised_severity');
+    expect(r.unrecognisedSeverities).toEqual(['moderate', 'cosmetic']);
+    expect(r.statement).toContain('moderate, cosmetic');
+  });
+
+  it('is the defect that mattered: three unweighable findings scored as none', () => {
+    // v1 skipped them in `convertFindings` AND omitted them from the sentence,
+    // so a document listing three defects read "no defect or hazard over the
+    // scope examined" and scored the reference.
+    const three = [
+      { element: 'a', severity: 'moderate' as never },
+      { element: 'b', severity: 'moderate' as never },
+      { element: 'c', severity: 'moderate' as never },
+    ];
+    expect(convertFindings(three)).toBe(CONDITION_REFERENCE);   // the arithmetic still can't see them
+    expect(assessConditionRecord(inspection({ findings: three }), ASOF).admissible).toBe(false);
+  });
+
+  it('exposes the severity vocabulary so a caller can validate before submitting', () => {
+    expect([...FINDING_SEVERITIES].sort())
+      .toEqual(['major_defect', 'minor_defect', 'safety_hazard', 'unfunded_liability']);
+    expect(isFindingSeverity('moderate')).toBe(false);
+    expect(isFindingSeverity('major_defect')).toBe(true);
+    for (const s of FINDING_SEVERITIES) expect(SEVERITY_DEDUCTION[s]).toBeGreaterThan(0);
+  });
+});
+
+describe('the record belongs to a property, and it is checked', () => {
+  it('refuses a document filed against another property', () => {
+    expect(refusalOf(inspection(), {
+      expectedSubject: { propertyAddress: '262 Pallas Street, Maryborough QLD 4650', propertyId: 'prop-pallas' },
+    })).toBe('subject_mismatch');
+  });
+
+  it('tolerates street-type abbreviation rather than rejecting on punctuation', () => {
+    expect(refusalOf(inspection(), {
+      expectedSubject: { propertyAddress: '18 Annabelle Cres, Kellyville, NSW 2155' },
+    })).toBeNull();
+  });
+
+  it('checks nothing when no subject was supplied — the caller decides', () => {
+    expect(refusalOf(inspection())).toBeNull();
+  });
+});
+
+describe('what has not changed', () => {
+  it('still names the absence rather than scoring it', () => {
     const r = assessConditionRecord(null, ASOF);
-    expect(r.admissible).toBe(false);
     expect(r.refusal).toBe('no_record');
-    // The statement has to say what would answer it — this is the actionable half.
     expect(r.statement).toContain('building inspection report');
   });
 
-  it('refuses a source nobody issues', () => {
-    const r = assessConditionRecord(
-      // A typed year dressed as a document.
-      inspection({ document: { kind: 'typed_construction_year' as never, issuer: 'operator', issuedOn: '2026-09-16' } }),
-      ASOF,
-    );
-    expect(r.refusal).toBe('inadmissible_source');
+  it('still refuses an inadmissible source, an unattributed issuer and a transcription', () => {
+    expect(refusalOf(inspection({
+      document: { kind: 'typed_construction_year' as never, issuer: 'operator', issuedOn: '2026-09-16' },
+    }))).toBe('inadmissible_source');
+    expect(refusalOf(inspection({
+      document: { ...inspection().document, issuer: '  ' },
+    }))).toBe('unattributed');
+    expect(refusalOf(inspection({ verification: 'transcribed_only' }))).toBe('not_verified');
   });
 
   it('lists what it refuses, so a reader can see the typed year was considered', () => {
     expect(Object.keys(INADMISSIBLE_SOURCES)).toContain('typed_construction_year');
-    expect(INADMISSIBLE_SOURCES.typed_construction_year).toContain('32 rows');
-    // None of the refused kinds may also be admissible.
     for (const k of Object.keys(INADMISSIBLE_SOURCES)) {
       expect(ADMISSIBLE_SOURCES as readonly string[]).not.toContain(k);
     }
   });
 
-  it('refuses an unattributed document', () => {
-    expect(assessConditionRecord(
-      inspection({ document: { ...inspection().document, issuer: '  ' } }), ASOF,
-    ).refusal).toBe('unattributed');
-  });
-
-  it('refuses one with no usable date', () => {
-    expect(assessConditionRecord(
-      inspection({ document: { kind: 'building_inspection', issuer: 'X', issuedOn: 'sometime' } }), ASOF,
-    ).refusal).toBe('undated');
-  });
-});
-
-describe('an absence of findings is a determination only where the scope is recorded', () => {
-  it('refuses a scopeless document even when everything else is in order', () => {
-    const r = assessConditionRecord(inspection({ scope: undefined }), ASOF);
-    expect(r.refusal).toBe('scope_not_recorded');
-    expect(r.statement).toContain('cannot be read as a finding');
-  });
-
-  it('accepts a scoped inspection that found nothing, and says who looked', () => {
-    const r = assessConditionRecord(inspection(), ASOF);
-    expect(r.admissible).toBe(true);
-    expect(r.refusal).toBeNull();
-    expect(r.statement).toContain('no defect or hazard over the scope examined');
-    expect(r.statement).toContain('Hunter Building Consultants');
-  });
-
-  it('refuses findings transcribed without the document', () => {
-    expect(assessConditionRecord(
-      inspection({ verification: 'transcribed_only' }), ASOF,
-    ).refusal).toBe('not_verified');
-  });
-
-  it('declines a document older than the currency window', () => {
-    const stale = inspection({
-      document: { ...inspection().document, issuedOn: '2020-01-10', inspectedOn: '2020-01-08' },
-    });
-    const r = assessConditionRecord(stale, ASOF);
-    expect(r.refusal).toBe('out_of_currency');
-    expect(r.ageMonths! > CONDITION_MAX_AGE_MONTHS).toBe(true);
-  });
-});
-
-describe('the conversion only ever deducts', () => {
-  it('starts at the declared reference when nothing was found', () => {
+  it('only ever deducts, and minor findings cannot exhaust the scale', () => {
     expect(convertFindings([])).toBe(CONDITION_REFERENCE);
-  });
-
-  it('never rises above the reference, whatever it is handed', () => {
     const many = Array.from({ length: 20 }, (_, i) => ({
-      element: `element ${i}`, severity: 'minor_defect' as const,
+      element: `e${i}`, severity: 'minor_defect' as const,
     }));
-    expect(convertFindings(many)).toBeLessThan(CONDITION_REFERENCE);
-    // ...and minor findings alone cannot exhaust the scale.
     expect(convertFindings(many)).toBe(CONDITION_REFERENCE - MAX_MINOR_DEDUCTION);
-  });
-
-  it('ranks the severities by what the finding obliges', () => {
-    expect(SEVERITY_DEDUCTION.safety_hazard).toBeGreaterThan(SEVERITY_DEDUCTION.major_defect);
-    expect(SEVERITY_DEDUCTION.major_defect).toBeGreaterThan(SEVERITY_DEDUCTION.minor_defect);
-  });
-
-  it('describes what it read, in the issuer’s units', () => {
-    const r = assessConditionRecord(inspection({
-      findings: [
-        { element: 'Subfloor bearer', severity: 'major_defect' },
-        { element: 'Balustrade height', severity: 'safety_hazard' },
-        { element: 'Gutter corrosion', severity: 'minor_defect' },
-      ],
-    }), ASOF);
-    expect(r.statement).toContain('1 safety hazard, 1 major defect and 1 minor defect');
-    expect(r.provisionalObservation).toBe(
-      CONDITION_REFERENCE - SEVERITY_DEDUCTION.safety_hazard
-        - SEVERITY_DEDUCTION.major_defect - SEVERITY_DEDUCTION.minor_defect,
-    );
-  });
-
-  it('floors at zero rather than going negative', () => {
     const wrecked = Array.from({ length: 12 }, (_, i) => ({
       element: `e${i}`, severity: 'safety_hazard' as const,
     }));
     expect(convertFindings(wrecked)).toBe(0);
   });
+
+  it('prefers by scope and recency, never by outcome', () => {
+    const wideButWorse = inspection({
+      document: { ...inspection().document, inspectedOn: '2026-01-04', issuedOn: '2026-01-05' },
+      conclusion: 'defects_identified',
+      findings: [{ element: 'Roof', severity: 'major_defect' }],
+    });
+    const narrowButNewer: ConditionRecord = {
+      document: { kind: 'vendor_statement', issuer: 'Vendor', issuedOn: '2026-08-01' },
+      subject: SUBJECT,
+      scope: 'Matters known to the vendor at the date of this statement.',
+      scopeCoverage: 'disclosure_only',
+      conclusion: 'no_defects_identified',
+      findings: [],
+      verification: 'document_held',
+    };
+    expect(bestConditionRecord([narrowButNewer, wideButWorse])?.document.kind)
+      .toBe('building_inspection');
+    expect(bestConditionRecord([])).toBeNull();
+  });
 });
 
 describe('preparing a method is not activating it', () => {
   it('ships with no activation decision', () => {
-    // This is the assertion that makes switching it on a visible act.
     expect(CONDITION_METHOD_ACTIVATION).toBeNull();
   });
 
   it('publishes no observation even from a fully admissible record', () => {
-    const r = assessConditionRecord(inspection(), ASOF);
+    const r = assessConditionRecord(inspection(), ASOF, { expectedSubject: SUBJECT });
     expect(r.admissible).toBe(true);
     expect(r.observation).toBeNull();
-    // The diagnostic value is still computed, so the method can be reviewed.
     expect(r.provisionalObservation).toBe(CONDITION_REFERENCE);
     expect(r.statement).toContain('no condition scale is authorised');
   });
 
-  it('carries a version, so a stored reading names its basis', () => {
-    expect(CONDITION_RECORD_METHOD_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
+  it('carries the version that names these rules', () => {
+    expect(CONDITION_RECORD_METHOD_VERSION).toBe('2.0.0');
     expect(assessConditionRecord(inspection(), ASOF).version)
       .toBe(CONDITION_RECORD_METHOD_VERSION);
   });
-});
 
-describe('choosing between records', () => {
-  it('prefers by scope and recency, never by outcome', () => {
-    const wideButOlder = inspection({
-      document: { ...inspection().document, inspectedOn: '2026-01-04', issuedOn: '2026-01-05' },
-      findings: [{ element: 'Roof', severity: 'major_defect' }],
-    });
-    const narrowerButNewer: ConditionRecord = {
-      document: {
-        kind: 'vendor_statement', issuer: 'Vendor', issuedOn: '2026-08-01',
-      },
-      scope: 'Matters known to the vendor.',
-      findings: [],
-      verification: 'document_held',
-    };
-    // The inspection wins although it is older AND carries the worse finding.
-    expect(bestConditionRecord([narrowerButNewer, wideButOlder])?.document.kind)
-      .toBe('building_inspection');
-  });
-
-  it('answers null where nothing admissible is held', () => {
-    expect(bestConditionRecord([])).toBeNull();
+  it('states no interval as an industry norm', () => {
+    // v1 claimed 36 months was "the ordinary re-inspection interval a lender or
+    // an insurer works to". No source was held for it. A parameter may be
+    // proposed; it may not be dressed as a fact about somebody else's practice.
+    const src = readFileSync(resolve(
+      process.cwd(), 'supabase/functions/_shared/reports/risk/conditionRecord.pure.ts'), 'utf8');
+    expect(src).not.toMatch(/interval a lender|insurer works to/);
+    expect(src).toContain('PROPOSED');
+    expect(src).toContain('the claim is withdrawn');
   });
 });

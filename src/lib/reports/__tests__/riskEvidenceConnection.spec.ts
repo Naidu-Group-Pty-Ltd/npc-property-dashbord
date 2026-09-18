@@ -185,3 +185,95 @@ describe('reading a stored evidence block', () => {
     expect(readStoredRiskReadings({})).toEqual([]);
   });
 });
+
+describe('one answered register must not conceal one that failed', () => {
+  // The aggregation defect: `refusalFor` returned
+  // `registers_answered_no_intersection` as soon as ANY register answered, so
+  // a sibling that 503'd or was never run vanished from the verdict and a
+  // partial sweep was reported as a completed one. HTTP 200 establishes that a
+  // register RESPONDED; it never establishes that the question was covered.
+  const hazardOnly = (outcome: RiskEvidenceReading['outcome'], register: string) => ({
+    ...ANNABELLE[1], register, outcome,
+  });
+
+  it('reads a partial sweep as incomplete, not as nothing found', () => {
+    const q = connectRiskEvidence(HOUSE_QUESTIONS, [
+      hazardOnly('answered_no_intersection', 'NSW Hazard'),
+      hazardOnly('request_failed', 'NSW Protection'),
+    ]).questions.find((x) => x.questionId === 'site_hazard_exposure')!;
+
+    expect(q.refusal).toBe('registers_incomplete');
+    expect(q.coverage.complete).toBe(false);
+    expect(q.coverage.answered).toBe(1);
+    expect(q.coverage.failed).toBe(1);
+    expect(q.coverage.incomplete).toEqual(['NSW Protection']);
+    expect(q.statement).toContain('NSW Protection');
+  });
+
+  it('reads the same two registers as a finding once both complete', () => {
+    const q = connectRiskEvidence(HOUSE_QUESTIONS, [
+      hazardOnly('answered_no_intersection', 'NSW Hazard'),
+      hazardOnly('answered_no_intersection', 'NSW Protection'),
+    ]).questions.find((x) => x.questionId === 'site_hazard_exposure')!;
+
+    expect(q.refusal).toBe('registers_answered_no_intersection');
+    expect(q.coverage.complete).toBe(true);
+    expect(q.coverage.incomplete).toHaveLength(0);
+  });
+
+  it('treats a register that was never run the same as one that failed', () => {
+    const q = connectRiskEvidence(HOUSE_QUESTIONS, [
+      hazardOnly('answered_no_intersection', 'NSW Hazard'),
+      hazardOnly('not_run', 'NSW Protection'),
+    ]).questions.find((x) => x.questionId === 'site_hazard_exposure')!;
+    expect(q.refusal).toBe('registers_incomplete');
+    expect(q.coverage.notRun).toBe(1);
+  });
+
+  it('keeps coverage beside a verdict chosen for another reason', () => {
+    // A positive finding is still why there is no answer — the conversion is
+    // missing, not the evidence — and the partial sweep must still be visible.
+    const q = connectRiskEvidence(HOUSE_QUESTIONS, [
+      { ...ANNABELLE[1], register: 'QLD FloodCheck', outcome: 'answered_with_intersection',
+        findings: [{ family: 'flood', kind: 'hazard', label: 'Lower Mary River' }] },
+      hazardOnly('request_failed', 'QLD Landslide'),
+    ]).questions.find((x) => x.questionId === 'site_hazard_exposure')!;
+
+    expect(q.refusal).toBe('evidence_held_no_approved_conversion');
+    expect(q.coverage.complete).toBe(false);
+    expect(q.statement).toContain('Coverage is incomplete');
+    expect(q.statement).toContain('QLD Landslide');
+  });
+
+  it('retains every reading, whatever the verdict', () => {
+    const readings = [
+      hazardOnly('answered_no_intersection', 'A'),
+      hazardOnly('request_failed', 'B'),
+      hazardOnly('not_run', 'C'),
+    ];
+    const q = connectRiskEvidence(HOUSE_QUESTIONS, readings)
+      .questions.find((x) => x.questionId === 'site_hazard_exposure')!;
+    expect(q.readings).toHaveLength(3);
+    expect(q.coverage.consulted).toBe(3);
+  });
+
+  it('carries coverage on a question nothing was consulted for', () => {
+    const q = connectRiskEvidence(HOUSE_QUESTIONS, [])
+      .questions.find((x) => x.questionId === 'site_hazard_exposure')!;
+    expect(q.coverage.consulted).toBe(0);
+    // Nothing consulted is not a complete sweep of nothing.
+    expect(q.coverage.complete).toBe(false);
+    expect(q.refusal).toBe('not_acquired');
+  });
+
+  it('reads the two real subjects exactly as before — the fix changes no complete sweep', () => {
+    const annabelle = connectRiskEvidence(HOUSE_QUESTIONS, ANNABELLE);
+    const hazard = annabelle.questions.find((q) => q.questionId === 'site_hazard_exposure')!;
+    expect(hazard.refusal).toBe('registers_answered_no_intersection');
+    expect(hazard.coverage.complete).toBe(true);
+
+    const pallas = connectRiskEvidence(HOUSE_QUESTIONS, PALLAS);
+    expect(pallas.questions.find((q) => q.questionId === 'site_hazard_exposure')!.refusal)
+      .toBe('evidence_held_no_approved_conversion');
+  });
+});

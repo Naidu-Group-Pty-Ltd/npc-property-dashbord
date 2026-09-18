@@ -105,6 +105,13 @@ import {
 } from './scoringInputPolicy.pure.ts';
 import { dwellingTypeFor } from './domainEvidence.pure.ts';
 import { riskRemedyFor } from '../risk/propertyRiskSchema.pure.ts';
+import {
+  ASSESSMENT_DIMENSIONS,
+  assessCompletion,
+  type AssessmentCompletion,
+  type AssessmentDimension,
+  type RecoveryAction,
+} from './assessmentCompletion.pure.ts';
 
 export { dwellingTypeFor };
 
@@ -190,6 +197,13 @@ export interface ProductionScoringInput {
   riskEvidence?: unknown;
   /** The questions the subject's asset class actually asks, from the schema. */
   riskQuestionIds?: readonly string[];
+  /**
+   * Automatic acquisition attempts already spent on this assessment.
+   *
+   * Read by the completion gate to bound retries. Absent means none spent,
+   * which is the correct reading for a first run.
+   */
+  acquisitionAttempts?: number;
   now: Date;
 }
 
@@ -241,6 +255,12 @@ export interface ProductionScoreRecord {
   grade: string | null;
   recommendation: string;
   breakdown: Record<ProductionBreakdownKey, ProductionDimensionScore>;
+  /**
+   * The five-dimension completion gate's reading: the state, every dimension's
+   * status, and what would close each gap. Carried on the record so a surface
+   * draws the run's own decision rather than re-deriving it.
+   */
+  completion: AssessmentCompletion;
   coverage: {
     dimensionsScored: number;
     totalDimensions: number;
@@ -361,6 +381,88 @@ export function qualifyRecommendation(
     : names[0];
   return `${base}. Assessed on ${measured.length} of ${total} dimensions: ${list}.`;
 }
+
+/**
+ * The five-dimension completion gate (S5/S6 §4, 18 September 2026).
+ *
+ * `SCORING_V2_ACTIVATION` issues a grade on the engine's floor of three
+ * measured dimensions plus Growth. Measured over production, 9 of 9 runs that
+ * issued a grade did so on 3 of 5 — location and property risk excluded on
+ * every one, two of the letters F. The owner's instruction narrows it: **a
+ * completed final investment grade issues only when all five dimensions have
+ * valid scores.**
+ *
+ * What this does NOT change, and a spec asserts each:
+ *
+ *   * **no weight, threshold, cap or anchor.** The engine's arithmetic is
+ *     untouched; this decides when a letter is PUBLISHED, not what it is.
+ *   * **no stored row.** A record written before this keeps the grade its own
+ *     run issued, under its own stamp. `assessCompletion`'s `historical` state
+ *     exists for exactly that, and nothing here rewrites history.
+ *   * **no intermediate measurement.** Growth, Yield and Demand still score,
+ *     still carry their weights and still reach the page; withholding the
+ *     completed grade withholds the letter alone.
+ *
+ * It is a constant rather than configuration for the reason
+ * `SCORING_V2_ACTIVATION` is: narrowing when a grade may issue is a decision
+ * with a review behind it, and an environment variable is not that decision.
+ */
+type CompletionDimensions = Parameters<typeof assessCompletion>[0]['dimensions'];
+
+/*
+ * Deliberately a lookup rather than a `switch`.
+ *
+ * `openDataGrowthWiring.spec.ts` scans this module's SOURCE for the first
+ * `case 'growth':` and reads the remedy after it, to pin that `describeGaps`
+ * sends an operator to the sales-register loader as well as to Domain. A
+ * second switch on the same key defeats that guard by being found first. The
+ * guard is right, so the helper avoids the collision instead.
+ */
+const RECOVERY_DEFAULTS: Readonly<Record<AssessmentDimension, {
+  actor: RecoveryAction['actor']; retryable: boolean; fallback: string;
+}>> = {
+  risk: {
+    actor: 'operator',
+    // The building half; the site half needs its own approved conversion, and
+    // neither is closed by re-running a fetch.
+    retryable: false,
+    fallback: 'Submit a building inspection report covering the whole dwelling, with its issuer, '
+      + 'its dates and what it examined.',
+  },
+  location: {
+    actor: 'system',
+    retryable: true,
+    fallback: 'Regenerate the assessment so the location enrichment is re-acquired with an '
+      + 'acquisition stamp.',
+  },
+  growth: { actor: 'system', retryable: true, fallback: 'Re-acquire the capital growth evidence.' },
+  demand: { actor: 'system', retryable: true, fallback: 'Re-acquire the demand evidence.' },
+  yield: { actor: 'system', retryable: true, fallback: 'Re-acquire the rental yield evidence.' },
+};
+
+/**
+ * Turn a gap's remedy into an act somebody can perform.
+ *
+ * `retryable` is the load-bearing field and it is false more often than a
+ * reader expects: re-running an acquisition cannot produce a building
+ * inspection report, cannot attach a Domain API package, and cannot approve a
+ * scoring method. Only a dimension whose evidence a further fetch could
+ * actually deliver may keep an assessment in `acquisition`.
+ */
+function recoveryFor(dimension: AssessmentDimension, remedy: string | null): RecoveryAction {
+  const d = RECOVERY_DEFAULTS[dimension];
+  return { actor: d.actor, action: remedy ?? d.fallback, retryable: d.retryable };
+}
+
+export const FIVE_DIMENSION_COMPLETION_GATE = {
+  effectiveFrom: '2026-09-18',
+  reference: 'S5/S6 §4',
+  decidedBy: 'platform owner instruction, 18 September 2026 — "issue a completed final investment '
+    + 'grade only when all five dimensions have valid scores under the approved method"',
+  requires: ASSESSMENT_DIMENSIONS,
+  narrows: 'SCORING_V2_ACTIVATION, for the ISSUE of a completed grade only. Weights, thresholds, '
+    + 'caps and the engine floor are unchanged.',
+} as const;
 
 const num = (v: unknown): number | null =>
   typeof v === 'number' && Number.isFinite(v) ? v : null;
@@ -679,7 +781,33 @@ export function scoreForProduction(input: ProductionScoringInput): ProductionSco
   const withheldBy: ProductionScoreRecord['v2']['withheldBy'] = result.grade === null
     ? 'engine_floor'
     : requiredMissing.length ? 'required_dimension' : null;
-  const gradeIssued = withheldBy === null && result.grade !== null && result.compositeScore !== null;
+  // The engine's own verdict: did it form a composite the floor admits?
+  const engineWouldIssue = withheldBy === null
+    && result.grade !== null && result.compositeScore !== null;
+
+  // The completion gate, over and above it. `describeGaps` already says why
+  // each unmeasured dimension is unmeasured and what would close it, so the
+  // recovery actions are DERIVED from the run rather than restated beside it.
+  const preGaps = describeGaps(input, result, withheldBy);
+  const completion = assessCompletion({
+    dimensions: Object.fromEntries(ASSESSMENT_DIMENSIONS.map((d) => {
+      const dim = out.dimensions.find((x) => x.key === d);
+      const gap = preGaps.find((g) => g.dimension === d);
+      return [d, dim?.available
+        ? { scored: true, score: dim.performance ?? null }
+        : {
+            scored: false,
+            reason: gap?.reason ?? gap?.detail ?? null,
+            recovery: recoveryFor(d, gap?.remedy ?? null),
+          }];
+    })) as CompletionDimensions,
+    evidenceCoverage: typeof result.evidenceCoverage === 'number' ? result.evidenceCoverage : null,
+    attemptsUsed: input.acquisitionAttempts ?? 0,
+  });
+
+  // A completed grade needs BOTH: the engine willing to form one, and all five
+  // dimensions validly scored. Neither alone is enough.
+  const gradeIssued = engineWouldIssue && completion.mayIssueCompletedGrade;
 
   const stamp: ScoringV2PolicyStamp = {
     scoringSystem: 'scoring-v2',
@@ -720,7 +848,7 @@ export function scoreForProduction(input: ProductionScoringInput): ProductionSco
     };
   }
 
-  const gaps = describeGaps(input, result, withheldBy);
+  const gaps = preGaps;
   const notAssessed: Record<string, string> = {};
   for (const gap of gaps) notAssessed[gap.dimension] = gap.reason;
 
@@ -734,9 +862,16 @@ export function scoreForProduction(input: ProductionScoringInput): ProductionSco
     .reduce((s, d) => s + d.nominalWeight, 0).toFixed(2));
   const total = out.dimensions.length;
   const partialLabel = !gradeIssued
-    ? withheldBy === 'required_dimension'
-      ? `Grade withheld — ${requiredMissing.join(', ')} not measured (${measured.length} of ${total} dimensions measured)`
-      : `Insufficient evidence — qualitative review only (${measured.length} of ${total} dimensions)`
+    // The completion gate is a DIFFERENT cause from the engine's own floor, and
+    // saying "insufficient evidence" where the engine formed a grade sends an
+    // operator to look for missing data rather than at the two dimensions the
+    // gate names. `engineWouldIssue` distinguishes them.
+    ? engineWouldIssue
+      ? `Assessment incomplete — ${completion.outstanding.map((d) => d.label).join(' and ')} `
+        + `not yet assessed (${measured.length} of ${total} dimensions measured)`
+      : withheldBy === 'required_dimension'
+        ? `Grade withheld — ${requiredMissing.join(', ')} not measured (${measured.length} of ${total} dimensions measured)`
+        : `Insufficient evidence — qualitative review only (${measured.length} of ${total} dimensions)`
     : measured.length === total
       ? `Full coverage (${total} of ${total} dimensions)`
       : `Partial score: ${measured.length} of ${total} dimensions`;
@@ -761,6 +896,7 @@ export function scoreForProduction(input: ProductionScoringInput): ProductionSco
     grade,
     recommendation: qualifyRecommendation(grade, measured, total),
     breakdown,
+    completion,
     coverage: {
       dimensionsScored: measured.length,
       totalDimensions: total,

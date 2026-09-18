@@ -113,10 +113,46 @@ export type AnswerRefusal =
   | 'not_served_here'
   /** A register that could answer it did not complete. */
   | 'register_unavailable'
+  /**
+   * Some registers answered and found nothing, and at least one that could
+   * inform this question did NOT complete.
+   *
+   * This exists because `refusalFor` used to collapse the set: one register
+   * answering `answered_no_intersection` returned
+   * `registers_answered_no_intersection` for the whole question, whatever the
+   * others did. A sibling that 503'd or was never run was concealed by a
+   * sibling that answered, and "nothing found" was reported as though the
+   * question had been covered. On a partial set nothing found is not a
+   * finding, and this is the reading that says so.
+   */
+  | 'registers_incomplete'
   /** No query was run for this assessment. */
   | 'not_acquired'
   /** The question is owned by another dimension and is never Risk's to answer. */
   | 'owned_elsewhere';
+
+/**
+ * What was actually covered for one question.
+ *
+ * Always present, whatever the refusal says, so incompleteness cannot be
+ * inferred from a verdict that was chosen for a different reason. **An
+ * `answered_*` outcome means the register responded and its answer parsed —
+ * HTTP 200 is a successful RESPONSE and never by itself a complete or usable
+ * assessment**, which is why `complete` is computed from every consulted
+ * register rather than from whether any of them answered.
+ */
+export interface RiskQuestionCoverage {
+  readonly consulted: number;
+  readonly answered: number;
+  readonly withIntersection: number;
+  readonly failed: number;
+  readonly notRun: number;
+  readonly notServed: number;
+  /** True only where every consulted register completed. */
+  readonly complete: boolean;
+  /** The registers that did not complete, named, so a reader sees which. */
+  readonly incomplete: readonly string[];
+}
 
 /** One question's outcome: an answer, or a reason there is none. */
 export interface RiskQuestionConnection {
@@ -126,6 +162,8 @@ export interface RiskQuestionConnection {
   readonly refusal: AnswerRefusal | null;
   /** The registers consulted for this question, in the order they were asked. */
   readonly readings: readonly RiskEvidenceReading[];
+  /** What was covered, retained whatever the refusal is. */
+  readonly coverage: RiskQuestionCoverage;
   /** One sentence a reviewer can act on. */
   readonly statement: string;
 }
@@ -190,16 +228,51 @@ export const CONVERSIONS: Readonly<Record<string, never>> = Object.freeze({});
 const asked = (r: RiskEvidenceReading) =>
   r.outcome === 'answered_with_intersection' || r.outcome === 'answered_no_intersection';
 
-/** The one place a refusal is chosen, so two surfaces cannot disagree. */
+/** Count what each consulted register did, and keep every one of them. */
+export function coverageOf(readings: readonly RiskEvidenceReading[]): RiskQuestionCoverage {
+  const n = (o: RegisterOutcome) => readings.filter((r) => r.outcome === o).length;
+  const failed = n('request_failed');
+  const notRun = n('not_run');
+  const notServed = n('not_served');
+  return {
+    consulted: readings.length,
+    answered: readings.filter(asked).length,
+    withIntersection: n('answered_with_intersection'),
+    failed,
+    notRun,
+    notServed,
+    complete: readings.length > 0 && failed === 0 && notRun === 0,
+    incomplete: readings
+      .filter((r) => r.outcome === 'request_failed' || r.outcome === 'not_run')
+      .map((r) => r.register),
+  };
+}
+
+/**
+ * The one place a refusal is chosen, so two surfaces cannot disagree.
+ *
+ * The precedence corrects an aggregation defect: the first version returned
+ * `registers_answered_no_intersection` whenever ANY register answered, so a
+ * sibling that failed or was never run was concealed by one that answered, and
+ * a partial sweep was reported as a completed one. **Nothing found is a
+ * finding only when the sweep was complete**, so an incomplete set now reads
+ * `registers_incomplete` instead. `coverage` travels on every question
+ * regardless, so incompleteness is never inferred from a verdict chosen for
+ * another reason.
+ */
 function refusalFor(readings: readonly RiskEvidenceReading[]): AnswerRefusal {
   if (readings.length === 0) return 'not_acquired';
-  if (readings.some((r) => r.outcome === 'answered_with_intersection')) {
-    return 'evidence_held_no_approved_conversion';
-  }
-  if (readings.every((r) => r.outcome === 'not_run')) return 'not_acquired';
-  if (readings.some(asked)) return 'registers_answered_no_intersection';
-  if (readings.some((r) => r.outcome === 'request_failed')) return 'register_unavailable';
-  return 'not_served_here';
+  const c = coverageOf(readings);
+  // Evidence positively held is the reason there is no ANSWER whatever else
+  // happened — the conversion is missing, not the evidence. Coverage still
+  // travels, and the statement says when the sweep was partial.
+  if (c.withIntersection > 0) return 'evidence_held_no_approved_conversion';
+  if (c.answered === 0 && c.failed > 0) return 'register_unavailable';
+  if (c.answered === 0 && c.notServed > 0 && c.notRun === 0) return 'not_served_here';
+  if (c.answered === 0) return 'not_acquired';
+  // Some register answered and found nothing. Whether that is a finding
+  // depends entirely on whether the rest of the sweep completed.
+  return c.complete ? 'registers_answered_no_intersection' : 'registers_incomplete';
 }
 
 const STATEMENTS: Readonly<Record<AnswerRefusal, string>> = {
@@ -214,6 +287,10 @@ const STATEMENTS: Readonly<Record<AnswerRefusal, string>> = {
     'No register serving this question is integrated for this jurisdiction, so it was not asked.',
   register_unavailable:
     'A register that could answer this did not complete, so nothing was established either way.',
+  registers_incomplete:
+    'Some registers answered at the coordinate and found no intersecting layer, and at least one '
+    + 'that could inform this question did not complete. A partial sweep cannot establish that '
+    + 'nothing is there, so this is recorded as incomplete coverage rather than as a finding.',
   not_acquired:
     'No register was queried for this assessment, so no evidence was acquired.',
   owned_elsewhere:
@@ -259,12 +336,24 @@ export function connectRiskEvidence(
       );
     }
     const refusal = refusalFor(qReadings);
+    const coverage = coverageOf(qReadings);
+    // The verdict is one sentence; incomplete coverage is a second fact and is
+    // appended rather than folded in, so a reader always sees which registers
+    // did not complete even when the verdict was chosen for another reason.
+    const statement = coverage.consulted > 0 && !coverage.complete
+      && refusal !== 'registers_incomplete'
+      ? `${STATEMENTS[refusal]} Coverage is incomplete: ${coverage.incomplete.join(', ')} did not `
+        + 'complete, so what they would have found is unknown.'
+      : refusal === 'registers_incomplete'
+        ? `${STATEMENTS[refusal]} The registers that did not complete: ${coverage.incomplete.join(', ')}.`
+        : STATEMENTS[refusal];
     return {
       questionId,
       answer: null,
       refusal,
       readings: qReadings,
-      statement: STATEMENTS[refusal],
+      coverage,
+      statement,
     };
   });
 
