@@ -1212,6 +1212,27 @@ export function renderTemplateToHtml(
    * title they already draw; that is a change to the generator, not to a
    * renderer, and until it is made this keeps every existing master
    * conformant.
+   *
+   * **And "0 x 0 and clipped" did not clip it.** That was the mechanism this
+   * used, and it was believed rather than measured. WeasyPrint lays the
+   * heading out at the position given and PAINTS ITS GLYPHS regardless of the
+   * box's declared size — `overflow: hidden` on a zero-size absolutely
+   * positioned box does not suppress the text run. Measured 18 September 2026
+   * on a real Financial Analysis render: `pdftotext` returns the title a
+   * second time at the top of page 1, broken one word per line by the
+   * zero-width box (`Financial` / `Analysis` / `—` / `1/27D` / `Mitchell` /
+   * `Street`), drawn at no contrast against the cover's own ground, and its
+   * word boxes OVERLAP the letterhead's. Three consequences, none visible on
+   * screen and all of them real: the client's PDF carries its own title twice
+   * to copy-paste, to search and to a screen reader; the document measures
+   * ILLEGIBLE and OVERLAP on its cover; and the second copy is fragments
+   * rather than a sentence.
+   *
+   * `font-size: 0` is what actually removes it from the surface. The element
+   * and its heading role stay in the box tree — which is what the structure
+   * tree is built from, and what 7.4.2 reads — while there is no glyph of any
+   * size to paint or extract. The zero-size clipped box is kept as well, so
+   * nothing about the layout changes.
    */
   const bound = (expr: string): string => {
     try {
@@ -1224,9 +1245,10 @@ export function renderTemplateToHtml(
   const named = [bound('{{report.documentTitle}}'), bound('{{property.address}}')]
     .filter(Boolean).join(' — ');
   const docTitle = declared || named || 'Report';
-  // 0 x 0 and clipped: present in the structure tree, absent from the page.
+  // Present in the structure tree, absent from the painted surface. The size
+  // is what does that — see the note above; the clipped box alone did not.
   const titleHeading = `<h1 style="position:absolute;top:0;left:0;width:0;height:0;`
-    + `overflow:hidden;margin:0;">${escapeHtml(docTitle)}</h1>`;
+    + `overflow:hidden;margin:0;font-size:0;line-height:0;">${escapeHtml(docTitle)}</h1>`;
 
   const editorRuntime = options.editorMode ? `
 <script>(function(){
