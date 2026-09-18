@@ -27,6 +27,7 @@ import {
   Home,
 } from 'lucide-react';
 import { calculateCGT, type CGTInputs, type CGTCostBaseItem, type CGTResult } from '@/lib/cgtCalculations';
+import { CurrencyInput } from '@/components/ui/currency-input';
 import {
   Tooltip,
   TooltipContent,
@@ -200,11 +201,10 @@ export function CGTCalculator({ property, clientGrossAnnualIncome }: CGTCalculat
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label className="text-xs font-medium">Estimated Sale Price</Label>
-                <Input
-                  type="number"
-                  value={salePrice || ''}
-                  onChange={e => setSalePrice(Number(e.target.value))}
-                  placeholder="800000"
+                <CurrencyInput
+                  value={salePrice || null}
+                  onValueChange={(v) => setSalePrice(v ?? 0)}
+                  placeholder="800,000"
                 />
               </div>
               <div className="space-y-2">
@@ -217,11 +217,10 @@ export function CGTCalculator({ property, clientGrossAnnualIncome }: CGTCalculat
                     </Tooltip>
                   </TooltipProvider>
                 </div>
-                <Input
-                  type="number"
-                  value={purchasePrice || ''}
-                  onChange={e => setPurchasePrice(Number(e.target.value))}
-                  placeholder="600000"
+                <CurrencyInput
+                  value={purchasePrice || null}
+                  onValueChange={(v) => setPurchasePrice(v ?? 0)}
+                  placeholder="600,000"
                 />
               </div>
               <div className="space-y-2">
@@ -260,10 +259,9 @@ export function CGTCalculator({ property, clientGrossAnnualIncome }: CGTCalculat
                     </Tooltip>
                   </TooltipProvider>
                 </div>
-                <Input
-                  type="number"
-                  value={grossIncome || ''}
-                  onChange={e => setGrossIncome(Number(e.target.value))}
+                <CurrencyInput
+                  value={grossIncome || null}
+                  onValueChange={(v) => setGrossIncome(v ?? 0)}
                 />
               </div>
             </div>
@@ -288,12 +286,11 @@ export function CGTCalculator({ property, clientGrossAnnualIncome }: CGTCalculat
                       onChange={e => updateCostItem(i, 'label', e.target.value)}
                       placeholder="Description"
                     />
-                    <Input
+                    <CurrencyInput
                       className="w-32 h-8 text-xs"
-                      type="number"
-                      value={item.amount || ''}
-                      onChange={e => updateCostItem(i, 'amount', e.target.value)}
-                      placeholder="$0"
+                      value={item.amount || null}
+                      onValueChange={(v) => updateCostItem(i, 'amount', v ?? 0)}
+                      placeholder="0"
                     />
                     <Button variant="ghost" size="icon" className="h-8 w-8 flex-shrink-0" onClick={() => removeCostItem(i)}>
                       <Trash2 className="h-3 w-3" />
@@ -323,12 +320,11 @@ export function CGTCalculator({ property, clientGrossAnnualIncome }: CGTCalculat
                       onChange={e => updateSellingCost(i, 'label', e.target.value)}
                       placeholder="Description"
                     />
-                    <Input
+                    <CurrencyInput
                       className="w-32 h-8 text-xs"
-                      type="number"
-                      value={item.amount || ''}
-                      onChange={e => updateSellingCost(i, 'amount', e.target.value)}
-                      placeholder="$0"
+                      value={item.amount || null}
+                      onValueChange={(v) => updateSellingCost(i, 'amount', v ?? 0)}
+                      placeholder="0"
                     />
                     <Button variant="ghost" size="icon" className="h-8 w-8 flex-shrink-0" onClick={() => removeSellingCost(i)}>
                       <Trash2 className="h-3 w-3" />

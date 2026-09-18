@@ -83,10 +83,14 @@ export function useAllReminders() {
           priority: r.priority || 'medium',
           status: r.status === 'completed' ? 'completed' : 'pending',
           source: 'client_reminder',
-          source_label: 'Client Reminder',
+          // A reminder with no client is not a client reminder. The Email
+          // Copilot's "Remind me" writes one for a thread that has no customer
+          // behind it (`reminder_scope: 'personal'`), and calling it a client
+          // reminder about "Unknown" invents a customer who does not exist.
+          source_label: r.client_id ? 'Client Reminder' : 'Personal Reminder',
           reminder_type: r.reminder_type || 'general',
           client_id: r.client_id,
-          client_name: clientMap[r.client_id] || 'Unknown',
+          client_name: r.client_id ? (clientMap[r.client_id] || 'Unknown') : '',
           completed_at: r.completed_at,
           created_at: r.created_at,
           raw_source: 'client_reminders',
