@@ -17,8 +17,9 @@
  *   MOJIBAKE    replacement characters, control bytes, or an encoding-failed
  *               glyph sequence in the drawn text
  *   BLANK       a page with no body text at all
- *   SPARSE      a page whose body carries a blank band larger than 45% of the
- *               body height (the header 7% and footer 7% are excluded)
+ *   SPARSE      a HOLE: a blank band larger than 45% of the body with
+ *               drawn content BELOW it. A band that runs to the foot is a
+ *               short page, counted and named, never an issue.
  *   FONTS       every font unembedded (base-14 substitution) -- the document
  *               does not carry its own typefaces
  *   TOKEN       a client-facing sentinel (N/A, Unavailable, TBD, null,
@@ -85,9 +86,26 @@ const embeddedCount = fonts.filter((f) => f.embedded).length;
 // second the placeholder family in any case — and nothing is exempt any more:
 // the designed ungraded reading this used to admit ("Not available — …") is no
 // longer published by the projection.
+//
+// `not assessed` was in the second family and is NOT any more (18 Sep 2026,
+// S5/S6 §5). Two things made it a false alarm rather than a finding. It is a
+// SANCTIONED VALUE: `PLANNING_CONTROLS_IN_THE_REPORT.md` §9 made `Not assessed`
+// the risk register's level for an absence that may not be rated — "never Low,
+// Minimal, Limited, Negligible or Favourable" — so a detector that flags it
+// flags the correct answer. And it is ordinary English: measured on the
+// Financial fork of 48 Redfern Street, the single occurrence in 22 pages was
+// the Investor Suitability Profile's own sentence, *"Whether a particular
+// investor meets those requirements is not assessed here — no personal
+// financial circumstances are supplied to this report"*, which is a
+// disclosure a client is entitled to and reads as one.
+//
+// The rest of the family stays: "N/A" and "unavailable" are the owner's own
+// rule and neither is a value this product may publish. A false caveat teaches
+// people to dismiss the warning, which is the same rule the template-fit
+// notice answers to.
 const SENTINELS = [
   /(?<![A-Za-z])(NA|TBD|TBC|null|undefined|NaN|\[object Object\])(?![A-Za-z])|\{\{[^}]{1,80}\}\}/,
-  /(?<![A-Za-z])(n\/a|not available|unavailable|not provided|data unavailable|no data available|not assessed)(?![A-Za-z])/i,
+  /(?<![A-Za-z])(n\/a|not available|unavailable|not provided|data unavailable|no data available)(?![A-Za-z])/i,
 ];
 const findSentinel = (text) => {
   for (const re of SENTINELS) { const m = text.match(re); if (m) return m[0]; }
@@ -152,14 +170,29 @@ for (let n = 1; n <= doc.numPages; n++) {
   const hist = new Uint32Array(256);
   for (let y = top; y < bot; y++) { const row = y * img.w; for (let x = 0; x < img.w; x++) hist[img.px[row + x]]++; }
   let ground = 0; for (let v = 1; v < 256; v++) if (hist[v] > hist[ground]) ground = v;
-  let best = 0, run = 0, inkedRows = 0;
+  //
+  // Where the band ENDS decides what it is. A hole has ink on BOTH sides —
+  // that is `closeDroppedBlocks`'s own definition of the fault it repairs,
+  // and the thing a reader sees as a broken page. A band that runs to the
+  // foot of the body is not a hole: the page simply ended, which is what a
+  // contents list, a four-tile dashboard and a last content page all look
+  // like. Measured 18 Sep 2026 on the 48 Redfern Street forks, all three of
+  // the flagged bands were trailing and all three pages were correct — the
+  // Financial's Verdict band carrying $555,000 / $445 / 4.17% / −$467, the
+  // Due Diligence contents, and its Due Diligence Actions + Disclaimer.
+  // A trailing band is still reported, as a short page, because a document
+  // of short pages is a real observation; it is not an issue, because a
+  // false caveat teaches people to dismiss the warning.
+  let best = 0, bestEnd = top, run = 0, inkedRows = 0;
   for (let y = top; y < bot; y++) {
     let ink = 0; const row = y * img.w;
     for (let x = 0; x < img.w; x++) if (Math.abs(img.px[row + x] - ground) > 40) ink++;
-    if (ink > img.w * 0.004) { inkedRows++; run = 0; } else { run++; if (run > best) best = run; }
+    if (ink > img.w * 0.004) { inkedRows++; run = 0; } else { run++; if (run > best) { best = run; bestEnd = y; } }
   }
   const bodyRows = bot - top;
   const largestBandPct = +((best / bodyRows) * 100).toFixed(1);
+  // Within two scan rows of the body's foot — the band ran out of page.
+  const bandTrailing = bestEnd >= bot - 2;
   const blankPct = +(((bodyRows - inkedRows) / bodyRows) * 100).toFixed(1);
   const header = items.filter((i) => i.yTop < vp.height * 0.08).map((i) => i.s).join(' ').trim();
   const footer = items.filter((i) => i.yTop > vp.height * 0.92).map((i) => i.s).join(' ').trim();
@@ -169,7 +202,7 @@ for (let n = 1; n <= doc.numPages; n++) {
   const p = {
     page: n, ground, chars: text.replace(/\s+/g, '').length, bodyChars: bodyItems.map((i) => i.s).join('').replace(/\s+/g, '').length,
     illegible, illegibleSamples, offPage: offPage.length, offPageSamples: offPage.slice(0, 2).map((t) => t.s.trim().slice(0, 30)),
-    overlaps, overlapSamples, largestBandPct, blankPct, hasHeader: header.length > 0, hasFooter: footer.length > 0,
+    overlaps, overlapSamples, largestBandPct, bandTrailing, blankPct, hasHeader: header.length > 0, hasFooter: footer.length > 0,
     pageNo: pageNo ? { n: +pageNo[1], of: +pageNo[2] } : null, sentinel, mojibake: moji,
     firstText: bodyItems.slice(0, 6).map((i) => i.s.trim()).join(' ').slice(0, 70),
   };
@@ -179,7 +212,7 @@ for (let n = 1; n <= doc.numPages; n++) {
   if (overlaps) issues.push({ page: n, kind: 'OVERLAP', detail: overlapSamples.join(' | ') });
   if (moji) issues.push({ page: n, kind: 'MOJIBAKE', detail: JSON.stringify((text.match(MOJIBAKE)?.[0] ?? '')) });
   if (p.bodyChars === 0) issues.push({ page: n, kind: 'BLANK', detail: 'no body text' });
-  else if (largestBandPct >= 45) issues.push({ page: n, kind: 'SPARSE', detail: `largest empty band ${largestBandPct}% of body` });
+  else if (largestBandPct >= 45 && !bandTrailing) issues.push({ page: n, kind: 'SPARSE', detail: `largest empty band ${largestBandPct}% of body, with content below it` });
   if (sentinel) issues.push({ page: n, kind: 'TOKEN', detail: sentinel });
 }
 fs.rmSync(tmp, { recursive: true, force: true });
@@ -193,7 +226,8 @@ const summary = {
   numbering: { drawnOn: numbering.length, correct: numberingOk },
   headers: pages.filter((p) => p.hasHeader).length, footers: pages.filter((p) => p.hasFooter).length,
   meanLargestBandPct: +(pages.reduce((s, p) => s + p.largestBandPct, 0) / pages.length).toFixed(1),
-  sparsePages: pages.filter((p) => p.largestBandPct >= 45).map((p) => p.page),
+  sparsePages: pages.filter((p) => p.largestBandPct >= 45 && !p.bandTrailing).map((p) => p.page),
+  shortPages: pages.filter((p) => p.largestBandPct >= 45 && p.bandTrailing).map((p) => p.page),
   issues, pagesDetail: pages,
   result: issues.length === 0 ? 'VISUAL -- PASS' : 'VISUAL -- FAIL',
 };
@@ -201,7 +235,7 @@ if (opt('json')) fs.writeFileSync(opt('json'), JSON.stringify(summary, null, 2))
 
 console.log(`\n=== ${LABEL} -- ${doc.numPages} pages, ${(summary.bytes / 1024).toFixed(0)} KB ===`);
 console.log(`  fonts: ${embeddedCount}/${fonts.length} embedded   headers ${summary.headers}/${doc.numPages}   footers ${summary.footers}/${doc.numPages}   numbering ${numbering.length} drawn, ${numberingOk ? 'correct' : 'WRONG'}`);
-console.log(`  mean largest empty band ${summary.meanLargestBandPct}%   sparse pages (>=45%): ${summary.sparsePages.length ? summary.sparsePages.join(',') : 'none'}`);
+console.log(`  mean largest empty band ${summary.meanLargestBandPct}%   holes (>=45%, content below): ${summary.sparsePages.length ? summary.sparsePages.join(',') : 'none'}   short pages: ${summary.shortPages.length ? summary.shortPages.join(',') : 'none'}`);
 if (issues.length) {
   console.log(`  ${issues.length} issue(s):`);
   for (const i of issues) console.log(`    p${String(i.page).padStart(2)}  ${i.kind.padEnd(9)} ${i.detail}`);
