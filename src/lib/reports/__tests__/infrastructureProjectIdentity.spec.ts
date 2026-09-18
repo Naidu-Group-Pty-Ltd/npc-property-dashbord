@@ -33,7 +33,7 @@
  * sources.
  */
 import { describe, expect, it } from 'vitest';
-import { buildInfrastructureEvidence }
+import { buildInfrastructureEvidence, renderInfrastructureOutlook }
   from '../../../../supabase/functions/_shared/planning/infrastructureEvidence.pure';
 
 const QLD = 'Queensland StatePlanning layers (PDAs, SDAs, coordinated projects, infrastructure designations)';
@@ -47,8 +47,19 @@ const context = (label: string, extra: Record<string, unknown> = {}) => ({
   currencyDate: '2023-12-01', region: 'Wide Bay Burnett',
   instrument: 'Wide Bay Burnett Regional Plan', source: QLD, licence: 'CC BY 4.0',
   // Layer 35 is the priority-development-area layer the instruments probe
-  // reads. This is the stable identifier the merge requires.
-  sourceLayer: 35, ...extra,
+  // reads. It makes this a CANDIDATE.
+  sourceLayer: 35,
+  /*
+   * And `code` is what CONFIRMS it — matching the instrument reading's own
+   * `reference`, so the default pair is a duplicate somebody can prove.
+   *
+   * It was not here before 18 Sep 2026, because the rule then merged wherever
+   * nothing contradicted. It does not any more: **a missing identifier
+   * confirms nothing**, and suppressing a record on publisher, layer and name
+   * alone destroys evidence to tidy a list. Tests that want the unconfirmed
+   * case now pass `{ code: null }` and say so.
+   */
+  code: 'PLA-MBH', ...extra,
 });
 const build = (instruments: unknown[], constraints: unknown[]) => buildInfrastructureEvidence({
   planningData: {
@@ -265,36 +276,76 @@ describe('the publisher\'s own identifiers refuse a match the layer admits', () 
     expect(ev.items, 'case and padding are not a disagreement').toHaveLength(1);
   });
 
-  it('a channel one side never published says nothing — the ordinary case merges', () => {
-    // What production actually holds: the instruments probe publishes no
-    // identifier at all, the identify row publishes the plan it sits under.
+  it('a missing identifier CONFIRMS nothing — both rows stand, the second marked', () => {
+    /*
+     * The correction of 18 Sep 2026, and the whole of the difference from the
+     * first version. Publisher, layer and name all match and NEITHER side
+     * published an identifier that could settle it — so this is a candidate
+     * nobody confirmed, and suppressing one of them would destroy a record on
+     * the strength of a shared name.
+     *
+     * It is what production actually holds: three of `parseQldInstrument`'s
+     * four kinds read no published reference at all.
+     */
     const ev = build([instrument('Maryborough Priority Living Area', { reference: null })],
-      [context('Maryborough Priority Living Area')]);
-    expect(ev.items).toHaveLength(1);
+      [context('Maryborough Priority Living Area', { code: null, instrument: null })]);
+    expect(ev.items, 'nothing confirmed it, so nothing is suppressed').toHaveLength(2);
+    // And the danger is disclosed, because the extra row only does harm when
+    // somebody adds the two together.
+    expect(ev.items[1].unconfirmedDuplicateOf).toBe('Maryborough Priority Living Area');
+    expect(ev.items[0].unconfirmedDuplicateOf ?? null).toBeNull();
+  });
+
+  it('the page says so, and says not to add them together', () => {
+    const ev = build([instrument('Maryborough Priority Living Area', { reference: null })],
+      [context('Maryborough Priority Living Area', { code: null, instrument: null })]);
+    const page = renderInfrastructureOutlook(ev);
+    expect(page).toContain('Two readings that may be one project');
+    expect(page).toContain('Do not add their figures together');
+  });
+
+  it('a CONTRADICTION is never marked as a possible duplicate', () => {
+    // The identifiers said these are two records. Calling a genuine second
+    // designation "possibly a duplicate" is the same error pointing the other
+    // way, and it would suppress a real one from any total that excludes marks.
+    const ev = build([instrument('Caboolture West', { reference: 'PDA-CBW-01' })],
+      [context('Caboolture West', { code: 'PDA-CBW-02' })]);
+    expect(ev.items).toHaveLength(2);
+    expect(ev.items[1].unconfirmedDuplicateOf ?? null).toBeNull();
   });
 
   it('the two channels are never compared across each other', () => {
-    // A feature reference on one side and an instrument name on the other is
-    // the shape production is in TODAY. Read as one channel these two
-    // disagree, and the merge rule 10 exists for would never fire again.
+    /*
+     * A feature reference on one side and an instrument name on the other.
+     * Read as ONE channel these two strings disagree, and the pair would be
+     * filed as two confirmed-distinct records — which is a stronger claim than
+     * the evidence supports and would suppress the disclosure below.
+     *
+     * Judged like for like, neither channel has both sides, so the verdict is
+     * `unconfirmed`: both rows stand AND the second is marked, which is the
+     * honest reading of "we cannot tell".
+     */
     const ev = build(
       [instrument('Maryborough Priority Living Area', { reference: 'PDA-MBH' })],
       [context('Maryborough Priority Living Area', {
         code: null, instrument: 'Wide Bay Burnett Regional Plan',
       })],
     );
-    expect(ev.items).toHaveLength(1);
+    expect(ev.items).toHaveLength(2);
+    expect(ev.items[1].unconfirmedDuplicateOf).toBe('Maryborough Priority Living Area');
   });
 
   it('a merge fills the surviving row from the one it suppressed', () => {
     // The merge has to EARN the suppression: the identify row's plan name,
     // region, currency and licence are facts the layer read did not carry,
     // and dropping the row used to drop them with it.
+    // Confirmed by the instrument channel: both name the same plan.
     const ev = build(
       [instrument('Maryborough Priority Living Area', {
         reference: null, gazetted: null, detail: null,
+        instrument: 'Wide Bay Burnett Regional Plan',
       })],
-      [context('Maryborough Priority Living Area')],
+      [context('Maryborough Priority Living Area', { code: null })],
     );
     expect(ev.items).toHaveLength(1);
     const [only] = ev.items;
@@ -308,7 +359,7 @@ describe('the publisher\'s own identifiers refuse a match the layer admits', () 
   it('a fill never overwrites what the layer read already stated', () => {
     const ev = build(
       [instrument('Maryborough Priority Living Area', {
-        reference: null, gazetted: '2019-05-17', detail: 'Fraser Coast',
+        reference: 'PLA-MBH', gazetted: '2019-05-17', detail: 'Fraser Coast',
       })],
       [context('Maryborough Priority Living Area', { currencyDate: '2023-12-01' })],
     );
@@ -323,7 +374,7 @@ describe('the publisher\'s own identifiers refuse a match the layer admits', () 
 
   it('no status word travels — a designation\'s standing is not an instrument\'s', () => {
     const ev = build(
-      [instrument('Maryborough Priority Living Area', { reference: null, status: null })],
+      [instrument('Maryborough Priority Living Area', { reference: 'PLA-MBH', status: null })],
       [context('Maryborough Priority Living Area', { standingLabel: 'Statutory' })],
     );
     expect(ev.items).toHaveLength(1);
@@ -338,9 +389,13 @@ describe('the publisher\'s own identifiers refuse a match the layer admits', () 
     const { readFileSync } = await import('node:fs');
     const src = readFileSync(
       'supabase/functions/_shared/planning/infrastructureEvidence.pure.ts', 'utf8');
-    expect(src).toContain('identifiersContradict');
-    // Judged only where BOTH sides published the channel.
-    expect(src.replace(/\s+/g, ' ')).toContain(
-      'a.feature !== null && b.feature !== null');
+    expect(src).toContain('compareIdentity');
+    // The three verdicts are named, so the next reader cannot collapse
+    // "we cannot tell" back into "nothing contradicted, so merge".
+    for (const verdict of ['confirmed', 'contradicted', 'unconfirmed']) {
+      expect(src, verdict).toContain(`'${verdict}'`);
+    }
+    // A channel is judged only where BOTH sides published it.
+    expect(src.replace(/\s+/g, ' ')).toContain('if (x === null || y === null) continue;');
   });
 });

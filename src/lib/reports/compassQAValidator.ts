@@ -61,6 +61,12 @@ import {
 } from './compassSectionRegistry';
 import { countWords, estimatePages, findEditorialLabels } from './compassPostProcessor';
 import { findScoreClaims } from './investment/scoreClaims.pure';
+import {
+  findPortalCitations,
+  findPortalSourcedClearances,
+  findUnpublishedHorizons,
+  PORTAL_SOURCE_RE,
+} from './investment/evidenceClaims.pure';
 
 /**
  * The prompt asks for at most 4 `###` a section; this flags at 6+.
@@ -474,88 +480,94 @@ export function runQAValidation(
    * ("Determined Jul 2026"), by a calendar year, or by "Existing" — all three
    * of which a register can support.
    */
-  {
-    // `y` on its own is the spelling the report actually used ("0-2y", "5y+"),
-    // so the year suffix is wholly optional: y / yr / yrs / year / years.
-    const HORIZON = /\b(?:\d{1,2}\s*[-–—]\s*\d{1,2}\s*y(?:(?:ea)?rs?)?\b|\d{1,2}\s*y(?:(?:ea)?rs?)?\s*\+|(?:short|medium|near|long)[\s-]*term\b|next\s+\d{1,2}\s+y(?:(?:ea)?rs?)?\b)/i;
-    for (const m of markdown.matchAll(/\{\{timeline:([^}]*)\}\}/gi)) {
-      const body = m[1] ?? '';
-      // The bucket is what precedes each quoted label.
-      const buckets = [...body.matchAll(/(^|,)\s*([^,"]*?)\s*"/g)]
-        .map((b) => (b[2] ?? '').trim())
-        .filter(Boolean);
-      const horizons = buckets.filter((b) => HORIZON.test(b));
-      if (horizons.length === 0) continue;
-      findings.push({
-        rule: 'unpublished-delivery-horizon',
-        severity: 'error',
-        message: `A {{timeline:}} places ${horizons.length} item${horizons.length === 1 ? '' : 's'} in a future `
-          + `delivery horizon (${[...new Set(horizons)].join(', ')}). The planning and development registers this `
-          + 'report reads publish no delivery date for anything — every date they carry is a decision or a '
-          + 'declaration — so label each stop with what its date IS ("Determined Jul 2026", "Gazetted 2023") or '
-          + 'draw no horizon timeline.',
-      });
-    }
+  //
+  // The pattern and the walk live in `evidenceClaims.pure.ts`, which is also
+  // what CORRECTS this finding on the generation path. A detector with its own
+  // copy of the corrector's regex is two ends that drift, and the whole value
+  // of the correction is that what is reported is what is removed.
+  for (const found of findUnpublishedHorizons(markdown)) {
+    findings.push({
+      rule: 'unpublished-delivery-horizon',
+      severity: 'error',
+      message: `A {{timeline:}} places ${found.horizons.length} item${found.horizons.length === 1 ? '' : 's'} in a future `
+        + `delivery horizon (${[...new Set(found.horizons)].join(', ')}). The planning and development registers this `
+        + 'report reads publish no delivery date for anything — every date they carry is a decision or a '
+        + 'declaration — so label each stop with what its date IS ("Determined Jul 2026", "Gazetted 2023") or '
+        + 'draw no horizon timeline.',
+    });
   }
 
   /*
-   * 13. A listing portal is not a source.
+   * 13. A listing is not a planning authority — refined 18 Sep 2026.
    *
-   * Measured 18 Sep 2026 on 48 Redfern Street, read out of the rendered PDFs:
-   * four bracketed inline citations per document, THREE of them naming
-   * `Property.com.au` — and one of those three is the sentence
+   * Measured on 48 Redfern Street, read out of the rendered PDFs: four
+   * bracketed inline citations per document, THREE naming `Property.com.au`,
+   * and one of those three carrying
    *
-   *   "…multiple nearby addresses on the street recording no bushfire, flood
+   *   "...multiple NEARBY ADDRESSES on the street recording no bushfire, flood
    *    or heritage overlays on public mapping at the time they were last
    *    updated.[Property.com.au, 119, 120, 137 and 139 Redfern Street
    *    profiles, 2024-2026]"
    *
-   * which is the exact sentence `planningFacts.pure.ts` forbids by name:
-   * "never write that no overlay applies, that the property is not heritage
-   * listed, or that it is not flood or bushfire affected on the authority of
-   * a listing portal". The rule reached the model and NOTHING read the
-   * document to see whether it was obeyed — the gap section 10.3 of
-   * `PLANNING_CONTROLS_IN_THE_REPORT.md` already named for a different rule
-   * and closed with rule 12.
+   * which is the sentence `planningFacts.pure.ts` forbids by name. The
+   * prohibition reached the model and NOTHING read the document to see whether
+   * it was obeyed — the gap section 10.3 of
+   * `PLANNING_CONTROLS_IN_THE_REPORT.md` named for a different rule and closed
+   * with rule 12. And because the fork routes the parent's prose, one bad
+   * sentence becomes three documents.
    *
-   * It is also how one bad sentence becomes three documents: the fork routes
-   * the parent's prose, so the Compass, the Financial Analysis and the Due
-   * Diligence all carry it.
+   * ## Two findings, because they are two different mistakes
    *
-   * The detector is deliberately narrow, because a false caveat teaches people
-   * to dismiss the warning. It matches a named listing portal only, and says
-   * separately when the sentence around it also asserts an absence, because
-   * those are two different severities of the same mistake. It REPORTS and
-   * never scrubs: prose is never regex-scrubbed, on read or on write.
+   * The first version made any portal citation an error, and that was too
+   * broad. **A listing is the authoritative source for the thing it IS** — the
+   * asking price, the advertised configuration, the marketing copy — and
+   * rejecting it wholesale would strip a report of properly recorded evidence
+   * for an identity fact. What a listing can never do is clear the SUBJECT
+   * PROPERTY of a hazard or a planning control.
+   *
+   * So:
+   *
+   *   `portal-sourced-hazard-clearance` (ERROR) — a hazard or planning
+   *   absence asserted about this property on the authority of a listing
+   *   portal or of NEIGHBOURING listings. Two nouns make it worse than a bad
+   *   citation: it is a claim about a different parcel, presented as a
+   *   clearance for this one.
+   *
+   *   `listing-portal-as-source` (WARNING) — any other portal citation.
+   *   Disclosed so a reviewer can see what the prose rests on, not blocking,
+   *   because the legitimate case is real.
+   *
+   * It REPORTS and never scrubs: prose is never regex-scrubbed, on read or on
+   * write. And it is narrow on purpose — a false caveat teaches people to
+   * dismiss the warning.
    */
-  const PORTALS = /(property\.com\.au|realestate\.com\.au|domain\.com\.au|allhomes\.com\.au|onthehouse\.com\.au)/i;
-  const HAZARD_ABSENCE =
-    /\b(no|not|free from|without|nil)\b[^.]{0,80}\b(overlay|overlays|heritage[- ]listed|flood|bushfire|bush fire|landslip|acid sulfate|contamination)\b/i;
-  const bracketed = markdown.match(/\[[^\]\n]{4,160}\]/g) ?? [];
-  const portalCitations = bracketed.filter((b) => PORTALS.test(b));
+  // The patterns and both finders live in `evidenceClaims.pure.ts` for the
+  // reason rule 12 gives: the error half of this rule is CORRECTED on the
+  // generation path, and a detector holding its own copy of the corrector's
+  // regex reports one thing while the corrector removes another.
+  const portalCitations = findPortalCitations(markdown);
+  const clearances = findPortalSourcedClearances(markdown);
+  if (clearances.length) {
+    findings.push({
+      rule: 'portal-sourced-hazard-clearance',
+      severity: 'error',
+      message: `${clearances.length} sentence${clearances.length === 1 ? '' : 's'} state that a hazard or `
+        + 'planning control does NOT apply, on the authority of a listing portal or of neighbouring '
+        + 'listings. A listing is not a planning authority, and a neighbouring parcel is not this one. '
+        + 'The only absence this report may repeat is a register that was asked and matched nothing, '
+        + 'stated as "Checked and not mapped at this coordinate" and naming the register.',
+    });
+  }
   if (portalCitations.length) {
-    const named = [...new Set(portalCitations.map((b) => (PORTALS.exec(b) ?? [''])[0].toLowerCase()))];
+    const named = [...new Set(portalCitations.map((b) => (PORTAL_SOURCE_RE.exec(b) ?? [''])[0].toLowerCase()))];
     findings.push({
       rule: 'listing-portal-as-source',
-      severity: 'error',
+      severity: 'warning',
       message: `${portalCitations.length} inline citation${portalCitations.length === 1 ? '' : 's'} name a property `
-        + `listing portal (${named.join(', ')}). A listing site is not a retrieval: it is not an entry in the `
-        + 'planning register, it is not a licensed market source, and a client cannot look a claim up in it. '
-        + 'Name the register that answered, or omit the claim.',
+        + `listing portal (${named.join(', ')}). A listing is authoritative for what it IS — the asking `
+        + 'price, the advertised configuration — and is not evidence for a market statistic, a planning '
+        + 'control or a hazard. Check each one carries only what the listing itself states.',
     });
-    // The severe case: an absence asserted on that authority.
-    const sentences = markdown.split(/(?<=[.!?])\s+/);
-    const absences = sentences.filter((s) => PORTALS.test(s) && HAZARD_ABSENCE.test(s));
-    if (absences.length) {
-      findings.push({
-        rule: 'portal-sourced-hazard-absence',
-        severity: 'error',
-        message: `${absences.length} sentence${absences.length === 1 ? '' : 's'} state that an overlay or hazard `
-          + 'does NOT apply, on a listing portal\u2019s authority. This is the sentence `planningFacts.pure.ts` '
-          + 'forbids by name. A register that was asked and matched nothing is the only absence this report may '
-          + 'repeat, and it is stated as "Checked and not mapped at this coordinate", naming the register.',
-      });
-    }
   }
 
   const passed = findings.every((f) => f.severity !== 'error');

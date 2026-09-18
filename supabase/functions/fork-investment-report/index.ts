@@ -32,6 +32,8 @@ import {
 // it can be run, tested and rendered outside a deployed Deno runtime. It used
 // to be 257 lines of this file, reachable only by reading its own source.
 import { composeForkDocuments, countCompositeSections } from '../_shared/reports/investment/forkSplit.pure.ts';
+import { runQAValidation } from '../_shared/compassQAValidator.ts';
+import { correctUnsupportedEvidenceClaims } from '../_shared/reports/investment/evidenceClaims.pure.ts';
 import { scoreFinancial, scorePropertyFundamentals } from '../_shared/investmentScoreEngine.ts';
 import { variantScoreUnderPolicy } from '../_shared/reports/market/variantScorePolicy.pure.ts';
 import { internalError } from '../_shared/errorResponse.ts';
@@ -402,9 +404,71 @@ Deno.serve(async (req) => {
     const financialOut = docs.financial;
     const dueDiligenceOut = docs.dueDiligence;
 
+    /*
+     * QA on the ASSEMBLED child, which this path did not do at all.
+     *
+     * The generator validates its finished markdown and the condenser
+     * validates its composed document; the fork validated nothing — so a
+     * material claim error in the parent's prose (rule 13's hazard clearance
+     * on a listing's authority is the measured one) travelled into the
+     * Financial Analysis and the Due Diligence with nothing reading either.
+     * One bad sentence became three documents and only the first was checked.
+     *
+     * It runs on `markdown` — the composed document, after routing and the
+     * composed chapters — because that is what a client receives, and a rule
+     * about what a document says has to read the document.
+     *
+     * The tier is the CHILD's, never the parent's: a Compass's page band and
+     * financial exclusion asserted over a Financial Analysis is the defect
+     * `condenseCompose` already records, and it produced sixteen errors on a
+     * correct document.
+     */
+    /*
+     * The correction runs FIRST, and on the child.
+     *
+     * A fork routes the parent's prose, so a parent generated before the claim
+     * guard existed hands its hazard-clearance sentence to both children —
+     * every time somebody forks it, for as long as it is on the table. Nothing
+     * here rewrites the parent (its stored row is untouched, and a historical
+     * document is a record); what is corrected is the NEW document this call
+     * is producing, which is the one a client is about to receive.
+     *
+     * Ordering: correct, then validate. QA then measures what the client gets,
+     * so a surviving finding is a real one rather than one the corrector had
+     * already discharged.
+     */
+    const financialClaims = correctUnsupportedEvidenceClaims(financialOut.markdown);
+    const strategicClaims = correctUnsupportedEvidenceClaims(dueDiligenceOut.markdown);
+    const financialMarkdown = financialClaims.markdown;
+    const strategicMarkdown = strategicClaims.markdown;
+    for (const [variant, corrected] of [['financial', financialClaims], ['strategic', strategicClaims]] as const) {
+      for (const r of corrected.removed) {
+        console.log(
+          `[fork-investment-report] claim guard ${variant} [${r.rule}]: removed `
+          + JSON.stringify(r.text.slice(0, 160)),
+        );
+      }
+    }
+
+    const forkQa = {
+      financial: variants.includes('financial')
+        ? runQAValidation(financialMarkdown, 'financial') : null,
+      strategic: variants.includes('strategic')
+        ? runQAValidation(strategicMarkdown, 'strategic') : null,
+    };
+    for (const [variant, qa] of Object.entries(forkQa)) {
+      if (!qa) continue;
+      const errors = qa.findings.filter((f) => f.severity === 'error');
+      console.log(
+        `[fork-investment-report] QA ${variant}: ${qa.passed ? 'passed' : 'FAILED'} — `
+        + `${errors.length} error(s), ${qa.findings.length - errors.length} warning(s)`,
+      );
+      for (const f of qa.findings) console.log(`   [${f.severity}] ${f.rule}: ${f.message}`);
+    }
+
     const generated = await Promise.all(variants.map(async (variant) => {
-      if (variant === 'financial') return ['financial', await upsertFork(supabase, parent, 'financial', 'financial', financialOut.markdown, financialScore)] as const;
-      return ['strategic', await upsertFork(supabase, parent, 'due_diligence', 'strategic', dueDiligenceOut.markdown, strategicScore)] as const;
+      if (variant === 'financial') return ['financial', await upsertFork(supabase, parent, 'financial', 'financial', financialMarkdown, financialScore)] as const;
+      return ['strategic', await upsertFork(supabase, parent, 'due_diligence', 'strategic', strategicMarkdown, strategicScore)] as const;
     }));
     const result = Object.fromEntries(generated);
 
@@ -417,6 +481,13 @@ Deno.serve(async (req) => {
           composite: docs.compositeSections,
           financial: variants.includes('financial') ? docs.financial.sections : 0,
           strategic: variants.includes('strategic') ? docs.dueDiligence.sections : 0,
+        },
+        qa: forkQa,
+        // What the claim guard took out of each child, so a caller can see the
+        // correction rather than a document that looks like it never carried it.
+        claim_corrections: {
+          financial: variants.includes('financial') ? financialClaims.removed : null,
+          strategic: variants.includes('strategic') ? strategicClaims.removed : null,
         },
         composed_financial_chapters: docs.composedChapters,
         routed_sections_replaced_by_record: docs.replacedByComposedChapters,

@@ -50,8 +50,9 @@
  * | --- | --- |
  * | (none) | zoning, parcel, development instruments, development activity |
  * | `c2` | the constraint register — `constraints`, `constraintsAsked`, `constraintRegisters` (shipped 17 Sep 2026, between the two subject runs above) |
+ * | `c3` | the forward investment programme — `investmentProgramme` (shipped 18 Sep 2026). A `c2` row was cached before any programme was read, so serving one would report a property as having no funded investment near it when the programme was never asked. Exactly the fault `c2` exists for. |
  */
-export const PLANNING_ANSWER_VERSION = 'c2' as const;
+export const PLANNING_ANSWER_VERSION = 'c3' as const;
 
 /** Every top-level key the answer of this version carries. */
 export const PLANNING_ANSWER_KEYS: readonly string[] = [
@@ -62,6 +63,7 @@ export const PLANNING_ANSWER_KEYS: readonly string[] = [
   'developmentActivity',
   'developmentInstruments',
   'fetchedAt',
+  'investmentProgramme',
   'jurisdiction',
   'parcel',
   'verification',

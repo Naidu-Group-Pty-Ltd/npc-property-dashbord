@@ -33,6 +33,7 @@ import {
   composeSwotSection, composeVerdictSection,
 } from './scoreSections.pure.ts';
 import { recordedScoreValues, suppressUnrecordedScores } from './scoreClaims.pure.ts';
+import { correctUnsupportedEvidenceClaims } from './evidenceClaims.pure.ts';
 import { dropEmptySections, stripPlaceholderRows, trimToDeclaredSections } from './derivedHygiene.pure.ts';
 import { scrubBlocks } from './blockHygiene.pure.ts';
 import { authoredHeadingsForTier, markdownHeadingsForTier } from './sectionRegistry.pure.ts';
@@ -228,6 +229,24 @@ export function composeCondensedDocument(input: CondenseComposeInput): CondenseC
     condensedContent = scoreGuard.markdown;
     hygiene.unrecorded_score_claims_removed = scoreGuard.removed.length;
     if (scoreGuard.removed.length) hygiene.unrecorded_score_claims = scoreGuard.removed.map((r) => r.text);
+
+    /*
+     * The same shape for the two material claims QA reports and never
+     * corrects — a hazard clearance resting on a listing portal or on a
+     * neighbouring parcel, and a delivery horizon no register publishes.
+     *
+     * A condensation summarises the parent's prose, so a parent generated
+     * before the claim guard existed hands its clearance sentence to the
+     * Briefing and the Snapshot. The parent's stored row is untouched; what is
+     * corrected is the new document this call produces. It runs last, so the
+     * removal is measured against the assembled text a client receives.
+     */
+    const claimGuard = correctUnsupportedEvidenceClaims(condensedContent);
+    condensedContent = claimGuard.markdown;
+    hygiene.unsupported_claims_removed = claimGuard.removed.length;
+    if (claimGuard.removed.length) {
+      hygiene.unsupported_claims = claimGuard.removed.map((r) => ({ rule: r.rule, text: r.text }));
+    }
 
   return { markdown: condensedContent, hygiene, postProcessReport, recordedScores };
 }

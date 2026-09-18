@@ -136,6 +136,13 @@
  * Pure: no fetch, no Deno, no clock.
  */
 
+import {
+  horizonCaveat,
+  programmeStanding,
+  PROGRAMME_RADIUS_KM as PROGRAMME_RADIUS_KM_FALLBACK,
+  stageSentence,
+} from './investmentProgramme.pure.ts';
+
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 const str = (v: unknown): string | null =>
@@ -195,7 +202,7 @@ export function readDeliveryStanding(raw: string | null): DeliveryStanding | nul
  */
 export interface RegisterReading {
   /** Which register, in words a reader can match to the sentence. */
-  register: 'development instruments' | 'development applications';
+  register: 'development instruments' | 'development applications' | 'forward investment programme';
   /**
    * `searched_empty` — the register was asked at this location and answered
    * that it holds nothing here. Within that register's own coverage, that is
@@ -242,13 +249,39 @@ export interface InfrastructureItem {
   /**
    * The cost the register states, where it carries one.
    *
-   * **It is a cost and not funding.** A development-application register
-   * carries the APPLICANT'S OWN stated cost of development; no register this
-   * platform reads publishes who is paying or whether anything is funded, and
-   * the brief asks for funding per project. Saying so is the only honest
-   * answer; printing a dollar figure with no qualifier lets it read as one.
+   * **On a DA entry it is a cost and not funding.** A development-application
+   * register carries the APPLICANT'S OWN stated cost of development and says
+   * nothing about who is paying — so `costBasis` names which of the two this
+   * figure is, and a DA cost may never be read as investment.
+   *
+   * On a forward investment programme entry it IS a committed budget, because
+   * a government programme publishes one. That is the difference the two
+   * registers turn on, and it is the reason this field carries its basis
+   * rather than a bare number.
    */
   statedCost: number | null;
+  /**
+   * What `statedCost` IS — `application` for an applicant's stated cost of
+   * development, `committed_budget` for a government's committed funding.
+   * Null where there is no figure.
+   */
+  costBasis: 'application' | 'committed_budget' | null;
+  /**
+   * A cost BAND, where the publisher gives one instead of a figure.
+   *
+   * A planned investment carries "Up to $250 million" and no budget; a
+   * committed one carries a budget and no band. They are alternatives, and
+   * printing a band as an amount states a commitment nobody made.
+   */
+  statedCostRange: string | null;
+  /**
+   * Which governments contribute, where a register names them.
+   *
+   * Empty on every DA entry — an application register publishes no funder. On
+   * a programme entry it is the set of partners and never a split, because the
+   * columns are markers rather than amounts.
+   */
+  fundingPartners: string[];
   /**
    * What the publisher says about WHEN this will be delivered.
    *
@@ -279,6 +312,22 @@ export interface InfrastructureItem {
   licence: string | null;
   /** When this deployment retrieved it. */
   retrievedAt: string | null;
+  /**
+   * The name of an entry this one MIGHT be a second reading of — publisher,
+   * layer and name all matched, and neither side published an identifier that
+   * could confirm or deny it.
+   *
+   * It is retained rather than suppressed, because suppressing a record that
+   * was never confirmed to be a duplicate destroys evidence. It is MARKED
+   * because the danger is not the extra row: it is a reader or a consumer
+   * adding two statements of one project together and calling the total
+   * independent investment. Anything that totals must exclude a marked row.
+   *
+   * Null on a confirmed-distinct entry — identifiers that CONTRADICT say these
+   * are two records, and calling a genuine second designation "possibly a
+   * duplicate" is the same error pointing the other way.
+   */
+  unconfirmedDuplicateOf?: string | null;
 }
 
 export interface InfrastructureEvidence {
@@ -316,6 +365,13 @@ export interface InfrastructureEvidence {
   readings: RegisterReading[];
   /** What these registers do not reach at all (rule 5). */
   coverageLimits: string[];
+  /**
+   * What the forward investment programme was asked, and over what window —
+   * set only where it answered WITH entries, because a programme that answered
+   * with nothing is an absence and belongs in `readings` where the page prints
+   * "Searched, nothing found." over it.
+   */
+  programmeStatement: string | null;
   retrievedAt: string | null;
   /** True when at least one register answered with something. */
   anyEvidenced: boolean;
@@ -343,6 +399,23 @@ export const INFRASTRUCTURE_COVERAGE_LIMITS: readonly string[] = [
   'transport, water, energy and health agency project announcements',
   'projects outside the local government area the registers were asked about',
 ];
+
+/**
+ * The same list, with the programme limit removed where a programme WAS read.
+ *
+ * A coverage statement has to be true of this reading rather than of the
+ * registers in general: once the state's own forward investment programme has
+ * been read at this coordinate, saying it is not covered is false, and a false
+ * limitation teaches a reader to discount the true ones. The two entries a
+ * programme reading does not close stay — a state programme is not a council
+ * capital works programme and is not an agency announcement.
+ */
+export function coverageLimitsFor(programmeRead: boolean): string[] {
+  if (!programmeRead) return [...INFRASTRUCTURE_COVERAGE_LIMITS];
+  return INFRASTRUCTURE_COVERAGE_LIMITS
+    .filter((l) => l !== 'state and federal budget infrastructure programmes')
+    .concat('federal budget programmes, and state programmes outside transport and roads');
+}
 
 export interface InfrastructureEvidenceInput {
   /** `enhancedData.planningData` — the planning service's answer, or absent. */
@@ -456,15 +529,39 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
     instrument: str(r.instrument),
   });
   /**
-   * True where two readings' identifiers CONTRADICT — not where they merely
-   * fail to confirm each other. A channel one side left unpublished says
-   * nothing; a channel both published and they disagree says these are two
-   * records, whatever publisher, layer and name say.
+   * Whether two readings are CONFIRMED to be the same record.
+   *
+   * This asks for a match, not merely the absence of a contradiction — which
+   * is the correction of 18 Sep 2026 and the whole of the difference. The
+   * first version merged wherever nothing disagreed, so two readings that
+   * published NO identifier between them were suppressed to one on the
+   * strength of publisher, layer and name. Those three are a CANDIDATE. A
+   * missing identifier confirms nothing, and suppressing a record on it
+   * destroys evidence to tidy a list.
+   *
+   * So: a match on either channel confirms; a disagreement on either channel
+   * refuses outright, even if the other channel agrees; and nothing published
+   * on either side is `unconfirmed`, which retains both rows.
+   *
+   * Each channel is still judged against its own — a feature reference against
+   * a feature reference, the instrument a designation sits under against the
+   * same — because comparing across them is the publisher-plus-name mistake a
+   * level down and would refuse every honest pair.
    */
-  const identifiersContradict = (a: PublisherIdentifiers, b: PublisherIdentifiers): boolean =>
-    (a.feature !== null && b.feature !== null && norm(a.feature) !== norm(b.feature))
-    || (a.instrument !== null && b.instrument !== null
-      && norm(a.instrument) !== norm(b.instrument));
+  type IdentityVerdict = 'confirmed' | 'contradicted' | 'unconfirmed';
+  const compareIdentity = (a: PublisherIdentifiers, b: PublisherIdentifiers): IdentityVerdict => {
+    const channels: Array<[string | null, string | null]> = [
+      [a.feature, b.feature],
+      [a.instrument, b.instrument],
+    ];
+    let matched = false;
+    for (const [x, y] of channels) {
+      if (x === null || y === null) continue;
+      if (norm(x) !== norm(y)) return 'contradicted';
+      matched = true;
+    }
+    return matched ? 'confirmed' : 'unconfirmed';
+  };
   /**
    * Each instrument reading, keyed by what can actually identify it and
    * carrying WHERE it landed in `items` — because a candidate match has to be
@@ -501,6 +598,9 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
         address: null,
         reference: str(raw.reference),
         statedCost: null,
+        costBasis: null,
+        statedCostRange: null,
+        fundingPartners: [],
         statedDelivery: null,
         applications: null,
         source,
@@ -605,9 +705,12 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
     const candidate = contextSource && layerKind
       ? instrumentIdentities.get(identityOf(contextSource, layerKind, name))
       : undefined;
-    if (candidate !== undefined
-      && !identifiersContradict(candidate.ids, identifiersOf(raw))) {
-      // Fill, never overwrite.
+    const verdict = candidate === undefined
+      ? 'contradicted' as IdentityVerdict
+      : compareIdentity(candidate.ids, identifiersOf(raw));
+    if (candidate !== undefined && verdict === 'confirmed') {
+      // Suppress, and fill the survivor from what it held nothing for, so a
+      // confirmed merge never costs the document a fact. Never overwrite.
       const held = items[candidate.at];
       if (held.reference === null && contextReference !== null) {
         held.reference = contextReference;
@@ -620,6 +723,20 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
       if (held.licence === null && contextLicence !== null) held.licence = contextLicence;
       continue;
     }
+    /*
+     * Not confirmed. The row STANDS, and where it was a candidate that nothing
+     * confirmed it is marked so — because the danger of retaining an
+     * unconfirmed duplicate is not the extra row, it is a reader or a consumer
+     * adding two statements of the same project together and calling the total
+     * independent investment. `unconfirmedDuplicateOf` names the row it might
+     * be, so a total can exclude it and a reader is told why both are there.
+     *
+     * A contradiction is NOT marked: the identifiers said these are two
+     * records, and labelling a genuine second designation "possibly a
+     * duplicate" would be the same error pointing the other way.
+     */
+    const unconfirmedDuplicateOf = candidate !== undefined && verdict === 'unconfirmed'
+      ? items[candidate.at].name : null;
     const family = str(raw.family);
     items.push({
       name,
@@ -659,11 +776,15 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
       address: null,
       reference: contextReference,
       statedCost: null,
+      costBasis: null,
+      statedCostRange: null,
+      fundingPartners: [],
       statedDelivery: null,
       applications: null,
       source: contextSource ?? 'state planning layers',
       licence: contextLicence,
       retrievedAt,
+      unconfirmedDuplicateOf,
     });
   }
 
@@ -736,6 +857,10 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
         where: str(raw.suburb),
         address: str(raw.address),
         statedCost: num(raw.statedCost),
+        // An applicant's own stated cost of development, never funding.
+        costBasis: num(raw.statedCost) === null ? null : 'application',
+        statedCostRange: null,
+        fundingPartners: [],
         // A DA register publishes no delivery date, for any application. Rule
         // 3 already forbids reading a decision date as a completion date; this
         // says the absence out loud per entry rather than once at the foot.
@@ -754,6 +879,107 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
     note('development applications', act, 'No development-application register reading for this jurisdiction.');
   }
 
+  /*
+   * ── the forward investment programme ──────────────────────────────────────
+   *
+   * What a government has FUNDED, as against what somebody has applied to
+   * build. Everything above answers the second question, which is why
+   * `INFRASTRUCTURE_COVERAGE_LIMITS` has always named budget programmes as
+   * something these registers do not reach.
+   *
+   * It contributes entries on exactly the same terms as the other two
+   * registers — the publisher's own name, the publisher's own status word, a
+   * reference a reader can look up, and no date that is not a date something
+   * happened. Two things are its own:
+   *
+   *   **A distance, measured.** §4: *"an LGA project is not automatically near
+   *   the property."* The programme publishes a midpoint, so `where` states
+   *   the district AND how far the investment is from this property, and
+   *   `planning-data-service` has already dropped anything outside the radius.
+   *
+   *   **A committed budget, which a DA register cannot publish.** This is the
+   *   one source here that states who is paying, so `costBasis` distinguishes
+   *   it from an applicant's stated cost and `fundingPartners` names the
+   *   contributors — never a split, because the columns are markers.
+   */
+  const programme = isRecord(data?.investmentProgramme) ? data!.investmentProgramme : null;
+  let programmeStatement: string | null = null;
+  if (programme?.status === 'ok' && Array.isArray(programme.investments)) {
+    const source = str(programme.source) ?? 'a government investment programme';
+    const licence = str(programme.licence);
+    const edition = str(programme.edition);
+    for (const raw of programme.investments) {
+      if (!isRecord(raw)) continue;
+      const name = str(raw.name);
+      if (!name) continue;
+      const stages = isRecord(raw.stages) ? raw.stages : {};
+      const constructionStart = str(stages.constructionStart);
+      const statedStatus = str(raw.status);
+      const standing = programmeStanding(statedStatus, constructionStart);
+      const km = num(raw.distanceKm);
+      const district = str(raw.district);
+      const stageLine = [
+        stageSentence('Planning', str(stages.planning)),
+        stageSentence('Procurement', str(stages.procurement)),
+        stageSentence('Construction', constructionStart),
+      ].filter(Boolean).join('; ');
+      const budget = num(raw.committedBudget);
+      items.push({
+        name,
+        reference: str(raw.reference),
+        kind: standing === 'funded' ? 'Committed government investment' : 'Planned government investment',
+        statedStatus,
+        standing,
+        // The programme states no date on which anything happened, and its
+        // stage markers are expectations. Rule 3: they go in `statedDelivery`
+        // with what they are, never in a date column.
+        dateLabel: null,
+        date: null,
+        where: [
+          // The programme's own district names, except "Statewide", which is
+          // a scope rather than a district — "Statewide district" is not a
+          // place, and the Queensland Train Manufacturing Program is one.
+          district && (district.toLowerCase() === 'statewide' ? 'Statewide programme' : `${district} district`),
+          km === null ? null : `${km.toFixed(1)} km from the property`,
+        ].filter(Boolean).join(', ') || null,
+        address: null,
+        statedCost: budget,
+        costBasis: budget === null ? null : 'committed_budget',
+        statedCostRange: str(raw.costRange),
+        fundingPartners: Array.isArray(raw.fundingPartners)
+          ? raw.fundingPartners.filter((x): x is string => typeof x === 'string')
+          : [],
+        statedDelivery: stageLine || null,
+        applications: null,
+        source: edition ? `${source} ${edition}` : source,
+        licence,
+        retrievedAt,
+      });
+    }
+    // A programme that ANSWERED WITH ENTRIES is not an absence, and the
+    // readings list prints "Searched, nothing found." over everything in it.
+    // Its statement belongs beside the table it explains, so it travels as
+    // `programmeStatement` and only joins the absence list when it found
+    // nothing — which is a real absence and reads correctly there.
+    programmeStatement = `${source}${edition ? ` (${edition})` : ''} was read for `
+      + `${num(programme.radiusKm) ?? PROGRAMME_RADIUS_KM_FALLBACK} km around this property. `
+      + horizonCaveat(edition ?? 'its published window');
+    if (programme.investments.length === 0) {
+      readings.push({
+        register: 'forward investment programme',
+        reading: 'searched_empty',
+        note: programmeStatement,
+      });
+      programmeStatement = null;
+    }
+  } else if (programme) {
+    readings.push({
+      register: 'forward investment programme',
+      reading: str(programme.status) === 'none_at_point' ? 'searched_empty' : 'not_searched',
+      note: str(programme.note) ?? 'No forward investment programme reading for this jurisdiction.',
+    });
+  }
+
   return {
     items,
     pipelineDwellings,
@@ -763,7 +989,8 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
     absences: readings.map((r) => r.note),
     readings,
     registerWalk,
-    coverageLimits: [...INFRASTRUCTURE_COVERAGE_LIMITS],
+    coverageLimits: coverageLimitsFor(programme?.status === 'ok'),
+    programmeStatement,
     retrievedAt,
     anyEvidenced: items.length > 0 || pipelineDwellings !== null,
     enrichmentMissing: !data,
@@ -795,9 +1022,34 @@ const money = (v: number): string => `$${Math.round(v).toLocaleString('en-AU')}`
  * it.
  */
 function fundingCell(item: InfrastructureItem): string {
+  // A programme entry names its contributors; a DA entry names nobody, and
+  // the figure beside it is the applicant's own cost rather than investment.
+  if (item.fundingPartners.length) {
+    const n = item.fundingPartners;
+    const named = n.length === 1 ? n[0] : `${n.slice(0, -1).join(', ')} and ${n[n.length - 1]}`;
+    return `${named} — contributors named, amounts per partner not published`;
+  }
+  if (item.costBasis === 'committed_budget') return 'Committed by the programme; contributors not named on this entry';
   return item.statedCost !== null
-    ? 'Not stated — the figure is the applicant\u2019s own cost of development'
+    ? 'Not stated — the figure is the applicant’s own cost of development'
     : 'Not stated by this register';
+}
+
+/**
+ * The cost cell.
+ *
+ * A committed budget, a cost BAND, or nothing — never a band printed as though
+ * it were an amount. A planned investment carries "Up to $250 million" and no
+ * figure, and rendering that as a number would state a commitment nobody made.
+ */
+function costCell(item: InfrastructureItem): string {
+  if (item.statedCost !== null) {
+    return item.costBasis === 'committed_budget'
+      ? `${money(item.statedCost)} committed`
+      : money(item.statedCost);
+  }
+  if (item.statedCostRange) return `${item.statedCostRange} (band, not a committed figure)`;
+  return '—';
 }
 
 /**
@@ -857,14 +1109,49 @@ export function renderInfrastructureOutlook(evidence: InfrastructureEvidence): s
       const where = i.address ?? i.where ?? '—';
       lines.push(
         `| ${i.reference ?? '—'} | ${i.name} | ${kindCell(i)} | ${statusCell(i)} | ${when} | ${where} | `
-        + `${i.statedCost !== null ? money(i.statedCost) : '—'} | ${fundingCell(i)} | `
+        + `${costCell(i)} | ${fundingCell(i)} | `
         + `${i.statedDelivery ?? 'Not published by this register'} |`,
       );
     }
     lines.push('');
+    /*
+     * An unconfirmed duplicate is disclosed, not hidden and not merged.
+     *
+     * Both readings are on the page because neither publisher issued an
+     * identifier that could confirm they are one record, and suppressing on a
+     * name would destroy a real designation. Saying so is what stops a reader
+     * adding the two together — which is the only way an extra row does harm.
+     */
+    const unconfirmed = evidence.items.filter((i) => i.unconfirmedDuplicateOf);
+    if (unconfirmed.length) {
+      const pairs = unconfirmed
+        .map((i) => `"${i.name}" (${i.source}) beside "${i.unconfirmedDuplicateOf}"`);
+      lines.push(
+        `**Two readings that may be one project.** ${pairs.join('; ')}. `
+        + 'Both registers describe a designation of the same name at this point, and neither '
+        + 'published a reference that would confirm they are the same record — so both are '
+        + 'listed rather than one being dropped. **Do not add their figures together**: they may '
+        + 'be one project counted twice, and no total in this report treats them as independent.',
+        '',
+      );
+    }
     const sources = [...new Set(evidence.items.map((i) => `${i.source}${i.licence ? ` (${i.licence})` : ''}`))];
     lines.push(`Sources: ${sources.join('; ')}. Retrieved ${auDate(evidence.retrievedAt) ?? 'this run'}.`);
     lines.push('');
+
+    /*
+     * What the forward investment programme was asked, and over what window.
+     *
+     * Beside the table it explains rather than in the absence list, because
+     * that list prints "Searched, nothing found." over everything in it and
+     * this programme found four things. Its window is the load-bearing part:
+     * a four-year programme read as a ten-year outlook is §4's own warning,
+     * and the caveat says which years it covers and that it dates no
+     * completion at all.
+     */
+    if (evidence.programmeStatement) {
+      lines.push(`**The forward investment programme.** ${evidence.programmeStatement}`, '');
+    }
 
     /*
      * How to count this table, said on the page.

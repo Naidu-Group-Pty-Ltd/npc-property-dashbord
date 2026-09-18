@@ -171,7 +171,8 @@ describe('the two copies of the validator agree', () => {
     // `scoreClaims` than the mirror does.
     const strip = (src: string) => src.replace(/\.ts'/g, "'");
     const edge = strip(read('supabase/functions/_shared/compassQAValidator.ts'))
-      .replace("'./reports/investment/scoreClaims.pure'", "'./investment/scoreClaims.pure'");
+      .replace("'./reports/investment/scoreClaims.pure'", "'./investment/scoreClaims.pure'")
+      .replace("'./reports/investment/evidenceClaims.pure'", "'./investment/evidenceClaims.pure'");
     expect(strip(read('src/lib/reports/compassQAValidator.ts'))).toBe(edge);
   });
 });

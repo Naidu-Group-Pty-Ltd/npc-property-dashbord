@@ -50,6 +50,7 @@ import {
 } from '../_shared/reports/contract/governedNarrativeAuthority.pure.ts';
 import { regionalTrendBlocks } from '../_shared/reports/regionalPromptBlocks.pure.ts';
 import { runQAValidation } from '../_shared/compassQAValidator.ts';
+import { correctUnsupportedEvidenceClaims } from '../_shared/reports/investment/evidenceClaims.pure.ts';
 import { startRun as traceStartRun, recordChunk as traceRecordChunk, finishRun as traceFinishRun, packetKeysAttached as tracePacketKeys } from '../_shared/generation-trace.ts';
 import { buildInvestmentReportMeteringParts } from '../_shared/investmentReportMeteringKey.ts';
 import { cumulativeCashFlow, fmtCashFlow, impliedOpexFromSeries, seriesLvrPercent } from '../_shared/reports/investment/financialEngine.pure.ts';
@@ -6757,6 +6758,40 @@ YOUR DEDICATED PROPERTY PARTNER
       );
     }
 
+    /*
+     * A detected error is not a corrected report.
+     *
+     * The three guards above remove a claim; `runQAValidation` below only
+     * REPORTS one, and the comment beside it says why — "a report that exists
+     * and is over its band is more use to everyone than no report". That is
+     * right for a page band and wrong for two of its findings, which are not
+     * statements about a document's shape but material claims about somebody's
+     * property that nothing in this report supports:
+     *
+     *   portal-sourced-hazard-clearance — "no bushfire, flood or heritage
+     *     overlays … [Property.com.au, 119, 120, 137 and 139 Redfern Street
+     *     profiles]", measured on 48 Redfern Street. A listing is not a
+     *     planning authority and a neighbouring parcel is not this one.
+     *
+     *   unpublished-delivery-horizon — a {{timeline:}} placing named projects
+     *     in "0-2y", when every date the registers publish is a decision or a
+     *     declaration and none is a delivery date.
+     *
+     * Both were detected, filed in `validation_flags` and printed anyway. They
+     * are corrected here, by the sentence and by the stop, and what went is
+     * logged and stored — a correction that leaves no trace is a document that
+     * looks like it never carried the claim. It runs unconditionally and above
+     * the overlay branch for the same reason the score guard does: a switch
+     * that turns a correctness control off is not a switch about formatting.
+     */
+    const claimGuard = correctUnsupportedEvidenceClaims(reportContent);
+    if (claimGuard.removed.length) {
+      reportContent = claimGuard.markdown;
+      for (const r of claimGuard.removed) {
+        console.log(`✓ Claim guard [${r.rule}]: removed ${JSON.stringify(r.text.slice(0, 160))}`);
+      }
+    }
+
     let compassQa: ReturnType<typeof runQAValidation> | null = null;
     if (compass40OverlayActive) {
       const beforePost = reportContent.length;
@@ -7197,6 +7232,22 @@ YOUR DEDICATED PROPERTY PARTNER
           message: `Report content length (${combinedContent.length} chars) may result in fewer pages`,
           value: { actual: combinedContent.length, recommended: 45000 }
         }] : []),
+        /*
+         * What the claim guard CORRECTED, recorded as an `info` flag.
+         *
+         * Nothing is concealed: a correction that leaves no trace is
+         * indistinguishable from a document that never carried the claim, and
+         * the record has to be able to say a sentence was removed and why. It
+         * is `info` rather than a warning because nothing is outstanding — the
+         * claim is gone from the document these flags describe.
+         */
+        ...claimGuard.removed.map((r) => ({
+          type: 'correction',
+          severity: 'info' as const,
+          field: r.rule,
+          message: `Removed an unsupported claim before the document was stored: ${r.reason}`,
+          value: { rule: r.rule, removed: r.text },
+        })),
         // Compass structural QA. Recorded rather than thrown — see the seam above.
         ...(compassQa ? compassQa.findings.map((f) => ({
           type: 'structure',

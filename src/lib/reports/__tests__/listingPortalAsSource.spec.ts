@@ -45,20 +45,55 @@ const MEASURED = 'Properties on Redfern Street repeatedly show established detac
 const doc = (body: string) => `# Report\n\n## Executive Verdict\n\n${body}\n`;
 const rules = (md: string) => runQAValidation(md, 'compass').findings.map((f) => f.rule);
 
-describe('a listing portal cited as a source is an error', () => {
+const findingFor = (md: string, rule: string) =>
+  runQAValidation(md, 'compass').findings.find((f) => f.rule === rule);
+
+describe('a hazard clearance on a listing\'s authority is an ERROR', () => {
   it('catches the sentence that shipped', () => {
     const found = rules(doc(MEASURED));
-    expect(found).toContain('listing-portal-as-source');
-    // And the severe half separately: the portal is carrying an ABSENCE.
-    expect(found).toContain('portal-sourced-hazard-absence');
+    expect(found).toContain('portal-sourced-hazard-clearance');
+    expect(findingFor(doc(MEASURED), 'portal-sourced-hazard-clearance')?.severity).toBe('error');
   });
 
-  it('names the portal and the count so the finding can be acted on', () => {
-    const f = runQAValidation(doc(MEASURED), 'compass').findings
-      .find((x) => x.rule === 'listing-portal-as-source');
-    expect(f?.severity).toBe('error');
+  it('catches it on NEIGHBOURING listings with no portal named at all', () => {
+    /*
+     * The second noun in the measured sentence, and the one that survives if
+     * the citation is dropped: "nearby addresses". A claim about a different
+     * parcel is not a clearance for this one, whoever published it.
+     */
+    const found = rules(doc(
+      'Several nearby properties record no flood or bushfire overlay on public mapping.',
+    ));
+    expect(found).toContain('portal-sourced-hazard-clearance');
+  });
+
+  it('names what is wrong and what the permitted form is', () => {
+    const f = findingFor(doc(MEASURED), 'portal-sourced-hazard-clearance');
+    expect(f?.message).toContain('not a planning authority');
+    expect(f?.message).toContain('Checked and not mapped at this coordinate');
+  });
+});
+
+describe('an ordinary portal citation is a WARNING, not a rejection', () => {
+  it('a listing price sourced to the listing does not fail the document', () => {
+    /*
+     * The correction of 18 Sep 2026. A listing is the authoritative source for
+     * the thing it IS — the asking price, the advertised configuration — and
+     * rejecting it wholesale would strip a report of properly recorded
+     * evidence for an identity fact.
+     */
+    const md = doc('The property is advertised at $555,000.[Property.com.au listing, 2026]');
+    const f = findingFor(md, 'listing-portal-as-source');
+    expect(f?.severity).toBe('warning');
+    expect(runQAValidation(md, 'compass').passed, 'a warning must not fail the document').toBe(true);
+    expect(rules(md)).not.toContain('portal-sourced-hazard-clearance');
+  });
+
+  it('still discloses it, naming the portal and the count', () => {
+    const f = findingFor(doc(MEASURED), 'listing-portal-as-source');
     expect(f?.message).toContain('property.com.au');
     expect(f?.message).toMatch(/1 inline citation/);
+    expect(f?.message).toContain('authoritative for what it IS');
   });
 
   it('catches the other portals by name', () => {
@@ -66,14 +101,6 @@ describe('a listing portal cited as a source is an error', () => {
       expect(rules(doc(`The street is quiet.[${portal} listings, 2026]`)), portal)
         .toContain('listing-portal-as-source');
     }
-  });
-
-  it('a portal citation WITHOUT an absence claim raises only the first rule', () => {
-    // Still wrong — a client cannot look a claim up in a listing site — but it
-    // is not the planning sentence, and conflating the two loses the severity.
-    const found = rules(doc('Land sizes on the street run 900-2,200 m².[Property.com.au listings, 2026]'));
-    expect(found).toContain('listing-portal-as-source');
-    expect(found).not.toContain('portal-sourced-hazard-absence');
   });
 });
 
@@ -86,7 +113,7 @@ describe('what it must NOT flag', () => {
       + 'Each of these was asked of a register that answered, and no feature covers this point.',
     ));
     expect(found).not.toContain('listing-portal-as-source');
-    expect(found).not.toContain('portal-sourced-hazard-absence');
+    expect(found).not.toContain('portal-sourced-hazard-clearance');
   });
 
   it('a register named as the source, in brackets', () => {
@@ -101,7 +128,7 @@ describe('what it must NOT flag', () => {
       'Bushfire and flood exposure are assessed in the planning section against the state registers.',
     ));
     expect(found).not.toContain('listing-portal-as-source');
-    expect(found).not.toContain('portal-sourced-hazard-absence');
+    expect(found).not.toContain('portal-sourced-hazard-clearance');
   });
 
   it('a markdown link or a table cell is not a portal citation', () => {
@@ -111,7 +138,7 @@ describe('what it must NOT flag', () => {
 
   it('a clean document raises neither rule', () => {
     expect(rules(doc('The property is a detached house on a level lot.'))).toEqual(
-      expect.not.arrayContaining(['listing-portal-as-source', 'portal-sourced-hazard-absence']),
+      expect.not.arrayContaining(['listing-portal-as-source', 'portal-sourced-hazard-clearance']),
     );
   });
 });
@@ -123,9 +150,64 @@ describe('both copies of the validator carry it', () => {
       .replace(/reports\/investment\//g, 'investment/');
     const edge = strip(readFileSync('supabase/functions/_shared/compassQAValidator.ts', 'utf8'));
     const browser = strip(readFileSync('src/lib/reports/compassQAValidator.ts', 'utf8'));
-    for (const marker of ['listing-portal-as-source', 'portal-sourced-hazard-absence', 'PORTALS']) {
+    for (const marker of ['listing-portal-as-source', 'portal-sourced-hazard-clearance', 'NEIGHBOURING']) {
       expect(edge, `edge: ${marker}`).toContain(marker);
       expect(browser, `browser: ${marker}`).toContain(marker);
+    }
+  });
+});
+
+// ─── every path that produces a document reads it ─────────────────────────
+
+describe('generation, fork and condensation all validate the assembled output', () => {
+  const read = async (f: string) =>
+    (await import('node:fs')).readFileSync(f, 'utf8');
+
+  it('each of the three paths calls the validator', async () => {
+    /*
+     * The fork called it on NOTHING before 18 Sep 2026, which is how the
+     * measured sentence reached three documents while only the first was
+     * checked: the generator validates its finished markdown, the condenser
+     * validates its composed document, and the fork — which routes the
+     * parent's prose verbatim into two more client documents — validated
+     * neither of them.
+     */
+    for (const fn of ['generate-investment-report', 'fork-investment-report',
+      'condense-investment-report']) {
+      const src = await read(`supabase/functions/${fn}/index.ts`);
+      expect(src, fn).toContain('runQAValidation');
+    }
+  });
+
+  it('the fork validates the COMPOSED markdown, at the CHILD\'s tier', async () => {
+    const src = await read('supabase/functions/fork-investment-report/index.ts');
+    // The document a client receives, not the parent's prose before routing —
+    // and after the claim guard, so a surviving finding is a real one rather
+    // than one the correction had already discharged.
+    expect(src).toContain("runQAValidation(financialMarkdown, 'financial')");
+    expect(src).toContain("runQAValidation(strategicMarkdown, 'strategic')");
+    expect(src).toContain('const financialMarkdown = financialClaims.markdown;');
+    expect(src).toContain('const strategicMarkdown = strategicClaims.markdown;');
+    // …and what is stored is the corrected copy, never the composed one.
+    expect(src).toContain("'financial', 'financial', financialMarkdown, financialScore)");
+    expect(src).toContain("'due_diligence', 'strategic', strategicMarkdown, strategicScore)");
+    // Never the parent's tier: a Compass's page band and financial exclusion
+    // asserted over a Financial Analysis is the defect `condenseCompose`
+    // already records, and it produced sixteen errors on a correct document.
+    expect(src).not.toContain("runQAValidation(financialMarkdown, 'compass");
+  });
+
+  it('the rules travel with the prose, so a routed section is judged again', () => {
+    /*
+     * The mechanism that made one sentence into three documents: the fork
+     * routes the parent's prose into the child. So the same text, handed to
+     * the validator at the child's tier, must raise the same finding — which
+     * is what makes validating the child worth doing at all.
+     */
+    const routed = `# Due Diligence\n\n## Position Within the Locality\n\n${MEASURED}\n`;
+    for (const tier of ['compass', 'financial', 'strategic', 'briefing', 'snapshot']) {
+      expect(runQAValidation(routed, tier).findings.map((f) => f.rule), tier)
+        .toContain('portal-sourced-hazard-clearance');
     }
   });
 });

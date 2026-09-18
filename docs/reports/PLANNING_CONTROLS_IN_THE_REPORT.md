@@ -1095,34 +1095,215 @@ split $750m Commonwealth / $750m Queensland, nothing spent to 30 June 2024.
 the only one with live DataStore resources being *NSW Budget Paper 2* from
 2019.
 
-### 13.3 What this changes, and what it deliberately does not
+### 13.3 The 2024 reading was two editions stale, and the schema had changed
 
-It changes the **disclosure**. "Council capital works, budget programmes and
-agency announcements are not reached" is true of the DA register and is no
-longer true of Queensland as a jurisdiction: a funded programme with named
-projects, an LGA, a per-year profile and the funding split is published, open
-and readable.
+**It is built, and the reconciliation above had to be done first.** The
+catalogue holds three recent editions and the one §13.2 read is the oldest of
+them. Measured 18 Sep 2026:
 
-It does **not** change this release. Wiring it is a register in the shape of
-`amenity_register` and `crime_reference` — a table, an ingest function, a
-pg_cron schedule, a read path keyed on the cadastre's LGA, composition into
-`infrastructureEvidence`, and tests — and **this release carries no migration**
-(`S6_RELEASE_PACKAGE.md` §3). Bolting one on at an approval gate is how a
-release grows a fault nobody measured.
+| edition | rows in the DataStore | what it carries |
+| --- | ---: | --- |
+| 2024-25 → 2027-28 (what §13.2 read) | 903 | `Local Government`, `Network`, `Investment Name`, per-year budgets, `Beyond`, `Endnotes` — **no status, no stage dates** |
+| **2025-26 → 2028-29** | **639** | `Investment status (as at 1 July 2025)`, `Planning`, `Procurement`, `Construction Start`, `Range`, `Midpoint Latitude/Longitude` — **no `Local Government`, no `Network`** |
+| 2026-27 → 2029-30 | **0** | `datastore_active: true`, `total: 0`; its CSV answers HTTP 202 with zero bytes |
 
-Three rules it will have to answer to when it is built, all of them already
-this section's:
+Three things follow, and each is a rule in
+`_shared/planning/investmentProgramme.pure.ts`.
 
-- **A project is named only where a register named it**, and QTRIP names its
-  own — `Investment Name` verbatim, never a paraphrase.
-- **A funded year is a budget line, not a completion.** The columns are
-  appropriations; `Beyond` is explicitly unprofiled. A row may never be read as
-  a delivery date, which is rule 3 in its original form.
-- **The grain is the publisher's**: QTRIP is keyed on Local Government, so a
-  project is a fact about the **LGA**, stated as such, never placed at a
-  property. That is `OPEN_DATA_GROWTH_EVIDENCE`'s grain rule applied to
-  infrastructure.
+**The current edition is the one that ANSWERS.** The 2026-27 package is
+published, newer, and empty. `QTRIP_EDITIONS` lists the editions newest first
+and the reader takes the first that returns rows, naming which it used — the
+repository's standing rule in another costume: *asserted by effect, never by
+configuration*, the same rule the retention purge and the verification
+self-test answer to.
 
-Until it is built, the coverage limitation is stated as it is — and it now
-names *which* publisher, *which* programme and *which* route, so the next
-attempt starts from the DataStore rather than from a reachability probe.
+**The join key is a COORDINATE, not a local government area.** §13.2 planned
+an LGA join and the current edition dropped that column, which is strictly
+better for the question a report asks. §4's own words: *"an LGA project is not
+automatically near the property."* A 25 km box around the subject, then a
+measured haversine, answers geographic relevance directly. The box is drawn
+**2% wider than the radius**, because `1/111.32` is a MEAN degree and at
+-25.54° a 25 km box reached 24.974 km — an investment at 24.98 km due north
+would have been dropped before the distance test ever saw it. 508 of the
+edition's 639 rows carry a coordinate; the rest are counted as `unplaced`
+rather than dropped or placed.
+
+**Relying on the 2024 funding or status would have been wrong.** Its columns
+are appropriations for years since spent, and it publishes no status at all —
+so a report drawing "funded" from it would have asserted a state of affairs
+the register never stated, from a document two editions out of date. §4 asked
+for this reconciliation before the data was relied on; that is what it found.
+
+### 13.4 What it needed, and what it did not
+
+**It needed no migration.** `datastore_search_sql` with a bounding box
+answered this egress in **0.59 s — 14 rows, HTTP 200, CC BY 4.0** — so it is a
+live read at report time through the mechanism every other register in
+`planning-data-service` already uses. §4 asked to *"prefer existing
+acquisition, evidence-storage and composition mechanisms"*, and a table, an
+ingest function and a pg_cron schedule would have been three new failure modes
+for a query that takes half a second. `planningAnswerVersion` goes to **`c3`**
+instead, because a `c2` row was cached before any programme was read and
+serving one would report a property as having no funded investment near it
+when the programme was never asked — exactly the fault `c2` exists for.
+
+Five rules carry a row onto the page.
+
+1. **A project is named only where a register named it** — `Project Title`
+   verbatim.
+2. **A status is the publisher's own word**, mapped narrowly:
+   `Contractually Committed` is **funded** and is never read as approved or as
+   under construction; `Planned` is **proposed**. The one row that earns
+   `under_construction` is one whose `Construction Start` the publisher itself
+   writes as `Underway`.
+3. **A construction start is not a delivery date.** The stage cell reads
+   *"Construction expected to start 2026-27 — a start, not a completion"*, and
+   the programme publishes no completion date for anything.
+4. **A four-year programme is not a ten-year outlook.** The page states the
+   window and that nothing in it establishes delivery beyond it.
+5. **A cost band is not a committed budget**, and **funding names contributors
+   and never a split** — the three contribution columns hold a marker (`•`),
+   not an amount, so reading one as a number would print a funding split the
+   programme never published.
+
+### 13.5 New South Wales has a programme, and the report says so
+
+§4: *"'No equivalent structured dataset found' must not become 'NSW has no
+relevant programme.'"* `PROGRAMME_PUBLISHERS` names the publisher, the
+programme and the form it takes for **every state and territory**, and
+`programmeCoverageNote` composes the sentence. On a Kellyville report it reads:
+
+> **Not searched.** NSW Treasury, Transport for NSW and the local council
+> publishes the NSW Budget Infrastructure Statement, Transport for NSW project
+> announcements, and the council's own Delivery Program and capital works
+> programme. It is an official, current programme, and it is issued as budget
+> papers and agency publications rather than as a structured feed, so this
+> report does not read it. Nothing about the area follows from its absence here
+> — the programme exists and can be read at https://www.budget.nsw.gov.au/.
+
+A test asserts no note can be spelled as a jurisdiction publishing nothing.
+The two catalogue searches that produced §13.2's "NSW has no equivalent
+structured dataset" were correct about the CATALOGUE — data.nsw's CKAN is
+largely a library of PDFs, and the Planning Portal's major-projects backend
+answers 404 on every route probed — and that is a statement about a feed, not
+about a programme.
+
+**And the coverage statement is true of THIS reading.** Once the state's own
+forward programme has been read at this coordinate, listing "state and federal
+budget infrastructure programmes" among what is not covered is false, and a
+false limitation teaches a reader to discount the true ones. `coverageLimitsFor`
+narrows it to *"federal budget programmes, and state programmes outside
+transport and roads"*, and keeps council capital works and agency
+announcements, which a transport programme does not close.
+
+---
+
+## 14. A detected error is not a corrected report (18 Sep 2026)
+
+`compassQAValidator` has reported and never scrubbed since Phase 7, and the
+comment beside its call in the generator states the reasoning plainly:
+
+> QA is recorded, never thrown. A report that exists and is over its band is
+> more use to everyone than no report.
+
+That is right for almost everything it measures. A page band, a duplicate
+heading, a section over its word cap, a sub-heading density — each is a fact
+about a document's SHAPE, and discarding a finished report over one would cost
+more than the finding is worth.
+
+It is not right for two of its findings, and those two are the ones this
+section closes.
+
+| rule | what it says about the document |
+| --- | --- |
+| `portal-sourced-hazard-clearance` | a hazard or planning control **does not apply to this property**, on the authority of a listing portal or of a neighbouring parcel |
+| `unpublished-delivery-horizon` | a named project **will be delivered inside a horizon** no register here publishes |
+
+Neither is a statement about shape. Each is a **material claim about somebody's
+property that nothing in this report supports** — the first about a parcel the
+report is not describing, the second about a date no publisher has issued. Both
+were detected, written into `validation_flags`, and printed. The finding went to
+a table nobody reads and the claim went to the client.
+
+### The correction half
+
+`_shared/reports/investment/evidenceClaims.pure.ts` is the corrector, and it
+answers to four rules.
+
+**One declaration, two readers.** The patterns and the finders live in that
+module; `compassQAValidator` imports them. A corrector holding its own copy of
+the detector's regex is two ends that drift — the failure this repository has
+recorded under `AML_COMMAND_REFRESH_EVENT`, under `DEFAULT_REVIEW_INTERVALS`
+and under the two copies of "what is still owed" — and here the drift would be
+silent and specific: a finding reported and not removed. A test asserts the
+validator declares no `PORTALS`, `HAZARD_ABSENCE` or `HORIZON` of its own, and
+another asserts that a document the validator calls an error is a document the
+corrector leaves clean.
+
+**The unit of the correction is the unit of the assertion.** A sentence for a
+prose claim; one stop for a timeline stop. Never a paragraph, never a section,
+never a sweep across the document — the owner's rule is that *prose is never
+regex-scrubbed*, and the point of removing a clearance sentence is that the
+sentence IS the claim. A timeline mixing `Determined Jul 2026` with `0-2y`
+keeps the determination and loses the horizon; one left with no stops at all is
+dropped, because an empty directive draws nothing anyway.
+
+**Nothing is concealed.** Every removal comes back with the rule that took it,
+the text that went and why, and the generator files each as an `info`
+`validation_flags` entry of type `correction`; the fork returns
+`claim_corrections` and the condensation records `unsupported_claims` in its
+hygiene block. A correction that leaves no trace is indistinguishable from a
+document that never carried the claim.
+
+**It removes and never rewrites.** Nothing here invents a replacement — no
+relabelling `0-2y` as a date the model did not have, no downgrading
+`Confidence: High` to `Unverified`. Those are judgements, and a judgement
+written by a corrector is the fabrication this whole programme exists to
+remove. `risk-confidence-overstated` therefore stays a **warning** and stays
+uncorrected: the honest word is one a person picks.
+
+### It runs on all three generation paths
+
+A fork routes the parent's prose and a condensation summarises it, so a parent
+generated before this existed hands its clearance sentence to both children
+every time somebody forks it. Nothing rewrites the parent — its stored row is
+untouched, and a historical document is a record — but the **new** document
+each call produces is corrected before it is stored:
+
+| path | where | order |
+| --- | --- | --- |
+| `generate-investment-report` | above the Compass overlay branch, beside the three score guards | correct → post-process → validate |
+| `fork-investment-report` | on each composed child, before `runQAValidation` | correct → validate → store |
+| `condenseCompose.pure.ts` | last hygiene pass, after the score guard | correct → return |
+
+Correcting before validating is what makes a surviving finding a real one
+rather than one the corrector had already discharged.
+
+### What the tests found on the way
+
+Two defects, neither of which was the one being fixed.
+
+**`sentencesOf` was not total.** It was
+`text.match(/[^.!?]+(?:[.!?]+(?=\s|$)|$)/g)`, which requires every part to end
+at a terminator *followed by whitespace*. The generator's prose puts its
+citation immediately after the stop with no space —
+`…last updated.[Property.com.au, 119, 120, …]` — so that stop satisfied neither
+alternative, the engine walked the start position forward, and the text between
+was silently **dropped**: the real Redfern Street paragraph came back as two
+parts whose second began mid-domain, at `au, 119, …`. Every caller rebuilds the
+line with `kept.join(' ')`, so on a paragraph that happened to carry an
+unrecorded score claim, `suppressUnrecordedScores` would have deleted a sentence
+and a half nothing had decided to remove — a blanket removal wearing a
+sentence-level rule's clothes. It now walks the terminators and slices between
+them, which is total by construction, and a terminator may be followed by one
+bracketed citation, so **the citation travels with the claim it supports**: a
+source left standing over a deleted sentence reads as the source of the sentence
+after it.
+
+**The detector and the corrector split sentences two different ways.** The
+validator used `markdown.split(/(?<=[.!?])\s+/)` while the corrector used
+`sentencesOf`, and on the measured prose the two disagreed about where the
+sentence ended — so the finding survived its own correction, which is exactly
+the drift the one-declaration rule exists to prevent. `findPortalSourcedClearances`
+now reads `sentencesOf`, line by line, skipping anything `isProseLine` rejects
+so a table row or a directive cannot be mistaken for prose.
