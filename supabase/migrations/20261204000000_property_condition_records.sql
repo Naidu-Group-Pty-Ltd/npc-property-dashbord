@@ -1,7 +1,17 @@
 -- The condition-record evidence path (S5/S6 §1, "Approval A").
 --
 -- PREPARED FOR REVIEW. Not applied to production by this branch; DDL reaches
--- production only through `apply-migration.yml` on a merged file.
+-- production only through `apply-migration.yml` on a merged file. Confirmed
+-- absent from production on 18 September 2026 — `list_tables` shows no
+-- `property_condition_records`, and `list_migrations` does not carry this
+-- version.
+--
+-- The version is 20261204000000 and not the same-day 20260918nnnnnn it was
+-- first written as. Production has 980 migrations applied and its highest is
+-- 20261203010000; two same-day neighbours, 20260918090000 and 20260918100000,
+-- are already applied. A new file numbered below the applied high-water mark
+-- is the out-of-order case, and there is no reason to take it when a later
+-- number costs nothing.
 --
 -- ## What this is, and what it deliberately is not
 --
