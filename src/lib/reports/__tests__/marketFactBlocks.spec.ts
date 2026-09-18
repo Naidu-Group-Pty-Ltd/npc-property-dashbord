@@ -163,9 +163,17 @@ describe('the rules close what the prose actually did', () => {
     }
   });
 
-  it('refuses the comparison the Executive Verdict made', () => {
-    expect(rules).toMatch(/Do NOT\s+write that the property is "below the median"/);
-    expect(rules).toMatch(/any such comparison is a valuation this report does not\s+make/);
+  it('permits the comparison and refuses the verdict', () => {
+    // Corrected: a sourced comparison carrying its median's provenance is
+    // legitimate and useful. What the Executive Verdict actually got wrong was
+    // comparing two unsourced numbers and calling the result a position.
+    expect(rules).toMatch(/You MAY \s*say how the subject\u2019s recorded price sits against a median in this table/);
+    expect(rules).toMatch(/publisher, geography, dwelling split and period beside it/);
+    expect(rules).toMatch(/turn the gap into a verdict/);
+    for (const verdict of ['undervalued', 'a bargain', 'good buying']) {
+      expect(rules, verdict).toContain(verdict);
+    }
+    expect(rules).toMatch(/what a median cannot see/);
   });
 
   it('makes the benchmark name its own geography, and agrees with its own count', () => {

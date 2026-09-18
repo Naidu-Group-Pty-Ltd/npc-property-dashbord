@@ -45,8 +45,15 @@
  *    differ by $10,000 and that difference is information.
  * 3. **The record's price is the only price.** There is no second price guide,
  *    marketed range or "listed at" figure to be supplied from a search, a
- *    listing portal or the model's own knowledge, and the property is never
- *    described as priced above or below anything on the strength of one.
+ *    listing portal or the model's own knowledge.
+ * 4. **A comparison against a SOURCED median is legitimate and is not a
+ *    valuation.** The defect was never the comparison — it was comparing an
+ *    unsourced $1.55m against an unsourced $1.96m. Where the market evidence
+ *    table carries a median, saying how the price sits against it is useful
+ *    analysis, provided the publisher, geography, dwelling split and period
+ *    travel with it and the sentence stops at describing the difference.
+ *    "Undervalued", "a bargain", "good buying" and any inferred equity or
+ *    margin are conclusions this report does not make.
  *
  * Pure: no fetch, no Deno, no clock.
  */
@@ -160,10 +167,16 @@ export function subjectPriceRules(price: SubjectPrice): string {
     + 'estimated value or recent sale price other than the figure above — not from a listing portal, a news '
     + 'page, a live web search or your own knowledge. If you believe a different figure is advertised, that '
     + 'belief is not a retrieval and does not go in the report.',
-    '3. Do NOT compare this price against a median, a "prevailing" level or a "typical" figure, and do not '
-    + 'write that the property is below, above or in line with the market. That is a valuation, this report '
-    + 'does not make one, and the market table states what a market did rather than what this dwelling is '
-    + 'worth.',
+    '3. You MAY compare this price with a median the market evidence table carries, and it is useful to do so '
+    + '\u2014 but only that one, and only carrying its own limitations: name the publisher, the geography, the '
+    + 'dwelling split and the period beside the comparison, because a suburb median of all houses is not a '
+    + 'statement about this house. Do NOT compare it against a median, a "prevailing" level or a "typical" '
+    + 'figure the table does not carry.',
+    '3a. A comparison is a description, never a valuation. Say what the difference IS and what could explain it '
+    + '(land size, condition, age, position, the spread any median hides). Do NOT conclude that the property is '
+    + '"undervalued", "a bargain", "priced below its worth", "good buying" or "cheap", and do not infer equity, '
+    + 'an instant gain or a margin from the gap. This report does not value the property, and a median is the '
+    + 'middle of what sold rather than a measure of what this dwelling is worth.',
     price.basis === 'accepted_input'
       ? '4. This figure is the adviser’s accepted input, not an advertised price. Do NOT call it the '
         + '"asking price", the "list price" or the "guide" — it is what the analysis is modelled on, and the '

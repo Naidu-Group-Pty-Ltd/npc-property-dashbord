@@ -58,8 +58,11 @@
  *    and could not answer is named with its reason; a measure nothing
  *    published is listed as not held. Neither is an invitation to supply one.
  * 6. **Nothing here is a valuation.** A median describes a market, not this
- *    property, and no comparison of an asking price against a median is
- *    composed here or permitted in the prose.
+ *    property. A comparison against one IS permitted in the prose and is
+ *    useful — the defect was comparing two UNSOURCED figures, not comparing —
+ *    provided the median's provenance travels with it and the sentence stops
+ *    at the difference. What is never permitted is the verdict: "undervalued",
+ *    "a bargain", or an equity or margin inferred from the gap.
  *
  * Pure: no fetch, no Deno, no clock.
  */
@@ -358,10 +361,13 @@ export function marketFactRules(facts: MarketFacts): string {
         + `${marks.length === 1 ? 'is' : 'are'} a benchmark. Name that geography whenever you use one, and `
         + 'never present it as this suburb’s figure or let it stand in for one that is missing.'
       : '4. No benchmark is held, so do not compare this market against a wider one by supplying a figure for it.',
-    '5. A median is the middle of what sold; it is not a valuation of this property and not a forecast. Do NOT '
-    + 'write that the property is "below the median", "above market" or "under-priced" — the table states what a '
-    + 'market did, not what this dwelling is worth, and any such comparison is a valuation this report does not '
-    + 'make.',
+    '5. A median is the middle of what sold; it is not a valuation of this property and not a forecast. You MAY '
+    + 'say how the subject\u2019s recorded price sits against a median in this table, with that median\u2019s '
+    + 'publisher, geography, dwelling split and period beside it — that is useful and the reader needs it. What '
+    + 'you may NOT do is turn the gap into a verdict: no "undervalued", "a bargain", "priced below its worth", '
+    + '"good buying" or "cheap", and no equity, instant gain or margin inferred from it. Say what the '
+    + 'difference is and what a median cannot see — land size, condition, age, position, and the spread it '
+    + 'hides.',
     '6. Where the table says a measure is not held, say so if the subject comes up rather than supplying one, and '
     + 'do not rate or score the market from its absence.',
   ].join('\n');

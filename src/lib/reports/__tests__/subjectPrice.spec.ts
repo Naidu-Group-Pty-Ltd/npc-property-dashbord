@@ -100,9 +100,31 @@ describe('the rules stop a second price', () => {
     expect(rules).toMatch(/that\s+belief is not a retrieval/);
   });
 
-  it('forbids the comparison the Executive Verdict made', () => {
-    expect(rules).toMatch(/Do NOT compare this price against a median/);
-    expect(rules).toMatch(/below, above or in line with the market/);
+  it('permits a comparison against a SOURCED median, with its limitations', () => {
+    // The defect was never the comparison — it was comparing an unsourced
+    // $1.55m against an unsourced $1.96m. A sourced comparison is useful
+    // analysis a reader needs, so the rule keeps it and makes its provenance
+    // travel.
+    expect(rules).toMatch(/You MAY compare this price with a median the market evidence table carries/);
+    expect(rules).toMatch(/name the publisher, the geography, the\s+dwelling split and the period/);
+    expect(rules).toMatch(/a suburb median of all houses is not a\s+statement about this house/);
+  });
+
+  it('refuses a median the table does not carry', () => {
+    expect(rules).toMatch(/Do NOT compare it against a median, a "prevailing" level or a "typical" \s*figure the table does not carry/);
+  });
+
+  it('forbids the VERDICT rather than the comparison', () => {
+    expect(rules).toMatch(/A comparison is a description, never a valuation/);
+    for (const verdict of ['undervalued', 'a bargain', 'priced below its worth', 'good buying', 'cheap']) {
+      expect(rules, verdict).toContain(verdict);
+    }
+    expect(rules).toMatch(/do not infer equity,\s+an instant gain or a margin from the gap/);
+  });
+
+  it('says what a comparison may discuss instead', () => {
+    // A prohibition with no permitted form is one a model routes around.
+    expect(rules).toMatch(/land size, condition, age, position, the spread any median hides/);
   });
 
   it('tells the model this figure is not an advertised price', () => {
