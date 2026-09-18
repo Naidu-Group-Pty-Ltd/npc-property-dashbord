@@ -541,6 +541,13 @@ jobs:
       # index is what lets Mission Control tell this repository's leftover from
       # the tenant's own object, so it has to stay current with the migrations
       # it describes. Generated, never hand-edited.
+      #
+      # It stands ITSELF down on a repository whose backend Mission Control
+      # owns — see `indexIsCarriedNotAuthored`. A clone carries the prime's
+      # index and cannot hold the migrations it counts (the two template
+      # seeds are 39.7 MB each, over what a cascade will carry in one file),
+      # so asserting it there stopped every cascade pull request on all three
+      # clones at once over a file nothing on that side reads.
       - name: The migration object index is current
         run: npm run migrations:index:check
 
