@@ -66,7 +66,7 @@ import { populationGrowthPoint } from '../_shared/reports/market/populationGrowt
 import { EVIDENCE_KEYS, emptyEvidence, mergeEvidence, type EvidenceSubject, type MarketEvidence } from '../_shared/reports/market/marketEvidence.pure.ts';
 import { openDataSalesPoints, salesRegisterSourcesFor } from '../_shared/reports/market/openDataSalesEvidence.pure.ts';
 import {
-  buildMarketFacts, marketFactRules, renderMarketFacts,
+  buildMarketFacts, marketFactRules, renderMarketFacts, suppressUnevidencedMarketSeries,
 } from '../_shared/reports/market/marketFactBlocks.pure.ts';
 import {
   describeSubjectPrice, subjectPriceLine, subjectPriceRules,
@@ -6720,6 +6720,27 @@ YOUR DEDICATED PROPERTY PARTNER
       console.log(
         `✓ Visual guard: ${visualGuard.removed.length} unrecorded verdict visual(s) removed — `
         + visualGuard.removed.map((r) => `${r.kind}(${r.values.join(',')})`).join(', '),
+      );
+    }
+
+    /*
+     * The same guard for a market SERIES, which the one above cannot see.
+     *
+     * `suppressUnrecordedVerdictVisuals` judges `gauge` and `wheel` always and
+     * `bars`/`heatmap`/`radar` where they declare `max=100`. Every other
+     * primitive is unjudged, and on 18 Annabelle Crescent the growth section
+     * drew `{{margin: … | spark=9.6,7.1,5.9,4.8,3.5 | label=Growth profile}}`:
+     * the first three values are the endpoints of two unsourced ranges in the
+     * prose beside it, and 4.8 and 3.5 appear nowhere in the document or the
+     * record. A reader sees a measured decline.
+     */
+    const marketVisualGuard = suppressUnevidencedMarketSeries(reportContent, marketFacts);
+    if (marketVisualGuard.removed.length) {
+      reportContent = marketVisualGuard.markdown;
+      console.log(
+        `✓ Market series guard: ${marketVisualGuard.removed.length} chart(s) removed whose figures the `
+        + 'market evidence table does not state — '
+        + marketVisualGuard.removed.map((r) => `${r.kind}[${r.matchedOn}](${r.values.join(',')})`).join(', '),
       );
     }
 

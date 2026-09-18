@@ -309,6 +309,25 @@ export function renderMarketFacts(facts: MarketFacts): string {
   return lines.join('\n');
 }
 
+/*
+ * Rule 6/7, spelled once.
+ *
+ * It exists because a prohibition on SENTENCES is one a model routes around
+ * into a chart. On 18 Annabelle Crescent the growth section carried two
+ * unsourced rates in prose and then drew `spark=9.6,7.1,5.9,4.8,3.5` — the two
+ * ranges' endpoints, extended with two values that appear nowhere. The
+ * post-processor removes such a directive (`suppressUnevidencedMarketSeries`);
+ * this is the half that reaches the model before it writes one, which is the
+ * lesson `compassDocumentContract.pure.ts` records: a prohibition with no
+ * demonstration of the permitted form is one a model routes around.
+ */
+const CHART_IS_A_CLAIM =
+  'A CHART IS A CLAIM. Every rule here applies to a `{{…}}` directive exactly as it applies to a sentence: a '
+  + 'series of growth rates, medians, rents, vacancy figures or sale counts may contain only values from the '
+  + 'table above, and where the table holds fewer points than a chart would need, draw no chart. Do not fill a '
+  + 'series out to a nicer shape, do not extend it with a trend, and do not take a number from prose you have '
+  + 'just written unless the table states it too.';
+
 /** The rules the prose beside the table must obey. */
 export function marketFactRules(facts: MarketFacts): string {
   const head = 'MARKET FIGURE RULES FOR THE WHOLE REPORT — they apply in every section, including the executive '
@@ -340,6 +359,7 @@ export function marketFactRules(facts: MarketFacts): string {
       + 'figure. There is no median here, so any such comparison invents one.',
       '5. Do NOT rate, score or grade the market from the absence. A figure nobody retrieved is not evidence that '
       + 'the market is strong, weak, fair value or anything else.',
+      `6. ${CHART_IS_A_CLAIM} With no figure held, that means no market chart at all.`,
     ].join('\n');
   }
 
@@ -370,5 +390,174 @@ export function marketFactRules(facts: MarketFacts): string {
     + 'hides.',
     '6. Where the table says a measure is not held, say so if the subject comes up rather than supplying one, and '
     + 'do not rate or score the market from its absence.',
+    `7. ${CHART_IS_A_CLAIM}`,
   ].join('\n');
+}
+
+// ─── Charts drawn from market figures ───────────────────────────────────────
+
+/**
+ * A directive whose SERIES is market figures the record does not hold.
+ *
+ * ## The defect this ends
+ *
+ * On 18 Annabelle Crescent the growth section carried two growth rates and a
+ * chart of five, three lines apart, all in one section:
+ *
+ * > External suburb analytics report a **10-year compound annual growth rate
+ * > (CAGR) of about 9.6% for Kellyville's property market to early 2026** …
+ * >
+ * > Other investment profiles cite **average annual capital growth for houses
+ * > around 5.9–7.1% over longer windows** …
+ * >
+ * > `{{margin: Kellyville house value momentum | spark=9.6,7.1,5.9,4.8,3.5 |
+ * >  note=Long-run growth strong, recent growth moderating from high levels. |
+ * >  label=Growth profile}}`
+ *
+ * "External suburb analytics report" and "Other investment profiles cite" name
+ * nobody — rule 2 — and the two figures disagree by up to 3.7 points. The
+ * chart is worse than either: its first three values are the endpoints of
+ * those two unsourced ranges, and **4.8 and 3.5 appear nowhere at all**, in
+ * the document or the record. A reader sees a measured decline.
+ *
+ * `suppressUnrecordedVerdictVisuals` could not see it. That guard judges
+ * `gauge` and `wheel` always and `bars`/`heatmap`/`radar` where they declare
+ * `max=100`, on the reasoning that those primitives otherwise carry a measured
+ * series — which is right, and leaves every OTHER primitive unjudged, and
+ * `margin` is one of them.
+ *
+ * ## The rule
+ *
+ * The distinction is not the primitive, it is **whether the record holds the
+ * series**. Where a directive's title or label names a market measure, every
+ * number in its series must be one the market evidence table states. A chart
+ * is a claim in the same way a sentence is, and a chart the table cannot
+ * source is the sentence rule with the words taken out of it.
+ *
+ * Narrow on purpose:
+ *
+ *  - Only a directive whose TITLE or LABEL names a market measure is judged.
+ *    A `{{bars}}` of amenity counts or SEIFA deciles is not this rule's
+ *    business and is left alone.
+ *  - Only the NUMERIC SERIES is read — `spark=`, `values=`, `data=`,
+ *    `series=`, and a leading comma-separated run of numbers. A digit inside
+ *    a `note=` or a `title=` is prose.
+ *  - A directive with no readable series is left alone: malformed is not
+ *    untrue, and that is a different control's business.
+ *
+ * Pure: no fetch, no Deno, no clock.
+ */
+export interface SuppressedMarketVisual {
+  kind: string;
+  directive: string;
+  /** The values the market evidence table does not state. */
+  values: number[];
+  /** Why it was judged at all — the words in its title that named a measure. */
+  matchedOn: string;
+}
+
+export interface MarketVisualSuppression {
+  markdown: string;
+  removed: SuppressedMarketVisual[];
+}
+
+/**
+ * The words that make a chart a market chart.
+ *
+ * Deliberately the measures this module publishes and nothing else: an
+ * "affordability" or "lifestyle" chart is not a market series and is not
+ * this rule's to judge.
+ */
+const MARKET_WORDS = [
+  'growth', 'cagr', 'median', 'price', 'prices', 'value', 'values', 'rent', 'rents',
+  'rental', 'yield', 'vacancy', 'days on market', 'clearance', 'sale', 'sales',
+];
+
+const SERIES_OPTIONS = ['spark', 'values', 'data', 'series'];
+
+/** Every number the table states, rounded the way a chart would print it. */
+function statedNumbers(facts: MarketFacts): Set<string> {
+  const out = new Set<string>();
+  const add = (n: number) => {
+    out.add(n.toFixed(1));
+    out.add(Math.round(n).toFixed(1));
+    // A money figure drawn in a chart is routinely divided down — $1,808,000
+    // as 1.808, 1.81 or 1808 — so each scale the table's own value implies is
+    // admitted, and nothing that is not in the table is.
+    if (Math.abs(n) >= 1000) {
+      add2(n / 1000, out);
+      add2(n / 1_000_000, out);
+    }
+  };
+  const add2 = (n: number, set: Set<string>) => {
+    set.add(n.toFixed(1));
+    set.add(Math.round(n).toFixed(1));
+    set.add(Number(n.toFixed(2)).toFixed(1));
+  };
+  for (const row of facts.rows) {
+    if (!row.value) continue;
+    for (const token of row.value.match(/-?\d[\d,]*\.?\d*/g) ?? []) {
+      const n = Number(token.replace(/,/g, ''));
+      if (Number.isFinite(n)) add(n);
+    }
+  }
+  return out;
+}
+
+/** The numbers a directive's payload draws, ignoring prose options. */
+function seriesValues(payload: string): number[] {
+  const parts = payload.split('|').map((p) => p.trim());
+  const out: number[] = [];
+  const readList = (text: string) => {
+    for (const token of text.split(',')) {
+      const n = Number(token.trim().replace(/[^0-9.\-]/g, ''));
+      if (token.trim() !== '' && Number.isFinite(n)) out.push(n);
+    }
+  };
+  parts.forEach((part, index) => {
+    const eq = part.indexOf('=');
+    if (eq === -1) {
+      // The head, and only the head, may be a bare series.
+      if (index === 0 && /^[\s\d.,-]+$/.test(part) && /\d/.test(part)) readList(part);
+      return;
+    }
+    const key = part.slice(0, eq).trim().toLowerCase();
+    if (SERIES_OPTIONS.includes(key)) readList(part.slice(eq + 1));
+  });
+  return out;
+}
+
+/** The directive's title and any `label=` — what decides whether it is judged. */
+function describingWords(payload: string): string {
+  const parts = payload.split('|').map((p) => p.trim());
+  const head = parts[0] ?? '';
+  const headIsSeries = /^[\s\d.,-]+$/.test(head);
+  const labels = parts
+    .filter((p) => /^(label|title)\s*=/i.test(p))
+    .map((p) => p.slice(p.indexOf('=') + 1));
+  return [headIsSeries ? '' : head, ...labels].join(' ').toLowerCase();
+}
+
+export function suppressUnevidencedMarketSeries(
+  markdown: string,
+  facts: MarketFacts,
+): MarketVisualSuppression {
+  const stated = statedNumbers(facts);
+  const removed: SuppressedMarketVisual[] = [];
+  const out: string[] = [];
+  for (const line of markdown.split('\n')) {
+    const m = line.trim().match(/^\{\{([a-z]+)\s*:\s*([\s\S]*)\}\}$/i);
+    if (!m) { out.push(line); continue; }
+    const kind = m[1].toLowerCase();
+    const payload = m[2];
+    const words = describingWords(payload);
+    const matched = MARKET_WORDS.filter((w) => words.includes(w));
+    if (!matched.length) { out.push(line); continue; }
+    const values = seriesValues(payload);
+    if (!values.length) { out.push(line); continue; }
+    const unsupported = values.filter((v) => !stated.has(v.toFixed(1)));
+    if (!unsupported.length) { out.push(line); continue; }
+    removed.push({ kind, directive: line.trim(), values: unsupported, matchedOn: matched.join(', ') });
+  }
+  return { markdown: out.join('\n').replace(/\n{3,}/g, '\n\n'), removed };
 }
