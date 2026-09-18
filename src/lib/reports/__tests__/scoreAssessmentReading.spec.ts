@@ -46,8 +46,19 @@ describe('the arithmetic reproduces the stored total exactly', () => {
     expect(a.compositeScore).toBe(40);
     expect(a.compositeScore).toBe(a.storedTotal);
     expect(a.uncappedGrade).toBe('C');
-    expect(a.deliveredPoints).toBeCloseTo(27.8, 2);
-    expect(a.nominalCeiling).toBe('F');
+    /*
+     * RENEGOTIATED 18 September 2026 — a missing stamp is not evidence.
+     *
+     * The delivered-points ceiling belonged to scoring-v2 alone, and this
+     * fixture names no scoring system, so attributing it here would infer a
+     * methodology from an ABSENCE. The composite, the uncapped grade and the
+     * issued grade are unaffected and still asserted above; the ceiling path
+     * is exercised in `scorePublicationConsumers.spec.ts` against a record
+     * that DOES name scoring-v2.
+     */
+    expect(a.methodology).toBe('unknown');
+    expect(a.deliveredPoints, 'no ceiling for an unstated methodology').toBeNull();
+    expect(a.nominalCeiling).toBeNull();
     expect(a.issuedGrade).toBe('F');
     expect(a.capped).toBe(true);
   });
@@ -58,8 +69,10 @@ describe('the arithmetic reproduces the stored total exactly', () => {
     expect(a.compositeScore).toBe(63);
     expect(a.compositeScore).toBe(a.storedTotal);
     expect(a.uncappedGrade).toBe('B');
-    expect(a.deliveredPoints).toBeCloseTo(44, 2);
-    expect(a.nominalCeiling).toBe('C');
+    // Same rule as Annabelle above: this fixture names no scoring system.
+    expect(a.methodology).toBe('unknown');
+    expect(a.deliveredPoints).toBeNull();
+    expect(a.nominalCeiling).toBeNull();
     expect(a.issuedGrade).toBe('C');
     expect(a.capped).toBe(true);
   });
@@ -77,7 +90,9 @@ describe('what the record does not retain is named, never substituted', () => {
     expect(a.evidenceCoverage).toBeNull();
     expect(a.measuredNominalWeight).toBe(0.7);
     expect(a.notRetained.join(' ')).toContain('Evidence coverage');
-    expect(a.notRetained.join(' ')).toContain('growth eligibility ceiling');
+    // The ceiling paragraph follows the methodology that applies; on a record
+    // that states none, the honest sentence is that none is claimed.
+    expect(a.notRetained.join(' ')).toContain('does not state which scoring methodology');
   });
 
   it('never describes its own position on the page', () => {

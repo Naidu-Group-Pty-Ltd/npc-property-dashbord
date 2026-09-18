@@ -776,6 +776,7 @@ export function composeScoreDimensionTable(rec: StrategyRecord): string | null {
    * labelled as a measurement.
    */
   const legacyCeiling = a.methodology === 'delivered_points_ceiling';
+  const unknownMethod = a.methodology === 'unknown';
   lines.push(
     legacyCeiling
       ? 'Five dimensions carry the method. Each has an **original weight**; where a dimension could not be scored '
@@ -783,6 +784,12 @@ export function composeScoreDimensionTable(rec: StrategyRecord): string | null {
         + 'built from. This grade was issued under the methodology in force at the time, which read a second '
         + 'figure — the **points delivered** at the ORIGINAL weights — as a ceiling the letter could not exceed. '
         + 'That rule has since been superseded; it is stated here because it is what produced this grade.'
+      : unknownMethod
+      ? 'Five dimensions carry the method. Each has an **original weight**; where a dimension could not be scored '
+        + 'its weight is redistributed across the ones that could, giving the **adjusted weight** the composite is '
+        + 'built from. This record does not state which scoring methodology issued its grade, so the composite is '
+        + 'reconstructed from what it holds and the grade is reported as it was issued, without a rule being '
+        + 'attributed to it.'
       : 'Five dimensions carry the method. Each has an **original weight**; where a dimension could not be scored '
         + 'its weight is redistributed across the ones that could, giving the **adjusted weight** the composite is '
         + 'built from. The composite answers *how strong is what we measured*, over the original weights of the '
@@ -850,7 +857,7 @@ export function composeScoreDimensionTable(rec: StrategyRecord): string | null {
       + 'unavailable dimension is now disclosed with the result rather than deducted from it. This record keeps '
       + 'the grade it was issued, explained by the rule that issued it.',
     );
-  } else if (!legacyCeiling && a.dimensionsMeasured < a.totalDimensions) {
+  } else if (a.methodology === 'proportional' && a.dimensionsMeasured < a.totalDimensions) {
     // The scope replaces the ceiling: the same fact, disclosed rather than deducted.
     steps.push(
       `**Assessed on ${a.dimensionsMeasured} of the ${a.totalDimensions} dimensions**, carrying `
@@ -859,11 +866,18 @@ export function composeScoreDimensionTable(rec: StrategyRecord): string | null {
     );
   }
   if (a.issuedGrade) {
-    steps.push(a.capped
-      ? `**Grade issued: ${a.issuedGrade}** — held below what the composite alone would allow, because the `
-        + 'evidence behind the assessed dimensions does not carry the higher letter. That is an over-claim guard '
-        + 'working as designed, not a fault in the property.'
-      : `**Grade issued: ${a.issuedGrade}**, which the composite and the evidence behind it both support.`);
+    // Why a grade sits below its composite is a claim about the rule that
+    // graded it, so it follows the methodology too. Where the record does not
+    // state one, the difference is reported and not explained away.
+    steps.push(!a.capped
+      ? `**Grade issued: ${a.issuedGrade}**, which the composite and the evidence behind it both support.`
+      : a.methodology === 'unknown'
+        ? `**Grade issued: ${a.issuedGrade}**, below the ${a.uncappedGrade} the composite alone gives. This `
+          + 'record does not state which scoring methodology issued it, so the reason for the difference is not '
+          + 'reconstructed here. The grade is reported as it was issued.'
+        : `**Grade issued: ${a.issuedGrade}** — held below what the composite alone would allow, because the `
+          + 'evidence behind the assessed dimensions does not carry the higher letter. That is an over-claim guard '
+          + 'working as designed, not a fault in the property.');
   }
   // Labelled, because an unlabelled bulleted list directly under another one
   // reads as its continuation — and these are a different KIND of statement:

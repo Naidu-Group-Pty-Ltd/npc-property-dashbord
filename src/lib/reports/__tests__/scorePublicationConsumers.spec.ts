@@ -202,19 +202,33 @@ describe('fewer than three valid dimensions — nothing overall is published', (
 // ─── historical rendering ─────────────────────────────────────────────────
 
 describe('a historical assessment keeps its grade and its own methodology', () => {
-  it('Annabelle: read as the superseded methodology, because it carries no stamp', () => {
+  it('Annabelle: no stamp and no scoring system named — methodology UNKNOWN', () => {
+    // A missing publication-policy stamp alone must not establish that a
+    // particular ceiling was used: a V1 `investment-scoring-service` row never
+    // had one. This fixture names no scoring system, so none is attributed.
     const a = read(ANNABELLE_SCORE);
-    expect(a.methodology).toBe('delivered_points_ceiling');
+    expect(a.methodology).toBe('unknown');
     expect(a.publicationPolicyVersion).toBeNull();
     // The issued grade is the row's, untouched — no silent recomputation.
     expect(a.issuedGrade).toBe('F');
-    // …and the ceiling that produced it is still reconstructed, because it is
-    // the honest explanation of that letter.
-    expect(a.deliveredPoints).toBeCloseTo(27.8, 1);
-    expect(a.nominalCeiling).toBe('F');
     expect(a.compositeScore).toBe(40);
     expect(a.uncappedGrade).toBe('C');
     expect(a.capped).toBe(true);
+    // …and no ceiling is invented for it.
+    expect(a.deliveredPoints).toBeNull();
+    expect(a.nominalCeiling).toBeNull();
+  });
+
+  it('a record that NAMES scoring-v2 without the stamp gets the ceiling explained', () => {
+    const legacyV2 = {
+      ...ANNABELLE_SCORE,
+      policy: { scoringSystem: 'scoring-v2', authority: 'v2' },
+    };
+    const a = read(legacyV2);
+    expect(a.methodology).toBe('delivered_points_ceiling');
+    expect(a.deliveredPoints).toBeCloseTo(27.8, 1);
+    expect(a.nominalCeiling).toBe('F');
+    expect(a.issuedGrade).toBe('F');
   });
 
   it('a record graded under the new policy computes NO ceiling at all', () => {
@@ -231,7 +245,9 @@ describe('a historical assessment keeps its grade and its own methodology', () =
     const scores = { location: 58, yield: 65, risk: 75 } as const;
     const legacy = read(storedScore(scores, { proportional: false }));
     const current = read(storedScore(scores));
-    expect(legacy.methodology).toBe('delivered_points_ceiling');
+    // `storedScore` omits the whole policy block when `proportional: false`,
+    // so it names no scoring system either — the honest reading is `unknown`.
+    expect(legacy.methodology).toBe('unknown');
     expect(current.methodology).toBe('proportional');
     // The composite is identical — the methodology changes the EXPLANATION,
     // not the arithmetic of what was measured.
@@ -259,12 +275,23 @@ describe('the rendered grade table follows the methodology that graded the recor
     expect(t).toMatch(/none of them lowers this result/);
   });
 
-  it('a historical record draws the ceiling, labelled as the method that issued it', () => {
-    const t = table(ANNABELLE_SCORE)!;
+  it('a record naming scoring-v2 draws the ceiling, labelled as the method that issued it', () => {
+    const t = table({ ...ANNABELLE_SCORE, policy: { scoringSystem: 'scoring-v2', authority: 'v2' } })!;
     expect(t).toContain('Points delivered |');
     expect(t).toMatch(/methodology (then )?in force/);
     expect(t).toContain('has since been superseded');
     expect(t).toContain('**Grade issued: F**');
+  });
+
+  it('a record naming NO methodology draws no ceiling and attributes no rule', () => {
+    const t = table(ANNABELLE_SCORE)!;
+    expect(t).not.toContain('Points delivered |');
+    expect(t).toContain('does not state which scoring methodology issued');
+    // The grade is still reported, unchanged — a recorded fact is preserved.
+    expect(t).toContain('**Grade issued: F**');
+    expect(t).toContain('**Grade the composite alone gives: C.**');
+    // …and the proportional scope sentence is not borrowed for it either.
+    expect(t).not.toMatch(/Assessed on \d of the 5 dimensions/);
   });
 
   it('a full five-dimension record states no scope caveat, because there is none', () => {
@@ -282,5 +309,128 @@ describe('the rendered grade table follows the methodology that graded the recor
     expect(t!).not.toMatch(/\*\*Composite score \d+/);
     expect(t!).not.toMatch(/Grade the composite alone gives/);
     expect(t!).not.toContain('Points delivered |');
+  });
+});
+
+// ─── one validated set governs every number ───────────────────────────────
+
+describe('an out-of-range reading is not a measurement, and is never clamped', () => {
+  /** Three valid 80s and an invalid fourth, exactly as §2 specifies. */
+  const withInvalid = () => {
+    const base = storedScore({ growth: 80, yield: 80, demand: 80 }) as Record<string, any>;
+    // The record holds 150 for location — finite, non-null, out of range.
+    base.breakdown.locationScore = {
+      score: 150, weight: 25, details: 'Measured for location.',
+      hasData: true, excluded: false, dataPoints: ['location'],
+    };
+    return base;
+  };
+
+  it('calculates from the three valid scores only', () => {
+    const a = read(withInvalid());
+    expect(a.validDimensions).toBe(3);
+    // growth .40 + yield .15 + demand .15 = .70. Location's .25 is NOT in it.
+    expect(a.measuredNominalWeight).toBeCloseTo(0.70, 6);
+    // All three are 80, so the composite is 80 whatever the weights.
+    expect(a.compositeScore).toBe(80);
+    expect(a.compositeExact).toBeCloseTo(80, 6);
+  });
+
+  it('the invalid value never reaches the denominator, a weight or a contribution', () => {
+    const a = read(withInvalid());
+    const loc = a.dimensions.find((d) => d.key === 'location')!;
+    expect(loc.score, 'not treated as a measurement').toBeNull();
+    expect(loc.adjustedWeight, 'no weight').toBe(0);
+    expect(loc.contribution, 'no contribution').toBeNull();
+    // The three that ARE valid carry the whole of the adjusted weight.
+    const total = a.dimensions.reduce((t, d) => t + d.adjustedWeight, 0);
+    expect(total).toBeCloseTo(1, 6);
+  });
+
+  it('is not clamped to 100 — that would invent a measurement', () => {
+    const a = read(withInvalid());
+    const clampedComposite = (80 * 0.40 + 100 * 0.25 + 80 * 0.15 + 80 * 0.15) / 0.95;
+    expect(Math.round(clampedComposite), 'the clamped answer must NOT be produced').toBe(85);
+    expect(a.compositeScore).toBe(80);
+  });
+
+  it('says what the record held, rather than dropping it silently', () => {
+    const a = read(withInvalid());
+    const loc = a.dimensions.find((d) => d.key === 'location')!;
+    expect(loc.invalidScore).toBe(150);
+    expect(loc.exclusionReason).toMatch(/150/);
+    expect(loc.exclusionReason).toMatch(/outside the 0–100 scale/);
+    // A defect of the record, never a finding about the property.
+    expect(loc.exclusionReason).not.toMatch(/low|poor|weak/i);
+  });
+
+  it('a negative reading is refused on the same rule', () => {
+    const base = storedScore({ growth: 80, yield: 80, demand: 80 }) as Record<string, any>;
+    base.breakdown.locationScore = {
+      score: -20, weight: 25, details: '', hasData: true, excluded: false, dataPoints: [],
+    };
+    const a = read(base);
+    expect(a.validDimensions).toBe(3);
+    expect(a.measuredNominalWeight).toBeCloseTo(0.70, 6);
+    expect(a.dimensions.find((d) => d.key === 'location')!.invalidScore).toBe(-20);
+  });
+
+  it('a genuinely measured zero is still a measurement, and still counts', () => {
+    const a = read(storedScore({ growth: 80, location: 0, yield: 80, demand: 80 }));
+    expect(a.validDimensions).toBe(4);
+    const loc = a.dimensions.find((d) => d.key === 'location')!;
+    expect(loc.score).toBe(0);
+    expect(loc.invalidScore).toBeNull();
+    expect(loc.adjustedWeight).toBeGreaterThan(0);
+  });
+
+  it('and an invalid reading can push a record below the publication floor', () => {
+    const base = storedScore({ growth: 80, yield: 80 }) as Record<string, any>;
+    base.breakdown.demandScore = {
+      score: 150, weight: 20, details: '', hasData: true, excluded: false, dataPoints: [],
+    };
+    const a = read(base);
+    expect(a.validDimensions).toBe(2);
+    expect(a.publishable).toBe(false);
+    expect(a.compositeScore).toBeNull();
+  });
+});
+
+// ─── a stale grade field licenses nothing ─────────────────────────────────
+
+describe('a stale grade field never becomes an overall grade', () => {
+  /** Two valid dimensions, and a `grade` column left behind by an earlier run. */
+  const staleNewPolicy = () => ({ ...storedScore({ yield: 65, risk: 75 }), grade: 'B', totalScore: 68 });
+
+  it('the reading withholds the grade under the current policy', () => {
+    const a = read(staleNewPolicy());
+    expect(a.methodology).toBe('proportional');
+    expect(a.publishable).toBe(false);
+    expect(a.issuedGrade, 'a stale letter is not an issued grade').toBeNull();
+    // …but the value is still available to a consumer that needs to say so.
+    expect(a.recordedGrade).toBe('B');
+  });
+
+  it('and the COMPOSED report prints no grade, no composite and no verdict', () => {
+    const t = table(staleNewPolicy())!;
+    expect(t).not.toMatch(/\*\*Grade issued/);
+    expect(t).not.toMatch(/Grade the composite alone gives/);
+    expect(t).not.toMatch(/\*\*Composite score \d+/);
+    // The heading and the per-dimension explanation still stand.
+    expect(t).toContain('### How this grade was reached');
+    expect(t).toContain('| Rental yield |');
+  });
+
+  it('a HISTORICAL record below the floor keeps its recorded grade', () => {
+    // Preserving a customer's issued result is not the same as publishing a
+    // new one: suppressing it would rewrite their report rather than correct it.
+    const historical = {
+      ...storedScore({ yield: 65, risk: 75 }, { proportional: false }),
+      grade: 'B',
+    };
+    const a = read(historical);
+    expect(a.methodology).toBe('unknown');
+    expect(a.publishable).toBe(false);
+    expect(a.issuedGrade).toBe('B');
   });
 });

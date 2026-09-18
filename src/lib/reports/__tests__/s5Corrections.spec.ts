@@ -274,7 +274,7 @@ describe('correction 3 — every score statement is fully qualified', () => {
     const table = composeScoreDimensionTable(rec())!;
     expect(table).toContain('| Dimension | Score | Original weight | Adjusted weight |');
     // Growth: nominal .40 of the method, adjusted to .40 / .70 = 57%.
-    expect(table).toMatch(/\| Capital growth \| 56 \/ 100 \| 40% \| 57% \| 32\.00 \| 22\.40 \|/);
+    expect(table).toMatch(/\| Capital growth \| 56 \/ 100 \| 40% \| 57% \| 32\.00 \|/);
     // Yield and demand: nominal .15 each, adjusted to .15 / .70 = 21%.
     expect(table).toMatch(/\| Rental yield \| 23 \/ 100 \| 15% \| 21% \|/);
     expect(table).toMatch(/\| Demand \| 13 \/ 100 \| 15% \| 21% \|/);
@@ -286,8 +286,8 @@ describe('correction 3 — every score statement is fully qualified', () => {
       expect(table, `${label} must be on the page`).toContain(`| ${label} |`);
     }
     // The unscored two carry their original weight and no contribution.
-    expect(table).toContain('| Location | — | 25% | — (not scored) | — | — |');
-    expect(table).toContain('| Property risk | — | 5% | — (not scored) | — | — |');
+    expect(table).toContain('| Location | — | 25% | — (not scored) | — |');
+    expect(table).toContain('| Property risk | — | 5% | — (not scored) | — |');
     // The evidence is a list under the table, never a seventh column: the
     // growth cell on this record is 600 characters and a print column cannot
     // carry it.
@@ -320,17 +320,32 @@ describe('correction 3 — every score statement is fully qualified', () => {
    * the method that issued it. `scorePublicationConsumers.spec.ts` asserts
    * the other half: a proportionally graded record draws none of it.
    */
-  it('explains a historical grade by the methodology that issued it, in full', () => {
+  /*
+   * RE-RENEGOTIATED 18 September 2026 — a missing stamp is not evidence.
+   *
+   * The previous version asserted the delivered-points ceiling arithmetic on
+   * this record. That inferred a methodology from the ABSENCE of a stamp,
+   * which is exactly what the platform owner ruled out: this fixture is
+   * trimmed to the keys its readers named and carries no `policy` block at
+   * all, so it genuinely does not say which methodology graded it. A V1
+   * `investment-scoring-service` row never had that ceiling.
+   *
+   * So the reading is `unknown`, and the honest rendering follows: the
+   * composite and the uncapped grade are reconstructed from what the record
+   * holds, the issued F is reported unchanged, and the difference between
+   * them is stated rather than explained by a rule nobody recorded. The
+   * ceiling path is exercised in `scorePublicationConsumers.spec.ts` against
+   * a record that DOES name scoring-v2.
+   */
+  it('reports a historical grade unchanged and attributes no rule it cannot show', () => {
     const table = composeScoreDimensionTable(rec())!;
     expect(table).toContain('**Grade the composite alone gives: C.**');
-    expect(table).toContain('**Points delivered 27.80 of 100**');
-    expect(table).toContain('no higher than **F**');
     expect(table).toContain('**Grade issued: F**');
-    // Labelled as the recorded methodology rather than as the current rule.
-    expect(table).toMatch(/methodology (then )?in force/);
-    expect(table).toContain('has since been superseded');
     // The grade itself is untouched — no silent recomputation.
     expect(table).not.toMatch(/Grade issued: [^F]/);
+    // No ceiling is asserted, because none is recorded.
+    expect(table).not.toContain('Points delivered');
+    expect(table).toContain('does not state which scoring methodology issued');
   });
 
   it('reports coverage as the share of the ORIGINAL weight that was measured', () => {

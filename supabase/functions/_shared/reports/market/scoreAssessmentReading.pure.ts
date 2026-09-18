@@ -131,7 +131,16 @@ export interface AssessmentDimension {
  * the letter. Read from the record's own stamp, never assumed, so a
  * historical grade is explained by the method that issued it.
  */
-export type AssessmentMethodology = 'proportional' | 'delivered_points_ceiling';
+export type AssessmentMethodology =
+  | 'proportional'
+  | 'delivered_points_ceiling'
+  /**
+   * The record does not say which methodology graded it — typically a V1
+   * `investment-scoring-service` row, or one with no `policy` block at all.
+   * Its recorded grade is preserved and NO ceiling is reconstructed for it,
+   * because claiming one would be inventing history.
+   */
+  | 'unknown';
 
 export interface ScoreAssessmentReading {
   dimensions: AssessmentDimension[];
@@ -149,6 +158,8 @@ export interface ScoreAssessmentReading {
   publishable: boolean;
   /** Why the overall was withheld, in the reader's terms. Null when published. */
   withheldReason: string | null;
+  /** The letter the row stores, published or not. See the field's note. */
+  recordedGrade: string | null;
   /** The nominal weight that was measured at all, 0–1. `coverage.weightCovered`. */
   measuredNominalWeight: number;
   /** How many of the five were scored. */
@@ -263,9 +274,29 @@ export function readScoreAssessment(storedScore: unknown): ScoreAssessmentReadin
   const raw = DIMENSIONS.map(({ field, key, label }) => {
     const d = rec(breakdown[field]);
     const excluded = !d || d.excluded === true || d.hasData === false;
+    /*
+     * ONE validated set governs everything (18 Sep 2026).
+     *
+     * `score` was `excluded ? null : num(d?.score)` — any finite number,
+     * including 150 or −20. The publication count used `isValidDimensionScore`
+     * and the ARITHMETIC used this, so the two disagreed: a record with three
+     * valid 80s and an invalid fourth of 150 counted three for publication and
+     * then weighted FOUR, putting the invalid reading into the denominator,
+     * the adjusted weights, the contributions and the composite.
+     *
+     * An out-of-range reading is a defect of the record, not a measurement
+     * nobody took, and it is neither clamped nor silently dropped: `score` is
+     * null for every arithmetic purpose, `invalidScore` carries what the
+     * record actually held so it can be named, and the dimension is disclosed
+     * as unscored for a stated reason.
+     */
+    const held = excluded ? null : num(d?.score);
+    const valid = isValidDimensionScore(held);
     return {
       key, label,
-      score: excluded ? null : num(d?.score),
+      score: valid ? held : null,
+      /** What the record held where it is not a usable measurement. */
+      invalidScore: !excluded && held !== null && !valid ? held : null,
       excluded,
       evidence: excluded ? null : text(d?.details),
       // The record's own client sentence first, then the corrected fallback.
@@ -274,13 +305,19 @@ export function readScoreAssessment(storedScore: unknown): ScoreAssessmentReadin
       // evidence contradicts. See EXCLUSION_REASON.
       exclusionReason: excluded
         ? (text(notAssessed[key]) ?? EXCLUSION_REASON[key] ?? null)
-        : null,
+        : (!valid && held !== null
+          ? `This record holds ${held} for this dimension, which is outside the 0–100 scale a score `
+            + 'is measured on. It is not a reading about the property and it was left out of the '
+            + 'assessment rather than adjusted to fit.'
+          : null),
       exclusionRemedy: excluded ? remedyFor(s.gradeGaps, key) : null,
       inputs: strings(d?.dataPoints),
       nominalWeight: COMPOSITE_WEIGHTS[key],
     };
   });
 
+  // The one set. `score` is already null wherever the reading was not a valid
+  // measurement, so this filter and `isValidDimensionScore` cannot diverge.
   const measured = raw.filter((d) => d.score !== null);
   const measuredNominalWeight = measured.reduce((t, d) => t + d.nominalWeight, 0);
 
@@ -307,8 +344,30 @@ export function readScoreAssessment(storedScore: unknown): ScoreAssessmentReadin
    */
   const policyStamp = rec(s.policy);
   const publicationPolicyVersion = policyStamp ? text(policyStamp.publicationPolicyVersion) : null;
+  /*
+   * A MISSING stamp is not evidence that a particular ceiling was applied.
+   *
+   * The first version of this read `stamp ? 'proportional' :
+   * 'delivered_points_ceiling'`, which asserts of every unstamped record that
+   * the delivered-points ceiling produced its grade. That is false for the V1
+   * cohort: measured on this deployment, 48 Redfern Street carries
+   * `scoringSystem: 'investment-scoring-service'`, `authority: 'unavailable'`
+   * and `eligibility: 'no_authorised_scoring_system'` — the legacy service,
+   * which never had that ceiling at all — and the journey fixtures carry no
+   * `policy` block whatsoever.
+   *
+   * So there are three states, and the third is honest rather than convenient:
+   * a stamped record is proportional; an unstamped record that names
+   * scoring-v2 was graded under the ceiling; anything else is `unknown`, where
+   * the recorded grade is preserved and no methodology is claimed for it.
+   */
+  const scoringSystem = policyStamp ? text(policyStamp.scoringSystem) : null;
+  const authority = policyStamp ? text(policyStamp.authority) : null;
   const methodology: AssessmentMethodology = publicationPolicyVersion
-    ? 'proportional' : 'delivered_points_ceiling';
+    ? 'proportional'
+    : (scoringSystem === 'scoring-v2' || authority === 'v2')
+      ? 'delivered_points_ceiling'
+      : 'unknown';
 
   /*
    * An overall the publication policy would withhold is never reconstructed.
@@ -340,7 +399,21 @@ export function readScoreAssessment(storedScore: unknown): ScoreAssessmentReadin
   // Rounded ONCE, on the sum — which is what the engine does and what the
   // per-part rounding got wrong.
   const compositeScore = compositeExact === null ? null : Math.round(compositeExact);
-  const issuedGrade = text(s.grade);
+  /*
+   * A stale `grade` field does not license an overall grade.
+   *
+   * `text(s.grade)` was published unconditionally, so a record graded under
+   * the CURRENT policy with fewer than three valid dimensions still printed
+   * "Grade issued: B" from whatever the column happened to hold. Under the
+   * proportional policy nothing below the minimum may carry an overall, and
+   * that includes a letter left behind by an earlier scoring run.
+   *
+   * A historical record keeps its grade: its letter is a recorded fact about
+   * what was issued, and suppressing it would rewrite the customer's own
+   * report rather than correct it.
+   */
+  const recordedGrade = text(s.grade);
+  const issuedGrade = !publishable && methodology === 'proportional' ? null : recordedGrade;
   const uncappedGrade = compositeScore === null ? null : gradeFor(compositeScore);
   const nominalCeiling = deliveredPoints === null ? null : gradeFor(deliveredPoints);
 
@@ -358,11 +431,32 @@ export function readScoreAssessment(storedScore: unknown): ScoreAssessmentReadin
       + 'measured at all is stated instead, and it is a coarser figure.',
     );
   }
-  notRetained.push(
-    'The growth eligibility ceiling — whether the growth evidence was strong enough to carry an A or A+ — is not '
-    + 'retained on this record. The ceiling this assessment states is the one the delivered points support; where '
-    + 'the two differ the stricter binds, so the issued grade may be lower than it and never higher.',
-  );
+  /*
+   * Every explanatory paragraph follows the methodology that actually applies.
+   *
+   * This sentence described the delivered-points ceiling as the operative
+   * rule on EVERY record, including ones graded proportionally where no such
+   * ceiling exists and ones whose methodology is not recorded at all.
+   */
+  if (methodology === 'delivered_points_ceiling') {
+    notRetained.push(
+      'The growth eligibility ceiling — whether the growth evidence was strong enough to carry an A or A+ — is not '
+      + 'retained on this record. The ceiling stated here is the one the delivered points supported under the '
+      + 'methodology in force when this grade was issued; where the two differed the stricter bound, so the issued '
+      + 'grade may be lower than it and never higher.',
+    );
+  } else if (methodology === 'proportional') {
+    notRetained.push(
+      'The evidence ceiling — whether the evidence behind the assessed dimensions was strong enough to carry an A '
+      + 'or A+ — is not retained on this record. A dimension that could not be assessed does not lower this result; '
+      + 'the scope of the assessment is stated with it instead.',
+    );
+  } else {
+    notRetained.push(
+      'This record does not state which scoring methodology issued its grade, so no ceiling is reconstructed for '
+      + 'it. The grade shown is the one that was issued and is reported unchanged.',
+    );
+  }
 
   return {
     dimensions,
@@ -371,6 +465,13 @@ export function readScoreAssessment(storedScore: unknown): ScoreAssessmentReadin
     validDimensions: validCount,
     publishable,
     withheldReason,
+    /**
+     * The letter the row holds, whether or not it may be published. A
+     * consumer that needs to say "this record carries a stale grade the
+     * current policy does not support" needs the value; one that renders an
+     * overall must use `issuedGrade`, which is null where it may not.
+     */
+    recordedGrade,
     measuredNominalWeight: num(coverage.weightCovered) ?? measuredNominalWeight,
     dimensionsMeasured: num(coverage.dimensionsScored) ?? measured.length,
     totalDimensions: num(coverage.totalDimensions) ?? DIMENSIONS.length,

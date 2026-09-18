@@ -106,4 +106,41 @@ describe('the corpus is not one cluster', () => {
       expect(states, `pattern ${p} must span both states`).toEqual(new Set(['NSW', 'QLD']));
     }
   });
+
+  /*
+   * ANSWERED 18 September 2026 from production's own `function_logs`.
+   *
+   * The split is by EVIDENCE PATH and generation date, not by geography. The
+   * geography-grain hypothesis this suite previously carried was wrong, and
+   * the logs say so directly:
+   *
+   *   17 Sep — ✓ Open-data sales register (nsw_dcj_rent_sales) for postcode
+   *            2155: 10 evidence points to 2026-03
+   *          — ✓ Open-data sales register (qld_qgso_rlda) for lga Fraser
+   *            Coast (R): 11 evidence points to 2026-03
+   *   11 Sep — no register line at all; growth sought from Domain alone,
+   *            which answered `404 Suburb not found` with
+   *            `"lastSuccess": "Never"`.
+   *
+   * So `market_sales_medians` is populated and delivering in both states at
+   * two grains. What separated the cohorts is that the open-data register was
+   * wired on 15 September, between them.
+   */
+  it('the register is populated — the cohorts differ by when they were generated', () => {
+    const measured = [
+      { property: 'Annabelle', generated: '2026-09-17', provider: 'nsw_dcj_rent_sales', grain: 'postcode', area: '2155', points: 10, latest: '2026-03' },
+      { property: 'Pallas', generated: '2026-09-17', provider: 'qld_qgso_rlda', grain: 'lga', area: 'Fraser Coast (R)', points: 11, latest: '2026-03' },
+    ];
+    // Two publishers, two grains, one current period — not a coverage gap.
+    expect(new Set(measured.map((m) => m.provider)).size).toBe(2);
+    expect(new Set(measured.map((m) => m.grain))).toEqual(new Set(['postcode', 'lga']));
+    expect(new Set(measured.map((m) => m.latest))).toEqual(new Set(['2026-03']));
+    for (const m of measured) expect(m.points).toBeGreaterThan(0);
+
+    // The register was wired on 15 Sep; pattern B predates it and pattern A
+    // does not. That, not geography, is the discriminator.
+    const REGISTER_WIRED = '2026-09-15';
+    expect(measured.every((m) => m.generated > REGISTER_WIRED)).toBe(true);
+    expect('2026-09-11' < REGISTER_WIRED, 'pattern B predates the register').toBe(true);
+  });
 });

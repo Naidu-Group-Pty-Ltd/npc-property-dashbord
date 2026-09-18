@@ -141,26 +141,85 @@ LGA, postcode, suburb or state, and reports its own failure precisely —
 market-sales-ingest)"*. Pattern A proves the path delivers: Growth 56 and 77
 are real readings, so the register is populated for **some** geographies.
 
-### 3.1a Which geographies — the query, and why state is not the answer
+### 3.1a ANSWERED 18 September 2026 — the register is populated; the split is by EVIDENCE PATH
 
-The split is **not** by state. Both cohorts span NSW and QLD:
+*The platform owner authorised the database checks and was right that "both
+cohorts span NSW and QLD" disproves a state split without establishing
+geography grain. It does not: **the geography-grain hypothesis this section
+previously carried is wrong**, and production's own function logs say why.*
 
-| pattern | NSW | QLD |
+`execute_sql` is not exposed on this session's Supabase connector, but
+`query_logs` is, and the generator logs the register's answer per call. Read
+from project `dduzbchuswwbefdunfct` (NPC Property Dashboard), `function_logs`:
+
+**Pattern A — 17 September 2026. The register answers, in both states:**
+
+```
+✓ Open-data sales register (nsw_dcj_rent_sales) for postcode 2155:
+    10 evidence points to 2026-03          ← Kellyville — 18 Annabelle Crescent
+✓ Open-data sales register (qld_qgso_rlda) for lga Fraser Coast (R):
+    11 evidence points to 2026-03          ← Maryborough — 262 Pallas Street
+```
+
+Two publishers, two different grains (postcode and LGA), the same current
+period. **`market_sales_medians` is populated and delivering.** The question
+the original §3.1 left open — *has `market-sales-ingest` populated the
+register?* — is answered **yes**.
+
+**Pattern B — 11 September 2026. The register was never asked:**
+
+```
+Fetching Domain data for: cowra, NSW, 2794
+Domain API request URL: …/v1/suburbPerformanceStatistics/NSW/cowra?…
+⚠️ Domain API: Suburb not found (404) - cowra, NSW
+Error details: { "status": 404, "suburb": "cowra", "lastSuccess": "Never" }
+```
+
+…and the same for `muswellbrook, NSW 2333`. **No `Open-data sales register`
+line appears anywhere in that run — neither a success nor a "holds no rows".**
+Growth was sought from Domain alone, Domain answered 404 with
+`lastSuccess: "Never"`, and there was no open-data fallback to fall back to.
+
+| | pattern B | pattern A |
 | --- | --- | --- |
-| A — growth measured | Kellyville (Sydney, The Hills Shire) | Maryborough (Fraser Coast) |
-| B — growth absent | Cowra, Muswellbrook | Moranbah (Isaac) |
+| generated | 11 Sep 2026 | 17 Sep 2026 |
+| growth evidence path | Domain only | open-data register (Domain is now the tail) |
+| register consulted? | **no call at all** | yes, answered |
+| outcome | growth unmeasured | growth **56** / **77** |
 
-What separates them is more likely the **grain the publisher offers for that
-area**. `OPEN_DATA_GROWTH_EVIDENCE.md` records the two loaders: NSW DCJ Rent
-and Sales publishes by **postcode and LGA**, the Queensland Statistician by
-**LGA**, and `readSalesRegister` asks for the cadastre's council or the trusted
-postcode in that order. A metropolitan LGA and a large regional one are not
-equally likely to carry a continuous quarterly series with enough sales to
-publish, and DCJ suppresses a median where thirty or fewer sold.
+**So the cause is the evidence path and the generation date, not the
+geography.** `OPEN_DATA_GROWTH_EVIDENCE.md` records the register being
+measured and wired on 15 September — between the two cohorts. Pattern B
+predates it.
 
-That is a hypothesis about coverage, and it is settled by one read-only
-statement, not by reasoning. Prepared against the schema
-(`market_sales_medians` as `market-sales-ingest` writes it):
+Three consequences:
+
+1. **No ingest work is outstanding.** The register holds current series for
+   both states at two grains. Nothing in the calibration work is blocked on
+   loading data.
+2. **Regenerating a pattern-B property today should give it Growth**, because
+   the path that failed for it no longer exists in that form. Combined with
+   §1a's Client-Safe Gate prediction for Location, both cohorts should reach
+   4-of-5 or 5-of-5 on regeneration. **§10 is what tests both**, and they are
+   stated here in advance so the run can confirm or refute them.
+3. **The compression measured below is a property of the pattern-B evidence
+   path, not of the scoring method.** Calibrating anchors against it would fit
+   the anchors to a superseded acquisition path.
+
+**Access standing, stated precisely.** The Supabase connector authenticates
+and reaches the intended project: `list_projects`, `get_project` and
+`query_logs` all succeed. `execute_sql` **is not exposed** in this session's
+toolset — not an authentication failure, not a permission denial, not a query
+or schema error; the tool is simply absent from the connector's surface, so
+`select` against `market_sales_medians` itself cannot be run here. It was not
+routed around: the Lovable `query_database` tool is present and was
+deliberately not used. The row-level coverage table in the queries below
+therefore remains unrun, and **the finding above does not depend on it** —
+production's own logs answered the question that mattered. The smallest
+remaining action is to expose the Supabase `execute_sql` tool (the connector's
+database group) if a row-level breakdown is still wanted.
+
+### 3.1b The prepared statements, for when `execute_sql` is exposed
 
 ```sql
 -- Coverage of the growth register, by publisher, state, grain and currency.
@@ -174,7 +233,7 @@ from     market_sales_medians
 group by source, state, area_grain, dwelling_type
 order by state, area_grain, source;
 
--- And the five subjects' own areas, to settle the split directly.
+-- The five subjects' own areas.
 select   area_grain, area_code, area_name, state, dwelling_type,
          count(*) as periods, min(period_start), max(period_end)
 from     market_sales_medians
@@ -183,30 +242,6 @@ where    lower(area_name) in
 group by area_grain, area_code, area_name, state, dwelling_type
 order by area_name;
 ```
-
-**Access standing.** Both statements are `SELECT`-only and touch no client
-data. The Supabase SQL tool is unavailable or denied in this session, and that
-restriction is respected rather than routed around — no Lovable path, no
-deployed function, no alternative credential. The remaining action is
-therefore exactly one: **run the two statements above against production and
-paste the two result tables.** Nothing else in this document is blocked on
-them, and §1a already corrects what the missing answer had been allowed to
-imply.
-
-Magnitude, computed rather than asserted — the same property with Location 52,
-Yield 50, Demand 55 and Risk 75, scored across all five dimensions:
-
-| Growth score | five-dimension composite |
-| ---: | ---: |
-| 30 | 45 |
-| 50 | 53 |
-| 65 | 59 |
-| 80 | 65 |
-
-The spread is 20 points wide against the 14-point interquartile range the
-three-dimension shape produces. **Restoring Growth does not merely add a
-dimension; it restores most of the scale's ability to discriminate**, because
-the 0.40-weight dimension is the one that actually varies between properties.
 
 ### 3.2 Wrong units, periods, geographies or direction — **PARTLY CONFIRMED (geography)**
 
