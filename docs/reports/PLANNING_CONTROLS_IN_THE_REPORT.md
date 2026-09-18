@@ -1031,3 +1031,98 @@ something a reader lost.
 | `_shared/planning/planningConstraints.pure.ts` | `sourceLayer` added to `PlanningConstraintReading`, populated at all three constructors (`null` on the Victorian WFS path, whose features carry no layer id). |
 | `_shared/planning/infrastructureEvidence.pure.ts` | Rule 10: `INSTRUMENT_LAYER_KIND`, `identityOf`, `identifiersOf` / `identifiersContradict`, and the gap-fill on an accepted match. |
 | `src/lib/reports/__tests__/infrastructureProjectIdentity.spec.ts` | 23 assertions, 12 of them negative. |
+
+---
+
+## 13. The ten-year outlook beyond the DA register (18 Sep 2026)
+
+S5/S6 §4 asks for a ten-year outlook built from *"official programmes, budgets
+and planning publications"* rather than from development applications alone.
+
+§5's coverage limitation has always been stated on a full list as well as an
+empty one — *council capital works, budget programmes, agency announcements* —
+and until now it had never been **measured**. It is now, and the answer is
+narrower and more useful than the disclosure.
+
+### 13.1 Correcting a wrong reading first
+
+A two-URL probe earlier the same day reported `data.gov.au` answering **404**
+and was cited as evidence that the catalogues refuse this egress. That was a
+**path error of mine**, not a publisher's refusal: the CKAN API is under
+`/data/api/3/…`, not `/api/3/…`. Re-probed correctly, all three catalogues
+answer **HTTP 200**:
+
+| catalogue | endpoint | result |
+| --- | --- | --- |
+| data.gov.au | `/data/api/3/action/package_search` | 200 — 16,722 infrastructure packages, 1,602 for "infrastructure priority list" |
+| data.nsw.gov.au | `/data/api/3/action/package_search` | 200 — 24 for "infrastructure pipeline" |
+| www.data.qld.gov.au | `/api/3/action/package_search` | 200 — 29 for "transport roads investment program" |
+
+The rule this repeats: **a probe that fails is a statement about the probe
+until the probe itself is checked.** The same class as `layers=all` answering
+`{"results":[]}` in §8.
+
+### 13.2 Queensland publishes a funded forward programme, and it is reachable
+
+**Queensland Transport and Roads Investment Program (QTRIP) — 2024-25 to
+2027-28**, Department of Transport and Main Roads, **CC BY 4.0**, last updated
+2024-09-25.
+
+The **file** does not come: the resource download endpoint answers **HTTP 202
+with zero bytes** on three attempts, `tmr.qld.gov.au` answers **403** to a
+scripted client, and the Wayback Machine holds **no snapshot** of the file and
+no CDX entry for the path. That is the fault that would have been recorded as
+"unreachable" by a probe that stopped there.
+
+**The CKAN DataStore API answers**: `/api/3/action/datastore_search` on that
+resource returns **903 records**, with
+
+| field | what it gives an outlook |
+| --- | --- |
+| `Local Government` | the join key the DA register already uses |
+| `Investment Name` | the publisher's own project name |
+| `Network` | National / State / Local |
+| `2024-25` … `2027-28`, **`Beyond`** | a funded forward profile, year by year |
+| Australian / Queensland / Local Government contributions | who is paying — the thing §5 rule 4 says no register this platform reads publishes |
+| `Estimated expenditure to 30 June 2024` | progress against the programme |
+| `Endnotes` | the publisher's own qualifications, per row |
+
+First record, verbatim: *Pacific Motorway, Exit 45 (North) Ormeau, business
+case* — South Coast district, Gold Coast City, National network, $1.5bn total,
+split $750m Commonwealth / $750m Queensland, nothing spent to 30 June 2024.
+
+**NSW has no equivalent structured dataset** by the same search: 14 packages,
+the only one with live DataStore resources being *NSW Budget Paper 2* from
+2019.
+
+### 13.3 What this changes, and what it deliberately does not
+
+It changes the **disclosure**. "Council capital works, budget programmes and
+agency announcements are not reached" is true of the DA register and is no
+longer true of Queensland as a jurisdiction: a funded programme with named
+projects, an LGA, a per-year profile and the funding split is published, open
+and readable.
+
+It does **not** change this release. Wiring it is a register in the shape of
+`amenity_register` and `crime_reference` — a table, an ingest function, a
+pg_cron schedule, a read path keyed on the cadastre's LGA, composition into
+`infrastructureEvidence`, and tests — and **this release carries no migration**
+(`S6_RELEASE_PACKAGE.md` §3). Bolting one on at an approval gate is how a
+release grows a fault nobody measured.
+
+Three rules it will have to answer to when it is built, all of them already
+this section's:
+
+- **A project is named only where a register named it**, and QTRIP names its
+  own — `Investment Name` verbatim, never a paraphrase.
+- **A funded year is a budget line, not a completion.** The columns are
+  appropriations; `Beyond` is explicitly unprofiled. A row may never be read as
+  a delivery date, which is rule 3 in its original form.
+- **The grain is the publisher's**: QTRIP is keyed on Local Government, so a
+  project is a fact about the **LGA**, stated as such, never placed at a
+  property. That is `OPEN_DATA_GROWTH_EVIDENCE`'s grain rule applied to
+  infrastructure.
+
+Until it is built, the coverage limitation is stated as it is — and it now
+names *which* publisher, *which* programme and *which* route, so the next
+attempt starts from the DataStore rather than from a reachability probe.
