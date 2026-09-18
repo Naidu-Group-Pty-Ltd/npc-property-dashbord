@@ -314,6 +314,54 @@ export const RECOMMENDATION_BY_GRADE: Readonly<Record<string, string>> = {
   'F': 'AVOID - Poor investment opportunity with multiple red flags',
 };
 
+/** Dimension keys in the words a client reads, for the basis sentence. */
+const DIMENSION_PROSE: Readonly<Record<string, string>> = {
+  growth: 'capital growth',
+  yield: 'rental yield',
+  demand: 'demand',
+  location: 'location',
+  risk: 'property risk',
+};
+
+/**
+ * A verdict never stands unqualified on an incomplete assessment.
+ *
+ * `RECOMMENDATION_BY_GRADE` is written as though every dimension had been
+ * measured — "AVOID - Poor investment opportunity with multiple red flags",
+ * "STRONG BUY … across all metrics". Measured 18 September 2026, **9 of 9
+ * production runs that issued a grade did so on 3 of 5 dimensions**, location
+ * and property risk excluded on every one, and two of those grades are F. So
+ * the strongest negative sentence this product can print was reaching clients
+ * on an assessment that had not looked at where the property is.
+ *
+ * It is also not merely a coverage caveat. The engine caps the grade at the
+ * points actually DELIVERED, so an unmeasured dimension pushes the letter down
+ * by arithmetic: on 18 Annabelle Crescent the uncapped composite is 40 (C) and
+ * the delivered figure is 27.8 (F). An F formed that way is partly a statement
+ * about missing data, and printing "multiple red flags" beside it is a claim
+ * about the property that the run did not make.
+ *
+ * Two rules. **It says what the assessment RESTS ON, never what it lacks** —
+ * the same rule the governed authority's recovery sentence answers to, because
+ * a confession reads as a broken product where a basis reads as a scope. And
+ * **full coverage is not qualified at all**, so the caveat keeps its meaning
+ * rather than becoming a line every verdict wears.
+ */
+export function qualifyRecommendation(
+  grade: string | null,
+  measured: readonly string[],
+  total: number,
+): string {
+  if (!grade) return OVERALL_GRADE_UNAVAILABLE.explanation;
+  const base = RECOMMENDATION_BY_GRADE[grade] ?? OVERALL_GRADE_UNAVAILABLE.explanation;
+  if (measured.length >= total || measured.length === 0) return base;
+  const names = measured.map((k) => DIMENSION_PROSE[k] ?? k);
+  const list = names.length > 1
+    ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+    : names[0];
+  return `${base}. Assessed on ${measured.length} of ${total} dimensions: ${list}.`;
+}
+
 const num = (v: unknown): number | null =>
   typeof v === 'number' && Number.isFinite(v) ? v : null;
 
@@ -654,7 +702,17 @@ export function scoreForProduction(input: ProductionScoringInput): ProductionSco
   for (const d of out.dimensions) {
     breakdown[BREAKDOWN_KEY[d.key]] = {
       score: d.performance ?? 0,
-      weight: gradeIssued ? Math.round(d.effectiveWeight * 100) : 0,
+      // The adjusted weight, whichever way the grade went.
+      //
+      // This used to be `gradeIssued ? … : 0`, and that wrote a contradiction
+      // into every withheld run: growth, yield and demand stored as
+      // `hasData: true, excluded: false, weight: 0` — measured, and claiming to
+      // have contributed nothing. `dimensionWasScored` reads the weight, so a
+      // withheld report's dimension table came out EMPTY, telling the reader
+      // nothing about what had been measured at the one moment that matters.
+      // An unavailable dimension still lands on 0 because `effectiveWeight` is
+      // already 0 for it, so the conditional only ever destroyed information.
+      weight: Math.round(d.effectiveWeight * 100),
       details: dimensionDetails(d.key, result, out),
       hasData: d.available,
       dataPoints: dataPointsFor(d.key, result, input),
@@ -701,9 +759,7 @@ export function scoreForProduction(input: ProductionScoringInput): ProductionSco
   return {
     totalScore: gradeIssued ? result.compositeScore : null,
     grade,
-    recommendation: grade
-      ? (RECOMMENDATION_BY_GRADE[grade] ?? OVERALL_GRADE_UNAVAILABLE.explanation)
-      : OVERALL_GRADE_UNAVAILABLE.explanation,
+    recommendation: qualifyRecommendation(grade, measured, total),
     breakdown,
     coverage: {
       dimensionsScored: measured.length,

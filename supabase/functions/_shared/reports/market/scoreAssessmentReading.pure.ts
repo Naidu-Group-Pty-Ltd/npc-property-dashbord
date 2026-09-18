@@ -194,6 +194,21 @@ export function readScoreAssessment(storedScore: unknown): ScoreAssessmentReadin
   const coverage = rec(s.coverage) ?? {};
   const notAssessed = rec(s.notAssessed) ?? {};
   const assessment = rec(s.assessment);
+  // Where the engine ACTUALLY writes its own coverage figure.
+  //
+  // `PersistedAssessment` below describes an `assessment` block, and nothing in
+  // this repository writes one — measured 18 September 2026, `investment_score`
+  // carries an `assessment.evidenceCoverage` on **0 of 19** stamped rows and a
+  // `v2.evidenceCoverage` on **9**. So the read below always missed, always
+  // pushed "this record does not retain it" into `notRetained`, and the
+  // Evidence coverage sentence `strategyPositions` guards on
+  // (`a.evidenceCoverage !== null`) has never printed on any report — including
+  // the nine rows that do retain the figure, under the other key.
+  //
+  // `assessment` is preferred so a future writer of that block wins; `v2` is
+  // where the value lives today. `assessmentReadings.pure.ts` already read the
+  // `v2` path, which is how the same record came to be read two ways.
+  const v2 = rec(s.v2);
 
   const raw = DIMENSIONS.map(({ field, key, label }) => {
     const d = rec(breakdown[field]);
@@ -251,7 +266,7 @@ export function readScoreAssessment(storedScore: unknown): ScoreAssessmentReadin
   );
 
   const notRetained: string[] = [];
-  const evidenceCoverage = num(assessment?.evidenceCoverage);
+  const evidenceCoverage = num(assessment?.evidenceCoverage) ?? num(v2?.evidenceCoverage);
   if (evidenceCoverage === null) {
     notRetained.push(
       'Evidence coverage — the share of the method that actually ran, counting a dimension scored on part of its '

@@ -93,8 +93,28 @@ export function dimensionWasScored(raw: unknown): boolean {
   // `available`. Either being explicitly false means the dimension was not
   // scored and must not be tabulated as though it were.
   if (raw.excluded === true) return false;
-  if ((raw.hasData ?? raw.available) === false) return false;
-  // A dimension the engine gave no weight contributed nothing to the total.
+  const flag = raw.hasData ?? raw.available;
+  if (flag === false) return false;
+  // A dimension that POSITIVELY says it has data was measured, and the weight
+  // is not consulted.
+  //
+  // The zero-weight test below is right for a run that issued a grade — there,
+  // an available dimension always carries a positive renormalised weight, so a
+  // zero means it contributed nothing. It was wrong for a run that WITHHELD
+  // one: `scoringV2Production` wrote `weight: 0` on every dimension whenever
+  // `gradeIssued` was false, so all ten withheld rows in production carry
+  // growth, yield and demand as `hasData: true, excluded: false, weight: 0` —
+  // measured, and reported by this predicate as unscored. Every dimension
+  // table on a withheld report was therefore empty, which told the reader
+  // nothing about what HAD been measured at exactly the moment that is the
+  // only thing worth telling them.
+  //
+  // The producer no longer writes that contradiction; this ordering also
+  // repairs the rows that already carry it, with no migration and without
+  // inventing a weight the run never formed.
+  if (flag === true) return true;
+  // Neither flag present — a legacy row. A dimension the engine gave no weight
+  // contributed nothing to the total.
   const weight = num(raw.weight);
   return !(weight !== undefined && weight <= 0);
 }

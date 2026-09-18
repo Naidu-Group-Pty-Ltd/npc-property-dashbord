@@ -122,12 +122,27 @@ describe('a graded property — measured Growth, Demand and Yield', () => {
     expect(mayPublishOverallGrade(authorityOf(record))).toBe(true);
   });
 
-  it('carries a letter, a total and the recommendation keyed on the letter', () => {
+  it('carries a letter, a total and a recommendation that names what it rests on', () => {
     expect(record.grade).toMatch(/^(A\+|A|B\+|B|C\+|C|D|F)$/);
     expect(typeof record.totalScore).toBe('number');
     expect(record.totalScore).toBe(record.v2.score);
     expect(record.grade).toBe(record.v2.grade);
-    expect(record.recommendation).toBe(RECOMMENDATION_BY_GRADE[record.grade as string]);
+    // RENEGOTIATED 18 Sep 2026. This asserted the recommendation was EXACTLY
+    // `RECOMMENDATION_BY_GRADE[grade]`, which pinned the defect: this fixture
+    // measures three dimensions of five, and those sentences are written as
+    // though every dimension had been measured — "across all metrics",
+    // "multiple red flags". Measured over production, 9 of 9 runs that issued
+    // a grade did so on 3 of 5, and two of them are F. The engine also caps
+    // the letter at the points DELIVERED, so an unmeasured dimension pushes
+    // the grade down by arithmetic, which makes an unqualified verdict partly
+    // a statement about missing data dressed as a finding about the property.
+    //
+    // The sentence still LEADS with the table's wording — that is asserted —
+    // and now names the basis. `withheldAssessmentReading.spec.ts` pins the
+    // rule itself, including that a full assessment is not qualified at all.
+    expect(record.recommendation.startsWith(RECOMMENDATION_BY_GRADE[record.grade as string])).toBe(true);
+    expect(record.recommendation).toContain('Assessed on 3 of 5 dimensions');
+    expect(record.recommendation).toContain('capital growth, rental yield and demand');
     expect(record.evidenceStatement).toBeNull();
     expect(record.coverage.dataInsufficient).toBe(false);
     expect(record.coverage.dimensionsScored).toBe(3);
