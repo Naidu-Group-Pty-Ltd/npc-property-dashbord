@@ -435,11 +435,21 @@ itself.
 Three scrubs run where stored content is **read** — placeholders (already
 shipped), empty table columns and empty citation brackets. None overwrites a
 stored byte, none touches prose, and a clean document comes back
-byte-identical. Measured on the retained corpus: the Mitchell Street Briefing
-sheds 2,731 characters of placeholder on read, the Snapshot 570, the Due
-Diligence 83. A re-render of any stored report will therefore differ from its
-issued PDF by exactly those removals, which is the intended repair and is worth
-saying out loud before anyone compares an old document with a new one.
+byte-identical.
+
+Measured over all eight distinct documents in the retained corpus: **3,384
+characters removed in total, 5 of 8 byte-identical, 0 grown** — and every one of
+those characters is the placeholder scrub that **already shipped** (the Mitchell
+Street Briefing's 2,731, the Snapshot's 570, the Due Diligence's 83). The two
+rules added this round — empty columns and empty citation brackets — fire on
+**none** of the eight.
+
+So the re-render risk this release adds is, on the evidence available here,
+**nil**: a stored report re-renders exactly as it did before, except for the
+placeholder removal that was already live. The new rules are preventive on this
+corpus and corrective on the five PDFs supplied for acceptance, which are not in
+it. An earlier draft of this section implied the new rules had done that work;
+it had not been measured, and when it was, they had not.
 
 ### 10.3 What the correction does NOT change
 
@@ -496,8 +506,10 @@ flag. What that means in practice:
 
 - every clone's next generated or forked report carries validator rules 14-16
   and the labelled weekly-cash row;
-- every clone's reads of stored reports lose empty columns and empty citation
-  brackets — the read-path repair of 10.2, on documents nobody regenerated;
+- every clone's reads of stored reports gain the empty-column and
+  empty-citation rules — which, measured over the retained corpus, change
+  **nothing** on eight of eight documents (10.2), so this is a guard taking
+  effect rather than a visible change;
 - a clone that has configured no company name stops printing
   "Property Consulting" and prints **Aurixa Systems**. A clone that HAS
   configured one is untouched, which is what `whiteLabelIdentity.spec.ts`

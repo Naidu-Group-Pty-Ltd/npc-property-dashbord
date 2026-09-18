@@ -214,8 +214,30 @@ of them is a column of facts. The first column is never removed, because it is
 the row's label. And a table is never reduced below two columns. A clean
 document comes back byte-identical.
 
-Measured on the corpus: the Mitchell Street Briefing loses 2,731 characters of
-placeholder on read, the Snapshot 570, the Due Diligence 83.
+### What the two NEW rules actually did, measured
+
+Swept over all eight distinct documents in the corpus:
+
+| | |
+| --- | --- |
+| empty columns removed | **0** |
+| empty citations removed | **0** |
+| documents byte-identical after the whole read path | 5 of 8 |
+| documents that GREW | 0 |
+| total characters removed | 3,384 |
+
+**Every one of those 3,384 characters is the placeholder scrub that already
+shipped** — the Mitchell Street Briefing's 2,731, the Snapshot's 570, the Due
+Diligence's 83. The two rules added this round fire on **none** of these eight
+documents.
+
+That is worth stating plainly, because an earlier draft of this document and of
+the pull request implied otherwise. The empty columns and empty citation
+brackets are on the five PDFs supplied for acceptance, which are **not** in this
+corpus; the rules are therefore **preventive here and corrective there**, and
+nothing in this round has been shown to remove an empty column from a document
+anyone has seen. A rule that has not yet fired is not a repair that has already
+happened.
 
 ---
 
@@ -271,7 +293,8 @@ prove fresh acquisition, model generation, resume or scoring.
 | bed/bath asserted and withheld | Cowra compass + strategic | rule 14, verbatim two lines |
 | unbased figures | all eight documents | rule 15, 3–12 each |
 | paragraph-heavy register | all eight documents | rule 16, 17–23 cells each |
-| placeholders | Mitchell briefing / snapshot / strategic | the read path, 2,731 / 570 / 83 characters |
+| placeholders | Mitchell briefing / snapshot / strategic | the read path, 2,731 / 570 / 83 characters — all from the scrub that already shipped |
+| empty columns / citations | **none of the eight** | the two new read-path rules fire on 0 of 8; preventive here, corrective on the supplied PDFs |
 
 ### Regressions added
 
