@@ -7,6 +7,11 @@ reports has at some point been all three of those without being released.
 Nothing here is released. **Production release remains subject to the owner's
 approval gate.** The branch is `claude/adoring-hopper-g02tdt`.
 
+**Picking the programme up in a new session?** Start at
+[`S5_HANDOFF.md`](./S5_HANDOFF.md) — it carries the standing constraints, what
+is decided, what is measured, what is next, and the one question waiting on the
+owner.
+
 | | implemented | tested | visually verified | released |
 | --- | --- | --- | --- | --- |
 | **Investment Compass** | S1–S3, S5 | 9,402 report-suite tests, PDF/UA-1 on both subjects | both documents drawn whole (36 + 22 pages), every page measured | no |

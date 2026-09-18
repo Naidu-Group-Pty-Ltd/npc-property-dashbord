@@ -1,5 +1,8 @@
 # The S5 corrections
 
+> Resuming in a new session? [`S5_HANDOFF.md`](./S5_HANDOFF.md) is the entry
+> point; this document is the detail behind its § 5 and § 6.
+
 *Modules: [`_shared/reports/investment/strategyPositions.pure.ts`](../../supabase/functions/_shared/reports/investment/strategyPositions.pure.ts),
 [`market/marketFactBlocks.pure.ts`](../../supabase/functions/_shared/reports/market/marketFactBlocks.pure.ts),
 [`market/scoreAssessmentReading.pure.ts`](../../supabase/functions/_shared/reports/market/scoreAssessmentReading.pure.ts)
