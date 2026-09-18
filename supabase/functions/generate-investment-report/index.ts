@@ -6933,7 +6933,15 @@ YOUR DEDICATED PROPERTY PARTNER
         beds: effectiveBeds,
         baths: effectiveBaths,
         carSpaces: mergedOverrides.carSpaces ?? propertyDetails?.carSpaces,
-        yearBuilt: mergedOverrides.yearBuilt ?? propertyDetails?.yearBuilt,
+        // Both rungs of the old chain were keys nothing writes: the override
+        // registry spells it `constructionYear` and the generator sends
+        // `propertyDetails.constructionYear`, so `property_specs.year_built`
+        // was null on all 1,230 stored reports while 32 of them held the
+        // value one object away.
+        yearBuilt: mergedOverrides.constructionYear
+          ?? mergedOverrides.yearBuilt
+          ?? propertyDetails?.constructionYear
+          ?? propertyDetails?.yearBuilt,
         // An operator's own record first, then what the jurisdiction's layer
         // answered, then whatever the listing carried. `spec_zoning` and
         // `spec_council` were null on every report ever generated because
