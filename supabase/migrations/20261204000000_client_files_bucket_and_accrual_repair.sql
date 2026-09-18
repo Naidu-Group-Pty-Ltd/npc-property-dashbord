@@ -232,3 +232,25 @@ COMMENT ON COLUMN public.appointment_secondary_recipients.finance_contact_id IS
   'The finance partner this invitation is for, when it is one. NULL for a client or an additional contact — they have no finance contact id, and requiring one meant they could never be recorded as invited at all.';
 COMMENT ON COLUMN public.appointment_secondary_recipients.recipient_role IS
   'client | additional_contact | finance_partner. What this person is to the booking, recorded rather than inferred from whether finance_contact_id is set.';
+
+-- ===========================================================================
+-- 4. Close EXECUTE on the two accrual functions this migration re-asserted
+-- ===========================================================================
+--
+-- `CREATE OR REPLACE FUNCTION` on a SECURITY DEFINER function re-grants EXECUTE
+-- to PUBLIC, and this project's default privileges grant it DIRECTLY to `anon`
+-- and `authenticated` besides — so re-asserting a function body verbatim, which
+-- is what section 2 does, reopens it to the publishable key in the browser
+-- bundle. Revoking from PUBLIC alone is a no-op for `anon` here (20261129090000)
+-- and revoking from `anon` alone is a no-op because the grant is PUBLIC's
+-- (RLS-W5, 20260725096000), which is why all three are named.
+--
+-- Nothing is granted back. Both are `RETURNS TRIGGER`: Postgres checks EXECUTE
+-- when a trigger is CREATED, never when one fires, and the triggers that call
+-- these already exist and are not recreated here. No caller anywhere invokes
+-- either function directly — they are reached only through
+-- `builder_payment_milestones` and `client_deals` writes.
+REVOKE EXECUTE ON FUNCTION public.fp_accrue_commission_from_build_payment()
+  FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.fp_accrue_commission_from_deal_settlement()
+  FROM PUBLIC, anon, authenticated;
