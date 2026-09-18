@@ -35,6 +35,9 @@
 import { describe, expect, it } from 'vitest';
 import { runQAValidation } from '../compassQAValidator';
 
+/** Every member of `QATier`, pinned to the source below. */
+const QA_TIERS = ['compass-40', 'financial-analysis', 'briefing', 'snapshot', 'strategic'];
+
 /** The sentence as it printed, verbatim from the rendered PDF's text layer. */
 const MEASURED = 'Properties on Redfern Street repeatedly show established detached dwellings, '
   + 'off-street parking and standard residential zoning within Cowra Shire Council, with multiple '
@@ -184,7 +187,10 @@ describe('generation, fork and condensation all validate the assembled output', 
     // The document a client receives, not the parent's prose before routing —
     // and after the claim guard, so a surviving finding is a real one rather
     // than one the correction had already discharged.
-    expect(src).toContain("runQAValidation(financialMarkdown, 'financial')");
+    // `financial-analysis`, not `financial` — the fork first passed a string
+    // that is not a member of `QATier` at all, and `deno check` caught it
+    // where the repository's own `tsc` cannot look.
+    expect(src).toContain("runQAValidation(financialMarkdown, 'financial-analysis')");
     expect(src).toContain("runQAValidation(strategicMarkdown, 'strategic')");
     expect(src).toContain('const financialMarkdown = financialClaims.markdown;');
     expect(src).toContain('const strategicMarkdown = strategicClaims.markdown;');
@@ -195,6 +201,19 @@ describe('generation, fork and condensation all validate the assembled output', 
     // asserted over a Financial Analysis is the defect `condenseCompose`
     // already records, and it produced sixteen errors on a correct document.
     expect(src).not.toContain("runQAValidation(financialMarkdown, 'compass");
+    // And every tier the fork names is one the validator admits.
+    const tiers = [...src.matchAll(/runQAValidation\([A-Za-z]+, '([a-z-]+)'\)/g)].map((m) => m[1]);
+    expect(tiers.length).toBeGreaterThan(0);
+    for (const t of tiers) expect(QA_TIERS, t).toContain(t);
+  });
+
+  it('QA_TIERS is the union, not a list that drifted from it', async () => {
+    // A type union cannot be read at runtime, so the list above is pinned to
+    // the declaration — which is how it stays true when a tier is added.
+    const decl = (await read('supabase/functions/_shared/compassQAValidator.ts'))
+      .match(/export type QATier = ([^;]+);/)![1];
+    const declared = [...decl.matchAll(/'([a-z0-9-]+)'/g)].map((m) => m[1]);
+    expect(declared.sort()).toEqual([...QA_TIERS].sort());
   });
 
   it('the rules travel with the prose, so a routed section is judged again', () => {

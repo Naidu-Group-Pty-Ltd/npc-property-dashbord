@@ -452,7 +452,7 @@ Deno.serve(async (req) => {
 
     const forkQa = {
       financial: variants.includes('financial')
-        ? runQAValidation(financialMarkdown, 'financial') : null,
+        ? runQAValidation(financialMarkdown, 'financial-analysis') : null,
       strategic: variants.includes('strategic')
         ? runQAValidation(strategicMarkdown, 'strategic') : null,
     };

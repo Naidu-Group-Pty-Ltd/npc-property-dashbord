@@ -92,7 +92,27 @@ const PAIR_SECOND_LABEL = /^(?:#{3,5}\s+|\*\*)?(?:limitations?|weaknesses|consid
  * condense path can name what it is producing instead of borrowing a
  * Compass's rules; see the note at the head of this file.
  */
-export type QATier = 'compass-40' | 'financial-analysis' | 'briefing' | 'snapshot';
+/**
+ * The tiers this validator may judge.
+ *
+ * `strategic` joined them when `fork-investment-report` started validating its
+ * composed children (18 Sep 2026) — and the fork first passed `'financial'`
+ * and `'strategic'`, neither of which is a member: the financial tier is
+ * spelled `financial-analysis`, and the Due Diligence document had no name
+ * here at all. `deno check` caught both; the repository's `tsc` cannot see
+ * `supabase/functions`, which is why that gate exists.
+ *
+ * `strategic` deliberately declares **no page band and no section registry**,
+ * which is the treatment the condensed tiers already get and is this file's own
+ * rule: *a tier it does not know is a tier it must not judge*. What still
+ * applies to a Due Diligence document is every rule that is about a REPORT —
+ * no unresolved placeholder, no score the record does not hold, no editorial
+ * label, no duplicate heading, no promised table with no table, no hazard
+ * clearance on a listing's authority, no delivery horizon nobody published —
+ * and those are exactly the rules the fork needed, because it routes the
+ * parent's prose into two documents and used to check neither.
+ */
+export type QATier = 'compass-40' | 'financial-analysis' | 'briefing' | 'snapshot' | 'strategic';
 
 export type QASeverity = 'error' | 'warning' | 'info';
 
