@@ -2,10 +2,10 @@
 
 *Prepared 18 September 2026 on `claude/adoring-hopper-g02tdt` (PR
 [#2692](https://github.com/Naidu-Group-Pty-Ltd/npc-property-dashbord/pull/2692),
-draft). The release-candidate head at the time of writing is `153ae1e38`;
-**this stamp is re-checked against the PR's final head before merge**, and a
-release is claimed only against a head whose CI has been read green, never
-one still running.*
+draft). The release-candidate head carrying the last code change is
+`2641a86f4`, and its CI is read green in §6. **This stamp is re-checked
+against the PR's final head before merge**, and a release is claimed only
+against a head whose CI has been read green, never one still running.*
 
 Release stays behind the owner's approval gate. This document is the order
 of operations and the rollback, so that approving it is a decision about
@@ -127,5 +127,29 @@ RLS policies; no existing object touched, no backfill).
 
 The claim standard: checks are read on the **exact release-candidate head**
 after the last push, and a check still running is reported as running, never
-as passed. The reading for the final head is recorded on PR #2692 at merge
-time rather than frozen here.
+as passed.
+
+**Read 18 September 2026 08:25 UTC on head `2641a86f418b8e2e350015db41d0d94f2c0d65ce`**
+— the last head carrying a code change — all six checks completed
+`success`, and the pull request reports `mergeable_state: clean` (no
+conflict against `main`):
+
+| check | conclusion |
+| --- | --- |
+| `verify` | success |
+| `security` | success |
+| `supply-chain` | success |
+| `render-container` | success |
+| `pdf-import-regression` | success |
+| `pdf-import-release-gate` | success |
+
+One red reading preceded it and is recorded rather than tidied away: on
+head `a93527eb6` the `security` gate failed its per-file Deno baseline with
+`manage-investment-reports: 0 → 1`, because `verifyAuth` types `userId` as
+`string | null` while a stored record's `recorded_by` is its provenance.
+The fix refuses an identity-less submission with 401 rather than
+attributing the record to nobody; `2641a86f4` is that fix.
+
+Commits after this one are documentation only, and the head they produce is
+re-read before merge under the same standard — a docs push re-runs CI like
+any other.
