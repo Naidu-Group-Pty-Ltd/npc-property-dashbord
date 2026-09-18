@@ -78,18 +78,34 @@
  *    cannot be searched — no state-wide feed is published for the
  *    jurisdiction. `absences` was a flat list of strings, so the prose had no
  *    way to tell them apart.
- * 10. **One designation, one row — and identity is confirmed before anything
- *    is merged.** The two Queensland sources read the SAME MapServer: the
+ * 10. **One designation, one row — and identity is PROVEN before anything is
+ *    merged.** The two Queensland sources read the SAME MapServer: the
  *    instruments probe asks layers 25/30/35/40 one at a time, the constraint
  *    register calls `identify` with `layers: all` on the same service. So a
  *    property inside a priority development area got two rows that disagreed
- *    on every cell but the name (executed 18 Sep 2026). Merging is on the
- *    publisher's own source string plus the publisher's own name, equal after
- *    trim, case-fold and whitespace collapse — never on token overlap, edit
- *    distance or a shared word. Two projects that read alike are two
- *    projects, and merging them deletes one; nothing merges across sources at
- *    all. The layer-specific reading wins, because it parses that layer's own
- *    fields where the identify-all row parses whatever the server offered.
+ *    on every cell but the name (executed 18 Sep 2026).
+ *
+ *    The first version of this rule merged on **publisher + name**, and that
+ *    is a candidate match rather than proof: two designations can share a
+ *    name across registers, and — worse — the context source was read as
+ *    `?? 'state planning layers'`, so two readings that named NO source both
+ *    wore the fallback and looked identical to each other. A missing source
+ *    must never establish identity.
+ *
+ *    Identity now needs three things, and any one missing means no merge: the
+ *    context reading NAMES its publisher (no fallback); it carries the
+ *    publisher's own `sourceLayer`, and that layer is one of the four in
+ *    `INSTRUMENT_LAYER_KIND` — the stable identifier, because a label is what
+ *    a feature is called while a layer id is which register it came out of;
+ *    and the two publishers' own names match exactly after trim, case-fold and
+ *    whitespace collapse. Never token overlap, never edit distance, never a
+ *    shared word, and never across sources.
+ *
+ *    Where identity cannot be proven **the row stands**. A visible duplicate
+ *    is a presentation fault; merging two different designations deletes a
+ *    real one, and only one of those is recoverable. The layer-specific
+ *    reading wins a proven match, because it parses that layer's own fields
+ *    where the identify-all row parses whatever the server offered.
  *
  * Pure: no fetch, no Deno, no clock.
  */
@@ -366,9 +382,29 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
    * never one item however alike their names — and the suppression is silent,
    * because a client document does not narrate its own production.
    */
-  const identityOf = (name: string, source: string | null): string =>
-    `${(source ?? '').trim().toLowerCase()}\u0000${name.trim().toLowerCase().replace(/\s+/g, ' ')}`;
+  const norm = (v: string): string => v.trim().toLowerCase().replace(/\s+/g, ' ');
+  /**
+   * The four StatePlanning layers the instruments probe reads one at a time,
+   * and which of its `kind` values each answers with.
+   *
+   * This is the **documented equivalent mapping**: it says, layer by layer,
+   * that a `context` reading carrying `sourceLayer: 35` and an instrument
+   * reading carrying `kind: 'priority_development_area'` came out of the same
+   * register. It is written from `QLD_INSTRUMENT_LAYERS` in
+   * `planningSources.pure.ts`, and a spec asserts the two agree — a layer
+   * added there and not here would stop merging rather than start merging the
+   * wrong thing, which is the safe direction.
+   */
+  const INSTRUMENT_LAYER_KIND: Readonly<Record<number, string>> = {
+    25: 'coordinated_project',
+    30: 'infrastructure_designation',
+    35: 'priority_development_area',
+    40: 'state_development_area',
+  };
+  /** One instrument reading, keyed by what can actually identify it. */
   const instrumentIdentities = new Set<string>();
+  const identityOf = (source: string, kind: string, name: string): string =>
+    `${norm(source)}\u0000${kind}\u0000${norm(name)}`;
 
   // ── state development instruments, at the property's own coordinate ───────
   const inst = isRecord(data?.developmentInstruments) ? data!.developmentInstruments : null;
@@ -380,7 +416,12 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
       const name = str(raw.name);
       if (!name) continue;
       const statedStatus = str(raw.status);
-      instrumentIdentities.add(identityOf(name, source));
+      const instrumentKind = str(raw.kind);
+      // Only a reading that names BOTH its publisher and its kind can be
+      // identified. `source` here is the probe's own, never a fallback.
+      if (str(inst.source) && instrumentKind) {
+        instrumentIdentities.add(identityOf(str(inst.source)!, instrumentKind, name));
+      }
       items.push({
         name,
         kind: INSTRUMENT_LABEL[str(raw.kind) ?? ''] ?? (str(raw.kind) ?? 'Instrument'),
@@ -438,10 +479,37 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
     if (str(raw.kind) !== 'context') continue;
     const name = str(raw.label);
     if (!name) continue;
-    // Rule 10: the same publisher's same designation, already carried by the
-    // layer-specific read above.
-    const contextSource = str(raw.source) ?? 'state planning layers';
-    if (instrumentIdentities.has(identityOf(name, contextSource))) continue;
+    /*
+     * Rule 10: the same publisher's same designation, already carried by the
+     * layer-specific read above — and identity has to be PROVEN, not inferred
+     * from a shared label.
+     *
+     * Three things must all hold, and any one of them missing means no merge:
+     *
+     *   1. the context reading names its own publisher — `?? 'state planning
+     *      layers'` is a FALLBACK, and two readings that both fell back to it
+     *      share a string rather than a source. A null source identifies
+     *      nothing.
+     *   2. it carries the publisher's own `sourceLayer`, and that layer is one
+     *      of the four the instruments probe reads, mapped to the kind that
+     *      probe would have returned for it. This is the stable identifier:
+     *      a label is what a feature is called, a layer id is which register
+     *      it came out of.
+     *   3. the publisher's own names match exactly, after trim, case-fold and
+     *      whitespace collapse.
+     *
+     * Publisher plus name was the first version of this rule and it was not
+     * enough: two designations could share a name across registers, and two
+     * readings with no source could both wear the fallback and look identical.
+     * Where identity cannot be proven the row STANDS — a visible duplicate is
+     * a presentation fault, and merging two different designations deletes a
+     * real one.
+     */
+    const contextSource = str(raw.source);
+    const layerKind = typeof raw.sourceLayer === 'number'
+      ? INSTRUMENT_LAYER_KIND[raw.sourceLayer] ?? null : null;
+    if (contextSource && layerKind
+      && instrumentIdentities.has(identityOf(contextSource, layerKind, name))) continue;
     const family = str(raw.family);
     items.push({
       name,
@@ -483,7 +551,7 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
       statedCost: null,
       statedDelivery: null,
       applications: null,
-      source: contextSource,
+      source: contextSource ?? 'state planning layers',
       licence: str(raw.licence),
       retrievedAt,
     });

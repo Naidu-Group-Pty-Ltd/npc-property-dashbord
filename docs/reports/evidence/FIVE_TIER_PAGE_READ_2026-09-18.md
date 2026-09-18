@@ -227,17 +227,42 @@ report's own failure, which `compassDocumentContract` was written against
 (*three copies of one zoning section on one lot, disagreeing on every control*).
 
 **Rule 10** closes it, and closes it narrowly because §9's wording is a warning
-rather than an instruction to merge. Identity is the publisher's own source
-string plus the publisher's own name, equal after trim, case-fold and
-whitespace collapse. No token overlap, no edit distance, no shared word:
-*Maryborough Priority Living Area* and *Hervey Bay Priority Living Area* stay
-two designations, and nothing merges across sources at all. The layer-specific
+rather than an instruction to merge.
+
+Its first version merged on **publisher + name**, and the platform owner was
+right that this is a *candidate* match rather than proof — two designations can
+share a name across registers, and the context source was read as
+`?? 'state planning layers'`, so two readings naming **no** source both wore the
+fallback and looked identical to each other. A missing source must never
+establish identity.
+
+Identity now requires three things, and any one missing means no merge:
+
+1. the context reading **names its own publisher** — no fallback;
+2. it carries the publisher's own **`sourceLayer`**, and that layer is one of
+   the four in `INSTRUMENT_LAYER_KIND`, mapped to the kind the instruments
+   probe would have returned for it. This is the stable identifier: a label is
+   what a feature is called, a layer id is which register it came out of. The
+   id was already in the ArcGIS `identify` response and was being discarded at
+   the parse boundary; it is now carried on `PlanningConstraintReading`;
+3. the two publishers' own **names match exactly** after trim, case-fold and
+   whitespace collapse.
+
+No token overlap, no edit distance, no shared word: *Maryborough Priority
+Living Area* and *Hervey Bay Priority Living Area* stay two designations, and
+nothing merges across sources at all. **Where identity cannot be proven the row
+stands** — a visible duplicate is a presentation fault, and merging two
+different designations deletes a real one; only one of those is recoverable.
+The mapping is asserted against `QLD_INSTRUMENT_LAYERS` itself, so a layer
+added there and not here stops merging rather than starting to merge the wrong
+thing. The layer-specific
 reading wins, because it parses that layer's own fields (`pda_name`,
 `pda_status`, `gazetted_date`) where the identify-all row parses whatever the
 server volunteered. The suppression is silent — a duplicate that was never
 printed is not something a reader lost, and narrating it would be the same
-mistake as the two findings above. Eight tests, including the four that assert
-what must NOT merge.
+mistake as the two findings above. Thirteen tests, eight of which assert what must NOT merge — including a
+missing layer id, a layer outside the four, a layer mapping to a different
+kind, and two readings that both name no source at all.
 
 One thing checked and found not to be a defect: the first probe printed the raw
 register key `priorityDevelopmentArea` in the client-facing Kind cell, which

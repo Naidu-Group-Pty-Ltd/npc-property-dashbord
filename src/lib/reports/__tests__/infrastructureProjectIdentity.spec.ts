@@ -45,7 +45,10 @@ const instrument = (name: string, extra: Record<string, unknown> = {}) => ({
 const context = (label: string, extra: Record<string, unknown> = {}) => ({
   kind: 'context', family: 'growthArea', label, standingLabel: 'Statutory',
   currencyDate: '2023-12-01', region: 'Wide Bay Burnett',
-  instrument: 'Wide Bay Burnett Regional Plan', source: QLD, licence: 'CC BY 4.0', ...extra,
+  instrument: 'Wide Bay Burnett Regional Plan', source: QLD, licence: 'CC BY 4.0',
+  // Layer 35 is the priority-development-area layer the instruments probe
+  // reads. This is the stable identifier the merge requires.
+  sourceLayer: 35, ...extra,
 });
 const build = (instruments: unknown[], constraints: unknown[]) => buildInfrastructureEvidence({
   planningData: {
@@ -120,5 +123,62 @@ describe('the same designation from both Queensland reads is one row', () => {
     // A merge rule that lives only in a test is one the next change re-opens.
     const src = buildInfrastructureEvidence.toString();
     expect(src).toContain('instrumentIdentities');
+  });
+});
+
+// ─── identity must be PROVEN, not inferred from a label ───────────────────
+
+describe('publisher plus name is a candidate match, never identity', () => {
+  it('no layer identifier — the row stands rather than being merged on a name', () => {
+    const ev = build([instrument('Maryborough Priority Living Area')],
+      [context('Maryborough Priority Living Area', { sourceLayer: null })]);
+    expect(ev.items, 'an unidentified reading is unidentified').toHaveLength(2);
+  });
+
+  it('a layer OUTSIDE the instruments probe\'s four is not the same register', () => {
+    // Layer 12 is some other StatePlanning layer. Same publisher, same name,
+    // different register — and a name is not proof.
+    const ev = build([instrument('Maryborough Priority Living Area')],
+      [context('Maryborough Priority Living Area', { sourceLayer: 12 })]);
+    expect(ev.items).toHaveLength(2);
+  });
+
+  it('the layer must map to the kind the instrument reading carries', () => {
+    // Layer 25 is the coordinated-project layer; the instrument is a priority
+    // development area. Same publisher, same name, two different registers.
+    const ev = build([instrument('Maryborough Priority Living Area')],
+      [context('Maryborough Priority Living Area', { sourceLayer: 25 })]);
+    expect(ev.items).toHaveLength(2);
+  });
+
+  it('a MISSING source never establishes identity, even against another missing one', () => {
+    // The defect the first version carried: `?? 'state planning layers'` made
+    // two sourceless readings look like the same publisher.
+    const ev = buildInfrastructureEvidence({ planningData: {
+      fetchedAt: '2026-09-18T00:00:00Z',
+      developmentInstruments: {
+        status: 'ok', source: null, licence: null,
+        instruments: [instrument('Maryborough Priority Living Area')],
+      },
+      constraints: [context('Maryborough Priority Living Area', { source: null })],
+    } });
+    expect(ev.items).toHaveLength(2);
+  });
+
+  it('the mapping agrees with the probe it is written from', async () => {
+    // A layer added to QLD_INSTRUMENT_LAYERS and not here stops merging rather
+    // than starting to merge the wrong thing — the safe direction, asserted.
+    const { QLD_INSTRUMENT_LAYERS } = await import(
+      '../../../../supabase/functions/_shared/planning/planningSources.pure');
+    const { readFileSync } = await import('node:fs');
+    // Read the SOURCE, not the transpiled function: vitest rewrites string
+    // quoting, so `toString()` would assert on the compiler's taste.
+    const src = readFileSync(
+      'supabase/functions/_shared/planning/infrastructureEvidence.pure.ts', 'utf8');
+    const map = src.slice(src.indexOf('INSTRUMENT_LAYER_KIND'), src.indexOf('instrumentIdentities'));
+    for (const { layer, kind } of QLD_INSTRUMENT_LAYERS) {
+      expect(map, `layer ${layer} must map to ${kind}`).toContain(`${layer}: '${kind}'`);
+    }
+    expect(QLD_INSTRUMENT_LAYERS).toHaveLength(4);
   });
 });
