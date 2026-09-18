@@ -19,6 +19,7 @@ import { InvestmentReportLoadingState } from '@/components/reports/report-view/I
 import { InvestmentReportMobileActionBar } from '@/components/reports/report-view/InvestmentReportMobileActionBar';
 import { InvestmentReportOverridePanel } from '@/components/reports/report-view/InvestmentReportOverridePanel';
 import { ConditionEvidencePanel } from '@/components/reports/report-view/ConditionEvidencePanel';
+import { AssessmentCompletionCard } from '@/components/reports/report-view/AssessmentCompletionCard';
 import type { ClientInfo, InvestmentReport } from '@/components/reports/report-view/types';
 import { getHasOverrides, getOverriddenFields, getReportStatusLabel, getReportTierLabel, getReportVariantLabel } from '@/components/reports/report-view/utils';
 import { logActivityDirect } from '@/hooks/useActivityLogger';
@@ -293,6 +294,8 @@ export default function InvestmentReportView() {
                 dataSources={report.data_sources}
                 validationFlags={report.validation_flags}
               />
+
+              <AssessmentCompletionCard investmentScore={report.investment_score} />
 
               <ConditionEvidencePanel
                 reportId={report.id}

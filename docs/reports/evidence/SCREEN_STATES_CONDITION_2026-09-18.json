@@ -1,0 +1,157 @@
+{
+  "measuredAt": "2026-09-18T07:45:30.312Z",
+  "reportFixture": "09f8569e-21ca-48b9-a3b9-57f4793d0836",
+  "address": "48 Redfern Street, Cowra NSW 2794",
+  "findings": [
+    {
+      "step": "report opens",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "completion card does NOT mount on a pre-gate row",
+      "ok": true,
+      "detail": "historical rows preserved"
+    },
+    {
+      "step": "condition panel mounts",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "unapplied table renders its named state",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "no submit button while the table is unapplied",
+      "ok": true,
+      "detail": "a control that can only fail is not drawn"
+    },
+    {
+      "step": "completion card mounts with the run's own counts",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "state chip reads Evidence required (attempts spent)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "the statement is the run's own sentence",
+      "ok": true,
+      "detail": "3 of 5 dimensions are measured. A completed grade is not iss…"
+    },
+    {
+      "step": "dimension row: capital growth",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "dimension row: rental yield",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "dimension row: demand",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "dimension row: location",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "dimension row: property risk",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "an unscored dimension names its recovery actor",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "scored rows print their value, unscored print none",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "evidence coverage stated as its own measure",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "condition panel lists the stored record",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "the record is labelled in the validator's words (evidence, not scored)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "dialog opens with the live reading box",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "empty draft cannot be stored, with the reason on screen",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "valid transcribed draft is storable (evidence)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "a different street disables storing",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "and the reason is the validator's sentence",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "restoring the street re-enables storing",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "the stored toast carries the reading",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "the list refreshes to two records",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "the server-side double judged the submission with the same module",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "no console errors across all scenarios (realtime WebSocket exempt by name)",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "fatal": null,
+  "consoleErrors": [
+    "WebSocket connection to 'wss://dduzbchuswwbefdunfct.supabase.co/realtime/v1/websocket?apikey=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZS",
+    "WebSocket connection to 'wss://dduzbchuswwbefdunfct.supabase.co/realtime/v1/websocket?apikey=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZS",
+    "WebSocket connection to 'wss://dduzbchuswwbefdunfct.supabase.co/realtime/v1/websocket?apikey=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZS",
+    "WebSocket connection to 'wss://dduzbchuswwbefdunfct.supabase.co/realtime/v1/websocket?apikey=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZS",
+    "WebSocket connection to 'wss://dduzbchuswwbefdunfct.supabase.co/realtime/v1/websocket?apikey=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZS",
+    "WebSocket connection to 'wss://dduzbchuswwbefdunfct.supabase.co/realtime/v1/websocket?apikey=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZS",
+    "WebSocket connection to 'wss://dduzbchuswwbefdunfct.supabase.co/realtime/v1/websocket?apikey=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZS"
+  ]
+}
