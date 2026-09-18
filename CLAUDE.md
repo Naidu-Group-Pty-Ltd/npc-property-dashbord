@@ -365,6 +365,34 @@ out somebody who has paid. And **a top-up does not activate a workspace** —
 `seat_plan` and `setup_package` settle the gate, so a $50 credit pack cannot
 open a $2,015/month plan.
 
+**The pay button is decided by what is OWED, never by a reason word.** An
+operator locked a clone by hand and asked where its Stripe button had gone; it
+was gone correctly — `resolveGateState` reads `manual_override` BEFORE
+`paid_at` and `settleGatePayment` never clears it, so paying an
+`operator_locked` gate takes the money and leaves the workspace exactly as
+shut — and four other things were wrong. The rule was
+`reason !== "operator_locked"`, which answers yes to every word this build has
+never heard of, INCLUDING the `unknown` an unreadable body resolves to, so a
+lost signal drew a full-width demand for money; `payingCanUnlock` is an
+ALLOW-list (`grace_expired`, `within_grace`, `no_deadline`) and fails closed,
+and `lockedCopy` stops saying "complete the payment" over a page with no button.
+**A gate on no clock at all had no way to pay anywhere in the product** —
+`shouldWarn` required `counting`, and the banner is the only CTA inside an
+unlocked dashboard. **`verdict.pricingUrl` had zero call sites**, though the
+module's own comment calls it "always a real URL when gated … because a locked
+screen with no way out is worse than no screen". And **paying twice was one
+click away**, because the only guard is Mission Control's `paid_at` and the
+Stripe webhook writes it after the redirect. On Mission Control's side the gate
+quoted `tier.monthlyInclGstCents` — the price WITHOUT the AML module, $2,015
+against Scale's $2,210 headline — which `seatPlanForTier` refuses as a
+`price_mismatch`, so every newly armed gate's button would have died; the
+checkout route did not refuse an `operator_locked` gate; and the operator page
+had no way to send a customer to Stripe at all. **Payment Gates offers a
+payment link now**, minted by `mintGateActivationCheckout` — the same module
+the clone's CTA calls, so the two cannot charge different amounts or refuse on
+different grounds — and it is the one gate act that demands no reason, because
+it writes nothing.
+
 ## Workflow Playground (the automation canvas)
 Read [`docs/workflows/DISPATCH.md`](./docs/workflows/DISPATCH.md) before touching
 the run engine, the trigger-capture triggers or the dispatcher. One engine serves
