@@ -268,9 +268,20 @@ export function renderMarketFacts(facts: MarketFacts): string {
       for (const r of marks) lines.push(`| ${r.label} | ${r.value} | ${r.describes} | ${r.publisher} |`);
     }
     lines.push('');
+    /*
+     * One provenance note per PARAGRAPH, not one per line.
+     *
+     * They were pushed as consecutive lines, which reads correctly on a
+     * terminal and is one paragraph in Markdown — so on the first render of
+     * this block all six of Kellyville's notes ran together into a wall of
+     * text, each publisher, geography and period colliding with the next.
+     * Every consumer of this string is a Markdown renderer.
+     */
     const notes = facts.rows.filter((r) => r.note);
-    for (const r of notes) lines.push(`**${r.label}.** ${r.note}`);
-    if (notes.length) lines.push('');
+    for (const r of notes) {
+      lines.push(`**${r.label}.** ${r.note}`);
+      lines.push('');
+    }
   }
 
   if (facts.evidenceMissing) {

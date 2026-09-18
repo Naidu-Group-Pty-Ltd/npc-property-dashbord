@@ -317,7 +317,11 @@ export function buildSwot(rec: StrategyRecord): Swot {
       const share = Math.abs(diff) / m * 100;
       const side = diff < 0 ? 'below' : 'above';
       (diff < 0 ? o : w).push({
-        claim: `The ${rec.price.label.toLowerCase()} sits ${pct(share, 0)} ${side} the market's median.`,
+        // The label is a noun phrase that can end in a preposition ("…this
+        // analysis is modelled on"), so it is quoted as a subject rather than
+        // run straight into a verb: "The purchase price this analysis is
+        // modelled on sits 18% below" is correct and reads as a mistake.
+        claim: `At ${money(rec.price.value)}, the ${rec.price.basis === 'accepted_input' ? 'figure this analysis is modelled on' : 'price the listing recorded'} is ${pct(share, 0)} ${side} the market's median.`,
         basis: `${money(rec.price.value)} against ${median.value} — ${citeRow(median)}. `
           + 'A median is the middle of what sold across the whole geography and dwelling split named; it does not '
           + 'describe this dwelling, and the difference may be land size, condition, age or position rather than value.',
