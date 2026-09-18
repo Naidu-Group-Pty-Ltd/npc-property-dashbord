@@ -126,16 +126,90 @@ So the HTTP wrapper (`Deno.serve`, `verifyAuth`, `createCorsHeaders`,
 `enforceCsrf`, `requireModulePermission`) was **not** exercised, and is stated
 as such rather than worked around.
 
-## 5. The one operation that needs the owner
+## 5. The credential path, verified (corrects §4 above)
 
-To run the Compass generation and the Briefing/Snapshot condensation for real,
-**one** of the following is required:
+My earlier statement — that the generation and condensation runs are blocked on
+a missing `PERPLEXITY_API_KEY` — was **wrong in two ways**, and both were the
+result of reasoning from my own sandbox rather than from Supabase.
 
-- **(a)** `PERPLEXITY_API_KEY` set as an Edge Function secret on a
-  non-production Supabase project, with `generate-investment-report`,
-  `condense-investment-report` and their callees deployed to it; or
-- **(b)** a **test** Perplexity key supplied to this session **together with**
-  `api.perplexity.ai` added to the sandbox's egress allow-list — both are
-  needed, neither alone is sufficient.
+### 5.1 Both production credentials are configured and working
 
-Everything else in S5 proceeds without it.
+| Path | How it resolves | Provider | Secret | Model | Production evidence |
+|---|---|---|---|---|---|
+| `generate-investment-report` (Compass prose) | direct `fetch` | Perplexity | `PERPLEXITY_API_KEY` | `sonar-pro` | **2,791 successful calls**; 75 in the last 48 h; latest 2026-09-17 09:09:53; last error 2026-09-03 |
+| `condense-investment-report` (Briefing + Snapshot) | `callLLMRaw({ agentKey: 'investment_report_condense' })` → `llmRouter` → route `gateway` | **Lovable AI gateway** | **`LOVABLE_API_KEY`** | `google/gemini-2.5-flash`, fallback `google/gemini-3-flash-preview` | **537 gateway successes in 14 days**, latest **2026-09-18 00:05:08** — minutes before this was written |
+
+**The condensation path never touches Perplexity.** Its provider and model are
+not in code at all: they are rows in `agent_model_assignments`
+(`agent_key = 'investment_report_condense'`, `route = 'gateway'`,
+`is_active = true`, `last_used_at = 2026-09-16 07:23:57`, `last_error` empty).
+"Preserve the configured provider and model choices" therefore means preserving
+that row, not a constant.
+
+No vault mechanism, no workspace integration and no forwarded credential is in
+either path: `llmRouter`'s `callGateway` reads `Deno.env.get('LOVABLE_API_KEY')`
+and the generator reads `Deno.env.get('PERPLEXITY_API_KEY')`, both
+project-level Edge Function secrets.
+
+**There is no credential failure in any environment.** Nothing needs to be
+created, added or rotated.
+
+### 5.2 Status of each environment
+
+| Environment | Perplexity | Lovable gateway | Status |
+|---|---|---|---|
+| Production `dduzbchuswwbefdunfct` | working | working | **configured** |
+| Intended non-production | — | — | **does not exist yet** |
+| Existing branch `yncczbrmicjebjepfave` | unknown | unknown | **inaccessible to current tools** (and not to be repurposed) |
+| This session's sandbox | n/a | n/a | **network-denied**, which is a separate fact from any credential |
+
+Network denial is recorded apart from credential status, and no credential
+anywhere is failing authentication.
+
+### 5.3 What actually blocks a real run, in order
+
+1. **No non-production runtime can be created with these tools.**
+   `create_branch` rejects `confirm_cost_id` as an unrecognised key (a
+   server/schema mismatch — its own published schema requires it) and times out
+   at 60 s without it. Neither attempt produced a resource: `list_branches`
+   still shows only `main` and the unrelated August branch, so **there is
+   nothing to reconcile and no charge**.
+2. **No secret can be set from here.** There is no Supabase secrets tool in
+   this session's toolset, and the CLI reports
+   `LegacyPlatformAuthRequiredError` — no access token.
+3. **No Supabase endpoint can be reached from here.** The gateway answers
+   **403 to CONNECT for `*.supabase.co`** as well as for the provider hosts.
+   The MCP tools work because that server runs outside this sandbox. So even a
+   correctly provisioned, correctly keyed runtime could not be invoked from
+   here over HTTPS.
+
+## 6. The one operation that needs the owner
+
+Everything else is prepared. The single action, and it is one screen:
+
+**Supabase Dashboard → organisation *Naidu Group PTY LTD* (`mrfuwtroeeczontuqwsz`)
+→ project *NPC Property Dashboard* (`dduzbchuswwbefdunfct`) → Branches →
+Create branch, named `s5-validation`.**
+
+Then, on that new branch project only, **Project Settings → Edge Functions →
+Secrets**, add the two names below by copying their values from the same screen
+on production. The values are never shown to me and must not be sent here:
+
+- `PERPLEXITY_API_KEY`
+- `LOVABLE_API_KEY`
+
+Two notes on scope. Nothing on production is changed, added or rotated by this
+— the secrets are *copied out of* production, not written to it. And a branch
+inherits main's migrations, so before it is used the notification jobs must be
+deactivated on the branch (`process-scheduled-emails-every-minute`, the three
+`finance-portal-*` jobs and the seven `market-updates-digest-*` jobs) and the
+four jobs carrying hardcoded production URLs disabled — `agent-planner-run-scheduled`,
+`aml-monitoring-hourly`, `market-qa-subscriptions-run-due` and the fourth in
+that family. They fail closed on an empty vault, but §2's rule applies: not
+relying solely on a credential being absent. I can do that deactivation myself
+through `execute_sql` against the branch the moment it exists, before anything
+is invoked.
+
+If reaching the branch from this session is also wanted, `*.supabase.co` needs
+adding to this sandbox's egress allow-list; otherwise I will drive the branch
+through the MCP tools, which reach it from outside the sandbox.
