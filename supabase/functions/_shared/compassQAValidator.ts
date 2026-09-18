@@ -69,6 +69,10 @@ import {
 } from './reports/investment/evidenceClaims.pure.ts';
 import { findDocumentContradictions } from './reports/investment/documentConsistency.pure.ts';
 import { findFiguresWithoutABasis } from './reports/investment/evidenceClaims.pure.ts';
+import {
+  RISK_REGISTER_CELL_MAX_WORDS,
+  findOverlongRegisterCells,
+} from './reports/investment/riskRegister.pure.ts';
 
 /**
  * The prompt asks for at most 4 `###` a section; this flags at 6+.
@@ -638,6 +642,33 @@ export function runQAValidation(
         + 'needs a traceable dataset or an approved calculation, and a figure states it in a caption: '
         + 'the units, the period, the geography, and the source or the model basis. Where none can be '
         + 'given, say the finding in words rather than drawing it.',
+    });
+  }
+
+  /*
+   * ── 16. A register cell carrying a paragraph ──────────────────────────
+   *
+   * The risk section was declared as four columns, one of them an explanation
+   * and another an instruction, over roughly eight risks inside a 550-word
+   * cap. A grid is the wrong container for two paragraphs, so what printed was
+   * the paragraph-heavy table read off the supplied documents: cells running
+   * to four and five lines, and a reader who has to read across a column
+   * boundary to follow one thought.
+   *
+   * The register is a scan and the detail blocks are the reading now, so a
+   * cell carrying a paragraph is a cell in the wrong container. The cap is the
+   * one `riskRegisterInstruction` states to the model, imported rather than
+   * restated so what is asked for and what is judged cannot become two
+   * standards.
+   */
+  for (const cell of findOverlongRegisterCells(markdown)) {
+    findings.push({
+      rule: 'risk-register-cell-overlong',
+      severity: 'warning',
+      message: `The risk register's "${cell.column}" cell for ${cell.risk || 'a risk'} runs to `
+        + `${cell.words} words (the register's cells hold ${RISK_REGISTER_CELL_MAX_WORDS}). A register `
+        + 'is scanned, not read: put the finding, the evidence, what it means for this purchase and '
+        + 'the next check in a detail block under the table, and leave a phrase in the cell.',
     });
   }
 
