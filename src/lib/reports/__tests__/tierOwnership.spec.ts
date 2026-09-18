@@ -26,9 +26,27 @@
  * its body — four of the five chapters byte-identical to the Financial
  * Analysis Report's. That is exactly the `TIER_FRAMEWORK` Decision E defect in
  * the other direction, and no producer test could see it.
+ *
+ * ## Why the core half runs on SYNTHETIC rows
+ *
+ * This file originally read `.verify/fixtures/` for everything, and that
+ * **failed `verify` in CI at commit `247dd4683`**: those are real production
+ * rows, the directory is gitignored, and the runner has none of it. Skipping
+ * the assertions would leave the rule unguarded on every push, which is where
+ * it matters most; committing the rows would put customer data in the
+ * repository. So the core half builds its own rows
+ * (`fixtures/syntheticTierRows.ts`) — fictional address, round invented
+ * figures, no clock — and every assertion it makes is about STRUCTURE, which
+ * a synthetic row exercises exactly as a real one does.
+ *
+ * The retained production rows are still read, under their own heading at the
+ * foot of this file, and that half SKIPS with a named reason where the
+ * fixtures are absent. The two are never mixed: one proves the rule on every
+ * push, the other proves it holds on real records when someone has them.
  */
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { syntheticRow } from './fixtures/syntheticTierRows';
 import { projectInvestmentReport }
   from '../../../../supabase/functions/_shared/reportBindingProjection.pure';
 import { composeCondensedDocument }
@@ -36,16 +54,24 @@ import { composeCondensedDocument }
 import { markdownHeadingsForTier }
   from '../../../../supabase/functions/_shared/reports/investment/sectionRegistry.pure';
 
-/** The retained set: one real row per tier, all five from production. */
-const FIXTURE: Record<string, string> = {
+/** The core half: synthetic, committed, deterministic. Runs everywhere. */
+const row = syntheticRow;
+
+/**
+ * The replay half: one real row per tier, from production. `.verify/fixtures/`
+ * is gitignored, so this is present only where somebody exported it.
+ */
+const RETAINED: Record<string, string> = {
   compass: '09f8569e-21ca-48b9-a3b9-57f4793d0836',
   financial: 'c21ed1fa-115c-4e8e-8fc3-6b5a0982834f',
   strategic: '2f1f7f6f-d921-4f5c-85ff-36d4ffbdd931',
   briefing: '89b451f6-93d9-4fb5-ba62-c554b1b83e4e',
   snapshot: '8c6edc56-6fce-4613-a3f3-82f3fe3769e2',
 };
-const row = (tier: string): Record<string, unknown> =>
-  JSON.parse(readFileSync(`.verify/fixtures/${FIXTURE[tier]}/report.json`, 'utf8'));
+const retainedPath = (tier: string) => `.verify/fixtures/${RETAINED[tier]}/report.json`;
+const haveRetained = Object.keys(RETAINED).every((t) => existsSync(retainedPath(t)));
+const retainedRow = (tier: string): Record<string, unknown> =>
+  JSON.parse(readFileSync(retainedPath(tier), 'utf8'));
 
 /**
  * The detailed modelling, by binding name. Every one of these is a statement
@@ -194,5 +220,91 @@ describe('the covers and the bodies say the same thing', () => {
     expect(say('strategic')).toMatch(/verified before contract/);
     expect(say('briefing')).toMatch(/condensed for a decision/);
     expect(say('snapshot')).toMatch(/numbers that matter/);
+  });
+});
+
+// ─── the replay half: the same rules, on the retained production rows ──────
+
+/**
+ * Separately identified, and skipped with a reason where the rows are absent.
+ *
+ * `.verify/fixtures/` holds real `investment_reports` rows and is gitignored,
+ * so CI has none and must not fail for want of them. What this half adds over
+ * the synthetic core is the one thing a built row cannot give: confirmation
+ * that the rule holds on records the product actually produced, with all the
+ * shape drift seven months of schema history put into them.
+ *
+ * It asserts the SAME rules rather than new ones. A divergence between the two
+ * halves would mean the synthetic row had stopped representing a real one,
+ * which is the failure this arrangement is most exposed to.
+ */
+describe.skipIf(!haveRetained)('the retained production rows agree (replay)', () => {
+  for (const tier of WITHHOLDING) {
+    it(`${tier}: no modelling binding on a real row either`, () => {
+      const p = projectInvestmentReport(retainedRow(tier)) as any;
+      for (const key of MODELLING_BINDINGS) {
+        expect(p.financials[key], `${tier}.financials.${key}`).toBeUndefined();
+      }
+      expect(Object.keys(p.assumptions)).toEqual([]);
+      expect(p.equitySeries).toEqual([]);
+      expect(p.report.drawsFinancialModelling).toBe(false);
+      // And the identity figures survive, which is what makes the withholding
+      // a separation rather than a blackout.
+      expect(typeof p.financials.purchasePrice).toBe('number');
+      expect(typeof p.financials.weeklyRent).toBe('number');
+    });
+  }
+
+  for (const tier of CARRYING) {
+    it(`${tier}: carries the modelling on a real row too`, () => {
+      const p = projectInvestmentReport(retainedRow(tier)) as any;
+      expect(p.report.drawsFinancialModelling).toBe(true);
+      expect(typeof p.financials.weeklyNet).toBe('number');
+      expect(typeof p.financials.lvr).toBe('number');
+      expect(Object.keys(p.assumptions).length).toBeGreaterThan(0);
+    });
+  }
+
+  it('the synthetic row and the real row publish the SAME binding NAMES', () => {
+    // The guard on the arrangement itself. If a schema change made a real row
+    // publish a namespace the synthetic one does not, the core half would
+    // quietly stop representing production — and this is where that shows.
+    for (const tier of [...WITHHOLDING, ...CARRYING]) {
+      const keys = (r: Record<string, unknown>) =>
+        Object.keys((projectInvestmentReport(r) as any).financials).sort();
+      expect(keys(syntheticRow(tier)), tier).toEqual(keys(retainedRow(tier)));
+    }
+  });
+});
+
+// ─── the guard on the arrangement ─────────────────────────────────────────
+
+describe('a spec that reads retained fixtures says so and skips without them', () => {
+  it('every `.verify/` read in a spec is guarded', async () => {
+    /*
+     * The class this closes, in its own words: `.verify/fixtures/` holds real
+     * production rows and is gitignored, so a spec that reads it unguarded
+     * passes for whoever exported them and fails `verify` for everybody else.
+     * That is what happened at `247dd4683`, and the failure named a file
+     * nobody could add to the repository.
+     *
+     * A spec may still read them — the replay half above does — but it must
+     * check first and skip with a reason, so the run reports "skipped for want
+     * of retained fixtures" rather than an unreadable path.
+     */
+    const { readdirSync, readFileSync, statSync } = await import('node:fs');
+    const walk = (dir: string): string[] => readdirSync(dir).flatMap((e) => {
+      const full = `${dir}/${e}`;
+      if (statSync(full).isDirectory()) return walk(full);
+      return /\.(spec|test)\.tsx?$/.test(e) ? [full] : [];
+    });
+    const offenders = walk('src')
+      .filter((f) => {
+        const src = readFileSync(f, 'utf8');
+        if (!src.includes('.verify/')) return false;
+        // Guarded if it checks the path exists AND gates a suite on it.
+        return !(src.includes('existsSync') && /skipIf|describe\.skip|it\.skip/.test(src));
+      });
+    expect(offenders, 'these read retained fixtures without guarding').toEqual([]);
   });
 });
