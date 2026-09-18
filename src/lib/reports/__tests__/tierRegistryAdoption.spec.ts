@@ -102,7 +102,24 @@ describe('the briefing is trimmed to its own structure', () => {
     'Top 3 Risks', 'Investment Recommendations', 'Market Data Sources',
   ];
 
-  it('declares seventeen headings — nine authored, eight composed and appended', () => {
+  /*
+   * Twelve, not seventeen, from 18 Sep 2026 (S5/S6 §4, `TIER_FRAMEWORK`
+   * Decision F).
+   *
+   * The five that left are the detailed financial chapters. They contradicted
+   * three things this platform already said about the same document:
+   * `TIER_CONTENT.briefing.financialModelling: false`, a projection that
+   * withholds 32 modelling bindings and drops three master pages, and the
+   * companion note the Briefing prints on its own cover — *"the financial
+   * position in the Financial Analysis Report"*. Measured on this very row
+   * (89b451f6) they composed to 3,156 characters over 73 table rows, four of
+   * the five byte-identical to that report's own.
+   *
+   * The two that remain are the ASSESSMENT — the score breakdown and the
+   * SWOT — which is what a Briefing is for, and they are still composed from
+   * the record rather than asked of the model.
+   */
+  it('declares twelve headings — ten authored, two composed and placed', () => {
     const all = markdownHeadingsForTier('briefing');
     const authored = authoredHeadingsForTier('briefing');
     expect(authored).toEqual([
@@ -110,16 +127,21 @@ describe('the briefing is trimmed to its own structure', () => {
       'Property Fit', 'Risk Overview', 'Top 3 Opportunities', 'Top 3 Risks',
       'Recommendation', 'Market Data Sources',
     ]);
-    // The rest are the chapters composed from the record after the model call.
+    expect(all).toHaveLength(12);
+    // The rest are composed from the record after the model call.
     expect(all.filter((h) => !authored.includes(h))).toEqual([
+      'Investment Score Breakdown',
+      'SWOT Analysis',
+    ]);
+    // And the modelling is declared by NO briefing heading, asserted by name
+    // rather than by the count above — a count can be satisfied by a swap.
+    for (const gone of [
       'Purchase Costs & Annual Holding Cost Breakdown',
       'Rental Assessment, Gross Yield & Net Yield',
       'Loan Structure, Repayments & Cashflow Impact',
       'Sensitivity & Scenario Testing',
       '10-Year Cashflow, Equity & Growth Projection',
-      'Investment Score Breakdown',
-      'SWOT Analysis',
-    ]);
+    ]) expect(all, gone).not.toContain(gone);
   });
 
   it('keeps every section a correctly-written briefing carries', () => {

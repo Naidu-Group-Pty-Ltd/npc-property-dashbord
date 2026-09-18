@@ -26,7 +26,7 @@
  * caller that is not an edge function can see what was removed.
  */
 import {
-  composeFinancialChapters, composeFinancialSnapshotSection,
+  composeFinancialSnapshotSection,
 } from './financialChapters.pure.ts';
 import {
   composeScoreBreakdownSection, composeScoreDimensionsSection,
@@ -86,29 +86,23 @@ export function composeCondensedDocument(input: CondenseComposeInput): CondenseC
       condensedContent = result.markdown;
       postProcessReport = result.report;
 
-      // The financial tables, the score breakdown and the SWOT are COMPOSED
-      // from the row's own record, never asked of the model — the guide
-      // forbids it, and the model's version is what wrote 87 N/As on the
-      // newest briefing. The parent's score and calculations were copied
-      // onto this child above, so the composed sections and the templated
-      // KPI tiles read the same record.
+      // The score breakdown and the SWOT are COMPOSED from the row's own
+      // record, never asked of the model — the guide forbids it, and the
+      // model's version is what wrote 87 N/As on the newest briefing. The
+      // parent's score and calculations were copied onto this child above, so
+      // the composed sections and the templated KPI tiles read the same
+      // record.
       //
-      // Each chapter is tagged with the section id the registry places it at.
-      // The map is here rather than in the composer because the composer
-      // answers to the Financial tier's layout and the registry answers to
-      // the Briefing's.
-      const CHAPTER_SECTION_ID: Record<number, ComposedPlacement['id']> = {
-        4: 'purchaseHolding', 5: 'rentalYield', 6: 'loan', 8: 'sensitivity', 9: 'tenYear',
-      };
-      for (const ch of composeFinancialChapters(
-        { financialCalculations: input.financialCalculations, investmentScore: input.investmentScore },
-        { scenarios: 'primary' },
-      )) {
-        // 12 and 14 are the FIN-titled scorecard and SWOT; the briefing
-        // carries them under its own headings below.
-        const id = CHAPTER_SECTION_ID[ch.ordinal];
-        if (id) composedPlacements.push({ id, markdown: ch.markdown });
-      }
+      // The five FINANCIAL chapters used to be composed here too, and are not
+      // any more (S5/S6 §4, 18 Sep 2026). They contradicted the same tier's
+      // `financialModelling: false` — which withholds 32 bindings and drops
+      // three master pages — and the companion note this document prints on
+      // its own cover: *"the financial position in the Financial Analysis
+      // Report"*. Measured, four of the five were byte-identical to that
+      // report's; the whole set was 3,156 characters over 73 table rows
+      // carrying the weekly repayment, total interest and the ten-year
+      // series. The reasoning is recorded once, beside the declaration, in
+      // `sectionRegistry.pure.ts`'s financial-model block.
       const scoreSection = composeScoreBreakdownSection(input.investmentScore, 'Investment Score Breakdown');
       if (scoreSection) composedPlacements.push({ id: 'scorecard', markdown: scoreSection });
       const swotSection = composeSwotSection(input.investmentScore, 'SWOT Analysis');

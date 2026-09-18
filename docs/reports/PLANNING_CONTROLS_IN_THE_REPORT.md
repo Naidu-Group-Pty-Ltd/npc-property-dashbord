@@ -916,3 +916,118 @@ register was unreachable are both absent from it.
 |---|---|
 | `_shared/planning/planningFacts.pure.ts` | `checkedAndNotMapped` extracted and exported; rule 4 narrowed; rule 4a generated from it. |
 | `src/lib/reports/__tests__/checkedAndNotMapped.spec.ts` | 10 assertions. |
+
+---
+
+## 12. One designation, one row — and identity is proven (18 Sep 2026)
+
+S5/S6 §3. Not a new register and not a redesign: the overlap is between two
+reads of **the same MapServer** and it is exact rather than incidental.
+
+### 12.1 The overlap
+
+`PlanningCadastre/StatePlanning/MapServer` is read two ways by this platform:
+
+- `QLD_INSTRUMENT_LAYERS` asks layers **25 / 30 / 35 / 40** one at a time —
+  coordinated projects, infrastructure designations, priority development
+  areas, state development areas — and `parseQldInstrument` reads each layer's
+  own fields (`pda_name`, `pda_status`, `gazetted_date`).
+- `buildQldStatePlanningIdentify` calls `identify` with `layers: all` on the
+  same service, and `classify()` files what comes back as a constraint
+  reading; a priority development area lands under `growthArea` / `context`.
+
+So the four instrument layers answer **both**, and §5's strategic-designation
+block draws the second copy. Executed 18 Sep 2026 against
+`buildInfrastructureEvidence`, one designation produced two rows disagreeing
+on every cell but the name:
+
+| Name | Kind | Status | Reference |
+|---|---|---|---|
+| Maryborough Priority Living Area | Priority development area | Declared | — |
+| Maryborough Priority Living Area | Growth / priority area | Statutory | Wide Bay Burnett Regional Plan |
+
+That is the legacy report's own failure — three copies of one zoning section
+on one lot, disagreeing on every control — reproduced by this platform.
+
+No retained fixture carries `planningData` at all: all seven predate the
+planning wiring, so this class cannot be found by replaying them and was found
+by execution.
+
+### 12.2 Three things prove the register; a fourth can refuse the record
+
+**Publisher + name was the first version of this rule and it is a candidate
+match, not proof.** Two designations can share a name across registers, and —
+worse — the context source was read as `?? 'state planning layers'`, so two
+readings that named **no** source both wore the fallback and looked identical
+to each other. A missing source must never establish identity.
+
+Identity now needs all three of:
+
+1. the context reading **names its own publisher** — no fallback;
+2. it carries the publisher's own `sourceLayer`, and that layer is one of the
+   four in `INSTRUMENT_LAYER_KIND`, mapped to the `kind` the instruments probe
+   would have returned for it. This is the **documented equivalence**: written
+   from `QLD_INSTRUMENT_LAYERS`, with a spec asserting the two agree — a layer
+   added there and not here stops merging rather than starts merging the wrong
+   thing, which is the safe direction;
+3. the two publishers' own names match exactly after trim, case-fold and
+   whitespace collapse. Never token overlap, never edit distance, never a
+   shared word, and never across sources.
+
+**And a layer identifies a COLLECTION, not an individual designation.** Two
+priority development areas are both layer 35 and a name can be reused, so
+those three are a *candidate* and the publisher's own identifiers settle it.
+There are two of them and they identify **different things**:
+
+| Channel | What it identifies | Example |
+|---|---|---|
+| `feature` | this designation's own reference or code | `PDA-MBH`, `DDO1`, `HO544` |
+| `instrument` | the planning instrument it sits **under** | `Wide Bay Burnett Regional Plan` |
+
+Each is judged against its own channel only. Comparing a feature reference
+against an instrument name is the publisher-plus-name mistake one level down —
+two identifiers of different things disagree on every honest pair, and a rule
+built on that comparison would refuse every real merge and restore the
+two-contradicting-rows defect this section exists to close.
+
+Where a channel **both sides published** disagrees, the match is refused
+however well publisher, layer and name line up: these are two records, both
+stand, and each keeps its own reference, source, licence and currency, so a
+reader can see the disagreement and look either up. A channel one side left
+unpublished says nothing and does not refuse.
+
+### 12.3 What the parsers actually publish
+
+Measured against the two reading types on 18 Sep 2026:
+
+| | `feature` | `instrument` |
+|---|---|---|
+| `DevelopmentInstrumentReading` (`parseQldInstrument`, all four kinds) | not emitted | not emitted |
+| `PlanningConstraintReading` | `code` | `instrument` |
+
+So **every real match today is "one side published none", which merges** — the
+negative case cannot arise from production data yet. The guard is written now
+because the change that would otherwise start merging two designations
+silently is either parser growing an identifier, and at that point the guard
+has to already be in place.
+
+### 12.4 A merge has to earn the suppression
+
+Dropping the identify-all row used to drop its facts with it. It now fills the
+surviving layer-specific row wherever that row held **nothing** — reference,
+region, currency date, licence. Nothing already stated is overwritten, and
+**no status word travels**: a designation's standing is not an instrument's,
+and borrowing one would put a plan's `Statutory` in a project's Status column,
+which is the defect §5 already records in the other direction.
+
+Suppression and refusal are both **silent**. A client document does not
+narrate its own production, and a duplicate that was never printed is not
+something a reader lost.
+
+### 12.5 Where it lives
+
+| File | What changed |
+|---|---|
+| `_shared/planning/planningConstraints.pure.ts` | `sourceLayer` added to `PlanningConstraintReading`, populated at all three constructors (`null` on the Victorian WFS path, whose features carry no layer id). |
+| `_shared/planning/infrastructureEvidence.pure.ts` | Rule 10: `INSTRUMENT_LAYER_KIND`, `identityOf`, `identifiersOf` / `identifiersContradict`, and the gap-fill on an accepted match. |
+| `src/lib/reports/__tests__/infrastructureProjectIdentity.spec.ts` | 23 assertions, 12 of them negative. |

@@ -182,3 +182,165 @@ describe('publisher plus name is a candidate match, never identity', () => {
     expect(QLD_INSTRUMENT_LAYERS).toHaveLength(4);
   });
 });
+
+// ─── a layer is a COLLECTION; the publisher's identifiers settle it ────────
+
+/**
+ * S5/S6 §3, 18 Sep 2026: *"a layer identifier identifies a collection, not
+ * necessarily an individual designation. Confirm identity through the
+ * publisher's feature/reference identifier or a documented equivalence. Add
+ * the specific negative case of matching publisher, layer and name but
+ * different instrument references."*
+ *
+ * Two priority development areas are both layer 35. A name can be reused. So
+ * publisher + layer + name is a candidate and the publisher's own identifiers
+ * decide — and there are TWO of them, identifying different things:
+ *
+ *   - `feature` — this designation's own reference or code: `PDA-MBH`, `DDO1`.
+ *   - `instrument` — the planning instrument it sits UNDER: `Wide Bay Burnett
+ *     Regional Plan`.
+ *
+ * Each is judged against its own channel only. Comparing a feature reference
+ * against an instrument name is the publisher-plus-name mistake one level
+ * down: two identifiers of different things disagree on every honest pair,
+ * and a rule built on that comparison would refuse every real merge.
+ *
+ * Measured against the parsers on 18 Sep 2026: `parseQldInstrument` emits
+ * NEITHER identifier on any of its four kinds, and a
+ * `PlanningConstraintReading` carries both — so today every real match is
+ * "one side published none", which merges. The guard is written before either
+ * parser grows an identifier, because that is the change that would otherwise
+ * start merging two designations silently.
+ */
+describe('the publisher\'s own identifiers refuse a match the layer admits', () => {
+  it('matching publisher, layer and name but DIFFERENT feature references stay separate', () => {
+    const ev = build(
+      [instrument('Caboolture West', { reference: 'PDA-CBW-01' })],
+      [context('Caboolture West', { code: 'PDA-CBW-02' })],
+    );
+    expect(ev.items, 'two references that disagree are two records').toHaveLength(2);
+  });
+
+  it('matching publisher, layer and name but DIFFERENT instruments stay separate', () => {
+    const ev = build(
+      [instrument('Caboolture West', { instrument: 'Caboolture West Development Scheme' })],
+      [context('Caboolture West', { instrument: 'South East Queensland Regional Plan' })],
+    );
+    expect(ev.items).toHaveLength(2);
+  });
+
+  it('both rows keep their own provenance and the conflicting detail', () => {
+    const ev = build(
+      [instrument('Caboolture West', {
+        reference: 'PDA-CBW-01', status: 'Declared', gazetted: '2023-12-01',
+      })],
+      [context('Caboolture West', {
+        code: 'PDA-CBW-02', standingLabel: 'Statutory', currencyDate: '2024-06-30',
+        region: 'South East Queensland', instrument: 'SEQ Regional Plan',
+        licence: 'CC BY 4.0',
+      })],
+    );
+    expect(ev.items).toHaveLength(2);
+    const [fromLayer, fromIdentify] = ev.items;
+    // The conflicting identifiers are both on the page, so a reader can look
+    // either up rather than being handed one row that silently ate the other.
+    expect(fromLayer.reference).toBe('PDA-CBW-01');
+    expect(fromIdentify.reference).toBe('SEQ Regional Plan');
+    // Each keeps the standing its own register stated, and neither borrows.
+    expect(fromLayer.statedStatus).toBe('Declared');
+    expect(fromIdentify.statedStatus).toBe('Statutory');
+    expect(fromLayer.dateLabel).toBe('Gazetted');
+    expect(fromIdentify.dateLabel).toBe('Current at');
+    expect(fromIdentify.where).toBe('South East Queensland');
+    // Still silent — a refused merge is not something a client document
+    // narrates either.
+    expect(ev.absences).toEqual([]);
+  });
+
+  it('identifiers that AGREE confirm the match rather than refusing it', () => {
+    const ev = build(
+      [instrument('Caboolture West', { reference: 'PDA-CBW-01' })],
+      [context('Caboolture West', { code: ' pda-cbw-01 ' })],
+    );
+    expect(ev.items, 'case and padding are not a disagreement').toHaveLength(1);
+  });
+
+  it('a channel one side never published says nothing — the ordinary case merges', () => {
+    // What production actually holds: the instruments probe publishes no
+    // identifier at all, the identify row publishes the plan it sits under.
+    const ev = build([instrument('Maryborough Priority Living Area', { reference: null })],
+      [context('Maryborough Priority Living Area')]);
+    expect(ev.items).toHaveLength(1);
+  });
+
+  it('the two channels are never compared across each other', () => {
+    // A feature reference on one side and an instrument name on the other is
+    // the shape production is in TODAY. Read as one channel these two
+    // disagree, and the merge rule 10 exists for would never fire again.
+    const ev = build(
+      [instrument('Maryborough Priority Living Area', { reference: 'PDA-MBH' })],
+      [context('Maryborough Priority Living Area', {
+        code: null, instrument: 'Wide Bay Burnett Regional Plan',
+      })],
+    );
+    expect(ev.items).toHaveLength(1);
+  });
+
+  it('a merge fills the surviving row from the one it suppressed', () => {
+    // The merge has to EARN the suppression: the identify row's plan name,
+    // region, currency and licence are facts the layer read did not carry,
+    // and dropping the row used to drop them with it.
+    const ev = build(
+      [instrument('Maryborough Priority Living Area', {
+        reference: null, gazetted: null, detail: null,
+      })],
+      [context('Maryborough Priority Living Area')],
+    );
+    expect(ev.items).toHaveLength(1);
+    const [only] = ev.items;
+    expect(only.reference).toBe('Wide Bay Burnett Regional Plan');
+    expect(only.where).toBe('Wide Bay Burnett');
+    expect(only.date).toBe('2023-12-01');
+    expect(only.dateLabel).toBe('Current at');
+    expect(only.licence).toBe('CC BY 4.0');
+  });
+
+  it('a fill never overwrites what the layer read already stated', () => {
+    const ev = build(
+      [instrument('Maryborough Priority Living Area', {
+        reference: null, gazetted: '2019-05-17', detail: 'Fraser Coast',
+      })],
+      [context('Maryborough Priority Living Area', { currencyDate: '2023-12-01' })],
+    );
+    expect(ev.items).toHaveLength(1);
+    const [only] = ev.items;
+    // The gazettal is what the layer-specific register published; the
+    // designation's currency date does not replace it.
+    expect(only.date).toBe('2019-05-17');
+    expect(only.dateLabel).toBe('Gazetted');
+    expect(only.where).toBe('Fraser Coast');
+  });
+
+  it('no status word travels — a designation\'s standing is not an instrument\'s', () => {
+    const ev = build(
+      [instrument('Maryborough Priority Living Area', { reference: null, status: null })],
+      [context('Maryborough Priority Living Area', { standingLabel: 'Statutory' })],
+    );
+    expect(ev.items).toHaveLength(1);
+    // An instrument with no published status keeps none. Borrowing the
+    // designation's would put a plan's standing in a project's Status column,
+    // which is the defect rule 10's own comment records.
+    expect(ev.items[0].statedStatus).toBeNull();
+    expect(ev.items[0].standing).toBeNull();
+  });
+
+  it('the channels are written down, not only tested', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(
+      'supabase/functions/_shared/planning/infrastructureEvidence.pure.ts', 'utf8');
+    expect(src).toContain('identifiersContradict');
+    // Judged only where BOTH sides published the channel.
+    expect(src.replace(/\s+/g, ' ')).toContain(
+      'a.feature !== null && b.feature !== null');
+  });
+});

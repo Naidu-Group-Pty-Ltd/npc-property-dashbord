@@ -816,6 +816,31 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
   // The Compass carries none of them — it is the location and property case,
   // and detailed modelling belongs to the Financial tier. That is a rule of the
   // Compass registry too, and both are now pinned to this one.
+  //
+  // **And so does the Briefing, from 18 Sep 2026 (S5/S6 §4).** It carried all
+  // five, and that contradicted three statements this platform already made
+  // about the same document — the sentence directly above, and both halves of
+  // `TIER_CONTENT.briefing`: `financialModelling: false`, which withholds 32
+  // bindings and drops three master pages, and a companion note printed on the
+  // cover reading *"the financial position in the Financial Analysis Report"*.
+  // So the templated pages withheld the modelling, the cover said it was in
+  // another document, and the markdown body then printed it.
+  //
+  // Measured on row 89b451f6 (the retained Briefing) the five composed to
+  // **3,156 characters over 73 table rows**, including the weekly repayment,
+  // total interest over the term, the ten-year value/rent/cashflow/equity/LVR
+  // series and the equity bridge. Four of the five are BYTE-IDENTICAL to the
+  // Financial Analysis Report's; only `tenYear` differs, and only because
+  // `scenarios: 'primary'` drops the alternate cases. That is not a condensed
+  // financial position, it is the Financial report's own chapters inside a
+  // second document — which is the test `TIER_FRAMEWORK` Decision E sets:
+  // a reader could not name this document from its contents page.
+  //
+  // The Briefing keeps the ASSESSMENT — the score breakdown and the SWOT —
+  // because that is what it is for, and the price and indicative rent still
+  // reach it through `identityFigures`. Nothing is lost that is not named on
+  // its own cover. Stored Briefings are untouched: this decides what the next
+  // one contains, never what an issued one said.
   {
     id: 'purchaseHolding',
     canonicalLabel: 'Purchase Costs & Annual Holding Cost Breakdown',
@@ -831,7 +856,6 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     ],
     purpose: 'What it costs to buy and what it costs to hold, per year, from the recorded calculation.',
     tiers: {
-      briefing: { depth: 'required', order: 11, label: 'Purchase Costs & Annual Holding Cost Breakdown', producer: composed(4) },
       financial: { depth: 'required', order: 6, label: 'Purchase Costs & Annual Holding Cost Breakdown', producer: composed(4) },
     },
   },
@@ -845,7 +869,6 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     ],
     purpose: 'Rent, gross yield and net yield after the holding costs above.',
     tiers: {
-      briefing: { depth: 'required', order: 12, label: 'Rental Assessment, Gross Yield & Net Yield', producer: composed(5) },
       financial: { depth: 'required', order: 7, label: 'Rental Assessment, Gross Yield & Net Yield', producer: composed(5) },
     },
   },
@@ -867,7 +890,6 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     ],
     purpose: 'Loan size, LVR, repayments on both structures, and the weekly position that falls out of them.',
     tiers: {
-      briefing: { depth: 'required', order: 13, label: 'Loan Structure, Repayments & Cashflow Impact', producer: composed(6) },
       financial: { depth: 'required', order: 8, label: 'Loan Structure, Repayments & Cashflow Impact', producer: composed(6) },
     },
   },
@@ -886,7 +908,6 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     ],
     purpose: 'What a rate move or a rent move does to the position — the recorded grid, not a re-derivation.',
     tiers: {
-      briefing: { depth: 'required', order: 14, label: 'Sensitivity & Scenario Testing', producer: composed(8) },
       financial: { depth: 'required', order: 10, label: 'Sensitivity & Scenario Testing', producer: composed(8) },
     },
   },
@@ -905,7 +926,6 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     ],
     purpose: 'Value, rent, cashflow and equity year by year under the recorded scenarios.',
     tiers: {
-      briefing: { depth: 'required', order: 15, label: '10-Year Cashflow, Equity & Growth Projection', producer: composed(9) },
       financial: { depth: 'required', order: 11, label: '10-Year Cashflow, Equity & Growth Projection', producer: composed(9) },
     },
   },

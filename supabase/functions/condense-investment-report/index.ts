@@ -42,9 +42,9 @@ const TIER_CONFIG = {
     name: 'Executive Briefing',
     targetPages: 12,
     structureGuide: `
-EXECUTIVE BRIEFING STRUCTURE (~7 pages of prose — financial tables, the
-score breakdown and the SWOT are attached programmatically from the recorded
-calculation AFTER your output; do NOT write them yourself):
+EXECUTIVE BRIEFING STRUCTURE (~7 pages of prose — the score breakdown and the
+SWOT are attached programmatically from the recorded calculation AFTER your
+output; do NOT write them yourself):
 
 ## Executive Summary
 - The verdict and the case for it in 4-6 sentences, condensed from the
@@ -91,10 +91,16 @@ calculation AFTER your output; do NOT write them yourself):
 
 HARD RULES:
 - Do NOT write any financial table (costs, yield, loan, cashflow,
-  sensitivity, projections, LVR) — they are attached from the recorded
-  calculation after your output and anything you write would duplicate or
-  contradict them.
-- Do NOT write an Investment Score Breakdown or SWOT section — same reason.
+  sensitivity, projections, LVR, repayments, the weekly position). This
+  document is the ASSESSMENT condensed for a decision; the financial position
+  belongs to the Financial Analysis Report, which its own cover names, and
+  nothing here attaches one. Writing it would put the modelling in a document
+  that tells its reader the modelling is somewhere else.
+  You MAY refer to the purchase price and the indicative rent, which are
+  facts about the asset and are published on every tier.
+- Do NOT write an Investment Score Breakdown or SWOT section — those two ARE
+  attached from the recorded calculation after your output, and anything you
+  write under those headings would duplicate or contradict them.
 - Include a metric ONLY when its value is stated in the report or the
   recorded figures; NEVER write "N/A", "TBD" or a placeholder — omit the
   row, or the table, entirely.

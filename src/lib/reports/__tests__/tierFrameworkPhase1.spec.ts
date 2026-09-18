@@ -337,7 +337,18 @@ describe('the engines stamp lineage and compose rather than slice', () => {
     expect(condense).not.toContain('Loan Analysis (P&I and Interest-Only)');
     expect(condense).not.toContain('Current Market Performance (Q3/Q4 2025)');
     expect(condense).toContain('attached programmatically');
-    expect(condense).toContain('composeFinancialChapters');
+    /*
+     * `composeFinancialChapters` used to be asserted here. The Briefing no
+     * longer composes the five detailed chapters (S5/S6 §4, 18 Sep 2026;
+     * `TIER_FRAMEWORK` Decision F) — they contradicted the same tier's
+     * `financialModelling: false` and the companion note printed on its own
+     * cover. What this test is actually for is that the guide demands nothing
+     * the parent cannot give, so the two things that remain composed from the
+     * record are asserted instead, and the guide's prohibition with them.
+     */
+    expect(condense).toContain('composeScoreBreakdownSection');
+    expect(condense).toContain('composeSwotSection');
+    expect(condense).toContain('Do NOT write any financial table');
     expect(condense).toContain('trimToDeclaredSections');
     expect(condense).toContain('stripPlaceholderRows');
     const engineStamps = condense.match(/generation_engine: parentReport\.generation_engine \?\? 'legacy'/g);

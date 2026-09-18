@@ -101,6 +101,32 @@
  *    whitespace collapse. Never token overlap, never edit distance, never a
  *    shared word, and never across sources.
  *
+ *    And a layer identifies a COLLECTION, not an individual designation. Two
+ *    priority development areas are both layer 35 and a name can be reused,
+ *    so those three things are a CANDIDATE and the publisher's own
+ *    identifiers settle it. There are two of them and they identify different
+ *    things — a feature's own reference or code (`PDA-MBH`, `DDO1`) and the
+ *    instrument it sits UNDER (`Wide Bay Burnett Regional Plan`) — so each is
+ *    judged against its own channel only, and only where BOTH sides published
+ *    it. Comparing across channels is the publisher-plus-name mistake a level
+ *    down: two identifiers of different things disagree on every honest pair.
+ *
+ *    Where a channel both sides published DISAGREES, the match is refused
+ *    however well publisher, layer and name line up — these are two records
+ *    and both stand, each with its own reference, source, licence and
+ *    currency, so a reader can see the disagreement and look either up. A
+ *    channel one side left unpublished says nothing and does not refuse:
+ *    measured 18 Sep 2026, `parseQldInstrument` emits NEITHER identifier on
+ *    any of its four kinds while a `PlanningConstraintReading` carries both,
+ *    so every real match today is that case. It is exactly there that the
+ *    merge EARNS something: the surviving layer-specific row is filled from
+ *    the suppressed one wherever it held nothing — reference, region,
+ *    currency date, licence — so suppressing a duplicate never costs the
+ *    document a fact. Nothing already stated is overwritten, and no status
+ *    word travels: a designation's standing is not an instrument's. The guard
+ *    is written before either parser publishes an identifier, because that is
+ *    the change that would otherwise merge two designations silently.
+ *
  *    Where identity cannot be proven **the row stands**. A visible duplicate
  *    is a presentation fault; merging two different designations deletes a
  *    real one, and only one of those is recoverable. The layer-specific
@@ -401,8 +427,51 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
     35: 'priority_development_area',
     40: 'state_development_area',
   };
-  /** One instrument reading, keyed by what can actually identify it. */
-  const instrumentIdentities = new Set<string>();
+  /**
+   * The publisher's own identifiers for one reading — the finer question a
+   * layer cannot answer, and the reason they are two fields rather than one.
+   *
+   * A layer id says which REGISTER a feature came out of. Inside that
+   * register a publisher issues up to two identifiers, and they identify
+   * different things: `feature` is this designation's own reference or code
+   * (`PDA-MBH`, `DDO1`, `HO544`), `instrument` is the planning instrument it
+   * sits UNDER (`Wide Bay Burnett Regional Plan`). Comparing one against the
+   * other is the "publisher plus name" mistake a level down — two identifiers
+   * that identify different things will disagree on every honest pair — so
+   * each channel is judged only against its own, and only where both sides
+   * published it.
+   *
+   * Measured 18 Sep 2026: `parseQldInstrument` emits NEITHER on any of its
+   * four kinds, and a `PlanningConstraintReading` carries both. So today
+   * every real match is "one side publishes none", which merges — and the
+   * guard is written now because it has to be in place the moment either
+   * parser starts publishing one.
+   */
+  interface PublisherIdentifiers {
+    feature: string | null;
+    instrument: string | null;
+  }
+  const identifiersOf = (r: Record<string, unknown>): PublisherIdentifiers => ({
+    feature: str(r.reference) ?? str(r.code),
+    instrument: str(r.instrument),
+  });
+  /**
+   * True where two readings' identifiers CONTRADICT — not where they merely
+   * fail to confirm each other. A channel one side left unpublished says
+   * nothing; a channel both published and they disagree says these are two
+   * records, whatever publisher, layer and name say.
+   */
+  const identifiersContradict = (a: PublisherIdentifiers, b: PublisherIdentifiers): boolean =>
+    (a.feature !== null && b.feature !== null && norm(a.feature) !== norm(b.feature))
+    || (a.instrument !== null && b.instrument !== null
+      && norm(a.instrument) !== norm(b.instrument));
+  /**
+   * Each instrument reading, keyed by what can actually identify it and
+   * carrying WHERE it landed in `items` — because a candidate match has to be
+   * able to read that row's own identifiers before refusing or accepting the
+   * merge, and to fill its gaps afterwards.
+   */
+  const instrumentIdentities = new Map<string, { at: number; ids: PublisherIdentifiers }>();
   const identityOf = (source: string, kind: string, name: string): string =>
     `${norm(source)}\u0000${kind}\u0000${norm(name)}`;
 
@@ -417,11 +486,7 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
       if (!name) continue;
       const statedStatus = str(raw.status);
       const instrumentKind = str(raw.kind);
-      // Only a reading that names BOTH its publisher and its kind can be
-      // identified. `source` here is the probe's own, never a fallback.
-      if (str(inst.source) && instrumentKind) {
-        instrumentIdentities.add(identityOf(str(inst.source)!, instrumentKind, name));
-      }
+      const probeSource = str(inst.source);
       items.push({
         name,
         kind: INSTRUMENT_LABEL[str(raw.kind) ?? ''] ?? (str(raw.kind) ?? 'Instrument'),
@@ -442,6 +507,14 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
         licence,
         retrievedAt,
       });
+      // Only a reading that names BOTH its publisher and its kind can be
+      // identified. `probeSource` is the probe's own, never the fallback.
+      if (probeSource && instrumentKind) {
+        instrumentIdentities.set(
+          identityOf(probeSource, instrumentKind, name),
+          { at: items.length - 1, ids: identifiersOf(raw) },
+        );
+      }
     }
   } else if (inst) {
     note('development instruments', inst, 'No state development-instrument reading for this point.');
@@ -504,12 +577,49 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
      * Where identity cannot be proven the row STANDS — a visible duplicate is
      * a presentation fault, and merging two different designations deletes a
      * real one.
+     *
+     * And a fourth thing REFUSES a match the other three admit. A layer
+     * identifies a COLLECTION: two priority development areas are both layer
+     * 35, and a name can be reused. So publisher + layer + name is a
+     * CANDIDATE, and the publisher's own identifiers settle it — each channel
+     * judged against its own (`identifiersContradict`), because a feature
+     * reference and the instrument a designation sits under are two different
+     * identifiers and comparing them across would refuse every honest pair.
+     *
+     * Where a channel both sides published DISAGREES, the two rows stand,
+     * each keeping its own reference, source, licence and currency, so the
+     * reader can see the disagreement and look either up. Where no channel
+     * contradicts, the merge is taken — and then it EARNS something: the
+     * surviving layer-specific row is filled from the suppressed one wherever
+     * it held nothing, so suppressing a duplicate never costs the document a
+     * fact. Nothing already stated is overwritten, and no status word
+     * travels: a designation's standing is not an instrument's.
      */
     const contextSource = str(raw.source);
+    const contextReference = str(raw.instrument);
+    const contextRegion = str(raw.region);
+    const contextCurrency = str(raw.currencyDate);
+    const contextLicence = str(raw.licence);
     const layerKind = typeof raw.sourceLayer === 'number'
       ? INSTRUMENT_LAYER_KIND[raw.sourceLayer] ?? null : null;
-    if (contextSource && layerKind
-      && instrumentIdentities.has(identityOf(contextSource, layerKind, name))) continue;
+    const candidate = contextSource && layerKind
+      ? instrumentIdentities.get(identityOf(contextSource, layerKind, name))
+      : undefined;
+    if (candidate !== undefined
+      && !identifiersContradict(candidate.ids, identifiersOf(raw))) {
+      // Fill, never overwrite.
+      const held = items[candidate.at];
+      if (held.reference === null && contextReference !== null) {
+        held.reference = contextReference;
+      }
+      if (held.where === null && contextRegion !== null) held.where = contextRegion;
+      if (held.date === null && contextCurrency !== null) {
+        held.date = contextCurrency;
+        held.dateLabel = 'Current at';
+      }
+      if (held.licence === null && contextLicence !== null) held.licence = contextLicence;
+      continue;
+    }
     const family = str(raw.family);
     items.push({
       name,
@@ -537,22 +647,22 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
       // one as `approved` would put a plan in the same column as a road under
       // construction.
       standing: null,
-      dateLabel: str(raw.currencyDate) ? 'Current at' : null,
-      date: str(raw.currencyDate),
+      dateLabel: contextCurrency ? 'Current at' : null,
+      date: contextCurrency,
       // The region the register named — a place. It used to be `instrument`,
       // which is a layer or plan name: "Priority Living Area" is not a WHERE,
       // and on the regional-plan row it repeated the project's own name.
-      where: str(raw.region),
+      where: contextRegion,
       // A designation covers an area rather than an address, states no cost,
       // and publishes no delivery date — it says what the area is planned to
       // BECOME, on a horizon nobody has dated.
       address: null,
-      reference: str(raw.instrument),
+      reference: contextReference,
       statedCost: null,
       statedDelivery: null,
       applications: null,
       source: contextSource ?? 'state planning layers',
-      licence: str(raw.licence),
+      licence: contextLicence,
       retrievedAt,
     });
   }
