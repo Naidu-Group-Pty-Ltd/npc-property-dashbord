@@ -471,3 +471,38 @@ release deployed, which is §7's own sequence.
 The Cowra and Mitchell examples the owner supplied were **rechecked rather than
 avoided**: every defect in `EIGHT_SECTION_CORRECTION.md` §3 is measured on those
 two subjects.
+
+### 10.6 The pre-merge record (§7)
+
+Written before the merge, not after it.
+
+| | |
+| --- | --- |
+| **Release candidate** | `5688c488b79f51813a7455e0d30ca8c261c9d853` |
+| **Base at merge** | `9889ece087f4aa109428b48bf43eeabc7f4022bb` on `main` |
+| **Required checks on that exact head** | CI run **6953**, six of six `success`: verify, security, supply-chain, render-container, pdf-import-regression, pdf-import-release-gate. Read on the head being merged, not on an earlier one. |
+| **Rollback** | `git revert -m 1 <merge commit>` on `main`, then re-publish the browser bundle built from `9889ece087f4aa109428b48bf43eeabc7f4022bb`. No migration to unwind. |
+| **Local gates** | full suite 1,285 files / 23,873 tests at the §3 commit; 8,297 report, design and component tests at the head; Deno type-check 413 entry points, 334 errors, baseline 334. |
+
+**Fleet-wide deployment.** `supabase/functions/_shared/**` is shared server
+code and the deploy workflow ships it to **every** project the fleet covers, not
+to one tenant. Eight shared modules change in this release
+(`documentConsistency`, `riskRegister`, `evidenceClaims`, `derivedHygiene`,
+`financialChapters`, `companyBlock`, `issuerIdentity`, `compassQAValidator`
+plus `compassSectionRegistry`), so the correction reaches every deployment at
+once. **Testing with selected properties does not isolate a shared production
+deployment**, and nothing in this release is gated on a property, a tenant or a
+flag. What that means in practice:
+
+- every clone's next generated or forked report carries validator rules 14-16
+  and the labelled weekly-cash row;
+- every clone's reads of stored reports lose empty columns and empty citation
+  brackets — the read-path repair of 10.2, on documents nobody regenerated;
+- a clone that has configured no company name stops printing
+  "Property Consulting" and prints **Aurixa Systems**. A clone that HAS
+  configured one is untouched, which is what `whiteLabelIdentity.spec.ts`
+  asserts over three organisations.
+
+**Customer delivery and notifications stay out of the validation run**: nothing
+in §8's plan publishes to a portal, emails a client or writes
+`client_property_id` / `generated_by`.
