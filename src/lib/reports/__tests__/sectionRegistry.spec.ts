@@ -271,7 +271,7 @@ const STRATEGY: StrategyRecord = {
     countReading: { count: 117, radiusMetres: 1600, label: '117 boarding places within 1.6 km', radiusAssumed: false },
     nearestKm: 0.1, nearestName: 'Windsor Rd Before President Rd',
     sources: ['Transport for NSW Open Data (CC BY 4.0)'],
-    feedLoadedAt: '2026-09-07T05:22:15.603Z',
+    feedLoadedAt: '2026-09-07T05:22:15.603Z', measuredAt: '2026-09-17T08:58:02.529Z',
     notMeasured: ['Mode of transport is not published per stop.'],
   },
   score: {

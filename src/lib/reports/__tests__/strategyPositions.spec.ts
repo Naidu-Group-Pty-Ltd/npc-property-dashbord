@@ -89,6 +89,7 @@ const base = (over: Partial<StrategyRecord> = {}): StrategyRecord => ({
     nearestName: 'Windsor Rd Before President Rd',
     sources: ['Transport for NSW Open Data (CC BY 4.0)'],
     feedLoadedAt: '2026-09-07T05:22:15.603Z',
+    measuredAt: '2026-09-17T08:58:02.529Z',
     notMeasured: ['Mode of transport is not published per stop.'],
   },
   score: SCORE,
@@ -186,7 +187,8 @@ describe('rule 2 — an absence is coverage, never a quadrant entry', () => {
 
   it('never reports a property outside every loaded transport feed as poorly served', () => {
     const rec = base({
-      transport: { source: 'gtfs', verdict: 'outside_loaded_networks', countReading: null, nearestKm: null, nearestName: null, sources: [], feedLoadedAt: null, notMeasured: [] },
+      transport: { source: 'gtfs', verdict: 'outside_loaded_networks', countReading: null, nearestKm: null, nearestName: null, sources: [], feedLoadedAt: null,
+ measuredAt: null, notMeasured: [] },
     });
     const swot = buildSwot(rec);
     const quadrants = JSON.stringify([swot.strengths, swot.weaknesses, swot.opportunities, swot.threats]);
@@ -199,7 +201,8 @@ describe('rule 2 — an absence is coverage, never a quadrant entry', () => {
       market: market([]), finance: null,
       score: { grade: null, total: null, gaps: [], dimensions: [], coverageLabel: null, weightCovered: null, notAssessed: {}, authority: null },
       planning: { zone: null, zoneStatus: null, zoneSource: null, zoneEffectiveDate: null, council: null, verification: null, retrievedAt: null },
-      transport: { source: null, verdict: null, countReading: null, nearestKm: null, nearestName: null, sources: [], feedLoadedAt: null, notMeasured: [] },
+      transport: { source: null, verdict: null, countReading: null, nearestKm: null, nearestName: null, sources: [], feedLoadedAt: null,
+ measuredAt: null, notMeasured: [] },
     });
     const text = composeSwot(bare, 'SWOT');
     expect(text).toContain('a statement about what was examined, not a clearance');

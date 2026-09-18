@@ -86,6 +86,7 @@ import {
   type ScoreAssessmentReading,
 } from '../market/scoreAssessmentReading.pure.ts';
 import type { SubjectPrice } from './subjectPrice.pure.ts';
+import { ENRICHMENT_STAMP } from '../location/locationEnrichmentReuse.pure.ts';
 
 // ─── What the sections rest on ──────────────────────────────────────────────
 
@@ -200,6 +201,17 @@ export interface StrategyTransport {
   sources: string[];
   /** When the contributing feed was last loaded, ISO; null on a legacy row. */
   feedLoadedAt: string | null;
+  /**
+   * When THIS count was taken, ISO — the enrichment's own acquisition stamp,
+   * null on a row that carries none.
+   *
+   * Two different dates, and the reading used to state only the first as
+   * though it were both: the feed behind 18 Annabelle Crescent was loaded
+   * 2026-09-07 and the count was taken 2026-09-17. "The count is as at the
+   * feed's load date" is false of the measurement and true of the data under
+   * it, so both are said, each as what it is.
+   */
+  measuredAt: string | null;
   /** The things the feeds do not publish — carried verbatim. */
   notMeasured: string[];
 }
@@ -386,9 +398,18 @@ function transportBasis(t: StrategyTransport): string {
   if (t.countReading?.radiusAssumed) {
     parts.push('The radius is not recorded on this reading and is taken as the platform default.');
   }
-  parts.push(t.feedLoadedAt
-    ? `The feed was last loaded on ${t.feedLoadedAt.slice(0, 10)}; the count is as at that date.`
-    : 'When the feed behind this count was loaded is not recorded on this reading.');
+  // A feed-load date is not a measurement date. The count was taken when the
+  // enrichment ran; the stop file behind it is current as at the feed's load.
+  // Stating only the load stamp presented the publisher's currency as ours.
+  if (t.measuredAt) {
+    parts.push(t.feedLoadedAt
+      ? `Counted on ${t.measuredAt.slice(0, 10)}, against a stop file last loaded on ${t.feedLoadedAt.slice(0, 10)}.`
+      : `Counted on ${t.measuredAt.slice(0, 10)}. When the stop file behind it was loaded is not recorded on this reading.`);
+  } else {
+    parts.push(t.feedLoadedAt
+      ? `The stop file behind this count was last loaded on ${t.feedLoadedAt.slice(0, 10)}. When the count itself was taken is not recorded on this reading.`
+      : 'Neither the date this count was taken nor the date the stop file behind it was loaded is recorded on this reading.');
+  }
   if (t.nearestName && isNum(t.nearestKm)) {
     parts.push(`Nearest boarding place: ${t.nearestName}, ${t.nearestKm} km straight-line.`);
   }
@@ -1558,6 +1579,9 @@ export function readStrategyRecord(row: StrategyRowInput, opts: StrategyRowOptio
       nearestName: text(transport.nearestStation),
       sources: strings(transport.sources),
       feedLoadedAt: text(transport.feedLoadedAt),
+      // The enrichment's own stamp — when the readings on this row were
+      // taken. Read through ENRICHMENT_STAMP so the key is named once.
+      measuredAt: text(rec(rec(row.locationIntelligence)?.[ENRICHMENT_STAMP])?.acquiredAt),
       notMeasured: strings(transport.notMeasured),
     },
     score: {

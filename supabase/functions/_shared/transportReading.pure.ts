@@ -242,8 +242,11 @@ export function readTransport(
   const notMeasured = [
     'Mode of transport (train, bus, tram, ferry) is not published per stop in the feeds loaded '
     + 'and is not inferred from a stop name.',
-    'Service frequency is not measured: it requires the timetable file, which is 399 MB uncompressed '
-    + 'for the NSW feed alone.',
+    // A file size is not a fact a client needs. What this array holds is read
+    // verbatim into the document, so it says what is not known and why in the
+    // reader's terms; the engineering reason is in this module's header.
+    'Service frequency — how often services run — is not measured: the feeds loaded carry where the '
+    + 'stops are, not the timetable behind them.',
   ];
 
   // One place per station, not one per platform — see `groupToPlaces`. The

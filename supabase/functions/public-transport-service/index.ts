@@ -179,6 +179,11 @@ Deno.serve(async (req) => {
         feeds: reading.feeds,
         sources: reading.sources,
         notMeasured: reading.notMeasured,
+        // The reading's own currency. `readTransport` derives it from the
+        // contributing feeds' `loaded_at`, and it was being computed and then
+        // dropped at this boundary — so every caller received a stop count
+        // with no way to say when the data behind it was current.
+        feedLoadedAt: reading.feedLoadedAt,
       },
     }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 

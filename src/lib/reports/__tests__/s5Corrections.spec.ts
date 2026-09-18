@@ -82,7 +82,7 @@ const rec = (over: Partial<StrategyRecord> = {}): StrategyRecord => ({
     countReading: { count: 117, radiusMetres: 1600, label: '117 boarding places within 1.6 km', radiusAssumed: false },
     nearestKm: 0.1, nearestName: 'Windsor Rd Before President Rd',
     sources: ['Transport for NSW Open Data (CC BY 4.0)'],
-    feedLoadedAt: '2026-09-07T05:22:15.603Z',
+    feedLoadedAt: '2026-09-07T05:22:15.603Z', measuredAt: '2026-09-17T08:58:02.529Z',
     notMeasured: ['Mode is not published per stop.'],
   },
   score: {
@@ -184,14 +184,25 @@ describe('correction 2 — the transport reading states its own radius', () => {
     expect(doc).toContain('117 boarding places within 1.6 km straight-line');
   });
 
-  it('states the source, the radius, the unit, the date and the definition', () => {
+  it('states the source, the radius, the unit, BOTH dates and the definition', () => {
     const doc = composeSwot(rec(), 'SWOT');
     expect(doc).toContain('Transport for NSW Open Data (CC BY 4.0)');
     expect(doc).toContain('1.6 km');
     expect(doc).toContain("straight-line distance from this property's verified coordinate");
     expect(doc).toContain('a station and its platforms counted as one place');
-    expect(doc).toContain('feed was last loaded on 2026-09-07');
+    // A feed-load date is not a measurement date. The count was taken when the
+    // enrichment ran (2026-09-17); the stop file behind it is current as at the
+    // publisher's load (2026-09-07). Stating only the second presented the
+    // publisher's currency as ours.
+    expect(doc).toContain('Counted on 2026-09-17');
+    expect(doc).toContain('against a stop file last loaded on 2026-09-07');
     expect(doc).toContain('does not establish mode, service frequency, walking distance or travel time');
+  });
+
+  it('never presents the feed-load date as the date the count was taken', () => {
+    const doc = composeSwot(rec(), 'SWOT');
+    expect(doc).not.toMatch(/the count is as at that date/i);
+    expect(doc).not.toMatch(/feed was last loaded on 2026-09-07; the count/i);
   });
 
   it('says so where the feed currency is not recorded', () => {
@@ -199,7 +210,7 @@ describe('correction 2 — the transport reading states its own radius', () => {
     const doc = composeSwot(
       { ...r, transport: { ...r.transport, feedLoadedAt: null } }, 'SWOT',
     );
-    expect(doc).toContain('When the feed behind this count was loaded is not recorded');
+    expect(doc).toContain('When the stop file behind it was loaded is not recorded on this reading');
   });
 
   it('never calls a station-only register count public transport access', () => {
@@ -208,7 +219,7 @@ describe('correction 2 — the transport reading states its own radius', () => {
       ...r,
       transport: {
         source: 'osm_amenity_register', verdict: null, countReading: null,
-        nearestKm: null, nearestName: null, sources: [], feedLoadedAt: null, notMeasured: [],
+        nearestKm: null, nearestName: null, sources: [], feedLoadedAt: null, measuredAt: null, notMeasured: [],
       },
     }, 'SWOT');
     expect(doc).toContain('not read from an operator');
