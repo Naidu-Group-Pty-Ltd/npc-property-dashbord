@@ -1,138 +1,104 @@
-# S6 — the release package for the S5 reporting-engine work
+# S6 — the release package
 
 *Prepared 18 September 2026 on `claude/adoring-hopper-g02tdt` (PR
 [#2692](https://github.com/Naidu-Group-Pty-Ltd/npc-property-dashbord/pull/2692),
-draft). The release-candidate head carrying the last code change is
-`2641a86f4`, and its CI is read green in §6. **This stamp is re-checked
-against the PR's final head before merge**, and a release is claimed only
-against a head whose CI has been read green, never one still running.*
+draft). Release-candidate head **`42893f3c139f17e1129afd0bee8a1f1c79b8ccad`**;
+its CI is read green in §6. **The stamp is re-checked against the PR's final
+head before merge** — a release is claimed only against a head whose CI has been
+read green, never one still running.*
 
-Release stays behind the owner's approval gate. This document is the order
-of operations and the rollback, so that approving it is a decision about
-recorded facts rather than a memory of the branch.
+Release stays behind the owner's approval gate. This document is the order of
+operations and the rollback, so approving it is a decision about recorded facts
+rather than a memory of the branch.
+
+> **This document was rewritten on 18 September 2026.** The version it replaces
+> described the five-dimension completion gate, the condition-record evidence
+> path and one additive migration. **All three are out of this release** under
+> S5/S6 §1 and §8. What replaced the gate is in §1 below; where the deferred
+> work went is in §2.
 
 ---
 
-## 1. What ships, by version
+## 1. What ships
 
 | module | version | state |
 | --- | --- | --- |
-| `assessmentCompletion.pure.ts` | 1.1.0 | the five-dimension completion gate's reading; `scored: true` requires a valid 0–100 score, stale in-flight bounded |
-| `scoringV2Production.pure.ts` | `FIVE_DIMENSION_COMPLETION_GATE` (S5/S6 §4) | a completed grade issues only at five valid dimensions; engine figures retained on `v2` |
-| `conditionRecord.pure.ts` | 2.1.0 | the building method — admissibility, binding (expansion never deletion), refusal vocabulary; **not activated** (`CONDITION_METHOD_ACTIVATION` null, test-asserted) |
-| `conditionRecordSubmission.pure.ts` | new | the submission contract: whitelist parse, storability vs admissibility, subject-bound best reading, the named unapplied-table state |
-| `parcelGeometry.pure.ts` | 1.0.0 | the site half — parcel CANDIDATES, parcel-grain identify, the three-way sweep verdict; **no conversion** (`CONVERSIONS` frozen empty, test-asserted) |
-| `riskEvidenceConnection.pure.ts` | 1.0.0 | register aggregation — a partial sweep reads `registers_incomplete`, never "nothing found" |
-| `manage-investment-reports` | +2 actions | `submitConditionRecord` (edit-gated), `getConditionRecords` |
-| `generate-investment-report` / `investment-scoring-service` | wiring | the subject-bound condition reading rides the scoring call as evidence; byte-identical output when absent (test-pinned) |
-| frontend | new panels | `AssessmentCompletionCard`, `ConditionEvidencePanel` in the report view's aside; historical rows render unchanged |
+| `scorePublicationPolicy.pure.ts` | 1.0.0 (new) | when a score and grade may be published, and the score when fewer than five dimensions were assessed (§4, §7) |
+| `proportionalWeighting.pure.ts` | new | the one implementation of §7's arithmetic and of what counts as a valid dimension score |
+| `gradeEligibility.pure.ts` | **3.0.0** (was 2.0.0) | the delivered-points ceiling **removed**; the A/A+ coverage gate now reads evidence QUALITY over the assessed dimensions rather than a figure that mixes quality with dimension count |
+| `scoringV2Production.pure.ts` | 1.1.0 | rebuilt onto `decidePublication`; `requiredDimensions` is `[]`; `SCORE_PUBLICATION_GATE` records the decision |
+| `shadowScorer.pure.ts` | 2.1.0 (unchanged methodology) | composes with the shared leaf; publishes `evidenceQualityCoverage` beside `evidenceCoverage` |
+| `parcelGeometry.pure.ts` | 1.0.0 | retained — parcel CANDIDATES, parcel-grain identify, the three-way sweep verdict; **no conversion** (`CONVERSIONS` frozen empty, test-asserted) |
+| `riskEvidenceConnection.pure.ts` | 1.0.0 | retained — a partial register sweep reads `registers_incomplete`, never "nothing found" |
 
-No score, grade, weight, threshold, cap, CGR figure, financial formula, loan
-treatment or stored row changes anywhere in this set. The one behavioural
-change to issued grades is the completion gate itself, approved in S5/S6 §4.
+**The one behavioural change to issued grades**, and it is the point of the
+release: an assessment on three or four validly scored dimensions now receives
+a **qualified** score and grade, weighted proportionally over those dimensions'
+original weights, instead of being withheld. Below three, nothing is published
+and the report says briefly why.
 
-## 2. Schema dependencies
+No weight, anchor, threshold, cap, CGR figure, financial formula, loan treatment
+or stored row changes anywhere in this set. The qualification travels on
+`coverage.partialLabel` and the recommendation sentence — fields every surface
+already reads — so **no frontend component is added or removed**.
 
-Exactly one migration: **`20261204000000_property_condition_records.sql`** —
-additive (one table, one IMMUTABLE validator function, one trigger, three
-RLS policies; no existing object touched, no backfill).
+## 2. What was deferred, and where it is
 
-- **Merging does NOT apply it.** DDL reaches production only through
-  `apply-migration.yml` on the merged file, as its own explicitly triggered
-  step.
-- **Verified by application, not by reading**: applied verbatim and probed
-  in an isolated PostgreSQL cluster —
-  `docs/reports/evidence/MIGRATION_ISOLATED_TEST_2026-09-18.txt`
-  (the original inline-subquery CHECK reproduced its 0A000 apply-time
-  refusal first; then valid/invalid records, the absent-JSONB-key trap,
-  FK linkage with `ON DELETE SET NULL`, the RLS matrix, no DELETE path,
-  corrections under the trigger). Cluster was PG 16.13 against production's
-  17.4; nothing probed differs between the majors and the difference is in
-  the transcript.
-- **Every reader tolerates its absence.** `getConditionRecords` answers the
-  named `tableApplied: false` state; the panel renders that sentence and no
-  submit button; the generator reads a missing table as no evidence. Proven
-  through the actual screens (`SCREEN_STATES_CONDITION_2026-09-18.json`).
+Under S5/S6 §1. Preserved in full on **`claude/deferred-condition-evidence-s5`**
+(head `b98612546`); nothing in the release branch has to be undone to revive it.
 
-## 3. Deploy order
+`ConditionEvidencePanel`, the condition-entry dialog, `AssessmentCompletionCard`,
+`conditionRecord.pure.ts` and its submission contract (both copies), the
+`submitConditionRecord` / `getConditionRecords` edge operations, the generator
+and scoring wiring, `assessmentCompletion.pure.ts`, the
+`20261204000000_property_condition_records.sql` migration and its
+isolated-cluster harness.
+
+`docs/reports/RISK_METHOD_RECOMMENDATION.md` §0 records which half of that
+recommendation stands and which is deferred.
+
+## 3. Schema dependencies
+
+**None.** There is no migration in this release. The only one this branch ever
+carried left with the deferred work, so `apply-migration.yml` is not part of
+this deploy.
+
+## 4. Deploy order
 
 1. **Owner marks PR #2692 ready and merges** (squash or merge per repo
-   convention — the owner's call; nothing here depends on it).
-2. **Automatic — edge fleet deploy.** `deploy-supabase-functions.yml` runs
-   on push to `main` for `supabase/functions/**`, and because `_shared/`
-   changed it deploys **all 413 functions**, not the handful this PR names.
-   That is the standing behaviour of the workflow, stated so the deploy's
-   size is expected rather than alarming.
-3. **Owner-triggered — apply the migration** via `apply-migration.yml` for
-   `20261204000000_property_condition_records.sql`. Order relative to step 2
-   is safe in either direction: the functions tolerate the missing table
-   (named state), and the table without the functions is inert (nothing
-   writes it). Doing it after step 2 is the tidy order.
-4. **Frontend — published separately through Lovable.** The panels reach
-   users only at this step. The edge API is backwards-compatible with the
-   frontend that is live today: the two new actions are additive, nothing
-   was removed or renamed, and `manage-investment-reports`' existing actions
-   are untouched.
-5. **Nothing else.** No template re-seed, no render-container change, no
-   secret, no cron.
+   convention).
+2. **Automatic — edge fleet deploy.** `deploy-supabase-functions.yml` runs on
+   push to `main` for `supabase/functions/**`, and because `_shared/` changed it
+   deploys **all 413 functions**, not the handful this PR names. That is the
+   workflow's standing behaviour, stated so the deploy's size is expected rather
+   than alarming.
+3. **Frontend — published separately through Lovable.** Nothing in this release
+   requires it: no component was added or removed, and the qualification reaches
+   the existing surfaces through fields they already read. Publishing is
+   therefore optional and can follow at any time.
+4. **Nothing else.** No migration, no template re-seed, no render-container
+   change, no secret, no cron.
 
-## 4. Rollback
+## 5. Rollback
 
-- **Code**: revert the merge commit on `main`; the same workflow redeploys
-  the previous fleet. No data migration is entangled with code behaviour —
-  the completion gate and the evidence paths are code-side.
-- **Migration**: no rollback required or recommended. It is additive and
-  inert without callers; leaving the empty table in place after a code
-  revert breaks nothing. If the owner wants it gone regardless, dropping
-  `public.property_condition_records` and
-  `public.condition_findings_shape_ok(jsonb)` is complete — no other object
-  references them — through the same `apply-migration.yml` path as a new
-  migration, never by hand.
-- **Frontend**: republish the previous Lovable build. The old frontend
-  against the new edge functions is the compatible pair described in step 4.
-
-## 5. Verification standing (implemented / tested / visually verified / released)
-
-| stream | implemented | tested | visually verified | released |
-| --- | --- | --- | --- | --- |
-| Completion gate + score-validity contract | yes | 38 specs | via the completion card screens | no |
-| Condition record method (building) | yes (2.1.0, unactivated) | 38 specs | dialog screens | no |
-| Submission surface + edge operations | yes | 22 specs + screen probe | 28/28 screen checks, screenshots delivered | no |
-| Evidence → scoring (risk gap names what is on file) | yes | pinned byte-identical when absent | n/a (server-side) | no |
-| Site half (parcel candidates, parcel-grain sweep) | yes (1.0.0, no conversion) | 15 specs + live probe | n/a (no surface yet) | no |
-| Migration | prepared, NOT applied | isolated-cluster apply + 30 probes | n/a | no |
-
-**Genuinely remaining, and why:**
-
-- **R1–R12 journey verification in an authorised non-production
-  environment** — the writing steps write to production and generation
-  spends a forwarded vendor credential, so it needs the isolated project
-  and disposable records the execution-route doc describes. The browser
-  environment side is resolved (validation-on TLS measured:
-  `BROWSER_TLS_TRUST_2026-09-18.json`); what remains is the environment to
-  point at.
-- **Ten fresh PDFs (five per validation property) with every page
-  inspected** — depends on the same authorised environment, because
-  generation is a spend and a write.
-- **Approval B (activate the condition conversion)** — deliberately not
-  sought here; first records received are the first evidence the deduction
-  magnitudes are seen against.
-- **Five-of-five demonstrated on Annabelle/Pallas** — requires real
-  condition documents for those properties (the exact record needed is a
-  building inspection report over the whole dwelling, per property), and
-  for Pallas a confirmed lot/plan (two geocodes resolved two different
-  lots; §6a of the recommendation).
+- **Code**: revert the merge commit on `main`; the same workflow redeploys the
+  previous fleet. Nothing is entangled with data — the publication policy is
+  entirely code-side and rewrites no stored row.
+- **Historical results are untouched either way.** A score issued under the
+  previous policy keeps its own stamp; the new policy applies to new generations
+  and regenerations only. Reverting does not un-publish anything, because
+  nothing was republished.
+- **Frontend**: nothing to roll back — no component changed.
 
 ## 6. CI
 
 The claim standard: checks are read on the **exact release-candidate head**
-after the last push, and a check still running is reported as running, never
-as passed.
+after the last push, and a check still running is reported as running, never as
+passed.
 
-**Read 18 September 2026 08:25 UTC on head `2641a86f418b8e2e350015db41d0d94f2c0d65ce`**
-— the last head carrying a code change — all six checks completed
-`success`, and the pull request reports `mergeable_state: clean` (no
-conflict against `main`):
+**Read 18 September 2026 09:53 UTC on head
+`42893f3c139f17e1129afd0bee8a1f1c79b8ccad`** — all six checks completed
+`success`, and the pull request reports `mergeable_state: clean`:
 
 | check | conclusion |
 | --- | --- |
@@ -143,13 +109,49 @@ conflict against `main`):
 | `pdf-import-regression` | success |
 | `pdf-import-release-gate` | success |
 
-One red reading preceded it and is recorded rather than tidied away: on
-head `a93527eb6` the `security` gate failed its per-file Deno baseline with
-`manage-investment-reports: 0 → 1`, because `verifyAuth` types `userId` as
-`string | null` while a stored record's `recorded_by` is its provenance.
-The fix refuses an identity-less submission with 401 rather than
-attributing the record to nobody; `2641a86f4` is that fix.
+## 7. Verification standing
 
-Commits after this one are documentation only, and the head they produce is
-re-read before merge under the same standard — a docs push re-runs CI like
-any other.
+Separately, per output: **implemented / tested / visually verified / released.**
+
+| stream | implemented | tested | visually verified | released |
+| --- | --- | --- | --- | --- |
+| Publication policy (§4, §7) | yes | 30 specs — all 32 availability subsets against the formula, validity, genuine zero, single rounding, monotonicity, adverse dimension | n/a (server-side) | no |
+| Proportional weighting leaf (§7) | yes | pinned by the above + the engine's own suites | n/a | no |
+| Delivered-points ceiling removed (§8) | yes | 3 specs incl. a source-level guard that the input cannot carry it | n/a | no |
+| Growth-required rule removed (§8) | yes | 2 specs; B+ evidence ceiling asserted still binding | n/a | no |
+| Evidence-quality vs count split (§8) | yes | doc-code pin + eligibility specs | n/a | no |
+| Scope correction (§1) | yes | full suite green with the 18 paths removed | n/a | no |
+| Site half retained (parcel candidates, sweep) | yes | 15 specs + live probe | n/a (no surface) | no |
+| Compression investigation (§5) | n/a — analysis | measured by execution against real fixtures | n/a | n/a |
+| Criteria framework (§6) | n/a — analysis | doc-code pin on the anchors it reads | n/a | n/a |
+| Ownership matrix (§9) | n/a — analysis | generated from the registry by execution | n/a | n/a |
+
+**Genuinely remaining, and why — stated rather than implied:**
+
+- **§9 content completion** — planning, zoning and the ten-year infrastructure
+  outlook with attributable evidence; navigation and educational treatment; the
+  targeted template-update inventory. The ownership matrix
+  (`REPORT_OWNERSHIP_MATRIX.md`) establishes the structure is sound; this is the
+  content work on top of it.
+- **§10 — ten PDFs, every page read.** Generation spends a forwarded vendor
+  credential and writes production rows, so it needs the authorised environment
+  and disposable records. A fixture replay through the journey harness is
+  possible today and is **not** the same thing; it will be reported as a
+  retained-data replay if it is what gets run.
+- **The Growth data question** (`SCORE_COMPRESSION_INVESTIGATION.md` §4.1) —
+  whether `market_sales_medians` is populated for the corpus's states. A
+  production read, not a code change, and the single highest-impact item
+  outstanding.
+- **The two disputed anchors** (`SCORE_CRITERIA_AND_CALIBRATION.md` §3) — each
+  needs a published external distribution before it moves, and neither moves
+  until the Growth question above is settled.
+
+## 8. The documents this release is judged against
+
+| document | what it carries |
+| --- | --- |
+| [`SCORE_COMPRESSION_INVESTIGATION.md`](./SCORE_COMPRESSION_INVESTIGATION.md) | §5 — eight hypotheses, each with a verdict; the mechanism derived and checked against real records |
+| [`SCORE_CRITERIA_AND_CALIBRATION.md`](./SCORE_CRITERIA_AND_CALIBRATION.md) | §6 — the band definitions, the shipped anchors read against them, the benchmark each dispute needs |
+| [`REPORT_OWNERSHIP_MATRIX.md`](./REPORT_OWNERSHIP_MATRIX.md) | §9 — which report owns which section, with producers, read by execution |
+| [`SCORING_V2_METHODOLOGY.md`](./SCORING_V2_METHODOLOGY.md) | the method, updated for 3.0.0 and the publication policy, doc-code pinned |
+| [`RISK_METHOD_RECOMMENDATION.md`](./RISK_METHOD_RECOMMENDATION.md) | §0 records what is deferred and what stands |
