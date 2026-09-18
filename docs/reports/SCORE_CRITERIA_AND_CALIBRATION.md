@@ -149,7 +149,14 @@ unassessed and its 0.05 renormalises across the other four. Under the
 publication policy that is a four-of-five qualified assessment covering 95% of
 the matrix, which is an honest description of what was done.
 
-## 3. The two anchor changes this work would make, and why neither is made here
+## 3. The two anchor changes this work considered
+
+> **Concluded 18 September 2026 — see §5.** This section states what a change
+> would have needed; §5 records the benchmark that was sourced, the decision it
+> supports, and what would reopen it. Nothing here is left pending.
+
+### 3.1 What a change needs first
+
 
 | anchor | current | what a change needs first |
 | --- | --- | --- |
@@ -168,7 +175,8 @@ into the anchors — the worst outcome available here, because it would look lik
 it worked and would then be wrong for every report that has Growth.
 
 So: **the data defect is corrected and re-measured first, the benchmarks are
-sourced second, and the anchors move third or not at all.**
+sourced second, and the anchors move third or not at all.** §5 is that second
+step, carried out.
 
 ## 4. What is explicitly not proposed
 
@@ -182,3 +190,102 @@ against a benchmark that is named, and nothing else.
 Dimension weights and component weights stay fixed throughout any comparison,
 so that a measured difference is attributable to the anchor and not to the
 weighting.
+
+---
+
+## 5. The conclusion (18 September 2026)
+
+S5/S6 §4: *"Conclude the calibration work with supported, versioned changes or
+a documented decision to retain existing anchors. Do not leave it indefinitely
+pending or force scores into a preferred range."*
+
+**Decision: both anchors are RETAINED, and the retention is now supported by a
+measurement rather than by a deferral.**
+
+### 5.1 The benchmark that was sourced
+
+§3 said a change needs *"a published Australian gross rental yield
+distribution, with its geography, dwelling type, period, and its own sample
+limitations."* One exists and is reachable at zero cost, and it was measured on
+18 September 2026.
+
+The **NSW Department of Communities and Justice Rent and Sales Report**
+publishes median weekly rents and median sale prices for the same postcodes, in
+two quarterly workbooks, open-licensed. Pairing them gives a gross-yield
+distribution over **398 NSW postcodes** — not a platform sample, a market one.
+Every row is in
+[`evidence/nsw-dcj-gross-yield-distribution-2026Q2.json`](./evidence/nsw-dcj-gross-yield-distribution-2026Q2.json),
+with the workbook, the period and the exclusions recorded beside it.
+
+| | p10 | p25 | **median** | p75 | p90 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| **NSW postcodes, all dwellings** | 2.34% | 2.85% | **3.41%** | 4.01% | 4.64% |
+| the platform's corpus (the current anchor's basis) | — | — | **4.36%** | 5.49% | — |
+
+Four limitations travel with it, and each is why it is a benchmark rather than
+the answer:
+
+- **One state.** New South Wales, not Australia.
+- **All dwellings, because the publisher gives no crosswalk.** The rent
+  workbook's vocabulary is House / Flat-Unit / Townhouse; the sales workbook's
+  is Strata / Non Strata. Pairing *House* with *Non Strata* would be an
+  invention, and inventing a crosswalk between two vocabularies a publisher did
+  not cross is the error `CRIME_SOURCES.md` records for SAPOL's 2025
+  reclassification. So the distribution is computed on `Total ÷ Total`, the one
+  pairing DCJ itself defines on both sides.
+- **Two periods.** Rents are April–June 2026; sales are January–March 2026. The
+  publisher issues them on different cycles.
+- **New lettings, not the stock.** DCJ's rent series is median rent for **new
+  bonds lodged**, which runs above in-place rent.
+
+### 5.2 Why the measurement supports retaining rather than moving
+
+The published median sits **0.95 points below** the corpus median the anchor is
+set at. That is a large gap and it is the reason NOT to move, for two
+independent reasons.
+
+**A single-state median is not a national anchor.** The platform reports on
+properties in every state; this benchmark describes one. Substituting it would
+move every non-NSW property's yield score on evidence about New South Wales,
+which is the same defect as calibrating to a corpus — a sample standing in for
+a population — with a citation attached. §6's rule is that *the platform's own
+sample median must not define "average"*, and a state median is a different
+sample, not a population.
+
+**The two figures are not measuring the same thing.** The corpus is the
+properties this platform has been **asked to report on** — selected investment
+stock, which is why a third of it sits at or above 5%. The DCJ figure is the
+market, including every owner-occupied postcode nobody would buy as an
+investment. A gap in that direction is what you would expect if both numbers
+are right, and closing it by decree would not be calibration.
+
+Moving the anchor down to 3.41% would raise the yield score of every property
+in the book. Moving it in either direction to make grades look better is
+exactly what §4 forbids, and there is no evidence here for the direction, only
+for the fact that two different populations have two different medians.
+
+### 5.3 `WALK_ANCHORS` — retained, and the reason is simpler
+
+§3 asks for *"a published distribution of Australian walk scores for
+residential addresses"*. No such distribution is published by anyone reachable
+at zero cost: the scale is a vendor's own, the vendor publishes no national
+distribution, and nothing in the open-data inventory
+(`ME-6-Z3`) carries one. **There is no benchmark to move to**, so the anchor
+stays where it is and the reason is stated rather than deferred.
+
+### 5.4 What would reopen this
+
+Two things, and both are acquisitions rather than opinions:
+
+1. **A second state's published rent-and-price pair**, so the benchmark stops
+   being one state. Queensland is the obvious candidate — QGSO already loads
+   into `market_sales_medians` — but a matching published median-rent series at
+   the same grain was not found on `data.qld.gov.au` on 18 Sep 2026.
+2. **Growth arriving**, per §3's ordering. `SCORE_COMPRESSION_INVESTIGATION.md`
+   §4 establishes that the dominant cause of clustering is Growth's absence
+   turning a 0.25-weight dimension into 56% of the answer, and any anchor
+   fitted while that holds is fitting an absence.
+
+Until one of those lands, the anchors are what they are, the basis is stated in
+the module's own header, and the benchmark that disagrees with it is on file
+with its limitations — which is a conclusion, not a pending item.
