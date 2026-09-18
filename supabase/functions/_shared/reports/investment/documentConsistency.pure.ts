@@ -115,6 +115,23 @@ function statementLines(markdown: string): string[] {
   return out;
 }
 
+/**
+ * `28860` -> `$28,860`, grouped here rather than by the runtime.
+ *
+ * Deno and Node need not agree on ICU grouping and these strings are asserted
+ * in tests — the rule `measure.pure.ts` records and `investmentSourceOfTruth`
+ * enforces over every canonical module.
+ */
+function money(n: number): string {
+  const whole = String(Math.round(Math.abs(n)));
+  let grouped = '';
+  for (let i = 0; i < whole.length; i++) {
+    if (i > 0 && (whole.length - i) % 3 === 0) grouped += ',';
+    grouped += whole[i];
+  }
+  return `${n < 0 ? '-' : ''}$${grouped}`;
+}
+
 const trim = (s: string) => s.replace(/\s+/g, ' ').trim();
 const clip = (s: string, n = 170) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
@@ -193,7 +210,7 @@ export function findWeeklyCashDisagreements(markdown: string): ConsistencyFindin
     severity: unlabelled.length >= 2 ? 'error' : 'warning',
     message:
       `The document states ${distinct.length} different weekly cash positions `
-      + `(${distinct.map((d) => `$${d.value.toLocaleString('en-AU')}`).join(', ')}). `
+      + `(${distinct.map((d) => money(d.value)).join(', ')}). `
       + 'A weekly figure is the annual cash position divided by 52; two of them means two annual '
       + 'positions, which the engine publishes as one. Bind each section to the same approved '
       + 'financial output, or — where the bases genuinely differ (contractual rent against the '
@@ -263,7 +280,6 @@ export function findLoanBasisContradiction(markdown: string): ConsistencyFinding
     if (!values.length) continue;
     const stated = Math.max(...values);
     const excess = stated - interestOnlyAnnual;
-    const money = (n: number) => `$${Math.round(n).toLocaleString('en-AU')}`;
     return [{
       rule: 'interest-only-repayment-is-amortising',
       severity: 'error',
