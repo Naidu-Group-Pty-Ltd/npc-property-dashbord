@@ -5,16 +5,27 @@
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { buildIndex } from "../../../scripts/build-migration-object-index.mjs";
+import {
+  buildIndex,
+  indexIsCarriedNotAuthored,
+} from "../../../scripts/build-migration-object-index.mjs";
 
 const committed = JSON.parse(readFileSync("supabase/migration-object-index.json", "utf8"));
 
 describe("the committed index matches the migrations it describes", () => {
-  it("regenerating produces exactly what is committed", () => {
-    // The same assertion `npm run migrations:index:check` makes in CI, kept
-    // here too so a local run catches it before the push.
-    expect(buildIndex()).toEqual(committed);
-  });
+  // Skipped where Mission Control owns the backend, by the same
+  // `indexIsCarriedNotAuthored` the CI check reads — one implementation, so a
+  // clone cannot be failed by one of them and excused by the other. Every
+  // other assertion below is about the FILE and stays true wherever it is
+  // carried; this one alone is about THIS repository's migrations.
+  it.skipIf(indexIsCarriedNotAuthored())(
+    "regenerating produces exactly what is committed",
+    () => {
+      // The same assertion `npm run migrations:index:check` makes in CI, kept
+      // here too so a local run catches it before the push.
+      expect(buildIndex()).toEqual(committed);
+    },
+  );
 
   it("carries a schema version, so a consumer can tell an old index apart", () => {
     expect(committed.schema_version).toBe(1);
