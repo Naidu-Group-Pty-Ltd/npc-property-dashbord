@@ -323,6 +323,12 @@ export function createSupabaseDouble(fixtures, opts = {}) {
         return json({ changes: [] });
       case 'mission-control-feedback-prompt':
         return json({ due: false });
+      // Platform notices, mounted by `DashboardLayout` on every dashboard page
+      // and therefore on every report page too. An empty channel is the shape
+      // `parseAnnouncementsPayload` reads and is what a deployment with
+      // nothing published answers; the host then draws nothing.
+      case 'mission-control-announcements':
+        return json({ announcements: [] });
       case 'manage-template-library':
         return json({ success: true, records: [], count: 0 });
       case 'authenticated-data':

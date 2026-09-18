@@ -99,7 +99,7 @@ HARD RULES:
   recorded figures; NEVER write "N/A", "TBD" or a placeholder — omit the
   row, or the table, entirely.
 
-WRITE ONLY THE SECTIONS ABOVE. Do NOT copy the original report's own section
+WRITE ONLY THE SECTIONS ABOVE. Do NOT copy the source material's own section
 headings after them — anything outside this structure is discarded.
 `
   },
@@ -153,7 +153,7 @@ or the score components anywhere else either.
 - Only sources actually cited in the report or the recorded figures; omit
   the section entirely rather than writing "N/A" for a source you do not have
 
-WRITE ONLY THE SECTIONS ABOVE. Do NOT copy the original report's own section
+WRITE ONLY THE SECTIONS ABOVE. Do NOT copy the source material's own section
 headings after them — anything outside this structure is discarded.
 `
   },
@@ -529,18 +529,32 @@ Deno.serve(async (req) => {
       projectInvestmentReport(parentReport as InvestmentReportRowLike, { tier: targetTier }),
     );
 
+    // The block's LABEL is part of the contract. It used to read "ORIGINAL
+    // COMPREHENSIVE REPORT", and the model handed that phrase straight to the
+    // client: row 89b451f6 carries four sentences of the form "N/A (Historical
+    // price growth data not provided in the original report.)" and one of them
+    // reached page 4 of the rendered Briefing as a prose bullet — where the
+    // read-path placeholder scrub correctly cannot go, because prose is never
+    // regex-scrubbed. Banning the TOKEN without naming the permitted form is
+    // how a model routes around a prohibition: denied "N/A" in a cell, it
+    // wrote a sentence narrating the gap instead, and parenthesised the token
+    // inside it. So the source is named as pipeline input, the reader's
+    // single-document position is stated, and the permitted form — omit the
+    // line — is given.
     const userPrompt = `Please condense the following comprehensive investment report into a ${tierConfig.name} format (~${tierConfig.targetPages} pages).
 
 Use the structure template from the system prompt and extract the relevant data from this report:
 
 ---
-ORIGINAL COMPREHENSIVE REPORT:
+SOURCE MATERIAL (pipeline input — the reader has never seen this document):
 ${parentReport.report_content}
 ---
 ${factsBlock ? `\n${factsBlock}\n` : ''}
 IMPORTANT:
-- Copy all numerical values, percentages, and scores EXACTLY — from the RECORDED FIGURES block first, then from the report
+- Copy all numerical values, percentages, and scores EXACTLY — from the RECORDED FIGURES block first, then from the source material
 - Include a metric's table row ONLY when its value is known from those sources; NEVER write "N/A", "TBD" or any placeholder — omit the row entirely
+- The reader is handed exactly ONE document: this one. Never mention the source material, "the original report", "the parent report", "the full report" or what it did or did not contain. "Vacancy rate was not provided in the original report" describes our pipeline, not their property, and names a document they cannot open.
+- Where the source material and the RECORDED FIGURES are both silent on something, OMIT the line, the bullet or the row. Do not write a sentence reporting the gap, and do not put the gap in a heading with nothing under it — a reader who is not told a number has lost nothing.
 - Keep all table data intact
 - Follow the section structure precisely
 - Maintain professional formatting throughout`;
