@@ -26,6 +26,8 @@ import {
   type MarketFacts,
 } from '../../../../supabase/functions/_shared/reports/market/marketFactBlocks.pure';
 import { transportCountReading } from '../../../../supabase/functions/_shared/transportReading.pure';
+import { readScoreAssessment } from '../../../../supabase/functions/_shared/reports/market/scoreAssessmentReading.pure';
+import { ANNABELLE_SCORE } from './fixtures/annabelleScore';
 
 const src = (rel: string) => readFileSync(resolve(__dirname, '../../../../', rel), 'utf8');
 
@@ -48,6 +50,8 @@ const FINANCE: StrategyFinance = {
   interestOnlyYears: 5, interestOnlyAssumed: true,
   capitalGrowth: 6.2, weeklyRent: 850, occupancyWeeks: 52,
 };
+
+const ASSESSMENT = readScoreAssessment(ANNABELLE_SCORE);
 
 const rec = (over: Partial<StrategyRecord> = {}): StrategyRecord => ({
   property: {
@@ -96,7 +100,10 @@ const rec = (over: Partial<StrategyRecord> = {}): StrategyRecord => ({
     coverageLabel: 'Partial score: 3 of 5 dimensions',
     weightCovered: 0.7,
     notAssessed: { risk: 'Not assessed — insufficient verified property-risk evidence is available.' },
-    authority: null,
+    authority: 'v2',
+    // Derived by the reader under test from the production row, exactly as
+    // `readStrategyRecord` derives it in the generator and the fork.
+    assessment: ASSESSMENT,
   },
   ...over,
 });
@@ -244,34 +251,94 @@ describe('correction 3 — every score statement is fully qualified', () => {
     }
   });
 
-  it('names dimension, score, nominal points, delivered points, evidence and inputs', () => {
+  /*
+   * The eight readings the owner's instruction names, over the production row.
+   *
+   * The table this replaced printed the stored `weight` values 57/21/21 as
+   * "nominal points" and `coverage.weightCovered` as a share of the nominal
+   * points. Both are the same mistake — reading a RENORMALISED figure as a
+   * nominal one — and together they hid the fact that the grade was capped.
+   */
+  it('separates the original nominal weight from the adjusted weight', () => {
     const table = composeScoreDimensionTable(rec())!;
-    expect(table).toContain('Capital growth');
-    expect(table).toContain('56 / 100');
-    expect(table).toContain('| 57 |');
-    expect(table).toContain('31.9');
-    expect(table).toContain('Five-year capital growth: 6.2% per annum over five years.');
-    expect(table).toContain('longTerm, relative');
+    expect(table).toContain('| Dimension | Score | Original weight | Adjusted weight |');
+    // Growth: nominal .40 of the method, adjusted to .40 / .70 = 57%.
+    expect(table).toMatch(/\| Capital growth \| 56 \/ 100 \| 40% \| 57% \| 32\.00 \| 22\.40 \|/);
+    // Yield and demand: nominal .15 each, adjusted to .15 / .70 = 21%.
+    expect(table).toMatch(/\| Rental yield \| 23 \/ 100 \| 15% \| 21% \|/);
+    expect(table).toMatch(/\| Demand \| 13 \/ 100 \| 15% \| 21% \|/);
   });
 
-  it('names the calculation owner and the grade treatment', () => {
+  it('draws all five dimensions, never only the ones that scored', () => {
+    const table = composeScoreDimensionTable(rec())!;
+    for (const label of ['Capital growth', 'Location', 'Rental yield', 'Demand', 'Property risk']) {
+      expect(table, `${label} must be on the page`).toContain(`| ${label} |`);
+    }
+    // The unscored two carry their original weight and no contribution.
+    expect(table).toContain('| Location | — | 25% | — (not scored) | — | — |');
+    expect(table).toContain('| Property risk | — | 5% | — (not scored) | — | — |');
+    // The evidence is a list under the table, never a seventh column: the
+    // growth cell on this record is 600 characters and a print column cannot
+    // carry it.
+    expect(table).toContain('**What each dimension rested on.**');
+    expect(table).not.toContain('| What it rested on |');
+  });
+
+  it('states the contributions, the composite and the rounding', () => {
+    const table = composeScoreDimensionTable(rec())!;
+    expect(table).toContain('| 32.00 |');
+    expect(table).toContain('| 4.93 |');
+    expect(table).toContain('| 2.79 |');
+    expect(table).toContain('**Composite score 40.**');
+    expect(table).toContain('39.71');
+    expect(table).toContain('rounds once, on that sum');
+  });
+
+  it('states the uncapped grade, the ceiling and the issued grade separately', () => {
+    const table = composeScoreDimensionTable(rec())!;
+    expect(table).toContain('**Grade the composite alone gives: C.**');
+    expect(table).toContain('**Points delivered 27.80 of 100**');
+    expect(table).toContain('no higher than **F**');
+    expect(table).toContain('**Grade issued: F**');
+    expect(table).toContain('the ceiling binds');
+  });
+
+  it('reports coverage as the share of the ORIGINAL weight that was measured', () => {
+    const table = composeScoreDimensionTable(rec())!;
+    expect(table).toContain('3 of 5 dimensions were scored, carrying 70% of the original weight');
+    // …and names what this record does not retain, rather than substituting
+    // the coarser figure for the finer one.
+    expect(table).toContain('**What this record does not retain.**');
+    expect(table).toContain('Evidence coverage');
+  });
+
+  it('names the calculation owner', () => {
     const table = composeScoreDimensionTable(rec())!;
     expect(table).toContain("this platform's investment scoring service");
-    expect(table).toContain('Partial score: 3 of 5 dimensions');
-    expect(table).toContain('the grade recorded for this report is **F**');
+    expect(table).toContain('No figure in this table is re-derived by this report');
   });
 
-  it('lists an excluded dimension with the engine’s own reason, never as a low score', () => {
+  it('gives an unscored dimension its reason and its remedy, never a low score', () => {
     const table = composeScoreDimensionTable(rec())!;
-    expect(table).toContain('Property risk');
-    expect(table).toContain('— (excluded)');
-    expect(table).toContain('insufficient verified property-risk evidence');
-    expect(table).toContain('is not a low score');
+    expect(table).toContain('Not assessed — insufficient verified property-risk evidence is available.');
+    expect(table).toContain('Answered property-risk questions from the per-class schema');
+    expect(table).toContain('the available location information does not meet the current verification standard');
+    expect(table).toContain('the location service re-acquires the enrichment with its acquisition stamp');
+    expect(table).toContain('A dimension that was not scored is not a low score');
   });
 
-  it('draws no table where the record holds no breakdown', () => {
+  it('never repeats the engine’s internal “could not be measured” about the area', () => {
+    const table = composeScoreDimensionTable(rec())!;
+    expect(
+      table,
+      'the record proves the readings were taken and then removed before persistence',
+    ).not.toContain('No location inputs could be measured for this property');
+  });
+
+  it('draws no table where nothing scored', () => {
     const r = rec();
-    expect(composeScoreDimensionTable({ ...r, score: { ...r.score, dimensions: [] } })).toBeNull();
+    const empty = { ...r, score: { ...r.score, assessment: readScoreAssessment({}) } };
+    expect(composeScoreDimensionTable(empty)).toBeNull();
   });
 
   it('reads the dimensions off the stored breakdown shape', () => {
@@ -319,7 +386,12 @@ describe('correction 5 — a sales count is not liquidity', () => {
     expect(doc).toContain('162 dwellings settled in the latest published quarter');
     expect(doc).toContain('postcode 2155, NSW — houses');
     expect(doc).toContain('not a measure of liquidity');
-    expect(doc).toContain('Days on market, time to sell and buyer depth were not measured');
+    expect(doc).toContain('Days on market, time to sell and buyer depth are not held for this market');
+    // 4d — an absence is about the registers THIS report reads, never about
+    // what any publisher issues. "No publisher issues them" is a claim about
+    // the world that nothing here measured.
+    expect(doc).toContain('The registers this report reads did not return them');
+    expect(doc).not.toMatch(/no publisher (issues|publishes)/i);
   });
 
   it('never calls it buyer depth or a liquidity reading', () => {

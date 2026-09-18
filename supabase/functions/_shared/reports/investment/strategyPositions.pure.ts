@@ -81,6 +81,10 @@
 
 import type { MarketFacts, MarketFactRow } from '../market/marketFactBlocks.pure.ts';
 import type { EvidenceKey } from '../market/marketEvidence.pure.ts';
+import {
+  readScoreAssessment,
+  type ScoreAssessmentReading,
+} from '../market/scoreAssessmentReading.pure.ts';
 import type { SubjectPrice } from './subjectPrice.pure.ts';
 
 // ─── What the sections rest on ──────────────────────────────────────────────
@@ -263,6 +267,16 @@ export interface StrategyScore {
   notAssessed: Record<string, string>;
   /** The engine that calculated it, where the row records one. */
   authority: string | null;
+  /**
+   * The full assessment — original nominal weights, adjusted weights,
+   * contributions, composite, uncapped grade, ceiling and issued grade —
+   * reconstructed by `readScoreAssessment` and passed in by the caller.
+   *
+   * Null where the caller supplied none, and then the table is not drawn: a
+   * partial assessment is how the stored `weight` came to be printed as a
+   * nominal weight and 70% as evidence coverage.
+   */
+  assessment: ScoreAssessmentReading | null;
 }
 
 /** The property's own recorded attributes. */
@@ -641,11 +655,27 @@ export function buildSwot(rec: StrategyRecord): Swot {
   return { strengths: s, weaknesses: w, opportunities: o, threats: t, coverage };
 }
 
+/*
+ * An empty quadrant says WHAT WAS EXAMINED and what it would have taken to
+ * fill it.
+ *
+ * "Nothing reads as a weakness" and "No threat is stated" were both
+ * unqualified: a reader cannot tell whether four registers were searched and
+ * came back clean or whether nothing was searched at all, and the second
+ * reading is a reassurance the record does not support.
+ */
 const QUADRANT_NOTE: Record<keyof Omit<Swot, 'coverage'>, string> = {
-  strengths: 'Nothing the record holds reads as a strength. That is a statement about this record, not a verdict on the property.',
-  weaknesses: 'Nothing the record holds reads as a weakness. That is a statement about this record, not a clearance.',
-  opportunities: 'No opportunity is stated, because none is evidenced. An opportunity nobody measured is a hope.',
-  threats: 'No threat is stated. Every threat below the line would have to come from a register, and the registers read for this property returned none — which is not the same as there being none.',
+  strengths: 'No entry. This quadrant draws only on the market register, the planning layer, the transport feeds '
+    + 'and the recorded financial position; on this record none of them produced a reading that stands on its own '
+    + 'as a strength. Read *What this rests on* below for which of them answered and which did not.',
+  weaknesses: 'No entry. The same four sources feed this quadrant, and none of them produced a reading that stands '
+    + 'on its own as a weakness. That is a statement about what was examined, not a clearance: the sources listed '
+    + 'below are the whole of what was looked at.',
+  opportunities: 'No entry. An opportunity here has to be evidenced by a figure the record holds, and none of the '
+    + 'readings below supports one. Nothing is inferred in its place.',
+  threats: 'No entry. A threat here has to come from a register, a planning layer or the recorded loan; the ones '
+    + 'read for this property are listed below and none returned a finding. Registers that were NOT read are '
+    + 'listed there too — an unread register is not a clean one.',
 };
 
 export function composeSwot(rec: StrategyRecord, heading: string): string {
@@ -689,47 +719,131 @@ export function composeSwot(rec: StrategyRecord, heading: string): string {
  * reason rather than omitted — excluding is a statement, and a table that
  * silently drops two of five rows reads as a complete score.
  */
+/**
+ * Close the join artefacts in a sentence the engine composed, and nothing else.
+ *
+ * `breakdown.growthScore.details` is five measure sentences joined with `. `,
+ * and three of them already end in a full stop — so the production row reads
+ * "…the five-year rate of 6.2% p.a.. Twelve-month movement…". Purely
+ * presentational: no figure, word or clause is altered, and an ellipsis is
+ * left alone.
+ */
+function tidySentences(text: string): string {
+  return text.replace(/([^.])\.\.(?!\.)/g, '$1.');
+}
+
 export function composeScoreDimensionTable(rec: StrategyRecord): string | null {
-  const dims = rec.score.dimensions;
-  if (!dims.length) return null;
-  const lines: string[] = ['### What the investment score measured', ''];
+  const a = rec.score.assessment;
+  if (!a || !a.dimensions.some((d) => d.score !== null)) return null;
+
+  const pctOf = (v: number) => `${Math.round(v * 100)}%`;
+  const lines: string[] = ['### How this grade was reached', ''];
   lines.push(
-    'Each row is one dimension of the score, as the scoring engine recorded it. **Score** is out of 100 for that '
-    + 'dimension; **nominal points** is its share of the score\'s own 100; **delivered** is the first applied to '
-    + 'the second, and the delivered column sums to the total.',
+    'Five dimensions carry the method. Each has an **original weight**; where a dimension could not be scored its '
+    + 'weight is redistributed across the ones that could, giving the **adjusted weight** the composite is built '
+    + 'from. The composite answers *how strong is what we measured*. A second reading — the **points delivered** '
+    + 'at the ORIGINAL weights — answers *how much did the evidence deliver*, and it sets a ceiling the grade may '
+    + 'not exceed. Unmeasured weight discloses and caps; it never lifts.',
     '',
-    '| Dimension | Score | Nominal points | Delivered | What it rested on | Inputs |',
+    '| Dimension | Score | Original weight | Adjusted weight | Contribution | Points delivered |',
     '|---|---|---|---|---|---|',
   );
-  for (const d of dims) {
-    const score = d.excluded || d.score === null ? '—' : `${d.score} / 100`;
-    const delivered = d.excluded || d.deliveredPoints === null ? '—' : d.deliveredPoints.toFixed(1);
-    const nominal = d.excluded ? '— (excluded)' : String(d.nominalPoints);
-    const evidence = d.evidence ?? rec.score.notAssessed[d.key] ?? 'Not recorded.';
-    lines.push(`| ${d.label} | ${score} | ${nominal} | ${delivered} | ${evidence} | ${d.inputs.join(', ') || '—'} |`);
+  for (const d of a.dimensions) {
+    const score = d.score === null ? '—' : `${d.score} / 100`;
+    const adjusted = d.score === null ? '— (not scored)' : pctOf(d.adjustedWeight);
+    const contribution = d.contribution === null ? '—' : d.contribution.toFixed(2);
+    const delivered = d.deliveredPoints === null ? '—' : d.deliveredPoints.toFixed(2);
+    lines.push(`| ${d.label} | ${score} | ${pctOf(d.nominalWeight)} | ${adjusted} | ${contribution} | ${delivered} |`);
   }
   lines.push('');
-  const total = rec.score.total;
-  const parts: string[] = [];
-  if (total !== null) parts.push(`The delivered points total **${total}**`);
-  if (rec.score.grade) parts.push(`and the grade recorded for this report is **${rec.score.grade}**`);
-  else parts.push('and no grade was issued');
+
+  /*
+   * The evidence is a LIST, not a seventh column.
+   *
+   * It was a column, and the growth cell on the first real record is 600
+   * characters — five measures the engine joins into one sentence. Six numeric
+   * columns beside it leave that cell about two centimetres wide on the
+   * printed page, which sets one or two words a line for thirty lines and
+   * takes the numbers with it. `NARRATIVE_PACKING.md`'s rule is that a block is
+   * charged what it will DRAW; a cell nobody can read is the same defect one
+   * level down.
+   *
+   * An unscored dimension carries its reason AND what would restore it: a
+   * reader handed only "not assessed" cannot tell a gap in the record from a
+   * finding about the property, and cannot act on either.
+   */
+  lines.push('**What each dimension rested on.**', '');
+  for (const d of a.dimensions) {
+    const what = d.score === null
+      ? [d.exclusionReason ?? 'Not recorded.', d.exclusionRemedy].filter(Boolean).join(' ')
+      : (d.evidence ?? 'Not recorded.');
+    lines.push(`- **${d.label}.** ${tidySentences(what)}`);
+  }
+  lines.push('');
+
+  // The arithmetic, stated as arithmetic, at the precision the engine used.
+  const steps: string[] = [];
+  if (a.compositeExact !== null && a.compositeScore !== null) {
+    steps.push(
+      `**Composite score ${a.compositeScore}.** The contributions come to ${a.compositeExact.toFixed(2)}, and the `
+      + 'engine rounds once, on that sum. Rounding each contribution first and adding them gives a different '
+      + 'answer, and the adjusted weights the table prints as whole percentages are themselves rounded — the '
+      + 'arithmetic uses the exact fractions.',
+    );
+  }
+  if (a.uncappedGrade) {
+    steps.push(`**Grade the composite alone gives: ${a.uncappedGrade}.**`);
+  }
+  if (a.deliveredPoints !== null && a.nominalCeiling) {
+    steps.push(
+      `**Points delivered ${a.deliveredPoints.toFixed(2)} of 100**, which supports a grade no higher than `
+      + `**${a.nominalCeiling}**. This is the ceiling: the ${pctOf(1 - a.measuredNominalWeight)} of the method that `
+      + 'was not measured contributes nothing toward a better grade.',
+    );
+  }
+  if (a.issuedGrade) {
+    steps.push(a.capped
+      ? `**Grade issued: ${a.issuedGrade}** — the ceiling binds, and the grade is held below what the composite `
+        + 'alone would allow. That is the cap working as designed, not a fault in the property.'
+      : `**Grade issued: ${a.issuedGrade}**, which the composite and the ceiling both support.`);
+  }
+  // Labelled, because an unlabelled bulleted list directly under another one
+  // reads as its continuation — and these are a different KIND of statement:
+  // the list above is evidence, this one is arithmetic.
+  if (steps.length) {
+    lines.push('**How the grade follows.**', '');
+    for (const step of steps) lines.push(`- ${step}`);
+    lines.push('');
+  }
+
   lines.push(
-    `${parts.join(' ')}. Calculated by this platform's investment scoring service`
-    + (rec.score.authority ? ` (${rec.score.authority})` : '')
-    + '; no figure in this table is re-derived by this report.',
+    `**Coverage.** ${a.dimensionsMeasured} of ${a.totalDimensions} dimensions were scored, carrying `
+    + `${pctOf(a.measuredNominalWeight)} of the original weight. A dimension that was not scored is not a low `
+    + 'score, and each one is given its own reason.',
     '',
   );
-  if (rec.score.coverageLabel) {
+  if (a.evidenceCoverage !== null) {
     lines.push(
-      `**${rec.score.coverageLabel}.** A dimension the engine excluded scores nothing and carries no nominal `
-      + 'points — it is not a low score, and the grade is a reading of the dimensions that were measured rather '
-      + 'than of all five.',
+      `**Evidence coverage ${pctOf(a.evidenceCoverage)}.** This is finer than the figure above: it discounts each `
+      + 'scored dimension by how much of its own method actually ran, so a dimension scored on part of its inputs '
+      + 'counts as part of a dimension rather than a whole one.',
       '',
     );
   }
+  if (a.notRetained.length) {
+    lines.push('**What this record does not retain.**', '');
+    for (const n of a.notRetained) lines.push(`- ${n}`);
+    lines.push('');
+  }
+  lines.push(
+    "Calculated by this platform's investment scoring service"
+    + (rec.score.authority ? ` (${rec.score.authority})` : '')
+    + '. No figure in this table is re-derived by this report; the arithmetic above restates the engine\'s own.',
+    '',
+  );
   return lines.join('\n').trimEnd();
 }
+
 
 // ─── 2. Investor suitability ────────────────────────────────────────────────
 
@@ -784,7 +898,7 @@ export function composeSuitability(rec: StrategyRecord, heading: string): string
         basis: `The projection assumes ${f.occupancyWeeks} occupied weeks a year. `
           + (f.occupancyWeeks >= 52
             ? 'That is full occupancy, which is an assumption rather than a measurement — no vacancy figure was '
-              + 'published for this market, so none is applied.'
+              + 'returned for this market by the registers this report reads, so none is applied.'
             : `The remaining ${52 - f.occupancyWeeks} weeks are already allowed for.`),
       });
     }
@@ -1021,15 +1135,21 @@ export function composeExitOutlook(rec: StrategyRecord, heading: string): string
       claim: `${volume.value} dwellings settled in the latest published quarter.`,
       basis: `${citeRow(volume)}. That is a count of completed transactions at the geography and dwelling split `
         + 'named — not at this street, and not a measure of liquidity. **Days on market, time to sell and buyer '
-        + 'depth were not measured for this market**: no publisher in the approved register issues them at this '
-        + 'geography, and nothing here estimates them.',
+        + 'depth are not held for this market.** The registers this report reads did not return them; whether any '
+        + 'publisher issues them at this geography is a separate question this report does not answer. Nothing '
+        + 'here estimates them.',
     });
   }
   if (median?.value) {
     liquidity.push({
       claim: `The market's middle price is ${median.value}.`,
-      basis: `${citeRow(median)}. Half of what sold went for less. A dwelling priced far from the middle is sold to a `
-        + 'narrower pool, in either direction.',
+      // "A dwelling priced far from the middle is sold to a narrower pool"
+      // inferred a buyer pool from a median and a count. Nothing in this
+      // record measures one, which is the liquidity claim this section
+      // already says it cannot make.
+      basis: `${citeRow(median)}. Half of what sold went for less and half for more, across the whole geography and `
+        + 'dwelling split named. How many buyers are active at any particular price is not published at this '
+        + 'geography and is not measured here.',
     });
   }
   if (series?.value) {
@@ -1125,8 +1245,11 @@ export function buildMonitorRows(rec: StrategyRecord): MonitorRow[] {
       register: median.publisher,
       cadence: 'Quarterly, on the publisher\'s own schedule',
       lastRead: `${median.value ?? '—'} — ${median.describes}`,
-      changesIf: 'A median that moves against the recorded trend for two consecutive quarters is the earliest signal '
-        + 'this report\'s growth assumption has stopped describing the market.',
+      // "Two consecutive quarters" and "four quarters" were thresholds
+      // invented in this file. Rule 7 forbids exactly that.
+      changesIf: 'A median that moves away from the recorded trend is the first place a change in this market shows '
+        + 'up. How far, and for how long, before it matters is a judgement for the reader and their adviser — this '
+        + 'report sets no threshold, because none is published.',
     });
   }
   if (g1 && g1 !== median) {
@@ -1135,7 +1258,9 @@ export function buildMonitorRows(rec: StrategyRecord): MonitorRow[] {
       register: g1.publisher,
       cadence: 'Quarterly, from the same series',
       lastRead: g1.value ?? '—',
-      changesIf: 'It is the fastest-moving figure here and the noisiest. One quarter is not a signal; four are.',
+      changesIf: 'The shortest window the register publishes, and therefore the one most affected by how few or how '
+        + 'many dwellings happened to sell. It moves before the longer-run rates do, and it also moves when nothing '
+        + 'has changed.',
     });
   }
   if (rec.planning.zoneStatus === 'stated') {
@@ -1219,10 +1344,15 @@ export function composeMonitoringPlan(rec: StrategyRecord, heading: string): str
     lines.push(`| ${r.what} | ${r.register} | ${r.cadence} | ${r.lastRead} | ${r.changesIf} |`);
   }
   lines.push('');
+  /*
+   * "Follow the slowest thing on the list" was a cadence rule invented here.
+   * The publishers' schedules are facts and are in the table; what to do with
+   * them is the reader's decision.
+   */
   lines.push(
-    'A sensible cadence follows the slowest thing on the list rather than the fastest: the sale-price registers '
-    + 'republish quarterly, so a review more often than that re-reads the same numbers, and one less often than '
-    + 'annually lets two publication cycles pass unexamined.',
+    'Each row states how often its publisher republishes. Re-reading anything more often than its publisher issues '
+    + 'it returns the same figure; how far behind a publication cycle a review may fall is a decision for the '
+    + 'reader and their adviser, and this report does not set one.',
     '',
   );
   return lines.join('\n').trimEnd();
@@ -1447,6 +1577,14 @@ export function readStrategyRecord(row: StrategyRowInput, opts: StrategyRowOptio
       weightCovered: num(rec(score.coverage)?.weightCovered),
       notAssessed: readNotAssessed(score.notAssessed),
       authority: text(rec(score.v2)?.authority),
+      // S5-1 item 1 — derived HERE, from the score this function already
+      // holds, rather than taken as a parameter. A parameter is one a caller
+      // can forget, and a forgotten one takes the whole grade-rationale table
+      // off the page with nothing reporting it — the class of defect
+      // `builderPortalUiMounted.spec.ts` exists for. `readScoreAssessment` is
+      // total: an absent or malformed score yields a reading with no scored
+      // dimension, and the composer draws no table for that.
+      assessment: readScoreAssessment(row.investmentScore),
     },
   };
 }

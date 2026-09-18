@@ -23,6 +23,8 @@ import {
 } from '../investment/strategyPositions.pure';
 import type { MarketFacts, MarketFactRow } from '../../../../supabase/functions/_shared/reports/market/marketFactBlocks.pure';
 import type { SubjectPrice } from '../investment/subjectPrice.pure';
+import { readScoreAssessment } from '../../../../supabase/functions/_shared/reports/market/scoreAssessmentReading.pure';
+import { ANNABELLE_SCORE } from './fixtures/annabelleScore';
 
 const row = (over: Partial<MarketFactRow> & Pick<MarketFactRow, 'key' | 'label' | 'value'>): MarketFactRow => ({
   describes: 'postcode 2155, NSW — houses, 162 sales, 2026-03-31',
@@ -118,7 +120,11 @@ const SCORE: StrategyRecord['score'] = {
     risk: 'Not assessed — insufficient verified property-risk evidence is available.',
     location: 'Not assessed — the available location information does not meet the current verification standard.',
   },
-  authority: null,
+  authority: 'v2',
+  // Built by the reader under test from the production row itself, so the
+  // fixture cannot agree with the composer while the engine disagrees with
+  // both. `readStrategyRecord` derives it the same way in production.
+  assessment: readScoreAssessment(ANNABELLE_SCORE),
 };
 
 describe('the key names are read from the evidence union', () => {
@@ -196,7 +202,7 @@ describe('rule 2 — an absence is coverage, never a quadrant entry', () => {
       transport: { source: null, verdict: null, countReading: null, nearestKm: null, nearestName: null, sources: [], feedLoadedAt: null, notMeasured: [] },
     });
     const text = composeSwot(bare, 'SWOT');
-    expect(text).toContain('not the same as there being none');
+    expect(text).toContain('a statement about what was examined, not a clearance');
     expect(text).not.toMatch(/\bno risks?\b/i);
     expect(text).not.toMatch(/\bclear\b/i);
   });
@@ -219,7 +225,7 @@ describe('rule 3 — the modelling travels only where the tier carries it', () =
     const doc = composeSwot(base({ finance: null }), 'SWOT');
     const hits = doc.match(/2\.97%/g) ?? [];
     expect(hits, 'the allocation permits one gross-yield reference, not several').toHaveLength(1);
-    const table = doc.indexOf('What the investment score measured');
+    const table = doc.indexOf('How this grade was reached');
     expect(table, 'the grade rationale table must be present').toBeGreaterThan(-1);
     expect(doc.indexOf('2.97%')).toBeGreaterThan(table);
   });
