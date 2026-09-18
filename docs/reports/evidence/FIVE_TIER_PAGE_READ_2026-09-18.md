@@ -82,17 +82,54 @@ Feasibility & Financial Performance Report`).
 No ILLEGIBLE, no OFF-PAGE, no OVERLAP, no MOJIBAKE, no BLANK on any tier.
 Page numbering correct on every page that draws it.
 
-### The SPARSE pages are the contents and the dashboard, and they are not defects
+### The SPARSE pages, diagnosed
 
 p2 on the strategic and the financial is the **contents page**: 12 and 11 rows
 on a page sized for about 30, so the band under the last row is half the body.
 Filling it would mean listing subsections, which `listedSectionLevel` exists to
 refuse — a complete list of sections beats a truncated list of sections and
-subsections. p3 is the executive dashboard, a fixed-geometry master. p24 is
-the strategic's disclaimer.
+subsections. p24 is the strategic's disclaimer.
 
-Recorded as measured rather than closed: the threshold is deliberately
-generous and these are the pages it is generous *about*.
+The Compass's two are worth naming exactly, because **both empty bands sit at
+the FOOT of their page, not in the middle** — measured from the text layer, so
+neither is a `closeDroppedBlocks` hole. Each is a short page, and each has a
+different, identified cause.
+
+**p3 (68.3%) is Decision E working.** It is the Verdict master's second sheet,
+which draws a KPI band and a property/detail table: `PURCHASE PRICE` and
+`WEEKLY RENT`, then three rows (`house`, `1 car`, `988 m²`), last ink at
+y=291 of 842. The Snapshot's equivalent page draws the *same* master band with
+`GROSS YIELD`, `WEEKLY POSITION`, loan amount and annual repayment as well, and
+fills. The Compass is shorter because it **correctly withholds the purchase
+modelling** (`TIER_FRAMEWORK.md` Decision E) — the bindings are absent and the
+blocks below them suppressed. Re-laying the Verdict spread for the content the
+Compass actually carries is a template-master question, which is the already
+recorded deferred item on master geometry, not a defect in this release.
+
+**p33 (77.9%) is the packer at its calibration boundary, not a bug.** The
+source is a seven-item list under `Report Limitations`; the packer cut it 4/3
+and the last three items print 105pt of a ~700pt body. Both repair mechanisms
+decline, and both decline *as designed*:
+
+- `stubRoom` makes a cut shorter only while the stub is under
+  `tailMinLines(contBudget)` = `max(4, round(contBudget × 0.2))`. Three list
+  items clear that in the packer's own charge unit, so the cut stands.
+- `balanceTail`'s pull-down loop breaks on `cut.has(foot)` — p32's last block
+  is a piece of this same list, and the rule is explicit that a cut piece is
+  never moved away from its siblings, because it would print as a gap inside
+  one list.
+
+So the guard is stated in **charged lines** and the defect is in **printed
+height**, and for a short-item list those diverge: each item is charged a wrap
+allowance these items do not use. Closing it means either moving
+`TAIL_MIN_FRACTION` or making the guard measure printed height — on a
+subsystem whose charge model was calibrated against the pinned engine across
+the whole corpus, where either change shifts page counts on every report.
+That is a measurement exercise, not a patch, and it is **deliberately not made
+here**: `NARRATIVE_PACKING.md` records what it cost to calibrate once.
+
+Recorded as measured rather than closed. The threshold is deliberately generous
+and these are the pages it is generous *about*.
 
 ### The two TOKEN findings are real, and both are fixed at the producer
 
