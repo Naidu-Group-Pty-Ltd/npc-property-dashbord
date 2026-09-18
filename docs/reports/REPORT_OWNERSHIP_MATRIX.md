@@ -147,3 +147,44 @@ remaining §9 items are about content rather than ownership:
 Items 1 and 2 are measured by the ten-PDF read; items 3 and 4 are changes to
 the production templates and the master page sequences. None of them changes
 which report owns which section, which is what this matrix fixes.
+
+---
+
+## 6. The template-update inventory (§9)
+
+§9 asks for a targeted inventory of template changes, preserving user-created
+templates and overrides. **It is empty, and that is a design property rather
+than an oversight.**
+
+The publication policy changed what a client document *says* about a qualified
+score. It reached every template — the 500 seeded masters, the 43 voice
+templates and every template a user has created or overridden — **without one
+of them being edited**, because the change happened inside values the
+projection already publishes and the masters already bind:
+
+| bound path | before | after |
+| --- | --- | --- |
+| `recommendation.gradedLine` | "Graded B at 62 out of 100, weighted across growth, yield and demand." | "…, weighted across growth, yield and demand **— 3 of the 5 assessment dimensions**." |
+| `recommendation.gradedDetailLine` | the same sentence plus the assessment-page pointer | carries the qualifier too, from the same implementation |
+| `coverage.partialLabel` (verdict section) | "Partial score: 3 of 5 dimensions" | "Qualified score — based on 3 of 5 assessed dimensions (70% of the scoring matrix by its original weights)" |
+| `recommendation` (the verdict sentence) | "…across all metrics" on a 4-of-5 assessment | the breadth claim narrowed to "across the metrics assessed" |
+
+No binding path was added, renamed or removed, so **a template that bound the
+old value binds the new one**, and a user's own template or override cannot be
+left behind by a change it never had to adopt. This is the same rule the
+projection has answered to since RS-3: *the authority is in the projection,
+because that is what every template binds*.
+
+### One judgement worth surfacing
+
+A historical report **re-rendered** now carries the qualification it did not
+carry before. Nothing stored is rewritten — the score, the grade and every
+figure are exactly as issued — and the qualifier is read from
+`coverage.dimensionsScored`, which those records have always carried. The
+alternative would be to suppress a *true* statement about a record's coverage
+on older documents, which would mean a re-rendered report stating its grade
+more confidently than its own evidence supports. That is the defect this
+programme exists to remove, so the disclosure is applied on read.
+
+**This is a change to disclosure, never to a result**, and it is recorded here
+rather than left to be discovered.
