@@ -71,6 +71,11 @@ import {
 import {
   describeSubjectPrice, subjectPriceLine, subjectPriceRules,
 } from '../_shared/reports/investment/subjectPrice.pure.ts';
+import {
+  composeStrategySections,
+  readStrategyRecord,
+  strategySectionRules,
+} from '../_shared/reports/investment/strategyPositions.pure.ts';
 import { readSalesRegister } from '../_shared/reports/market/salesRegisterRead.ts';
 import type { SalesRegisterState } from '../_shared/reports/market/openData/salesRegister.pure.ts';
 import { describeLandArea } from '../_shared/reports/investment/landAreaScope.pure.ts';
@@ -4874,6 +4879,40 @@ Produce a comprehensive statewide investment analysis following the structure ab
       unavailable: marketFacts.unavailable.length,
       evidenceMissing: marketFacts.evidenceMissing,
     });
+    /*
+     * The three strategy sections this document owns, composed rather than
+     * asked for.
+     *
+     * `carriesModelling: false` — the Compass does not carry the analysis of a
+     * purchase (`TIER_FRAMEWORK.md` Decision E), so every entry that would
+     * state a yield, a weekly position, a lending ratio or an equity figure is
+     * simply not produced. The Financial report composes the same sections
+     * from the same module with the modelling on.
+     *
+     * The planning and transport readings come off the objects this run has
+     * already built, not off the row — the row is written after this point.
+     */
+    const compassStrategyRecord = readStrategyRecord(
+      {
+        propertyAddress,
+        propertySpecs,
+        financialCalculations: enhancedData.financials,
+        investmentScore: enhancedData.investmentScore,
+        dataSources,
+        locationIntelligence: measuredLocationIntelligence ?? enhancedData.locationIntelligence,
+      },
+      { market: marketFacts, price: subjectPrice, carriesModelling: false },
+    );
+    const compassStrategySections = composeStrategySections(compassStrategyRecord, [
+      { id: 'exitStrategy', heading: 'Resale Liquidity & Exit Outlook' },
+      { id: 'swot', heading: 'SWOT Analysis' },
+      { id: 'monitoring', heading: 'Monitoring & Review Plan' },
+    ]);
+    const strategySectionsMarkdown = compassStrategySections.map((x) => x.markdown).join('\n\n');
+    const strategyRules = strategySectionRules(compassStrategyRecord);
+    console.log('🧭 Strategy sections composed:', compassStrategySections.map((x) => ({
+      id: x.id, chars: x.markdown.length,
+    })));
     console.log('🏗️ Infrastructure evidence:', {
       items: infrastructure.items.length,
       dwellings: infrastructure.pipelineDwellings?.total ?? null,
@@ -4979,6 +5018,14 @@ Produce a comprehensive statewide investment analysis following the structure ab
       // authority that `limitPromptContext` can cut while its rule survives is
       // §6's defect.
       subjectPriceSectionRules,
+      /*
+       * The strategy sections are composed and appended to the document, so
+       * the model never writes them — but it does write the sections AROUND
+       * them, and a SWOT quadrant restated in the executive verdict with the
+       * provenance dropped is how a composed fact becomes an unsourced claim.
+       * The rules ride the pin for the same reason the market's do.
+       */
+      strategyRules,
       planningCitationRule,
     ].join('\n\n');
     console.log(`📌 Pinned planning/infrastructure/market context: ${pinnedPlanningContext.length} chars`);
@@ -6734,6 +6781,27 @@ YOUR DEDICATED PROPERTY PARTNER
       );
     }
 
+    /*
+     * The strategy sections, on the page, composed.
+     *
+     * Appended for the same two reasons the evidence tables above are. They
+     * are COMPOSED from the record rather than written, so asking a model to
+     * reproduce them is asking for a paraphrase of a quadrant; and landing
+     * after the post-processor means no word cap can trim an entry — and every
+     * entry carries the fact it rests on, so trimming one removes a source
+     * rather than a flourish.
+     *
+     * Property reports only, like the tables: a suburb report has no lot to
+     * state a land size, a zone or a lending ratio about.
+     */
+    if (!isAreaReport && strategySectionsMarkdown.trim()) {
+      reportContent += `\n\n---\n\n${strategySectionsMarkdown}\n`;
+      console.log(
+        `🧭 Appended composed strategy sections (${strategySectionsMarkdown.length} chars, `
+        + `${compassStrategySections.length} sections)`,
+      );
+    }
+
 
     // Extract citations and sources from the response
     const citations = allCitations;
@@ -7125,6 +7193,18 @@ YOUR DEDICATED PROPERTY PARTNER
         calculation_version: '1.0.0',
         data_sources: {
           ...dataSources,
+          /*
+           * What the market registers answered, recorded.
+           *
+           * It was assembled on every run, handed to the scoring service and
+           * to the prose, and stored NOWHERE — so `fork-investment-report`
+           * could not compose a suitability profile or an exit outlook from
+           * the median and the growth the parent had been shown, and no reader
+           * could reconcile a sentence against the figures behind it. Same
+           * shape the generator holds, so `buildMarketFacts` reads it
+           * unchanged at either end.
+           */
+          marketEvidence: enhancedData.marketEvidence || null,
           // Add generation quality metadata
           _generationQuality: qualityMetadata
         },

@@ -36,10 +36,13 @@ import { scoreFinancial, scorePropertyFundamentals } from '../_shared/investment
 import { variantScoreUnderPolicy } from '../_shared/reports/market/variantScorePolicy.pure.ts';
 import { internalError } from '../_shared/errorResponse.ts';
 import { readPropertyFacts } from '../_shared/reports/investment/propertyRecord.pure.ts';
+import { readStrategyRecord } from '../_shared/reports/investment/strategyPositions.pure.ts';
+import { buildMarketFacts } from '../_shared/reports/market/marketFactBlocks.pure.ts';
+import { describeSubjectPrice } from '../_shared/reports/investment/subjectPrice.pure.ts';
 async function loadComposite(supabase: any, id: string) {
   const { data, error } = await supabase
     .from('investment_reports')
-    .select('id, property_address, property_listing_id, client_property_id, canonical_property_key, generated_by, report_content, financial_calculations, demographics_data, economic_data, location_intelligence, property_specs, manual_overrides, status, report_variant, report_tier, sources_content, investment_score, generation_engine, report_scope')
+    .select('id, property_address, property_listing_id, client_property_id, canonical_property_key, generated_by, report_content, financial_calculations, demographics_data, economic_data, location_intelligence, data_sources, property_specs, manual_overrides, status, report_variant, report_tier, sources_content, investment_score, generation_engine, report_scope')
     .eq('id', id)
     .maybeSingle();
   if (error) throw new Error(`Failed to load composite: ${error.message}`);
@@ -349,6 +352,39 @@ Deno.serve(async (req) => {
     // the "Financial Performance Report" came to hold one dollar sign while
     // its own row held the whole model — and they replace any routed prose
     // about the same money. See `forkSplit.pure.ts`.
+    /*
+     * The record the strategy sections are composed from.
+     *
+     * `carriesModelling: true` because this is the Financial report — the
+     * Compass composes the same sections from the same module with `finance`
+     * null, and `TIER_FRAMEWORK.md` Decision E is what makes that one
+     * parameter rather than two implementations.
+     *
+     * The market evidence is read from `data_sources.marketEvidence`, which
+     * the generator records on the row. A parent written before it did carries
+     * none, `buildMarketFacts` answers `evidenceMissing`, and each composer
+     * simply produces the entries that do not need it — which is the honest
+     * outcome and not an empty heading.
+     */
+    const strategyRecord = readStrategyRecord(
+      {
+        propertyAddress: parent.property_address,
+        propertySpecs: parent.property_specs,
+        financialCalculations: parent.financial_calculations,
+        investmentScore: parent.investment_score,
+        dataSources: parent.data_sources,
+        locationIntelligence: parent.location_intelligence,
+      },
+      {
+        market: buildMarketFacts({ marketEvidence: (parent.data_sources as any)?.marketEvidence }),
+        price: describeSubjectPrice({
+          overridePurchasePrice: (parent.manual_overrides as any)?.purchasePrice,
+          listingPrice: (parent.property_specs as any)?.price,
+        }),
+        carriesModelling: true,
+      },
+    );
+
     const docs = composeForkDocuments({
       registry,
       parentContent: parent.report_content || '',
@@ -356,6 +392,7 @@ Deno.serve(async (req) => {
       financialCalculations: parent.financial_calculations,
       financialScore,
       composeFinancial: variants.includes('financial'),
+      strategy: strategyRecord,
       generatedOn: new Date().toISOString(),
     });
     const financialOut = docs.financial;

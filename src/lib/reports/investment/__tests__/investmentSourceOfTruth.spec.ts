@@ -37,7 +37,25 @@ const BRIDGE_SHAPE =
  * like the others here — eleven routes each carried a private copy.
  */
 const ALLOWED_IMPORT =
-  /^(?:\.\/[\w.]+\.pure\.ts|\.\.\/\.\.\/reportDesign\/[\w.]+\.(?:pure|generated)\.ts|\.\.\/(?:text|markdown|vizDirectives|vizFigures|reportDate)\.pure\.ts|\.\.\/\.\.\/(?:reportSplitRegistry|compassPostProcessor)\.ts)$/;
+  /^(?:\.\/[\w.]+\.pure\.ts|\.\.\/\.\.\/reportDesign\/[\w.]+\.(?:pure|generated)\.ts|\.\.\/(?:text|markdown|vizDirectives|vizFigures|reportDate)\.pure\.ts|\.\.\/market\/(?:marketFactBlocks|marketEvidence)\.pure\.ts|\.\.\/\.\.\/(?:reportSplitRegistry|compassPostProcessor)\.ts)$/;
+
+/**
+ * The two market modules a canonical investment module may name, and they may
+ * be named only for their TYPES.
+ *
+ * `strategyPositions.pure.ts` composes the SWOT, the suitability profile and
+ * the rest from the market evidence table the report already carries, so it
+ * has to know that table's row shape and the key union that indexes it. The
+ * alternative was a local copy of both, which is how two shapes come to
+ * disagree — and the key union is exactly what caught four misspelled measure
+ * names on the first render.
+ *
+ * Named individually rather than as `../market/*`, for the reason the note
+ * below gives about `../../*.ts`, and held to `import type` so the dependency
+ * is erased at build time and no runtime edge is created between the two
+ * domains.
+ */
+const TYPE_ONLY_IMPORTS = /^\.\.\/market\//;
 
 /**
  * Two modules next door that are not named `.pure.ts` and are admitted anyway.
@@ -100,6 +118,14 @@ describe('investment report — single source of truth', () => {
         .filter((spec) => !/\s/.test(spec));
       for (const spec of imports) {
         expect(spec, `${file} imports "${spec}"`).toMatch(ALLOWED_IMPORT);
+      }
+    });
+
+    it('imports the market domain for its types alone', () => {
+      const statements = [...source.matchAll(/(?:^|\n)\s*import\s+(type\s+)?[^;]*?from '([^']+)'/g)];
+      for (const [, typeOnly, spec] of statements) {
+        if (!TYPE_ONLY_IMPORTS.test(spec)) continue;
+        expect(typeOnly, `${file} imports "${spec}" for a value — market types only`).toBeTruthy();
       }
     });
 

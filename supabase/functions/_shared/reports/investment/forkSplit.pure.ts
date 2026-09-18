@@ -38,6 +38,11 @@ import {
   composeFinancialChapters,
   type ComposedChapter,
 } from './financialChapters.pure.ts';
+import {
+  composeStrategySections,
+  type StrategyRecord,
+  type StrategySection,
+} from './strategyPositions.pure.ts';
 import { dropEmptySections, stripPlaceholderRows } from './derivedHygiene.pure.ts';
 import { scrubBlocks } from './blockHygiene.pure.ts';
 import { stripEditorialLabelsFromMarkdown } from '../../compassPostProcessor.ts';
@@ -307,6 +312,18 @@ function renderVariantMarkdown(
 }
 
 
+/**
+ * The loaded registry's own wording for a FIN section, found by prefix.
+ *
+ * By prefix because the registry is overridable from `report_engine_config`
+ * and an operator may have reworded a heading; a lookup on the in-code literal
+ * would then silently drop the section. The prefix is the part the two
+ * spellings share.
+ */
+function finHeading(registry: LoadedSplitRegistry, prefix: string): string {
+  return registry.finSectionOrder.find((e) => e.heading.startsWith(prefix))?.heading ?? prefix;
+}
+
 /** What one fork variant came out as, with what the hygiene pass removed. */
 export interface ForkVariantOutput {
   markdown: string;
@@ -343,6 +360,17 @@ export function composeForkDocuments(input: {
   financialScore: unknown;
   composeFinancial: boolean;
   /**
+   * The record the strategy sections are composed from, or null where the
+   * caller could not build one (a parent with no market evidence recorded, or
+   * a Due-Diligence-only fork).
+   *
+   * Composed here rather than routed, for the reason the financial chapters
+   * are: a Compass parent carries no suitability, holding or exit prose to
+   * slice, so routing them produced three empty headings for as long as they
+   * were declared `optional` and nothing noticed.
+   */
+  strategy?: StrategyRecord | null;
+  /**
    * The date the document prints as its own.
    *
    * Required rather than defaulted: a module here may not read the clock
@@ -370,7 +398,30 @@ export function composeForkDocuments(input: {
       { scenarios: 'all' },
     )
     : [];
-  const mergedFinancial = mergeComposedChapters(routedFinancialSections, composedChapters);
+  /*
+   * The three strategy sections the Financial report owns, at the FIN ordinals
+   * the split registry gives them. `composeStrategySections` takes the heading
+   * from here rather than deciding it, because the label belongs to the
+   * registry — the Compass calls the exit section "Resale Liquidity & Exit
+   * Outlook" and this document calls it "Resale Liquidity & Exit Strategy".
+   */
+  const strategySections: ComposedChapter[] = input.composeFinancial && input.strategy
+    ? composeStrategySections(input.strategy, [
+      { id: 'exitStrategy', heading: finHeading(input.registry, 'Resale Liquidity') },
+      { id: 'suitability', heading: finHeading(input.registry, 'Investor Suitability Profile') },
+      { id: 'holdingStrategy', heading: finHeading(input.registry, 'Holding Strategy') },
+    ]).flatMap((section: StrategySection) => {
+      const entry = input.registry.finSectionOrder.find((e) => e.heading === section.heading);
+      // A heading the loaded order does not carry has no place to sort to, so
+      // it is left out rather than appended at an ordinal nothing agreed.
+      return entry ? [{ ordinal: entry.ordinal, heading: section.heading, markdown: section.markdown }] : [];
+    })
+    : [];
+
+  const mergedFinancial = mergeComposedChapters(
+    routedFinancialSections,
+    [...composedChapters, ...strategySections],
+  );
 
   const financial = finaliseVariantMarkdown(
     renderVariantMarkdown(input.registry, 'financial', input.propertyAddress, mergedFinancial.sections, generatedOn),
@@ -383,7 +434,7 @@ export function composeForkDocuments(input: {
     financial: { ...financial, sections: mergedFinancial.sections.length },
     dueDiligence: { ...dueDiligence, sections: dueDiligenceSections.length },
     replacedByComposedChapters: mergedFinancial.replaced,
-    composedChapters: composedChapters.map((c) => c.heading),
+    composedChapters: [...composedChapters, ...strategySections].map((c) => c.heading),
     compositeSections: sections.length,
   };
 }
