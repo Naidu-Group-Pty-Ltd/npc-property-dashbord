@@ -68,6 +68,9 @@ import { openDataSalesPoints, salesRegisterSourcesFor } from '../_shared/reports
 import {
   buildMarketFacts, marketFactRules, renderMarketFacts,
 } from '../_shared/reports/market/marketFactBlocks.pure.ts';
+import {
+  describeSubjectPrice, subjectPriceLine, subjectPriceRules,
+} from '../_shared/reports/investment/subjectPrice.pure.ts';
 import { readSalesRegister } from '../_shared/reports/market/salesRegisterRead.ts';
 import type { SalesRegisterState } from '../_shared/reports/market/openData/salesRegister.pure.ts';
 import { describeLandArea } from '../_shared/reports/investment/landAreaScope.pure.ts';
@@ -4835,6 +4838,32 @@ Produce a comprehensive statewide investment analysis following the structure ab
      * Exactly the shape of the planning defect: the service answered, the
      * answer was stored, and the section that needed it read none of it.
      */
+    /*
+     * Which price, and whose.
+     *
+     * `effectivePurchasePrice` is
+     * `mergedOverrides.purchasePrice || propertyDetails?.price || 0` and the
+     * prompt labelled it "**Asking price:**" on either rung. On 18 Annabelle
+     * Crescent the first rung answers — an adviser's accepted $1,490,000, the
+     * figure `initialCosts.propertyValue` models, `loanAmount` is 80% of and
+     * `keyMetrics.lvr: 80` agrees with — so an accepted modelling input was
+     * handed to the model as the market's asking price. The model then wrote a
+     * "price guide around $1.55m" that appears in no field of the record,
+     * contradicts the accepted input by $60,000, and became the Executive
+     * Verdict's central claim when compared against an unsourced median.
+     *
+     * Nothing here changes WHICH figure is used — that figure carries the
+     * loan, the LVR, every projection and the Cash Flow. What changes is that
+     * it is named by the rung it came from, and that no second price may be
+     * supplied beside it.
+     */
+    const subjectPrice = describeSubjectPrice({
+      overridePurchasePrice: mergedOverrides.purchasePrice,
+      listingPrice: propertyDetails?.price,
+    });
+    const subjectPriceSectionRules = subjectPriceRules(subjectPrice);
+    console.log('💲 Subject price:', { basis: subjectPrice.basis, value: subjectPrice.value });
+
     const marketFacts = buildMarketFacts({ marketEvidence: enhancedData.marketEvidence });
     const marketTable = renderMarketFacts(marketFacts);
     const marketSectionRules = marketFactRules(marketFacts);
@@ -4945,6 +4974,11 @@ Produce a comprehensive statewide investment analysis following the structure ab
       '# Market Evidence — the figures retrieved for this market',
       marketTable,
       marketSectionRules,
+      // The subject's own price rides the same pin as the market's figures,
+      // for the same reason: it is the authority for a number, and an
+      // authority that `limitPromptContext` can cut while its rule survives is
+      // §6's defect.
+      subjectPriceSectionRules,
       planningCitationRule,
     ].join('\n\n');
     console.log(`📌 Pinned planning/infrastructure/market context: ${pinnedPlanningContext.length} chars`);
@@ -5137,7 +5171,7 @@ ${crimeStatBlocks(enhancedData)}
 
 ## What is offered, and what it rents for
 
-${effectivePurchasePrice ? `**Asking price:** $${effectivePurchasePrice.toLocaleString()}` : '**Asking price:** not recorded.'}
+${subjectPriceLine(subjectPrice)}
 
 ${rentalEvidence.established && quotedWeeklyRent
   ? `**Indicative weekly rent:** $${quotedWeeklyRent} a week (${rentalEvidence.source}).`
