@@ -498,6 +498,66 @@ export function runQAValidation(
     }
   }
 
+  /*
+   * 13. A listing portal is not a source.
+   *
+   * Measured 18 Sep 2026 on 48 Redfern Street, read out of the rendered PDFs:
+   * four bracketed inline citations per document, THREE of them naming
+   * `Property.com.au` — and one of those three is the sentence
+   *
+   *   "…multiple nearby addresses on the street recording no bushfire, flood
+   *    or heritage overlays on public mapping at the time they were last
+   *    updated.[Property.com.au, 119, 120, 137 and 139 Redfern Street
+   *    profiles, 2024-2026]"
+   *
+   * which is the exact sentence `planningFacts.pure.ts` forbids by name:
+   * "never write that no overlay applies, that the property is not heritage
+   * listed, or that it is not flood or bushfire affected on the authority of
+   * a listing portal". The rule reached the model and NOTHING read the
+   * document to see whether it was obeyed — the gap section 10.3 of
+   * `PLANNING_CONTROLS_IN_THE_REPORT.md` already named for a different rule
+   * and closed with rule 12.
+   *
+   * It is also how one bad sentence becomes three documents: the fork routes
+   * the parent's prose, so the Compass, the Financial Analysis and the Due
+   * Diligence all carry it.
+   *
+   * The detector is deliberately narrow, because a false caveat teaches people
+   * to dismiss the warning. It matches a named listing portal only, and says
+   * separately when the sentence around it also asserts an absence, because
+   * those are two different severities of the same mistake. It REPORTS and
+   * never scrubs: prose is never regex-scrubbed, on read or on write.
+   */
+  const PORTALS = /(property\.com\.au|realestate\.com\.au|domain\.com\.au|allhomes\.com\.au|onthehouse\.com\.au)/i;
+  const HAZARD_ABSENCE =
+    /\b(no|not|free from|without|nil)\b[^.]{0,80}\b(overlay|overlays|heritage[- ]listed|flood|bushfire|bush fire|landslip|acid sulfate|contamination)\b/i;
+  const bracketed = markdown.match(/\[[^\]\n]{4,160}\]/g) ?? [];
+  const portalCitations = bracketed.filter((b) => PORTALS.test(b));
+  if (portalCitations.length) {
+    const named = [...new Set(portalCitations.map((b) => (PORTALS.exec(b) ?? [''])[0].toLowerCase()))];
+    findings.push({
+      rule: 'listing-portal-as-source',
+      severity: 'error',
+      message: `${portalCitations.length} inline citation${portalCitations.length === 1 ? '' : 's'} name a property `
+        + `listing portal (${named.join(', ')}). A listing site is not a retrieval: it is not an entry in the `
+        + 'planning register, it is not a licensed market source, and a client cannot look a claim up in it. '
+        + 'Name the register that answered, or omit the claim.',
+    });
+    // The severe case: an absence asserted on that authority.
+    const sentences = markdown.split(/(?<=[.!?])\s+/);
+    const absences = sentences.filter((s) => PORTALS.test(s) && HAZARD_ABSENCE.test(s));
+    if (absences.length) {
+      findings.push({
+        rule: 'portal-sourced-hazard-absence',
+        severity: 'error',
+        message: `${absences.length} sentence${absences.length === 1 ? '' : 's'} state that an overlay or hazard `
+          + 'does NOT apply, on a listing portal\u2019s authority. This is the sentence `planningFacts.pure.ts` '
+          + 'forbids by name. A register that was asked and matched nothing is the only absence this report may '
+          + 'repeat, and it is stated as "Checked and not mapped at this coordinate", naming the register.',
+      });
+    }
+  }
+
   const passed = findings.every((f) => f.severity !== 'error');
   return { tier, estimatedPages, wordCount, passed, findings };
 }
