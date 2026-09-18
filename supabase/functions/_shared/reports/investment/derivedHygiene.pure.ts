@@ -221,12 +221,88 @@ export function dropEmptySections(markdown: string): EmptySectionResult {
  * untouched, byte for byte, so a clean report's packing, charges and goldens
  * are exactly what they were.
  */
+/**
+ * A cell that reports OUR gap rather than a finding about the property.
+ *
+ * Measured in the S6 acceptance run, 18 Sep 2026, on two issued documents:
+ *
+ *     {{glance: ✓ Matches workaday local demand | ✓ Functional over flashy
+ *              | ⚠ Exact bed/bath/car details not provided
+ *              | ★ Best for practical occupiers}}
+ *     {{glance: ✓ Established township amenity
+ *              | ⚠ Exact facility distances not provided | …}}
+ *
+ * `compassDocumentContract` forbids this by name and quotes the first string
+ * verbatim — *"which a client reads as a defect in the house rather than a gap
+ * in our file"* — and that rule reaches the MODEL. It does nothing for a
+ * document already stored, and both of these were written before it existed.
+ * §8 of `RUNTIME_CONSOLIDATION.md` is the precedent: the scrub runs where
+ * stored content is READ.
+ *
+ * `stripPlaceholderRows` could not see them because they are neither a table
+ * row nor a bullet — they are cells inside a `{{glance:}}` payload, which the
+ * renderer draws as a strip.
+ *
+ * **The rule is narrow on purpose.** A gap phrase alone is not enough: "⚠ NBN
+ * not available" is a finding ABOUT THE PROPERTY, and dropping it would remove
+ * real evidence. The cell must also name an INFORMATION noun — details, data,
+ * figures, distances, a breakdown — which is what makes it a statement about
+ * the record rather than about the house.
+ */
+const GAP_PHRASE = /\b(?:not (?:provided|available|stated|specified|disclosed|supplied|recorded)|no data|unavailable)\b/i;
+const INFORMATION_NOUN =
+  /\b(?:details?|data|figures?|information|distances?|breakdowns?|dimensions?|specifications?|specs|measurements?|records?)\b/i;
+
+const isOwnGapCell = (cell: string): boolean =>
+  GAP_PHRASE.test(cell) && INFORMATION_NOUN.test(cell);
+
+export interface GlanceScrubResult {
+  markdown: string;
+  /** Every cell removed, verbatim, so the caller can say what went. */
+  removedCells: string[];
+  /** Directives dropped entirely because every cell was a gap. */
+  removedDirectives: number;
+}
+
+/**
+ * Remove a gap cell from every at-a-glance strip, keeping the strip.
+ *
+ * The contract's own words: *"three cells that each carry a finding is a
+ * complete strip, and a fourth reporting our own gap is not."* So the CELL
+ * goes and the strip stays — and a strip left with no cells at all is dropped,
+ * because an empty directive draws nothing anyway.
+ *
+ * A document with no gap cell is returned byte for byte.
+ */
+export function stripOwnGapCells(markdown: string): GlanceScrubResult {
+  const removedCells: string[] = [];
+  let removedDirectives = 0;
+  const out = markdown.replace(/\{\{(glance|tiles|chips)\s*:([^}]*)\}\}/gi, (whole, kind: string, body: string) => {
+    const cells = body.split('|').map((c) => c.trim()).filter(Boolean);
+    if (!cells.some(isOwnGapCell)) return whole;
+    const kept = cells.filter((c) => {
+      if (!isOwnGapCell(c)) return true;
+      removedCells.push(c);
+      return false;
+    });
+    if (!kept.length) { removedDirectives += 1; return ''; }
+    return `{{${kind}: ${kept.join(' | ')}}}`;
+  });
+  return removedCells.length === 0
+    ? { markdown, removedCells, removedDirectives: 0 }
+    : { markdown: out.replace(/\n{3,}/g, '\n\n'), removedCells, removedDirectives };
+}
+
 export function presentStoredMarkdown(markdown: string | null | undefined): string {
   if (!markdown) return '';
   const r = stripPlaceholderRows(markdown);
   const scrubbed = r.removedRows + r.removedTables + r.removedLines + r.blankedCells === 0 ? markdown : r.markdown;
-  const sections = dropEmptySections(scrubbed);
-  return sections.dropped.length === 0 ? scrubbed : sections.markdown;
+  // A gap cell inside an at-a-glance strip is the same defect one layer down,
+  // and `stripPlaceholderRows` cannot see it — it is neither a row nor a
+  // bullet. Found on two issued documents in the S6 acceptance run.
+  const glance = stripOwnGapCells(scrubbed);
+  const sections = dropEmptySections(glance.markdown);
+  return sections.dropped.length === 0 ? glance.markdown : sections.markdown;
 }
 
 const normalizeHeading = (h: string): string =>

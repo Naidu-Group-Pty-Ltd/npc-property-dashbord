@@ -103,12 +103,42 @@ const embeddedCount = fonts.filter((f) => f.embedded).length;
 // rule and neither is a value this product may publish. A false caveat teaches
 // people to dismiss the warning, which is the same rule the template-fit
 // notice answers to.
-const SENTINELS = [
+// Two families, and they answer to different rules.
+//
+// ALWAYS: `NA`, `TBD`, `null`, `undefined`, `NaN`, `[object Object]` and an
+// unresolved `{{…}}` are never legitimate prose. Anywhere they appear is a
+// defect.
+//
+// ONLY IN A SHORT RUN: "not available" and "not provided" are placeholders
+// when they occupy a VALUE SLOT and ordinary English when they sit in a
+// sentence. Measured in the S6 acceptance run, 18 Sep 2026, on real pages:
+//
+//   ⚠ Exact facility distances not provided                            (39 ch)  ← a defect
+//   Authoritative postcode-level demographic information was not
+//   available for this analysis, so no …                               (95 ch)  ← prose
+//   … (SEIFA) and workforce composition figures were not available
+//   at the subject property's postal area                              (97 ch)  ← prose
+//
+// The first is a strip cell reporting our own gap as a finding about the
+// house; `stripOwnGapCells` removes it. The other two are sentences that name
+// what was missing and why, which the repository's own rule protects — *prose
+// is never regex-scrubbed, on read or on write* — so flagging them is a false
+// caveat, and a false caveat teaches people to dismiss the warning.
+//
+// 60 characters sits with real margin either side of the measured cases: a
+// placeholder label ("N/A", "Not available", "Not provided") is under 20, and
+// a sentence carrying a subject, a verb and a subordinate clause is over 90.
+const SENTINELS_ANYWHERE = [
   /(?<![A-Za-z])(NA|TBD|TBC|null|undefined|NaN|\[object Object\])(?![A-Za-z])|\{\{[^}]{1,80}\}\}/,
+];
+const SENTINELS_IN_A_VALUE_SLOT = [
   /(?<![A-Za-z])(n\/a|not available|unavailable|not provided|data unavailable|no data available)(?![A-Za-z])/i,
 ];
+const VALUE_SLOT_MAX_CHARS = 60;
 const findSentinel = (text) => {
-  for (const re of SENTINELS) { const m = text.match(re); if (m) return m[0]; }
+  for (const re of SENTINELS_ANYWHERE) { const m = text.match(re); if (m) return m[0]; }
+  if (text.trim().length > VALUE_SLOT_MAX_CHARS) return null;
+  for (const re of SENTINELS_IN_A_VALUE_SLOT) { const m = text.match(re); if (m) return m[0]; }
   return null;
 };
 // U+FFFD, C0 control bytes other than tab/newline, and UTF-8 read as Latin-1
