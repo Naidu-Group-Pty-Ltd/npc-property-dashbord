@@ -293,6 +293,100 @@ export function stripOwnGapCells(markdown: string): GlanceScrubResult {
     : { markdown: out.replace(/\n{3,}/g, '\n\n'), removedCells, removedDirectives };
 }
 
+export interface EmptyColumnResult {
+  markdown: string;
+  /** `[table index, header text]` for each column removed. */
+  removed: Array<{ table: number; header: string }>;
+}
+
+/**
+ * Remove a table column that is empty in every body row.
+ *
+ * A column with a header and nothing under it is a promise the record could
+ * not keep: the reader is shown a heading — `Source`, `Period`, `Evidence` —
+ * and is left to decide whether it means *nothing was found* or *nothing was
+ * printed*. It was on the supplied documents beside the placeholders
+ * `stripPlaceholderRows` already removes, and the two are the same defect at
+ * different grains.
+ *
+ * Three guards keep it from removing a meaningful limitation.
+ *
+ * **Only a LITERALLY empty cell counts.** A dash is a value in this product —
+ * `builderStock/manualStats` pays for that rule: an em dash says the record
+ * holds nothing here, which is a fact worth printing, and a column of them is
+ * a column of facts. So `—`, `-`, `n/a` and every worded absence are left
+ * exactly where they are; the caller's earlier passes decide those.
+ *
+ * **The first column is never removed**, because it is the row's label and a
+ * table with no labels is unreadable however empty the column is.
+ *
+ * **A table is never reduced below two columns**, so the degenerate case
+ * produces a narrower table rather than a list of headings.
+ */
+export function dropEmptyTableColumns(markdown: string): EmptyColumnResult {
+  const lines = markdown.split('\n');
+  const removed: EmptyColumnResult['removed'] = [];
+  const out: string[] = [];
+  let tableIndex = 0;
+  let i = 0;
+  const cellsAt = (n: number): string[] | null =>
+    (n >= 0 && n < lines.length ? splitRow(lines[n]) : null);
+  while (i < lines.length) {
+    const headerCells = cellsAt(i);
+    const ruleCells = cellsAt(i + 1);
+    if (!headerCells || !ruleCells || !isSeparatorRow(ruleCells)) {
+      out.push(lines[i]); i += 1; continue;
+    }
+    let end = i + 2;
+    while (cellsAt(end)) end += 1;
+    const block = lines.slice(i, end);
+    const header = headerCells;
+    const body = block.slice(2).map((l) => splitRow(l) ?? []);
+    const width = header.length;
+    const drop = new Set<number>();
+    // Body rows only: a rule row carries alignment, never content.
+    if (body.length && width > 2) {
+      for (let c = 1; c < width; c++) {
+        const everyCellEmpty = body.every((row) => (row[c] ?? '') === '');
+        if (everyCellEmpty) drop.add(c);
+      }
+    }
+    // Never below two columns: drop the rightmost candidates back in until the
+    // table is wide enough to still be a table.
+    const ordered = [...drop].sort((a, b) => b - a);
+    while (width - drop.size < 2 && ordered.length) drop.delete(ordered.pop()!);
+    if (drop.size === 0) {
+      out.push(...block); tableIndex += 1; i = end; continue;
+    }
+    for (const c of drop) removed.push({ table: tableIndex, header: header[c] ?? '' });
+    const keep = (cells: string[]) => cells.filter((_, c) => !drop.has(c));
+    out.push(`| ${keep(header).join(' | ')} |`);
+    out.push(`| ${keep(ruleCells).join(' | ')} |`);
+    for (const row of body) out.push(`| ${keep(row).join(' | ')} |`);
+    tableIndex += 1;
+    i = end;
+  }
+  return { markdown: out.join('\n'), removed };
+}
+
+/**
+ * An inline citation with nothing in it.
+ *
+ * `[Source: ]`, `[ ]`, `[Source]` — a bracket the model opened and could not
+ * fill. It reads as a reference the reader is expected to follow, and there is
+ * nothing to follow. It is removed with the space in front of it so the
+ * sentence closes normally; the sentence itself is untouched, because prose is
+ * never regex-scrubbed and this is punctuation rather than prose.
+ */
+export function stripEmptyCitations(markdown: string): { markdown: string; removed: number } {
+  let removed = 0;
+  const out = markdown.replace(/[ \t]*\[\s*(?:source|ref|reference|citation)?\s*:?\s*\]/gi, () => {
+    removed += 1;
+    return '';
+  });
+  return { markdown: out, removed };
+}
+
 export function presentStoredMarkdown(markdown: string | null | undefined): string {
   if (!markdown) return '';
   const r = stripPlaceholderRows(markdown);
@@ -301,8 +395,14 @@ export function presentStoredMarkdown(markdown: string | null | undefined): stri
   // and `stripPlaceholderRows` cannot see it — it is neither a row nor a
   // bullet. Found on two issued documents in the S6 acceptance run.
   const glance = stripOwnGapCells(scrubbed);
-  const sections = dropEmptySections(glance.markdown);
-  return sections.dropped.length === 0 ? glance.markdown : sections.markdown;
+  // A column with a header and nothing under it, and a citation bracket with
+  // nothing in it — both were on the documents supplied for acceptance, both
+  // are a promise the record could not keep, and neither is prose.
+  const columns = dropEmptyTableColumns(glance.markdown);
+  const cited = stripEmptyCitations(columns.removed.length ? columns.markdown : glance.markdown);
+  const tidied = cited.removed ? cited.markdown : (columns.removed.length ? columns.markdown : glance.markdown);
+  const sections = dropEmptySections(tidied);
+  return sections.dropped.length === 0 ? tidied : sections.markdown;
 }
 
 const normalizeHeading = (h: string): string =>

@@ -68,6 +68,7 @@ import {
   PORTAL_SOURCE_RE,
 } from './investment/evidenceClaims.pure';
 import { findDocumentContradictions } from './investment/documentConsistency.pure';
+import { findFiguresWithoutABasis } from './investment/evidenceClaims.pure';
 
 /**
  * The prompt asks for at most 4 `###` a section; this flags at 6+.
@@ -609,6 +610,35 @@ export function runQAValidation(
    */
   for (const c of findDocumentContradictions(markdown)) {
     findings.push({ rule: c.rule, severity: c.severity, message: c.message });
+  }
+
+  /*
+   * ── 15. A figure that names no basis ──────────────────────────────────
+   *
+   * The occupier mixes, property-fit gauges, evidence mixes, risk scores and
+   * investor-readiness ratings read off the supplied PDFs. Some of those
+   * numbers are sound — an occupier mix from the Census, an evidence mix from
+   * the register — and the reader has no way to tell them from the ones a
+   * model chose, because the figure names no dataset, no period and no model
+   * basis anywhere near it.
+   *
+   * REPORTED, never removed. `suppressUnrecordedVerdictVisuals` removes a
+   * rating the record does not hold, which is right because that number is
+   * untrue; deleting a sound figure to silence a warning takes real data off
+   * the page. The remedy is a caption.
+   */
+  const unbased = findFiguresWithoutABasis(markdown);
+  if (unbased.length) {
+    const named = [...new Set(unbased.map((f) => f.title || f.kind))].slice(0, 6);
+    findings.push({
+      rule: 'figure-without-a-stated-basis',
+      severity: 'warning',
+      message: `${unbased.length} figure${unbased.length === 1 ? '' : 's'} draw numbers with no dataset, `
+        + `period or model basis stated near them (${named.join('; ')}). Every number a reader acts on `
+        + 'needs a traceable dataset or an approved calculation, and a figure states it in a caption: '
+        + 'the units, the period, the geography, and the source or the model basis. Where none can be '
+        + 'given, say the finding in words rather than drawing it.',
+    });
   }
 
   const passed = findings.every((f) => f.severity !== 'error');

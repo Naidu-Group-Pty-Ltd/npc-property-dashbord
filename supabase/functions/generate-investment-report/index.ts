@@ -1661,6 +1661,7 @@ VISUAL-FIRST RULES (CRITICAL):
 - Use \`{{margin: …}}\` to push secondary context off the main column instead of
   parenthetical asides — saves prose and adds visual rhythm.
 - Use \`~~[…]~~\` inline sparklines liberally for any time-series mentioned in prose.
+- **EVERY FIGURE STATES ITS BASIS, IN WORDS THE READER CAN SEE.** A number drawn on a page is read as a measurement, so the sentence introducing a chart — or the line immediately under it — must name where the numbers came from: the DATASET or register (ABS Census, SEIFA, the RBA, the state crime register, the planning register, the recorded calculation), the PERIOD it covers, the GEOGRAPHY it describes, and the UNITS. Write it plainly, e.g. "Tenure mix, ABS Census 2021, postal area 2794." or "Year-one cash position from the recorded calculation, before tax." Where you cannot name a dataset, a period or a modelled basis, do not draw the figure: state the finding in words. This applies to every occupier or tenure mix, every evidence or source breakdown, every readiness or fit reading and every risk chart.
 - All shortcodes must use REAL figures from the data provided. Never fabricate.
 - If a visualisation would duplicate a table on the same page, choose the visualisation.
 - Cross-references must point to a chapter heading that actually exists.

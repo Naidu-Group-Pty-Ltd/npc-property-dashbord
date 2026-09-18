@@ -271,3 +271,112 @@ export function correctUnsupportedEvidenceClaims(markdown: string): ClaimCorrect
 
   return { markdown: out.replace(/\n{3,}/g, '\n\n'), removed };
 }
+
+// ── a figure that names no basis ──────────────────────────────────────────
+
+/**
+ * The primitives that draw NUMBERS a reader will act on.
+ *
+ * `glance`, `stat`, `margin` and the inline sparkline are excluded: they carry
+ * a figure the prose around them has already sourced, and flagging them turns
+ * a rule into noise. `timeline` is included because a project pipeline asserts
+ * dates, and a date nobody published is the defect §5 names by itself.
+ */
+export const FIGURE_KINDS_NEEDING_A_BASIS = [
+  'bars', 'donut', 'pictograph', 'heatmap', 'tiles', 'quadrant', 'wheel',
+  'gauge', 'waterfall', 'timeline', 'radar',
+] as const;
+
+/**
+ * What counts as a stated basis.
+ *
+ * One of three things, not all of them: a named PUBLISHER or register, a
+ * PERIOD, or an explicit statement that the figure is modelled or comes from
+ * the recorded calculation. Units are asked for separately — the directive
+ * vocabulary has a `unit=` option and most figures carry `$`, `%` or a
+ * measurement anyway, so requiring a unit alone would make the rule toothless
+ * while requiring all four at once would flag every figure in every document
+ * and teach people to dismiss it.
+ */
+const BASIS_MARKER = new RegExp([
+  // A publisher or register this platform actually reads.
+  '\\b(?:ABS|Census|SEIFA|RBA|BOCSAR|QPS|SAPOL|NT\\s+Police|DCJ|GTFS|Domain|',
+  'Nominatim|OpenStreetMap|Overpass|Mapillary|OSRM|QTRIP|ePlanning|',
+  'Statistician|Rural\\s+Fire\\s+Service|council|register|registry)\\b|',
+  // A period.
+  '\\b(?:19|20)\\d{2}\\b|\\bFY\\s?\\d{2}\\b|\\b(?:quarter|quarterly|annual|',
+  'monthly|as\\s+at|to\\s+(?:June|September|December|March))\\b|',
+  // An explicit model basis.
+  '\\b(?:modelled|modeled|assumption|assumed|recorded\\s+calculation|',
+  'stored\\s+calculation|the\\s+record|source\\s*[:=]|basis\\s*[:=])\\b',
+].join(''), 'i');
+
+export interface UnbasedFigure {
+  kind: string;
+  /** The directive's own `title=` / label, or its first value when it has none. */
+  title: string;
+  directive: string;
+}
+
+const FIGURE_LINE = new RegExp(
+  `^\\{\\{(${FIGURE_KINDS_NEEDING_A_BASIS.join('|')})\\s*:\\s*([\\s\\S]*)\\}\\}$`,
+);
+
+/**
+ * How far either side of a figure its basis may be stated, counted in lines
+ * that carry text.
+ *
+ * Counted in NON-BLANK lines because markdown separates every block with one,
+ * so three raw lines is one sentence and a gap — measured: a caption three
+ * sentences above a figure was not being found at all.
+ */
+const BASIS_WINDOW_BEFORE = 3;
+const BASIS_WINDOW_AFTER = 2;
+
+/** `source=`/`basis=`/`unit=` on the directive ITSELF. */
+const DECLARED_BASIS_OPTION = /\b(?:source|basis|unit)\s*=\s*[^|}\s]/i;
+
+/**
+ * Figures that draw numbers and name no dataset, period or model basis.
+ *
+ * Reported, never removed. `suppressUnrecordedVerdictVisuals` already removes
+ * a rating the record does not hold, and that is the case where deletion is
+ * right because the number is untrue. This is a different case: the number may
+ * be perfectly sound and the reader cannot tell, and deleting a sound figure
+ * to silence a warning takes real data off the page.
+ *
+ * The remedy is a caption. It is what §4 asks for in so many words — units,
+ * period, geography and source or model basis — and it is what separates an
+ * occupier mix drawn from the Census from one a model chose.
+ */
+export function findFiguresWithoutABasis(markdown: string): UnbasedFigure[] {
+  const lines = markdown.split('\n');
+  const out: UnbasedFigure[] = [];
+  const isDirective = (line: string) => /^\s*\{\{/.test(line);
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].trim().match(FIGURE_LINE);
+    if (!m) continue;
+    const payload = m[2];
+    // A `source=` / `basis=` / `unit=` option on the directive is a stated
+    // basis. Nothing else inside a directive is: `{{donut: Register 4, Model
+    // 3, Portal 2}}` names a register as a SLICE of the mix, and reading that
+    // as provenance lets a figure vouch for itself.
+    if (DECLARED_BASIS_OPTION.test(payload)) continue;
+    const neighbours: string[] = [];
+    for (let j = i - 1, seen = 0; j >= 0 && seen < BASIS_WINDOW_BEFORE; j--) {
+      if (!lines[j].trim()) continue;
+      if (isDirective(lines[j])) { seen += 1; continue; }
+      neighbours.push(lines[j]); seen += 1;
+    }
+    for (let j = i + 1, seen = 0; j < lines.length && seen < BASIS_WINDOW_AFTER; j++) {
+      if (!lines[j].trim()) continue;
+      if (isDirective(lines[j])) { seen += 1; continue; }
+      neighbours.push(lines[j]); seen += 1;
+    }
+    if (BASIS_MARKER.test(neighbours.join('\n'))) continue;
+    const title = (/\btitle\s*=\s*([^|}]+)/i.exec(payload)?.[1]
+      ?? payload.split('|')[0] ?? '').trim();
+    out.push({ kind: m[1], title: title.slice(0, 80), directive: lines[i].trim().slice(0, 160) });
+  }
+  return out;
+}
