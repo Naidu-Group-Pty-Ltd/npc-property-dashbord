@@ -198,6 +198,17 @@ export interface ProductionScoringInput {
   /** The questions the subject's asset class actually asks, from the schema. */
   riskQuestionIds?: readonly string[];
   /**
+   * The reading of the best stored condition record for this property, where
+   * one exists — `assessConditionRecord`'s verdict, carried in so the risk
+   * gap can name the per-property state (a record on file awaiting the
+   * method's activation, evidence that cannot clear the dwelling, or nothing
+   * submitted) without this module reading any table. Structural rather than
+   * the imported type, so a stored JSON copy passes unchanged. NEVER a
+   * score: `CONDITION_METHOD_ACTIVATION` is null and nothing here changes
+   * the engine's decision — absent, the output is byte-identical.
+   */
+  conditionReading?: { admissible: boolean; refusal: string | null; statement: string } | null;
+  /**
    * Automatic acquisition attempts already spent on this assessment.
    *
    * Read by the completion gate to bound retries. Absent means none spent,
@@ -601,12 +612,24 @@ export function describeGaps(
           + 'acquisition stamp (RF-7.2B), and stamped, stage-proven readings verify automatically.';
         break;
       }
-      case 'risk':
+      case 'risk': {
         detail = result.risk.eligibility.reason;
         // Derived from the schema, so the remedy cannot name as outstanding
         // something the platform already retrieves. See `riskRemedyFor`.
         remedy = riskRemedyFor(result.risk.assetClass);
+        // The building half's per-property state, where the caller read the
+        // register. Evidence and its refusal are the validator's own words;
+        // nothing here scores, because no condition scale is authorised.
+        const cr = input.conditionReading;
+        if (cr) {
+          detail += cr.admissible
+            ? ' A condition record admissible for the building question is on file; no condition '
+              + 'scale is authorised for this deployment yet, so it is shown as evidence and '
+              + 'contributes no points.'
+            : ` Condition evidence on file: ${cr.statement}`;
+        }
         break;
+      }
       default:
         detail = 'Not measured.';
         remedy = 'Supply the dimension\'s evidence.';

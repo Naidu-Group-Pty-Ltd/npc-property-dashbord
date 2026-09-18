@@ -18,6 +18,7 @@ import { InvestmentReportHero } from '@/components/reports/report-view/Investmen
 import { InvestmentReportLoadingState } from '@/components/reports/report-view/InvestmentReportLoadingState';
 import { InvestmentReportMobileActionBar } from '@/components/reports/report-view/InvestmentReportMobileActionBar';
 import { InvestmentReportOverridePanel } from '@/components/reports/report-view/InvestmentReportOverridePanel';
+import { ConditionEvidencePanel } from '@/components/reports/report-view/ConditionEvidencePanel';
 import type { ClientInfo, InvestmentReport } from '@/components/reports/report-view/types';
 import { getHasOverrides, getOverriddenFields, getReportStatusLabel, getReportTierLabel, getReportVariantLabel } from '@/components/reports/report-view/utils';
 import { logActivityDirect } from '@/hooks/useActivityLogger';
@@ -291,6 +292,11 @@ export default function InvestmentReportView() {
               <InvestmentReportCoverageNote
                 dataSources={report.data_sources}
                 validationFlags={report.validation_flags}
+              />
+
+              <ConditionEvidencePanel
+                reportId={report.id}
+                propertyAddress={report.property_address}
               />
 
               {hasOverrides && (

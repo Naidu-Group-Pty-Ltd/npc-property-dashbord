@@ -60,6 +60,7 @@ import {
   sensitivityRowsForPrompt,
 } from '../_shared/reports/investment/promptFinancials.pure.ts';
 import { recordedScoreValues, suppressUnrecordedScores, suppressUnrecordedVerdictVisuals } from '../_shared/reports/investment/scoreClaims.pure.ts';
+import { bestReadingForSubject, isMissingTableError, recordFromRow } from '../_shared/reports/risk/conditionRecordSubmission.pure.ts';
 import { investmentScorePromptBlock, overallRecommendationLine } from '../_shared/reports/investment/scorePromptBlock.pure.ts';
 import { abbreviateState, domainCategoryFor, dwellingTypeFor } from '../_shared/reports/market/domainEvidence.pure.ts';
 import { populationGrowthPoint } from '../_shared/reports/market/populationGrowthEvidence.pure.ts';
@@ -3810,6 +3811,64 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         marketEvidence: { points: marketPoints, providersConsulted, providersUnavailable },
       };
 
+      // The building half of Property Risk: the best condition record BOUND
+      // to this property, read before the scoring call so a scoring failure
+      // cannot take the read with it. Evidence only — the condition method
+      // is not activated, so this changes no score; the risk gap names what
+      // is on file. A deployment without the table reads as no evidence,
+      // and a read failure is logged and never fails the run.
+      let conditionReading:
+        { admissible: boolean; refusal: string | null; statement: string } | null = null;
+      if (reportId && !isAreaReport) {
+        try {
+          const { data: subjectLink } = await supabase
+            .from('investment_reports')
+            .select('canonical_property_key, client_property_id')
+            .eq('id', reportId)
+            .maybeSingle();
+          const conditionRows = new Map<string, Record<string, unknown>>();
+          const byReport = await supabase
+            .from('property_condition_records').select('*').eq('report_id', reportId);
+          if (byReport.error) {
+            if (!isMissingTableError(byReport.error)) {
+              console.warn('Condition record read failed (evidence omitted):', byReport.error.message);
+            }
+          } else {
+            for (const row of byReport.data ?? []) conditionRows.set(String(row.id), row);
+            if (subjectLink?.canonical_property_key) {
+              const byProperty = await supabase
+                .from('property_condition_records').select('*')
+                .eq('canonical_property_key', subjectLink.canonical_property_key);
+              if (!byProperty.error) {
+                for (const row of byProperty.data ?? []) conditionRows.set(String(row.id), row);
+              }
+            }
+            if (conditionRows.size > 0) {
+              const reading = bestReadingForSubject(
+                [...conditionRows.values()].map(recordFromRow),
+                {
+                  propertyAddress,
+                  propertyId: subjectLink?.client_property_id ?? null,
+                  reportId,
+                },
+                new Date().toISOString(),
+              );
+              if (reading) {
+                conditionReading = {
+                  admissible: reading.admissible,
+                  refusal: reading.refusal,
+                  statement: reading.statement,
+                };
+                console.log(`🏠 Condition evidence on file: ${reading.admissible ? 'admissible' : reading.refusal}`);
+              }
+            }
+          }
+        } catch (conditionReadError) {
+          console.warn('Condition record read failed (evidence omitted):',
+            conditionReadError instanceof Error ? conditionReadError.message : String(conditionReadError));
+        }
+      }
+
       // Calculate investment score - property OR area scoring
       if (!isAreaReport && effectivePurchasePrice > 0) {
         // Property-specific scoring
@@ -3862,6 +3921,9 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               // Location's inputs may count. The service derives the
               // verification itself; nothing here asserts trust.
               locationSubject: enrichmentSubject,
+              // The building half's evidence state (subject-bound best
+              // condition record). Evidence only — no score moves.
+              conditionReading,
             })
           });
           

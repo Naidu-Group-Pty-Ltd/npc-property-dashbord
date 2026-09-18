@@ -387,3 +387,52 @@ describe('invariants the activation must keep', () => {
     expect(order.indexOf(strong.grade as string)).toBeGreaterThanOrEqual(order.indexOf(weak.grade as string));
   });
 });
+
+/*
+ * S5/S6 §3 — condition evidence reaches the assessment as EVIDENCE.
+ *
+ * The generator reads the property's best subject-bound condition record and
+ * passes its reading in; the risk gap names what is on file. Nothing scores:
+ * `CONDITION_METHOD_ACTIVATION` is null, and the whole record apart from the
+ * risk gap's sentence must be unchanged by the input.
+ */
+describe('condition evidence rides the risk gap and moves no score', () => {
+  const baseline = scoreForProduction(base());
+
+  it('is unchanged when no reading is supplied — null and absent are one state', () => {
+    expect(JSON.stringify(scoreForProduction(base({ conditionReading: null }))))
+      .toBe(JSON.stringify(baseline));
+  });
+
+  it('names an admissible record on file, awaiting activation, and moves nothing', () => {
+    const record = scoreForProduction(base({
+      conditionReading: {
+        admissible: true,
+        refusal: null,
+        statement: 'A building inspection report issued by Hunter Building Consultants…',
+      },
+    }));
+    const gap = record.gradeGaps.find((g) => g.dimension === 'risk')!;
+    expect(gap.detail).toContain('admissible for the building question is on file');
+    expect(gap.detail).toContain('contributes no points');
+    // Everything that scores is byte-identical to the baseline.
+    expect(record.grade).toBe(baseline.grade);
+    expect(record.totalScore).toBe(baseline.totalScore);
+    expect(record.breakdown).toEqual(baseline.breakdown);
+    expect(record.completion.scoredCount).toBe(baseline.completion.scoredCount);
+    expect(record.completion.mayIssueCompletedGrade).toBe(baseline.completion.mayIssueCompletedGrade);
+  });
+
+  it("carries the validator's own sentence for evidence that cannot clear the dwelling", () => {
+    const statement = 'A building inspection report issued by X on 2026-06-02, over part of the '
+      + 'dwelling, records 1 major defect. It is shown as evidence; no condition scale is '
+      + 'authorised for this deployment yet, so it contributes no points.';
+    const record = scoreForProduction(base({
+      conditionReading: { admissible: false, refusal: 'not_verified', statement },
+    }));
+    const gap = record.gradeGaps.find((g) => g.dimension === 'risk')!;
+    expect(gap.detail).toContain('Condition evidence on file:');
+    expect(gap.detail).toContain(statement);
+    expect(record.breakdown).toEqual(baseline.breakdown);
+  });
+});

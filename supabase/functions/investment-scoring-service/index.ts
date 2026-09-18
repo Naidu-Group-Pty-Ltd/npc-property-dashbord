@@ -245,7 +245,23 @@ function productionInputFrom(rawInput: any, now: Date): ProductionScoringInput {
     // lives in `locationInputVerification.pure.ts`.
     verifiedInputs: locationVerification.verified,
     evidenceWithheldReason: str(rawInput.evidenceWithheldReason),
+    // The building half's evidence state, read by the generator from the
+    // condition-record register and sanitised here — shape-checked, never
+    // trusted. Evidence only: the risk gap names it and no score moves.
+    conditionReading: conditionReadingFrom(rawInput.conditionReading),
     now,
+  };
+}
+
+function conditionReadingFrom(v: unknown): ProductionScoringInput['conditionReading'] {
+  if (!v || typeof v !== 'object') return null;
+  const r = v as Record<string, unknown>;
+  if (typeof r.admissible !== 'boolean') return null;
+  if (typeof r.statement !== 'string' || !r.statement.trim()) return null;
+  return {
+    admissible: r.admissible,
+    refusal: typeof r.refusal === 'string' ? r.refusal : null,
+    statement: r.statement,
   };
 }
 
