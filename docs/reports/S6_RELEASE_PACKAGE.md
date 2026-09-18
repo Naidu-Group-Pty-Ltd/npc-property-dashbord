@@ -402,3 +402,72 @@ What approval does **not** cover, and is not being asked for: the ten PDFs on
 the two named subjects. Those need §9.4's first row resolved, and until then
 the nine documents in `S6_ACCEPTANCE_RUN.md` are what the render and
 composition work is judged on.
+
+---
+
+## 10. The eight-section correction, 18 September 2026
+
+§9's request stood on head `f1fe4d5f0`. It has been superseded by the owner's
+eight-section instruction of the same day, which **conditionally authorises the
+release** (§7) and adds correction work ahead of it. The full record of what was
+measured and what changed is
+**[`EIGHT_SECTION_CORRECTION.md`](./EIGHT_SECTION_CORRECTION.md)**; this section
+records only what it does to the release itself.
+
+### 10.1 What changed in the deployable surface
+
+| Change | Reaches a client's document through | Needs |
+| --- | --- | --- |
+| One issuer name (`FALLBACK_COMPANY_NAME` = `PLATFORM_ISSUER_NAME`) | the closing page, the running foot, the cover lockup | edge deploy |
+| Validator rules 14–16 (self-contradiction, figure basis, register cell) | `validation_flags` on generation, fork and condensation | edge deploy |
+| `Weekly net position (N of 52 weeks let)` | the composed financial chapters | edge deploy |
+| The fork hands one reconciled record to both producers | the Financial Analysis and the Due Diligence | edge deploy |
+| The risk section's declared shape | the generator's prompt, hence new documents only | edge deploy |
+| Every figure states its basis | the generator's prompt, hence new documents only | edge deploy |
+| Empty columns and empty citations | **the read path**, hence every stored report | **browser bundle publish** |
+
+The browser publish stays **required**, for the reason §4 already gives:
+`render-template-pdf` takes a pre-compiled HTML payload and compiles nothing
+itself.
+
+### 10.2 Historical re-rendering
+
+Three scrubs run where stored content is **read** — placeholders (already
+shipped), empty table columns and empty citation brackets. None overwrites a
+stored byte, none touches prose, and a clean document comes back
+byte-identical. Measured on the retained corpus: the Mitchell Street Briefing
+sheds 2,731 characters of placeholder on read, the Snapshot 570, the Due
+Diligence 83. A re-render of any stored report will therefore differ from its
+issued PDF by exactly those removals, which is the intended repair and is worth
+saying out loud before anyone compares an old document with a new one.
+
+### 10.3 What the correction does NOT change
+
+No weight, anchor, threshold, cap, CGR input or override, financial formula,
+loan treatment, cash-flow connection or stored row. No screen, form, mandatory
+input, navigation entry or condition-evidence surface. No branding interface,
+settings workflow or Template Builder entry point. The scoring policy of §1 is
+untouched, and nothing here targets a predetermined score.
+
+### 10.4 Rollback
+
+Unchanged in shape from §5: revert the branch's merge commit and re-publish the
+previous bundle. Every change in 10.1 is additive or a one-line substitution,
+and the three read-path scrubs revert to leaving stored content exactly as it
+is. The correction adds no migration.
+
+### 10.5 The remaining blocker, restated once
+
+The ten PDFs on 18 Annabelle Crescent and 262 Pallas Street still need their
+rows. `.verify/fixtures` holds 64 rows covering Cowra, Mitchell Street and
+Moranbah; neither subject is among them, and this session's Supabase MCP server
+exposes no `execute_sql` — **the SQL tool being unavailable or denied in this
+session, not a disconnected server**. It has not been bypassed through Lovable,
+another database endpoint, a deployed function or a different credential. One
+action clears it: expose `execute_sql`, or place the two rows under
+`.verify/fixtures/<id>/report.json`. Fresh generation additionally needs this
+release deployed, which is §7's own sequence.
+
+The Cowra and Mitchell examples the owner supplied were **rechecked rather than
+avoided**: every defect in `EIGHT_SECTION_CORRECTION.md` §3 is measured on those
+two subjects.
