@@ -2,7 +2,9 @@ import type { Block } from '../templateSchema';
 import { resolveBindable, resolveBindableColor } from '../bindingResolver';
 import { esc, type HtmlBlockContext } from './_shared.html';
 import { fitTocEntries, splitTocColumns, tocOmittedLine } from './tocFit';
-import { narrativeIndexFrom, type NarrativeIndexSection } from '../narrativeIndex';
+import {
+  listedSectionLevel, narrativeIndexFrom, type NarrativeIndexSection,
+} from '../narrativeIndex';
 
 export function renderTocHtml(block: Block, ctx: HtmlBlockContext): string {
   const p = block.props as Record<string, unknown>;
@@ -51,18 +53,29 @@ export function renderTocHtml(block: Block, ctx: HtmlBlockContext): string {
    * part of the document and contributes nothing — which is what the flag was
    * approximating, declared by a master rather than read off the render.
    *
-   * Only the run's own TOP level is listed. The Compass's narrative carries 18
-   * `h2` sections and 26 `h3` subsections; listing both is 51 rows on a page
-   * that fits about 30, and `fitTocEntries` would then omit the tail — which
-   * loses the END of the document rather than its detail. A complete list of
-   * sections beats a truncated list of sections and subsections. A master that
-   * wants more sets `sectionDepth`.
+   * One level of the run's own headings is listed. The Compass's narrative
+   * carries 18 `h2` sections and 26 `h3` subsections; listing both is 51 rows
+   * on a page that fits about 30, and `fitTocEntries` would then omit the tail
+   * — which loses the END of the document rather than its detail. A complete
+   * list of sections beats a truncated list of sections and subsections. A
+   * master that wants more sets `sectionDepth`.
+   *
+   * WHICH level is `listedSectionLevel`'s to decide, and it is not simply the
+   * shallowest: a narrative that wraps everything in one `h1` puts a single
+   * row — the document's own title — at that level, which is how a nineteen
+   * page Financial Analysis came to list its whole body as one contents entry.
+   * See that function for the measurement.
    */
   const index = narrativeIndexFrom(ctx.data);
-  const topLevel = index.sections.length ? Math.min(...index.sections.map((s) => s.level)) : 0;
+  const topLevel = listedSectionLevel(index.sections);
   const depth = Math.max(1, Number(p.sectionDepth ?? 1));
   const sectionsOn = new Map<number, NarrativeIndexSection[]>();
   for (const s of index.sections) {
+    // Shallower than the listed level is the document's own title — the row
+    // `listedSectionLevel` descended past. Listing it beside the sections it
+    // introduces gives the same page two rows, the second of which is the
+    // first section on it.
+    if (s.level < topLevel) continue;
     if (s.level >= topLevel + depth) continue;
     const list = sectionsOn.get(s.pageIndex);
     if (list) list.push(s); else sectionsOn.set(s.pageIndex, [s]);

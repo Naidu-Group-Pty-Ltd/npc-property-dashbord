@@ -98,7 +98,8 @@ exists to keep is kept.
 
 **`p 2 SPARSE 67.7%`** is the Contents page, and a contents page with five
 entries is genuinely airy rather than broken. But reading it as a document
-surfaces a real §9 finding of a different kind:
+surfaced a real §9 finding of a different kind, **which is now fixed** — see
+§"The contents named one row for fifteen pages" below:
 
 | | |
 | --- | --- |
@@ -115,3 +116,69 @@ names when it points at the legacy Lot 20427 report. Closing it means the
 contents enumerating the sections inside that chapter, which is a change to the
 master page sequences rather than to a renderer, and it is recorded here rather
 than attempted alongside an unrelated fix.
+
+
+---
+
+## The contents named one row for fifteen pages
+
+Same render, same reading, a different defect — and this one had already been
+found once and fixed for a different document shape.
+
+`toc.html.ts` lists the report's own headings rather than its page archetypes,
+and its own comment records why: a Compass contents used to read *Cover ·
+Contents · Executive dashboard · The assessment · Risk and recommendation · The
+report · Sources and methodology · Important information* — eight rows for a
+36-page report whose body is twenty-one sections. The renderer publishes which
+of the narrative's headings landed on which page, and the list names those.
+
+**It lists one level, and it chose the wrong one here.** The rule was "the run's
+own TOP level", which is right for the Compass — no `h1`, eighteen `h2`
+sections, twenty-six `h3` subsections, so listing the top level lists the
+eighteen. The Financial Analysis body is shaped differently: **one `h1` over six
+`h2` sections and fourteen `h3`s.** Its top level therefore held exactly one
+section — the document's own title — and the contents read:
+
+```
+1. Cover                                                            1
+2. Contents                                                         2
+3. Executive dashboard                                              3
+4. Client Investment Feasibility & Financial Performance Report     4
+5. Important information                                           19
+```
+
+Five rows for nineteen pages, one covering fifteen. The yield positioning, the
+risk dashboard and the recommendation were all inside row 4, reachable only by
+turning pages.
+
+**The rule, in `listedSectionLevel`:** a level holding a single section is a
+TITLE rather than a tier, so the list descends past it, stopping at the first
+level with more than one section. Where no level has more than one, the top
+level stands — a document with one section has one section. A level shallower
+than the listed one is then excluded, because listing the title beside the
+sections it introduces gives one page two rows, the second of which is the
+first section on it.
+
+The Compass is untouched by construction: its shallowest level already holds
+eighteen sections, so the descent never starts and the exclusion never fires.
+
+**After**, same record, same harness, same engine:
+
+```
+1. Cover                                                    1
+2. Contents                                                 2
+3. Executive dashboard                                      3
+4. Client Investment Decision Summary                       4
+5. Financial Input Snapshot                                 5
+6. Price, Rent & Yield Market Positioning                   7
+7. Financial Risk Dashboard                                10
+8. Financial Recommendation & Portfolio Fit                12
+9. Assumptions, Verification Items & Adviser Disclaimer    13
+10. Disclaimer                                             18
+11. Important information                                  19
+```
+
+Eleven entries across nineteen pages, each naming the page it opens on, each
+linking to the heading's own id rather than the top of the sheet. The contents
+page's largest empty band falls from **67.7% to 51.2%** as a side effect — still
+airy, which is what a contents page should be.

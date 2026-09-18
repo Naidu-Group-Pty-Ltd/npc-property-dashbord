@@ -58,3 +58,50 @@ export function narrativeIndexFrom(data: unknown): NarrativeIndex {
     sections: Array.isArray(raw?.sections) ? raw!.sections : [],
   };
 }
+
+/**
+ * The heading level a contents list should name.
+ *
+ * Normally the run's own TOP level: the Compass's narrative carries 18 `h2`
+ * sections and 26 `h3` subsections, and listing both is 51 rows on a page
+ * fitting about 30 — `fitTocEntries` would then omit the tail, losing the END
+ * of the document rather than its detail.
+ *
+ * **But a narrative that wraps everything in one `h1` has a top level with a
+ * single member, and that member is the document's own title.** Measured 18
+ * September 2026 on a real Financial Analysis render: the body carries 21
+ * headings — one `h1` (*Client Investment Feasibility & Financial Performance
+ * Report*) over six `h2` sections and fourteen `h3` subsections — so the top
+ * level was level 1, level 1 held exactly one row, and a nineteen-page
+ * document's contents read:
+ *
+ * ```
+ * 1. Cover                                                            1
+ * 2. Contents                                                         2
+ * 3. Executive dashboard                                              3
+ * 4. Client Investment Feasibility & Financial Performance Report     4
+ * 5. Important information                                           19
+ * ```
+ *
+ * Five rows for nineteen pages, one of them covering fifteen. Every section a
+ * reader opens a contents page to find — the yield positioning, the risk
+ * dashboard, the recommendation — was inside row 4 and reachable only by
+ * turning pages. That is the same defect the section index was built to close,
+ * surviving in the one shape it does not catch.
+ *
+ * So a level holding a single section is a TITLE rather than a tier, and the
+ * list descends past it. The descent stops at the first level with more than
+ * one section, which is the shallowest level that is actually a section list;
+ * where no level has more than one, the top level stands, because a document
+ * with one section has one section.
+ *
+ * A master that wants more than this level still sets `sectionDepth`.
+ */
+export function listedSectionLevel(sections: readonly NarrativeIndexSection[]): number {
+  if (!sections.length) return 0;
+  const countByLevel = new Map<number, number>();
+  for (const s of sections) countByLevel.set(s.level, (countByLevel.get(s.level) ?? 0) + 1);
+  const levels = [...countByLevel.keys()].sort((a, b) => a - b);
+  for (const level of levels) if ((countByLevel.get(level) ?? 0) > 1) return level;
+  return levels[0];
+}
