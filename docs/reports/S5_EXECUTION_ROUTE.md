@@ -4,49 +4,73 @@
 "Do not request branch creation while leaving the subsequent invocation route
 unresolved."*
 
-## 1. The finding, first
+## 1. SUPERSEDED — the egress is open, and the browser runs
 
-**One leg of the route is closed, and no credential or branch opens it.** The
-sandbox's egress is a fixed proxy policy that denies `CONNECT` to every web
-host, and the headless browser sits behind the same proxy as everything else.
-So the frontend half of the journey — R1 to R11, selection, editing, saving,
-reopening, previewing, exporting, history and permissions — **cannot be
-exercised from this session against any deployment**, production, branch or
-otherwise.
+**Re-measured 18 September 2026. The finding below was wrong, and the whole
+route it closed is open.**
 
-Measured, with Playwright's own Chromium:
+This section read: *"One leg of the route is closed, and no credential or
+branch opens it. The sandbox's egress is a fixed proxy policy that denies
+`CONNECT` to every web host … so the frontend half of the journey — R1 to R11
+— cannot be exercised from this session against any deployment."* It recorded
+`ERR_TUNNEL_CONNECTION_FAILED` against four hosts and concluded from
+`example.com` that the sandbox refuses an ordinary public page.
 
+Re-run today with the same tool against the same four hosts:
+
+| host | then | now, default | now, trusting the proxy CA |
+| --- | --- | --- | --- |
+| `example.com/` | TUNNEL_CONNECTION_FAILED | CERT_AUTHORITY_INVALID | **HTTP 200** |
+| `…supabase.co/functions/v1/` | TUNNEL_CONNECTION_FAILED | CERT_AUTHORITY_INVALID | reached (redirects) |
+| `api.perplexity.ai/` | TUNNEL_CONNECTION_FAILED | CERT_AUTHORITY_INVALID | reached (HTTP error status) |
+| `ai.gateway.lovable.dev/` | TUNNEL_CONNECTION_FAILED | CERT_AUTHORITY_INVALID | reached (redirects) |
+
+And from the shell, where curl already trusts the bundle, all three non-control
+hosts answer **HTTP 404** in under half a second — the correct answer for an
+unauthenticated GET to a bare root. **No credential was sent to any of them**;
+reachability and what a provider does with a key are different questions and
+this probe asked only the first.
+
+So there is no CONNECT denial. What is left is narrower and has a remedy:
+**Chromium does not trust the agent proxy's CA by default**, which is why every
+default-context navigation fails `ERR_CERT_AUTHORITY_INVALID` and every one of
+them succeeds in a context that trusts the bundle. The proxy's own status
+endpoint now reports `selective: false` with no relay failures of that kind.
+
+**The browser also needs its binary named.** `playwright@1.62.1` looks for
+`chromium_headless_shell-1234`; this image ships `chromium-1194`. That is a
+version pin, not a block, and the fix is one launch option:
+
+```js
+chromium.launch({
+  args: ['--no-sandbox'],
+  executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
+});
+// → Chromium 141.0.7390.37 launches, renders, and navigates.
 ```
-https://example.com/                                  ERR_TUNNEL_CONNECTION_FAILED
-https://dduzbchuswwbefdunfct.supabase.co/functions/v1/ ERR_TUNNEL_CONNECTION_FAILED
-https://api.perplexity.ai/                            ERR_TUNNEL_CONNECTION_FAILED
-https://ai.gateway.lovable.dev/                       ERR_TUNNEL_CONNECTION_FAILED
-```
 
-`example.com` is the one that settles it. This is not a vendor policy, a key,
-a CORS rule or a Supabase setting — it is the sandbox, and it refuses an
-ordinary public page. The proxy says so in its own words:
+Both probes are retained: `.verify/probe-browser.mjs` and
+`.verify/probe-routes.mjs`.
 
-```
-curl -sS "$HTTPS_PROXY/__agentproxy/status"
-  "enabled": true, "selective": false, "toolScoped": false,
-  "noProxy": "localhost,…,registry.npmjs.org,jsr.io,npm.jsr.io,pypi.org,
-              files.pythonhosted.org,index.crates.io,proxy.golang.org,…"
-  "recentRelayFailures": [
-    { "kind": "connect_rejected",
-      "detail": "gateway answered 403 to CONNECT (policy denial or upstream failure)",
-      "host": "esm.sh:443" }, …
-  ]
-```
+**What this changes.** The frontend journey (R1–R11) is no longer blocked by
+the environment. It is blocked only by what it needs to point AT — an
+authorised isolated environment with its own data — which is a provisioning
+question and not a network one. The leg table below is corrected accordingly.
 
-The exemptions are package registries and internal ranges. Nothing else.
+**What this does not change.** The MCP servers still run outside the sandbox
+and are still how production is reached. The Supabase MCP server's
+authorisation has **lapsed in this session** and `execute_sql` is additionally
+denied by a permission rule, so every route in the table that runs through it
+is unavailable until that is restored — which is a different obstacle from the
+one this section used to describe, and it is the only one now standing.
 
-**Why the MCP tools still work.** They are not in the sandbox. The Supabase,
-GitHub, Lovable and Airtable MCP servers run outside it and relay; that is why
-`execute_sql` answers while `curl https://dduzbchuswwbefdunfct.supabase.co`
-does not. Any route that runs *through an MCP server* or *inside the Supabase
-project* is open; any route that requires this container to open a socket to
-the internet is closed.
+**Why the earlier measurement was believed.** It was taken, it was real at the
+time, and it was recorded with its evidence. What made it dangerous was its
+SCOPE: a blanket "the sandbox has no egress" is a premise every later question
+inherits, so nobody re-asked it — the six register probes in
+`docs/reports/evidence/PLANNING_PROBE_2026-09-18.json` were left unrun for
+exactly that reason, and they answer HTTP 200. An environmental finding needs
+a re-measurement date, not just a measurement date.
 
 ## 2. The route, leg by leg
 
@@ -56,8 +80,8 @@ the internet is closed.
 | Set secrets on it | Supabase Management API | **Closed from here.** No MCP tool sets a function secret, and `api.supabase.com` is behind the same 403. |
 | Deploy candidate functions | `mcp__Supabase__deploy_edge_function` | **Open.** Runs through the MCP server. |
 | Invoke the authenticated handlers | `execute_sql` + `pg_net` | **Open.** `pg_net 0.14.0` is installed on the project and the HTTP call is made *by the database*, outside this sandbox. Every request id is recorded in `net._http_response` and disclosed. |
-| Exercise the frontend | headless Chromium | **Closed.** §1. |
-| Retrieve evidence | `execute_sql`, `query_logs` | **Open.** |
+| Exercise the frontend | headless Chromium | **Open**, with `executablePath` named and the proxy CA trusted. §1. What it still needs is an authorised isolated environment to point at. |
+| Retrieve evidence | `execute_sql`, `query_logs` | **Blocked today** — the Supabase MCP authorisation lapsed in this session and `execute_sql` is denied by a permission rule. Open again once re-authorised. |
 
 ## 3. What that means for the ask
 
