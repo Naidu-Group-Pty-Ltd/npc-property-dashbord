@@ -121,6 +121,7 @@ import {
   resolveNarrativeProfile,
 } from './reports/markdownPaging.pure.ts';
 import { stripBakedCover } from './reports/investment/narrativeClean.pure.ts';
+import { runningChapters } from './reports/runningChapters.pure.ts';
 import { planningChartContext, vizDirectiveRenderer } from './reports/vizFigures.pure.ts';
 import { reconcileStoredFinancials } from './reports/investment/financialEngine.pure.ts';
 import { readAnnualRent } from './reports/investment/rentBasis.pure.ts';
@@ -406,10 +407,18 @@ export function projectReportNarrative(
     charging: profile?.charging,
     renderDirective: vizDirectiveRenderer(planningChartContext()),
   }).blocks;
-  const pages = (profile
+  const packed = profile
     ? packNarrativePages(blocks, profile, linesPerPage)
-    : packMarkdownPages(blocks, linesPerPage)).length;
-  put(out, 'pages', pages || undefined);
+    : packMarkdownPages(blocks, linesPerPage);
+  put(out, 'pages', packed.length || undefined);
+  // The chapter each body page is in, for its running head.
+  //
+  // An ESTIMATE, exactly like `pages` beside it: this side has no template in
+  // hand, so the page breaks — and therefore which chapter a page opens in —
+  // are the calibrated profile's rather than the chosen master's.
+  // `planNarrative` overwrites both from the real geometry in one pass, and
+  // they travel together for that reason.
+  if (packed.length) put(out, 'chapters', runningChapters(packed, ''));
   return out;
 }
 

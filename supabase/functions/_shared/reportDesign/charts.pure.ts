@@ -388,16 +388,46 @@ function text(
  * 14 Sep 2026), and a legend label printed into its own value is what
  * "Professionals & small households" did to "20%".
  */
+/**
+ * Break a label into the pieces a line may end on.
+ *
+ * Whitespace is the obvious one and used to be the only one, and that is why
+ * page 9 of the Cowra Compass printed `Agriculture-dominat…` in a tile: a
+ * hyphenated compound is ONE whitespace token, so it never wrapped and the
+ * truncation at the end of this function cut it mid-word.
+ *
+ * A hyphen between two letters is a break point every typesetter uses, and
+ * the hyphen stays on the first line where it is already written. A hyphen
+ * with a digit on either side is not: breaking `2025-26` or `3-5y` across
+ * two lines turns one range into two numbers, and a reader has no way to see
+ * that it was ever one.
+ *
+ * The slash in `Land/Building` is the same case and breaks the same way.
+ */
+export function breakPoints(label: string): string[] {
+  const out: string[] = [];
+  for (const word of String(label ?? '').trim().split(/\s+/).filter(Boolean)) {
+    // Split AFTER a hyphen or slash that sits between two letters, keeping the
+    // mark with the piece before it.
+    const pieces = word.split(/(?<=[A-Za-z][-/])(?=[A-Za-z])/);
+    for (const piece of pieces) if (piece) out.push(piece);
+  }
+  return out;
+}
+
 export function fitLines(label: string, maxUnits: number, unitsPerChar: number, maxLines = 2): string[] {
   const perLine = Math.max(4, Math.floor(maxUnits / Math.max(0.1, unitsPerChar)));
-  const words = String(label ?? '').trim().split(/\s+/).filter(Boolean);
+  const words = breakPoints(label);
   if (!words.length) return [];
   const lines: string[] = [];
   let line = '';
   let i = 0;
   for (; i < words.length; i++) {
     const word = words[i];
-    const candidate = line ? `${line} ${word}` : word;
+    // A piece that follows a hyphen or a slash joins the one before it with no
+    // space — `Agriculture-` + `dominated` is one word broken, not two words.
+    const joiner = /[-/]$/.test(line) ? '' : ' ';
+    const candidate = line ? `${line}${joiner}${word}` : word;
     if (candidate.length <= perLine || !line) {
       line = candidate;
       continue;

@@ -308,7 +308,7 @@ export const COMPASS_40_SECTIONS: CompassSectionDefinition[] = [
     sectionPriority: 'Medium',
     maxWordCount: 700,
     visualComponents: ['amenityMatrix', 'attributeTable'],
-    purpose: 'One section answering what is nearby and how long it takes to reach — merged from the v2.0 education, retail/healthcare/lifestyle and transport sections. Lead with a single matrix: Amenity / Distance / Current / Future. Covers schools and childcare, healthcare, shopping and dining, parks and recreation, and rail, road, bus and real commute times including honest car-reliance. Top 3–5 per category; full school and facility lists go to the appendix. Render each ONCE.',
+    purpose: 'One section answering what is nearby and how long it takes to reach — merged from the v2.0 education, retail/healthcare/lifestyle and transport sections. Lead with one table that a reader can read as a sentence: what the amenity IS, how far it is and measured how (walking, driving, straight-line), what is there NOW, and what is published as coming. Give the columns those words rather than the four bare nouns the section was specified with — "Amenity / Distance / Current / Future" is the shape of a data structure and reads as one on the page. Covers schools and childcare, healthcare, shopping and dining, parks and recreation, and rail, road, bus and real commute times including honest car-reliance. Top 3–5 per category; full school and facility lists go to the appendix. Render each ONCE.',
   },
   {
     id: 'compass.transportAccess',
