@@ -82,10 +82,43 @@ producers were null on the Cowra row beside `errorsEncountered: 0`.
 | 6 | **`Agriculture-dominat…` fixed.** `fitLines` broke on whitespace only, so a hyphenated compound was one token that never wrapped. It breaks after a hyphen or slash between letters now — never between digits. | 6 specs. |
 | 7 | **The five-format ownership matrix**, generated from the registry with a spec that fails on drift. | 5 specs. |
 | 8 | The register's own denominator error corrected (§7a). | — |
+| 9 | **The constraints table's columns are sized to what they carry.** 4 of 50 Commercial Capacity masters printed their table over the explanation beneath it, because the four value columns took a fixed 330 pt and left the test name 87–117 pt against a vocabulary running to 31 characters. | Measured in Chromium at A4 across all fifty masters: before, Grand Folio +29.1 pt, Night Desk +12.4, Elevation +11.9, Sovereign Folio +5.2; after, **0 of 50 overlap and 0 of 400 rows wrap**. The spec pins the rule and fails on the old widths. |
+| 10 | **A listing's claims arrive attributed.** The prompt asked a model for the listing's "features, upgrades, and selling points" and "any specific renovations", three lines under a rule declaring condition record-governed — and the record holds no condition field, so "renovated" reached the page three times as the report's own assertion. | The instruction and `claimSupportRules` rule 4 now state one rule; both pinned, including that the bare instructions are gone. |
 
 Gates at each commit: `npx tsc --noEmit` clean; `check-edge-functions.mjs`
 334/334 baseline, no new errors; `check-edge-column-names.mjs` clean; the
 reports suite green.
+
+### The render QA, in full
+
+`npm run templates:compass:qa` **ran to completion**, which this programme had
+not previously achieved. Measured 19 Sep 2026: 500 templates, 500 declared
+combinations, **510 browser renders**, 100 PDFs, 715 screenshots. It reported
+**2 blocks printing over another**, both the same page of the same format —
+`Grand Folio` (20 pt) and `Elevation` (3 pt), p3 "The tests", the constraints
+table over the explanation beneath it. That page is composed by
+`commercialCapacity.ts`, a file this branch had not modified (`git log
+b7ec43d99..HEAD --name-only -- scripts/template-library/` names only
+`templates.ts`), so they were pre-existing rather than a regression of this
+work — and the ink measure understated them. Rendering all fifty Commercial
+Capacity masters and comparing each table's drawn box against what `flow()`
+reserved found **4 of 50** overlapping: Grand Folio +29.1 pt, Night Desk
++12.4, Elevation +11.9, Sovereign Folio +5.2. The other two overlapped by box
+alone, which is the same defect one paragraph away from being visible.
+
+The cause is measured, not inferred. The four value columns took a fixed
+330 pt, which on the families with the deepest margins left the test-name
+column 87–117 pt — narrower than the vocabulary it holds. `CONSTRAINT_LABELS`
+is a closed set of ten strings and three of them run 24 to 31 characters, so
+those rows wrapped to two lines while `table()` declared one. Measured in
+Chromium at A4 across all fifty masters, for the longest string each column
+can carry and for the column heads (mono, tracked — the wider requirement in
+`This deal`): Test 147.8, Permits 66.6, Policy 42.0, This deal 53.8, Status
+73.9. The value columns are now 75/48/60/82 = 265 pt, which leaves every
+family at least 152 pt for the name. Re-measured: **0 of 50 overlap, 0 of 400
+rows wrap.** `investmentCompassCatalogue.spec.ts` and
+`investmentCompassSource.spec.ts` pass (1,327 assertions).
+
 
 ---
 
@@ -94,34 +127,7 @@ reports suite green.
 Stated plainly rather than left to be discovered.
 
 1. **No fresh end-to-end generation** — see §1. It needs the deploy.
-2. **`npm run templates:compass:qa` ran to completion, found two overlaps, and
-   they are fixed.** Measured 19 Sep 2026: 500 templates, 500 declared
-   combinations, **510 browser renders**, 100 PDFs, 715 screenshots. It reported
-   **2 blocks printing over another**, both the same page of the same format —
-   `Grand Folio` (20 pt) and `Elevation` (3 pt), p3 "The tests", the constraints
-   table over the explanation beneath it. That page is composed by
-   `commercialCapacity.ts`, a file this branch had not modified (`git log
-   b7ec43d99..HEAD --name-only -- scripts/template-library/` names only
-   `templates.ts`), so they were pre-existing rather than a regression of this
-   work — and the ink measure understated them. Rendering all fifty Commercial
-   Capacity masters and comparing each table's drawn box against what `flow()`
-   reserved found **4 of 50** overlapping: Grand Folio +29.1 pt, Night Desk
-   +12.4, Elevation +11.9, Sovereign Folio +5.2. The other two overlapped by box
-   alone, which is the same defect one paragraph away from being visible.
-
-   The cause is measured, not inferred. The four value columns took a fixed
-   330 pt, which on the families with the deepest margins left the test-name
-   column 87–117 pt — narrower than the vocabulary it holds. `CONSTRAINT_LABELS`
-   is a closed set of ten strings and three of them run 24 to 31 characters, so
-   those rows wrapped to two lines while `table()` declared one. Measured in
-   Chromium at A4 across all fifty masters, for the longest string each column
-   can carry and for the column heads (mono, tracked — the wider requirement in
-   `This deal`): Test 147.8, Permits 66.6, Policy 42.0, This deal 53.8, Status
-   73.9. The value columns are now 75/48/60/82 = 265 pt, which leaves every
-   family at least 152 pt for the name. Re-measured: **0 of 50 overlap, 0 of 400
-   rows wrap.** `investmentCompassCatalogue.spec.ts` and
-   `investmentCompassSource.spec.ts` pass (1,327 assertions).
-3. **The remaining §2 claims are closed at the PRODUCER and still stand in the
+2. **The remaining §2 claims are closed at the PRODUCER and still stand in the
    STORED document.** Each was traced to the code that produced it rather than
    assumed:
 
@@ -134,14 +140,14 @@ Stated plainly rather than left to be discovered.
 
    None of that changes the stored document, and nothing here rewrites it. A
    corrected revision is a generation, which §1 says needs the deploy.
-4. **Cowra Shire Council's capital works programme, its DA register and its
+3. **Cowra Shire Council's capital works programme, its DA register and its
    Development Control Plan** were not retrieved. The infrastructure register
    states that limitation on the page.
-5. **`legislation.nsw.gov.au` refuses this egress** — a Cloudflare managed
+4. **`legislation.nsw.gov.au` refuses this egress** — a Cloudflare managed
    challenge on the HTML view, the PDF and the XML export alike, and again from
    headless Chromium. Any future feature needing instrument text must go through
    the Planning Portal's structured services.
-6. **Seed regeneration.** The master changes — the running head, the narrative
+5. **Seed regeneration.** The master changes — the running head, the narrative
    box and the constraints-table columns above — are in
    `scripts/template-library/`; `npm run templates:library:seed` has not been
    re-run, so the seeded catalogue still carries the old furniture. Each seed
