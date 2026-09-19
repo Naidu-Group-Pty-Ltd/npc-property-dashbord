@@ -89,11 +89,24 @@ console.log('READ-ONLY. Nothing below writes, applies, delivers or re-enables an
 //    treats that as retryable — so a false flag stops the mirror with a queue
 //    that is patiently full rather than an error anywhere.
 // ---------------------------------------------------------------------------
-const flag = await section('1. feature_flags — the door\'s gate', `
+/*
+ * THE TWO FLAGS ARE READ BY DIFFERENT RULES, so both readings are printed
+ * rather than one column called "enabled". `builderNetworkEnabled` requires
+ * `value === true` EXACTLY, while `coerceFlagEnabled` — which the Builder
+ * Stock tab uses — also accepts `"true"` and `{ "enabled": true }`. A row
+ * holding `{"enabled": true}` is therefore a flag an operator believes is on,
+ * that draws the tab, and that the network door still refuses; measuring one
+ * rule and labelling it the other is how a lane comes to disagree with the
+ * product it is measuring.
+ */
+const flag = await section('1. feature_flags — the two gates, each read its own way', `
   select key,
-         value::text                as raw_value,
-         jsonb_typeof(value)        as value_type,
-         (value = 'true'::jsonb)    as reads_as_enabled,
+         value::text             as raw_value,
+         jsonb_typeof(value)     as value_type,
+         (value = 'true'::jsonb) as strict_true_inbound_door,
+         (value = 'true'::jsonb
+          or value = '"true"'::jsonb
+          or value -> 'enabled' = 'true'::jsonb) as coerced_marketplace_tab,
          updated_at
   from public.feature_flags
   where key ilike 'builder_network%' or key ilike 'builder_stock%'
@@ -264,8 +277,12 @@ await section('8b. migration ledger tail', `
 console.log(`\n${'='.repeat(92)}\n9. WHAT THIS SIDE SAYS\n${'='.repeat(92)}`);
 const enabled = flag && flag.find((r) => r.key === 'builder_network_enabled');
 console.log(enabled
-  ? `  builder_network_enabled : value=${enabled.raw_value} (${enabled.value_type}) — the door reads this as ${enabled.reads_as_enabled}`
-  : '  builder_network_enabled : NO SUCH FLAG ROW — the door answers 503 network_disabled to every delivery.');
+  ? `  builder_network_enabled  : value=${enabled.raw_value} (${enabled.value_type}) — the inbound door reads this as ${enabled.strict_true_inbound_door}`
+  : '  builder_network_enabled  : NO SUCH FLAG ROW — the door answers 503 network_disabled to every delivery.');
+const tab = flag && flag.find((r) => r.key === 'builder_stock_marketplace');
+console.log(tab
+  ? `  builder_stock_marketplace: value=${tab.raw_value} (${tab.value_type}) — the marketplace tab reads this as ${tab.coerced_marketplace_tab}`
+  : '  builder_stock_marketplace: NO SUCH FLAG ROW — the Builder Stock tab is not drawn at all.');
 if (!conn || !conn.length) {
   console.log('  NO CONNECTION ROW — the door refuses every delivery with delivery_refused (401).');
 }
