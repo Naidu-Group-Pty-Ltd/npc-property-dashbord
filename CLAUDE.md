@@ -316,10 +316,23 @@ key SAY so rather than fall silently through to a model search, and as the one
 home of the eight-host allow-list, because a broker must enforce it rather
 than trust its caller. And **a feature the migrations have
 not reached degrades rather than failing**: `builder_network_stock_ranked`
-exists on no clone, so the marketplace falls back to the base table and says
-`ranked: false` instead of answering 42P01 into a 500 — with its own
-pre-ranking ORDER, because `ordered` leads with four ranking-only columns and
-would have failed the same way.
+exists on no clone — nor on the PRIME — so the marketplace falls back to the
+base table and says `ranked: false` instead of answering into a 500, with its
+own pre-ranking ORDER, because `ordered` leads with four ranking-only columns
+and would have failed the same way. **That fallback did not work for the first
+week it existed**, and the reason is worth more than the fix:
+`isMissingRankingRelation` accepted the POSTGRES codes `42P01`/`42703`, and a
+supabase-js caller never sees them here. PostgREST resolves a relation against
+its own schema cache and refuses before the statement is planned, so the wire
+answer is **`PGRST205`** (probed 19 Sep 2026: HTTP 404, *"Could not find the
+table 'public.builder_network_stock_ranked' in the schema cache"*) and
+`PGRST204` for a column. Neither was accepted, so the Builder Stock tab
+answered *"Builder stock could not be loaded."* over 46 correctly mirrored
+properties. Both spellings are accepted now. The rule: **an error code is
+observed on the wire, never assumed from the database that raises it** — and
+the two tests that vouched for this both invented their error, so code and
+test agreed while only the server disagreed, exactly as the AML `.or()` double
+did.
 
 **And a gap that reads like a clone's is sometimes nobody's.**
 `builder_network_connections` is empty on the PRIME as well as every clone,
