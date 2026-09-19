@@ -1,0 +1,101 @@
+# Stage C — the release, and what is proven before it
+
+19 September 2026. Branch `claude/reporting-engine-audit-4850hs`, PR #2700.
+Stage A's record is [`STAGE_A_RECORD.md`](./STAGE_A_RECORD.md), Stage B's is
+[`STAGE_B_RECORD.md`](./STAGE_B_RECORD.md).
+
+Stage C is R1–R12 and the preservation checks, CI green on the final head, the
+authorised merge / deploy / browser-publish gates, and fresh Annabelle and
+Pallas journeys producing ten PDFs within the A$25 limit.
+
+**Most of R1–R12 needs the deployed candidate.** `S5_ISOLATED_RUN_REQUEST.md`
+defines them: R1 is generation end to end including resume, R2–R3 an edit read
+back unchanged, R4–R5 template apply and change surviving a reload, R6–R7
+preview against export, R8–R9 navigation and permissions. Every one of those
+runs in the application against deployed edge functions. They are what the
+merge and deploy unlock, and nothing here claims them.
+
+**The preservation checks do not need it, and they are done.**
+
+---
+
+## 1. The read-path preservation check
+
+The standard's rule is that a change to how a report is READ must preserve
+*"verified facts, accepted financial inputs, material findings, user edits,
+historical records"*, and that *"infrastructure evidence must not silently
+change the financial model."*
+
+Nothing on this branch writes to a report row, so the stored bytes are
+trivially unchanged. The question that matters is what a **reader** now gets.
+So the same read path was executed over the same **105 stored rows** at this
+branch's head (`601bae591`) and at its merge base (`6d2a9c987`), in a worktree,
+and the two captures diffed field by field.
+
+`scripts/verify/read-path-preservation.mts` and its companion
+`read-path-preservation-diff.mjs` are retained so this is re-runnable rather
+than a claim. Every import in the capture is optional, because a module this
+branch created does not exist at the base — which is what lets one file run at
+both revisions.
+
+```
+rows compared: 105
+prose byte-identical: 105 of 105
+directives removed by the evidence contract: 831
+loan structure sentences DERIVED (base had none): 104
+
+unexpected differences: NONE
+```
+
+Compared on every row: the prose a client reads (hashed and line-counted), the
+directives kept, and then **`capitalGrowth`, `cpiGrowth`, `occupancyWeeks`,
+the whole `keyMetrics` object, the whole `initialCosts` object, the year-1 and
+year-10 moderate projections, the template projection's entire `financials`
+block, and every field of `loanDetails`** — `monthlyPayment`, `annualPayment`,
+`totalInterest`, `interestRate`, `loanAmount`, `loanType` and `structure`.
+
+Two differences are expected and are the work itself:
+
+- **831 unsupported directives removed** across 105 documents, each returned on
+  `findings` as the internal audit record rather than deleted silently.
+- **104 loan structure sentences derived** where the base carried none — a
+  disclosure added beside the figures, never a figure changed. The 105th row
+  holds no loan block.
+
+**Everything else is identical, including every figure named above.** The
+accepted CGR is untouched on every row; so is every projection, every key
+metric, every acquisition cost and every repayment.
+
+### What the first run got wrong, and why it is worth recording
+
+The first pass reported **99 of 105 documents with changed prose**, which would
+have been a serious finding. It was my measurement, not the code: the prose
+filter excluded `{{…}}` directive lines and not `::: stat …  :::` fences, so
+the summary-strip removals (Stage B §3.1) counted as prose. A stat fence is a
+label, a unit and a value — a card, not a sentence — and it is now excluded
+with the directives, while every other fence kind (pull quote, sidenote,
+divider, quote page) keeps its content in the comparison, so a change to one
+would still show. Re-run: 105 of 105.
+
+The rule that catches this class is the repository's own, and it is why the
+check reports a hash rather than a verdict: **a preservation check that cannot
+say what changed is not a preservation check.**
+
+---
+
+## 2. What Stage C still owes
+
+1. **CI green on the final head** — the PR is watched and each push has
+   reported a clean check suite; the final head's suite is what the merge gate
+   reads.
+2. **The authorised merge, deploy and browser-publish gates**, and the served
+   build verified by fetching it rather than inferred from Lovable's latest
+   edit.
+3. **Seed regeneration** (`npm run templates:library:seed`) — until it runs, no
+   master change on this branch reaches a deployment.
+4. **R1–R12 in the application**, which the deploy unlocks.
+5. **The fresh Annabelle and Pallas journeys** — ten PDFs, real generations,
+   within A$25 (**A$0.00 spent**). They are also what settle the two questions
+   Stage B named and deliberately did not turn into rules: whether a retrieved
+   growth reading can disagree with the accepted CGR unnoticed, and whether
+   condensation can introduce a claim its parent did not make.
