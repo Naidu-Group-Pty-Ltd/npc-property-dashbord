@@ -158,7 +158,48 @@ page because **the seeded catalogue has not been regenerated** — §5.5 of the
 Stage A record — and this render is the proof of that caveat rather than a
 counter-example to it.
 
-### 3.4 What still stands in the stored documents
+### 3.4 Three findings recorded and deliberately not fixed here
+
+**A tier's companion note is published, drawn by one renderer, and bound by no
+master.** `TIER_CONTENT.financial.companionNote` reads *"The location case, the
+planning controls mapped over the land and the risk register are set out in the
+Investment Compass for this property."* `reportBindingProjection` publishes it
+as `report.companionNote` and `render-investment-report-pdf` draws it — but the
+delivered PDF comes through the **template** route, and **no master binds it**:
+zero occurrences across `scripts/template-library/` and zero in the seeded
+catalogue. So the tier that is told to point elsewhere never does.
+
+It matters because of what pages 4 and 5 of the Financial Analysis carry: the
+Compass's *Location verdict* and *Property fit* prose, verbatim, listing-portal
+citations included. `sectionsForTier('financial')` declares eighteen sections
+and none of them is a location section, so the routing is faithful to the
+parent — the Compass's **Executive Verdict** section contains those
+sub-headings, and the fork maps that section onto *Client Investment Decision
+Summary*. Re-cutting the fork's summary routing is a content decision with its
+own corpus measurement to make, so it is named here rather than changed at the
+end of a session.
+
+**A timeline asserts horizons for infrastructure nobody retrieved.** Pages 10
+and 14 draw *Cowra infrastructure pipeline* and *Amenity & access pipeline* over
+`EXISTING / 0-2Y / 3-5Y / 5Y+`. Measured: **95 timeline directives across the
+corpus and 0 on a record with a planning producer.** A rule gated on that
+producer would therefore refuse 100% of them, with no positive case anywhere to
+test it against — which is the "fires on two-thirds of a corpus" hazard the
+evidence module warns about, and would read as a ban on a primitive rather than
+a judgement. The real control is upstream and already built: once the planning
+fetch answers (Stage A), `publishedProjectRules` gives the model dated stages
+from a publisher's own pages, and `planningFactBlocks` governs what may be said.
+So: measured, and deliberately not made a rule.
+
+**An absence is still rated in the stored risk register.** Page 21 reads
+*"Environmental hazards beyond flood/bushfire · Low–Moderate · No specific data
+has been provided on industrial uses, contamination or major noise sources"*.
+That is the §9 defect the planning doc records by name. The rule is live —
+`RISK_EXPOSURE_LEVELS` carries `Not assessed` and the section registry spells
+out that a register asked and returning nothing has measured the SEARCH, not the
+area — so this document predates it and the regeneration is what fixes it.
+
+### 3.5 What still stands in the stored documents
 
 Every §2 claim traced in Stage A §5.2 is visible on these pages, exactly as
 that record says: *"detached, renovated 3-bedroom residential home"*,
@@ -174,6 +215,17 @@ Two more, recorded rather than fixed, because both need the regeneration:
   OTHER addresses. `planningFactBlocks` rule 4 already forbids writing that no
   overlay applies, and the acquisition ledger and the rebuilt chapter are what
   replace it.
+- **The methodology page contradicts page 8.** Page 27 states that *"where
+  population, SEIFA or detailed demographic figures are not measured … the
+  report avoids quoting numbers"*, while page 8 quotes 12,721 residents and an
+  SA2 of 9,150–9,273. One document, both claims.
+- **A provenance nobody can check.** Page 27's source notes say local amenity
+  references are *"based on Cowra Shire Council facility maps, NSW Department of
+  Education school listings and Google Maps location searches"*.
+  `location_intelligence` is NULL: no such search was made by this report. The
+  crime and cash-rate notes on the same page are correct and checkable (BOCSAR
+  by postcode and month, RBA tables), which is what makes the amenity note
+  read as equally sourced. The acquisition ledger is what replaces it.
 - **The parking count is asserted and then doubted.** Page 3 prints
   *"Configuration · 1 car"*; page 6 says *"1 off-street space recorded in some
   data sources, on-site parking layout should be confirmed at inspection as
@@ -189,4 +241,4 @@ Two more, recorded rather than fixed, because both need the regeneration:
 2. **The seed has not been regenerated**, so no master change is on a page yet.
 3. **`briefing` and `snapshot` are read on a different property**, because the
    Cowra record has no child of either tier.
-4. The two findings in §3.4 are recorded and not fixed.
+4. The findings in §3.4 and §3.5 are recorded and not fixed.
