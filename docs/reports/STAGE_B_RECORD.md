@@ -588,13 +588,64 @@ both, and the difference is whether a register answered.
 
 ---
 
-## 4. What Stage B has not closed
+## 4. Every page, read
 
-1. **No fresh generation**, for the reason Stage A gives.
+Stage B asked for all five complete revised formats with **every page
+inspected**. That is done, and this is the tally:
+
+| document | pages | where the reading is |
+|---|---|---|
+| Investment Compass | 31 | §3.1–3.3, and Stage A §2 and §5 |
+| Financial Analysis | 21 | §3.4, §3.6, §3.7, §3.8 |
+| Due Diligence Report | 23 | §3.4, §3.5, §3.9 |
+| Executive Briefing | 11 | §3.10 |
+| Snapshot Report | 11 | §3.10 |
+| | **97** | |
+
+**Five defects were closed at the producer during the reading**, each measured
+across the corpus before a line was written: §3.1 a figure in a summary strip
+(83 of 89 records), §3.2 a rating out of ten and a distance nobody measured,
+§3.6 an interest-only label over principal-and-interest figures (92 of 92
+records), §3.7 a crime row and a checklist in the financial report, §3.8 and
+§3.10 a chart and a sentence about the report's own evidence, §3.9 three pages
+of distances on a record that measured none.
+
+**What every one of them has in common** is that the machinery was already
+there and the gap was one step away from it: a chart rule with no prose
+counterpart, a classifier missing the words a register actually writes, a
+disclosure field the writer publishes and no stored row carries, a population
+rule that correctly declined a chart no other rule then took. None of the five
+needed a new system.
+
+---
+
+## 5. What Stage B has not closed
+
+1. **No fresh generation**, for the reason Stage A gives. Every fix above
+   reaches a document at its next generation, and none rewrites a stored one.
 2. **The seed has not been regenerated**, so no master change is on a page yet.
 3. **`briefing` and `snapshot` are read on a different property**, because the
-   Cowra record has no child of either tier.
-4. The findings in §3.4 and §3.5 are recorded and not fixed.
+   Cowra record has no child of either tier. Both are also the oldest documents
+   in the set and predate every guard — §3.10 dates each finding rather than
+   leaving it to be assumed.
+4. The findings in §3.4 and §3.5 are recorded and not fixed, with the reasons
+   given there.
 5. **The loan-type contradiction is disclosed, not resolved.** §3.6 makes the
    record say what it holds; which product the borrower actually has is a
    question for the loan offer, and no repair may answer it from here.
+6. **Two questions are named and deliberately not made into rules**, because
+   the corpus holds no case to test either against:
+   - A retrieved growth reading that disagrees with the accepted CGR. Page 8 of
+     the Financial Analysis says *"annual capital growth readings around the
+     low-to-mid single digits"* while `assumptions.capitalGrowth` is **0.1** and
+     pages 13 and 16 name that figure correctly. Today `marketFactRules` rule 1
+     forbids the sentence outright, because nothing was retrieved — so the
+     document is closed. What is not closed is the case where a series IS
+     retrieved and differs from the modelled rate, which no record in the corpus
+     has.
+   - Whether condensation can introduce a claim its parent did not make.
+     `condense-investment-report` carries its own hand-written prohibitions and
+     not `claimSupportRules`; the corpus has two condensed documents, from one
+     parent, both predating the current prompt, so the hazard cannot be measured
+     from here. A fresh condensation under the current prompt is what settles
+     it, and that is Stage C's acceptance journey.
