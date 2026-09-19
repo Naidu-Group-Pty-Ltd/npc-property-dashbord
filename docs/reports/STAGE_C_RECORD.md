@@ -567,3 +567,99 @@ For acceptance: a master the v15 refresh classifies `deferred_customised` or
 `releaseApplied` stamp. It must therefore **not be counted as having received
 the new presentation.** `template_master_refresh_decisions` is what says which
 a given master got, and the reading queries are in the migration's own comment.
+
+---
+
+## 7. The release, executed — and the one defect it found
+
+### 7.1 The merge, and the compatibility question answered before it
+
+PR #2700 merged at head `b221c8958` into `35c6468f7`, producing merge commit
+**`1dd8e1ce7`** (parent 1 `35c6468f7`, so `git revert -m 1 1dd8e1ce7` is the
+rollback). `b61c454f7..b221c8958` is documentation only — one file,
+`STAGE_C_RECORD.md`, +139/−1 — so the full local gate table recorded in §5.6
+covers the merged code unchanged. CI 7019, PDF Import Release Gate 3415 and PDF
+Import Regression 1172 were green on `b221c8958`; `git merge-tree` exit 0
+against main.
+
+**The release window asked one real question:** merging deploys the edge
+functions immediately, while the migrations wait for a dispatch, so for a period
+production runs new code against a pre-migration template state. Two things were
+checked rather than assumed.
+
+1. **Do the deployed functions read the three tables the migrations create?**
+   `template_library_release_baselines`, `template_master_refresh_decisions` and
+   `report_template_refresh_snapshots` have **zero readers** anywhere in
+   `supabase/functions/` or `src/`. They appear only in the two migrations, the
+   generated object index, `buildSeedCatalogue.ts`, the verification harness and
+   this documentation.
+2. **Does the new code require a v15 master?** The only projection change is
+   additive: `reportBindingProjection.pure.ts` is +24/−4, `narrative.pages` is
+   still published and `narrative.chapters.*` is new. A v14 master binds a strict
+   subset, so it renders exactly as before.
+
+So there is no incompatibility in that direction. **The reverse direction is
+real and decides the order**, which is why the two migrations are separate and
+why this is worth writing down: v15 masters bind `{{narrative.chapters.N}}` in
+their running-head furniture (`investmentCompass/templates.ts`), and only the
+newly deployed projection publishes `chapters`. An unresolved binding renders as
+the empty string, so a v15 master refreshed onto masters served by pre-merge code
+would print a blank running head on every page.
+
+That constrains only the **second** migration. The seed writes
+`template_library_entries` and `template_library_release_baselines` and **never
+`report_templates`** — it cannot change a rendered document — so it is safe at
+any point. The refresh is what moves an active master, and it must follow a green
+function deploy.
+
+### 7.2 The v15 seed could not be applied, and why
+
+`apply-migration.yml` run **#66** (19 Sep 2026, 11:11Z) **failed, having applied
+nothing:**
+
+```
+… v15_running_head_and_columns.sql: 39.77 MB, 5540 lines
+Large file, but not the recognised INSERT shape — sending whole.
+public.template_library_release_baselines rows before: (relation absent)
+##[error]HTTP 413 — {"message":"request entity too large"}
+```
+
+This deployment has no `SUPABASE_DB_URL`, so the workflow takes the Management
+API route, where a 39.77 MB file has to be chunked. The chunker recognises the
+seed shape by finding a line that is exactly `VALUES` and a line starting with
+`ON CONFLICT ` **after** it. v15 is the first release to put a statement of its
+own *above* the catalogue insert — the pre-upsert baseline capture, which exists
+because the upsert overwrites `schema` in place and nothing else retains what it
+held. Its terminator is `ON CONFLICT (entry_id, release) DO NOTHING;` on line
+**66**; `VALUES` is on line **78**. `conflictAt > valuesAt` was therefore false,
+the file was sent whole, and the API refused it.
+
+The failure is clean in both senses that matter: the baselines relation was still
+absent when the job died, so the `CREATE TABLE` never ran; and `record_version`
+runs after the apply loop, so `schema_migrations` is untouched. Nothing is
+half-applied.
+
+**The correction is one expression** in `.github/scripts/apply-migration.mjs`:
+find the `ON CONFLICT` that *terminates the seeded INSERT* — the first one at or
+after its own `VALUES` — instead of the first one in the file. The migration
+files are untouched.
+
+Verified the way that script's own header says the chunker is meant to be
+verified, by a dry run against the real file rather than a fixture that can
+drift:
+
+```
+Parsed 543 tuples; reassembly byte-identical and every dollar-quote balanced.
+56 statements; largest 1.16 MB
+```
+
+543 is the catalogue's own declared count. The chunk composition was then read
+directly: every chunk carries lines 1–78 as its header, which is the baselines
+`CREATE TABLE`/`COMMENT`/`ALTER`, **the baseline-capture INSERT**, and the
+catalogue INSERT's column list. That is correct and not merely tolerable — the
+first chunk captures the complete pre-upsert baseline for every entry before any
+tuple in that same request is applied, and every later chunk's copy is a no-op
+under `ON CONFLICT (entry_id, release) DO NOTHING`. The terminating clause is the
+catalogue's own `ON CONFLICT (slug, version) DO UPDATE SET` (lines 5509–5530),
+and the trailing `UPDATE … SET status = 'published'` is sent once, after all 55
+row chunks.
