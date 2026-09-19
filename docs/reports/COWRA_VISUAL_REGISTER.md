@@ -33,7 +33,7 @@ The record, read directly:
 | `data_sources.seifa` / `.employment` / `.climate` | `null` | — |
 | *(no planning/infrastructure key exists at all)* | — | Both infrastructure timelines have no register behind them |
 | `investment_score.grade` | `"N/A"`, `gradeIssued: false`, `totalScore: null` | The three gauges and the risk wheel assert ratings the engine declined to issue |
-| `investment_score.coverage` | `coverageRatio: 0.2`, `dimensionsScored: 1` of 5 | The "Data resolution mix" graphic claims 60% address-specific |
+| `investment_score.coverage` | `coverageRatio: 0.2`, `dimensionsScored: 1` of 5 | *A different measure — see the correction below* |
 | `market_fact_snapshot` `market.demographics` | `status: "absent"` — *"not client safe: its label does not describe what it measures"* | Population was **explicitly withheld at the gate**, and page 11 charts it anyway |
 
 The one dataset the record genuinely holds — **crime**
@@ -74,7 +74,7 @@ wrote it into a `{{…}}` directive; no producer was asked and none answered.
 | 14 | 21 | `wheel 70,65,55,60,50,75` "Risk score breakdown (higher = more risk)" | Rate six risk categories | model | `riskScore: 60`, `hasData: false`, `excluded: true`; `riskRemedyFor` records Risk as unscoreable | none | Six ratings the engine cannot produce, on the one dimension the platform has formally recorded as **unscoreable**. §3: *incomplete evidence is not low risk* — and it is not a 55 either. Title printed BELOW the chart | Replace with the risk register's own three columns: exposure, evidence status, required action. Crime has real figures and belongs here |
 | 15 | 26 | `bars max=100 unit=%` — Planning 90, Environmental 85, Building 80, Insurance 75, Market 70 | Rank the due-diligence actions | model | none | none | §5 verbatim: *do not invent numerical priority weights*. A descending 90→70 ladder with no method | Action matrix: what to verify, why it matters, what evidence exists |
 | 16 | 30 | `donut: 40/35/25` "Evidence mix" | Say where the report's evidence came from | model | the record holds the real answer: 1 of 5 dimensions, `coverageRatio: 0.2` | none | Centre label clipped to "OFFICIAL STATISTI…". §3: evidence-coverage percentages require a reproducible counting method | Count the sources actually consulted, from `data_sources`. It is reproducible and it is already stored |
-| 17 | 31 | `bars max=100 unit=%` — Address-specific 60, Suburb/postcode 30, General 10 | State the resolution of the evidence | model | `coverageRatio: 0.2` | none | **Contradicts the record by a factor of three.** And the bullet directly beneath it reads *"Where population, SEIFA or detailed demographic figures are not measured … the report avoids quoting numbers"* — on the page after the one that charts population | Derive from `data_sources`; keep it separate from any investment score, as §3 requires |
+| 17 | 31 | `bars max=100 unit=%` — Address-specific 60, Suburb/postcode 30, General 10 | State the resolution of the evidence | model | *nothing in the record measures this* | none | The three shares have no counting method behind them, and the bullet directly beneath the chart reads *"Where population, SEIFA or detailed demographic figures are not measured … the report avoids quoting numbers"* — on the page after the one that charts population. **This row previously said the figures "contradict the record by a factor of three"; that comparison was wrong — see the correction below** | Derive from `data_sources` with a stated counting method, or state the resolution in words; keep it separate from any investment score, as §3 requires |
 | 18 | — | `bars max=3` "Dwelling type alignment" (Subject dwelling · 3-bed house …) | Show configuration fit | model | `property_specs.bedrooms: NULL`, `bathrooms: NULL` | none | Asserts a 3-bed house on a record that holds no bedroom count — the contradiction already logged, reaching a chart. **And it never rendered at all**: no item carries a number, so `parseVizDirectives` returns `[]` and the visual disappears with no trace | Remove. The document already says, correctly, that the count is not recorded |
 | 19–20 | 9, 10 | `tiles int=0.8 / int=0.5` ×2 | Compare the suburb to its neighbours | model | none | `int` drives a fill opacity | An intensity channel with **no scale and no legend** — colour carrying a value no reader can decode, which is §4's *colour must not be the only way to identify a series or status*. Page 10's fourth tile is clipped to "Agriculture-dominat…" | Keep the tiles, drop `int`, or give it a stated scale and a legend |
 | 21–33 | 4, 6, 9, 13, 16, 18, 21, 26, 29, 31, 32 | `glance` ×13 (11 pages carry one) | Four-line orientation blocks | model | qualitative | none | No figures, so no accuracy defect. But **eleven identical "AT A GLANCE" panels in 35 pages** is §4's *repeated graphics that add no information* | Keep at section openings; drop where a section already opens with a lead sentence |
@@ -238,6 +238,33 @@ Alongside those, five losses that *are* visible once looked for:
 
 Each is carried by a named module and a test in the sections that follow this
 register.
+
+---
+
+## 7a. A correction to this register
+
+The first version of this document compared the "Data resolution mix" graphic's
+**60% address-specific** against `investment_score.coverage.coverageRatio`
+(0.2) and called it a contradiction "by a factor of three".
+
+**That comparison was wrong, and it is the same error the register exists to
+catch.** The two percentages do not share a denominator:
+
+| | what it counts | denominator |
+|---|---|---|
+| `coverageRatio: 0.2` | scoring DIMENSIONS the engine could measure | 5 (Growth, Demand, Yield, Location, Risk) |
+| "Address-specific data 60%" | EVIDENCE held at address grain | undefined — the chart names no population of facts |
+
+One is one of five dimensions scored. The other is a share of evidence by
+geographic resolution. Setting them beside each other as though they measured
+the same thing is exactly what §3 forbids — *"percentages require a defined
+denominator"* — and doing it inside the register that enforces the rule is
+worse than doing it in the report.
+
+The finding that survives is simpler and is the one that mattered: **nothing in
+the record measures the resolution of this report's evidence at all**, so all
+three shares are unsupported. `coverageRatio` is not a smaller version of that
+number; it is a different number about a different thing.
 
 ---
 

@@ -169,23 +169,27 @@ describe('a rating the engine did not record', () => {
   });
 });
 
-describe('enforcement withholds the drawing and keeps the data', () => {
+describe('enforcement removes the unsupported visual and records it', () => {
   const OCCUPIER =
     '{{donut: Family renters 45, Local owner-occupiers 35, Professionals & small households 20 | title=Mix}}';
 
-  it('marks a share so the renderer tabulates it, keeping every label and figure', () => {
-    const { markdown } = enforceChartEvidence(OCCUPIER, readEvidenceInventory(COWRA_RECORD));
-    expect(markdown).toContain('basis=withheld');
-    expect(markdown).toContain('Family renters 45');
-    expect(markdown).toContain('Professionals & small households 20');
-    const d = parseVizDirectives(markdown)[0] as Extract<ReturnType<typeof parseVizDirectives>[number], { kind: 'donut' }>;
-    expect(d.basisWithheld).toBe(true);
-    expect(d.segments).toHaveLength(3);
+  it('does not tabulate an unsupported share — a table of it is the same claim', () => {
+    // A supported dataset a chart cannot render falls back to a table, and
+    // `vizFigures` still does that on the parser's `refused` list. An
+    // UNSUPPORTED dataset may not: the reader would receive three percentages
+    // of a population nobody measured, wearing the authority of a table.
+    const { markdown, findings } = enforceChartEvidence(OCCUPIER, readEvidenceInventory(COWRA_RECORD));
+    expect(markdown.trim()).toBe('');
+    expect(parseVizDirectives(markdown)).toEqual([]);
+    expect(markdown).not.toContain('Family renters 45');
+    // Nothing is lost to the operator: the directive and its reason are the
+    // audit record §2 requires the material to be retained in.
+    expect(findings).toHaveLength(1);
+    expect(findings[0].directive).toContain('Family renters 45');
+    expect(findings[0].verdict).toBe('population_not_held');
   });
 
-  it('removes a rating outright, because a gauge\'s data IS its verdict', () => {
-    // Tabulating "72 out of 100" states the same unsupported thing in a
-    // narrower column.
+  it('removes a rating too, because a gauge\'s data IS its verdict', () => {
     const { markdown } = enforceChartEvidence('{{gauge: 72 | Fit}}\n\nProse stays.',
       readEvidenceInventory(COWRA_RECORD));
     expect(markdown).not.toContain('{{gauge');

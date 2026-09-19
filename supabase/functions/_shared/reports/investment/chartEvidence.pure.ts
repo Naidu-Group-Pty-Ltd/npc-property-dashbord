@@ -37,10 +37,12 @@
  * ── What it may and may not do ───────────────────────────────────────────
  *
  * It never invents a figure, never rescales one, and never deletes a finding.
- * A visual it withholds becomes the table of its own labels and values — the
- * rule `vizDirectiveTables` already holds, and the reason the Cowra amenity
- * chart's four dropped rows came back. The prose around a visual is untouched,
- * because the prose is where the finding and the next action live.
+ * A visual it refuses LEAVES the document and is returned on `findings` as the
+ * audit record — it is not re-set as a table, because a table of unsupported
+ * percentages is the same unsupported claim in a narrower column. The prose
+ * around a visual is untouched, because the prose is where the finding and the
+ * next action live; replacing the withheld material with supported evidence is
+ * the acquisition work, not a scrub's job.
  *
  * It is deliberately NARROW. Only three classes are withheld, and each is one
  * where the record contradicts the drawing rather than merely failing to
@@ -86,11 +88,6 @@ export interface ChartEvidenceFinding {
   directive: string;
   /** One sentence naming what the record holds, for the operator, not the client. */
   reason: string;
-}
-
-export interface ChartEvidenceResult {
-  markdown: string;
-  findings: ChartEvidenceFinding[];
 }
 
 /**
@@ -260,18 +257,45 @@ export function assessChartEvidence(
 }
 
 /**
- * Withhold the drawing and keep the data.
+ * An unsupported visual leaves the client document and is kept in the audit
+ * record.
  *
- * A directive this refuses is not deleted: it is left in place for
- * `renderVizDirective` to set as a table of its own labels and values, by the
- * same route a chart with a refused item already takes. The reader still gets
- * every label the section promised; what leaves is the claim that those
- * numbers were measured.
+ * ── The correction this replaces ─────────────────────────────────────────
  *
- * The one exception is a RATING, which is removed outright, because a gauge's
- * data IS its verdict — tabulating "72 out of 100" states the same
- * unsupported thing in a narrower column.
+ * The first version of this module marked an unsupported share or series
+ * `basis=withheld` and let the renderer set it as a table — reasoning that
+ * withholding the DRAWING while keeping the labels and figures preserved the
+ * reader's material. That conflated two cases that are not alike:
+ *
+ *   - a **supported** dataset the chart primitive cannot render (a distance
+ *     written as a range, a categorical value where a number was expected).
+ *     A table is the right answer: every figure is real and the only thing
+ *     lost is the drawing. `vizFigures` still does exactly this, on the
+ *     parser's `refused` list.
+ *
+ *   - an **unsupported** dataset. "Family renters 45%, Local owner-occupiers
+ *     35%, Professionals & small households 20%" is not more defensible in a
+ *     table than in a donut. The reader still receives three percentages of a
+ *     population nobody measured, now wearing the authority of a table. The
+ *     defect is the figures, and a table does not repair figures.
+ *
+ * So an unsupported visual is REMOVED from what a client receives. Its
+ * directive, its values and the reason are returned on `findings` for the
+ * audit record, so nothing is lost to the operator — only to the reader who
+ * would otherwise have taken it for evidence.
+ *
+ * Removal is not the end state. §2 of the standard requires the material to be
+ * replaced by supported evidence or by an explanation that IS supported, and
+ * that replacement is the acquisition and composition work — not something a
+ * scrub can invent. What this module guarantees is the floor: an unsupported
+ * figure does not reach a client because a renderer found somewhere to put it.
  */
+export interface ChartEvidenceResult {
+  markdown: string;
+  /** The audit record: what left the document, and why. */
+  findings: ChartEvidenceFinding[];
+}
+
 export function enforceChartEvidence(
   markdown: string,
   inv: EvidenceInventory,
@@ -279,34 +303,13 @@ export function enforceChartEvidence(
   const findings = assessChartEvidence(markdown, inv);
   if (!findings.length) return { markdown, findings };
 
-  const ratings = new Set(
-    findings.filter((f) => f.verdict === 'unrecorded_rating').map((f) => f.directive),
-  );
-  const tabulate = new Set(
-    findings.filter((f) => f.verdict !== 'unrecorded_rating').map((f) => f.directive),
-  );
-
+  const remove = new Set(findings.map((f) => f.directive));
   const out: string[] = [];
   for (const line of markdown.split('\n')) {
     const t = line.trim();
-    const key = t.length > 190 ? `${t.slice(0, 189)}…` : t;
-    if (ratings.has(key)) continue;
-    out.push(tabulate.has(key) ? withholdDrawing(t) : line);
+    const key = t.length > 190 ? `${t.slice(0, 189)}\u2026` : t;
+    if (remove.has(key)) continue;
+    out.push(line);
   }
   return { markdown: out.join('\n').replace(/\n{3,}/g, '\n\n'), findings };
-}
-
-/**
- * Mark a directive so the renderer tabulates rather than draws it.
- *
- * `refused=1` rides in the directive's own option syntax, which every parser
- * on every path already reads, so this needs no second channel and no change
- * to the four render call sites. The values stay exactly as the model wrote
- * them — this withholds a DRAWING, not a figure.
- */
-export const WITHHELD_DRAWING_OPTION = 'basis=withheld';
-
-function withholdDrawing(directive: string): string {
-  if (directive.includes(WITHHELD_DRAWING_OPTION)) return directive;
-  return directive.replace(/\}\}\s*$/, ` | ${WITHHELD_DRAWING_OPTION}}}`);
 }
