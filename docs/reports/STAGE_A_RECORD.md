@@ -119,6 +119,18 @@ family at least 152 pt for the name. Re-measured: **0 of 50 overlap, 0 of 400
 rows wrap.** `investmentCompassCatalogue.spec.ts` and
 `investmentCompassSource.spec.ts` pass (1,327 assertions).
 
+The whole gate was then re-run on the changed masters and is **green**:
+
+```
+Investment Compass — render QA
+  500 templates, 500 declared combinations
+  510 browser renders (one per master + one dark per family)
+  100 PDFs, 715 screenshots → audit-output/investment-compass/
+
+✓ no block overflows its page, and none prints over another, in any of the 510 renders
+EXIT=0
+```
+
 
 ---
 
