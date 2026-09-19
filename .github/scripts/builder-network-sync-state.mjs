@@ -275,16 +275,44 @@ await section('8b. migration ledger tail', `
 //    each line restates a row printed above.
 // ---------------------------------------------------------------------------
 console.log(`\n${'='.repeat(92)}\n9. WHAT THIS SIDE SAYS\n${'='.repeat(92)}`);
-const enabled = flag && flag.find((r) => r.key === 'builder_network_enabled');
-console.log(enabled
-  ? `  builder_network_enabled  : value=${enabled.raw_value} (${enabled.value_type}) — the inbound door reads this as ${enabled.strict_true_inbound_door}`
-  : '  builder_network_enabled  : NO SUCH FLAG ROW — the door answers 503 network_disabled to every delivery.');
-const tab = flag && flag.find((r) => r.key === 'builder_stock_marketplace');
-console.log(tab
-  ? `  builder_stock_marketplace: value=${tab.raw_value} (${tab.value_type}) — the marketplace tab reads this as ${tab.coerced_marketplace_tab}`
-  : '  builder_stock_marketplace: NO SUCH FLAG ROW — the Builder Stock tab is not drawn at all.');
-if (!conn || !conn.length) {
-  console.log('  NO CONNECTION ROW — the door refuses every delivery with delivery_refused (401).');
+
+/*
+ * A READ THAT FAILED IS NOT A ROW THAT IS ABSENT, and this is the one place
+ * in the lane that could confuse them. `section()` answers null when the
+ * query could not be run at all — a transient Management API error, a token
+ * without the access, schema drift — and answers an empty array when the
+ * question was asked and the table holds nothing. Collapsing those two with
+ * a falsy test would print "NO SUCH FLAG ROW" and "NO CONNECTION ROW" off a
+ * lost signal, which is a definite claim about configuration, printed
+ * directly under this lane's own "COULD NOT BE READ", sending an operator to
+ * the wrong repair. It is also the exact defect the product has already paid
+ * for twice — `useAmlAccess` collapsing a failed read into the server's "no",
+ * and the partner surface reading an RLS-filtered `[]` as every flag off.
+ *
+ * So `unread` is checked FIRST and is its own sentence, and it names the
+ * limit of what the reading can say rather than guessing past it.
+ */
+const unread = (rows) => rows === null;
+const flagRow = (key) => (flag ? flag.find((r) => r.key === key) : undefined);
+
+const enabled = flagRow('builder_network_enabled');
+console.log(unread(flag)
+  ? '  builder_network_enabled  : COULD NOT BE READ — this says nothing about how the flag is set.'
+  : enabled
+    ? `  builder_network_enabled  : value=${enabled.raw_value} (${enabled.value_type}) — the inbound door reads this as ${enabled.strict_true_inbound_door}`
+    : '  builder_network_enabled  : no such flag row — the door answers 503 network_disabled to every delivery.');
+
+const tab = flagRow('builder_stock_marketplace');
+console.log(unread(flag)
+  ? '  builder_stock_marketplace: COULD NOT BE READ — this says nothing about how the flag is set.'
+  : tab
+    ? `  builder_stock_marketplace: value=${tab.raw_value} (${tab.value_type}) — the marketplace tab reads this as ${tab.coerced_marketplace_tab}`
+    : '  builder_stock_marketplace: no such flag row — the Builder Stock tab is not drawn at all.');
+
+if (unread(conn)) {
+  console.log('  connection               : COULD NOT BE READ — whether one exists here is unknown, not absent.');
+} else if (!conn.length) {
+  console.log('  connection               : NO ROW — the door refuses every delivery with delivery_refused (401).');
 }
 if (findings.length) {
   console.log('\n  Questions this database could not answer:');
