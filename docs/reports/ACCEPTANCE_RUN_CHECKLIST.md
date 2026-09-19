@@ -169,22 +169,26 @@ The two properties **need not share financial assumptions**. A $1.49m Kellyville
 house and a $575k Maryborough house are not the same case, and forcing one rate
 or one rent on both would be less realistic, not more controlled.
 
-### 2.7 Essential scenario questions
+### 2.7 The accepted scenario — settled 19 Sep 2026
 
-Only these. Everything else above is already determined by the record or by what
-the application ships.
+Three questions were put and answered. This is now the basis for both journeys
+and is not to be varied mid-run.
 
-1. **The defaults — accept or override?** Unless you say otherwise, both runs go
-   with the shipped scenario: 80% LVR, 6.5%, interest-only, 30-year term, 5%
-   growth, 8% management, 52 weeks. If a real client scenario applies to either
-   property, give me the numbers and they become the accepted inputs for that
-   property.
-2. **Rent — looked up, or stated?** Blank means the platform researches a median
-   and the yields rest on it. If you want a specific weekly rent for either
-   property, name it; if you want the lookup exercised, leave it and we record
-   the source it reports.
-3. **Expenses — modelled, or estimated into the form?** Press **Estimate
-   expenses** on both, or neither.
+1. **The shipped defaults are the accepted case.** 80% LVR, 6.5%, interest-only,
+   30-year term, 5% growth, 8% PM fee, 52 weeks — for **both** properties. The
+   deposit and loan amount follow from price and LVR as §2.3 sets out. Open the
+   tabs to read them if you wish; change nothing.
+2. **Weekly rent stays blank on both, and the lookup is exercised.** Record which
+   source answered — `override`, `listing`, `market_lookup` or `none`. If nothing
+   answers, the yields are **absent rather than `0.00%`**, and that is a correct
+   result to report, not a failure to retry.
+3. **Do not press Estimate expenses** on either property. The engine models the
+   annual costs; the submitted inputs stay minimal.
+
+So the only thing typed on either journey is the **address and the purchase
+price**. Everything else is either a default the form submits, a figure the form
+calculates, or something the platform researches — which is exactly the
+distinction this sheet exists to make.
 
 ---
 
