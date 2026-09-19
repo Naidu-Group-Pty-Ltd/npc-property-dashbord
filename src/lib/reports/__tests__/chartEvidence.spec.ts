@@ -112,14 +112,23 @@ describe('a share of a population the record does not hold', () => {
     expect(assessChartEvidence(OCCUPIER_MIX, HELD)).toEqual([]);
   });
 
-  it('a share of the report\'s OWN evidence is not a population and is left alone', () => {
+  it('a share of the report\'s OWN evidence is not a population, and is refused for its own reason', () => {
     // "Evidence mix: Official statistics 40, Major property portals 35, Local
-    // intelligence 25" describes where this report's material came from. It
-    // has its own defects — see the register — but it is not a census claim,
-    // and a rule that fired on it would fire on every cost breakdown too.
+    // intelligence 25" describes where this report's material came from. It is
+    // not a census claim, and a POPULATION rule that fired on it would fire on
+    // every cost breakdown too — so the population rule still leaves it alone.
+    // It is refused because nothing in this system measures the composition of
+    // a finished report, which is a different statement and its own verdict.
     const evidenceMix =
       '{{donut: Official statistics 40, Major property portals 35, Local intelligence 25 | title=Evidence mix}}';
-    expect(assessChartEvidence(evidenceMix, readEvidenceInventory(COWRA_RECORD))).toEqual([]);
+    const findings = assessChartEvidence(evidenceMix, readEvidenceInventory(COWRA_RECORD));
+    expect(findings.map((f) => f.verdict)).toEqual(['self_assessment_not_measured']);
+    expect(findings[0].reason).not.toContain('demographics producer');
+
+    // The same donut without the self-assessing title is untouched: the two
+    // rules are separate, and neither stands in for the other.
+    const costs = '{{donut: Council rates 40, Insurance 35, Maintenance 25 | title=Annual holding costs}}';
+    expect(assessChartEvidence(costs, readEvidenceInventory(COWRA_RECORD))).toEqual([]);
   });
 
   it('a pictograph of a transaction share is the same claim in icons', () => {
@@ -513,5 +522,71 @@ describe('the generator writes under it', () => {
     // And the instruction that used to ask for them bare is gone.
     expect(block).not.toContain('Include all relevant property features, upgrades, and selling points');
     expect(block).not.toContain('Note any specific renovations, improvements, or unique characteristics');
+  });
+});
+
+/**
+ * A chart about the report's own evidence.
+ *
+ * Page 17 of the delivered Cowra Financial Analysis drew
+ * `{{donut: Official statistics 40, Major property portals 35, Local
+ * intelligence 25 | title=Evidence mix}}` on a record holding
+ * `marketData: null`, `location_intelligence: NULL` and
+ * `demographics_data: NULL`. It is the one chart a reader uses to decide how
+ * much to trust every other number in the document, and it was the least
+ * supported thing in it — and it survived every other rule here, because
+ * "Official statistics" is neither a population subject nor a market one.
+ *
+ * Measured across the stored corpus (11 distinct documents, 216 directives,
+ * 102 titled, 64 distinct titles) exactly five titles match, and all five are
+ * this. Nothing else in the corpus is judged by it.
+ */
+describe('a chart about the report\'s own evidence', () => {
+  const inv = readEvidenceInventory(COWRA_RECORD);
+
+  it('refuses the evidence mix, with its own verdict', () => {
+    const md = [
+      'Some prose.',
+      '{{donut: Official statistics 40, Major property portals 35, Local intelligence 25 | title=Evidence mix | center=40% | centerSub=Official statistics}}',
+      'More prose.',
+    ].join('\n');
+    const out = enforceChartEvidence(md, inv);
+    expect(out.markdown).not.toContain('{{donut');
+    expect(out.markdown).toContain('Some prose.');
+    expect(out.markdown).toContain('More prose.');
+    const finding = out.findings.find((f) => f.verdict === 'self_assessment_not_measured');
+    expect(finding).toBeDefined();
+    expect(finding!.reason).toContain('acquisition ledger');
+  });
+
+  it('is decided by the title, not by a label that happens to say "confidence"', () => {
+    // A risk wheel with one "Data confidence" spoke is a chart about risk.
+    const risk = '{{wheel: 65,60,55,70,50,60 | labels=Crime,Environmental,Planning,Supply,Transport,Data confidence | max=100 | title=Composite risk profile}}';
+    const out = enforceChartEvidence(risk, inv);
+    expect(out.findings.some((f) => f.verdict === 'self_assessment_not_measured')).toBe(false);
+  });
+
+  it('holds however much evidence the record has, because nothing counts this', () => {
+    // Not a producer question: a full inventory does not make it supported,
+    // because no producer publishes the composition of the finished report.
+    const md = '{{donut: ABS Census 2021 40, ABS SEIFA 2021 25, Regional Population 25, Other official sources 10 | title=Primary data foundations}}';
+    for (const inventory of [inv, HELD]) {
+      const out = enforceChartEvidence(md, inventory);
+      expect(out.markdown.trim()).toBe('');
+      expect(out.findings[0].verdict).toBe('self_assessment_not_measured');
+    }
+  });
+
+  it('judges every primitive, because the assertion is the same in each', () => {
+    const grid = '{{heatmap: 1,1,0 / 1,0,1 / 0,1,1 | rows=Planning certainty,Parcel clarity,Development activity | cols=High,Moderate,Limited | title=Evidence quality at the property level}}';
+    const mix = '{{bars: Address-specific data 60, Suburb/postcode data 30, General market context 10 | title=Data resolution mix | max=100 | unit=%}}';
+    for (const md of [grid, mix]) {
+      expect(enforceChartEvidence(md, HELD).findings.some((f) => f.verdict === 'self_assessment_not_measured')).toBe(true);
+    }
+  });
+
+  it('leaves a chart about the property alone', () => {
+    const md = '{{bars: Kitchen 3, Bathroom 2, Living 4 | title=Dwelling type alignment}}';
+    expect(enforceChartEvidence(md, HELD).findings.some((f) => f.verdict === 'self_assessment_not_measured')).toBe(false);
   });
 });

@@ -406,6 +406,74 @@ emptied. The composed `Financial Risk Dashboard` chapter stands alone, and page
 This does not change a stored document: a fork is a generation, so the fix
 reaches the next one.
 
+### 3.8 The 40/35/25 evidence-mix donut — FIXED
+
+§2 names it by number, and page 17 of the delivered Financial Analysis still
+draws it:
+
+> **Evidence mix** — Official statistics 40% · Major property portals 35% ·
+> Local intelligence 25%
+
+on a record holding `data_sources.marketData: null`,
+`location_intelligence: NULL` and `demographics_data: NULL`.
+
+It survived the evidence contract, and the reason is instructive. Executed on
+the real Cowra record, `enforceChartEvidence` took the two occupier-mix donuts
+(`population_not_held`) and **kept this one**, because "Official statistics",
+"Major property portals" and "Local intelligence" are neither a population
+subject nor a market one. A test written earlier in this branch pinned that
+deliberately — a population rule that fired on it would fire on every cost
+breakdown too — and that reasoning was and is correct. What was missing is
+that a *different* rule should take it.
+
+**Nothing in this system counts what share of a report's statements came from
+which class of source.** The acquisition ledger records which producers
+answered; it says nothing about the composition of the finished prose, and
+turning producer outcomes into a percentage of "evidence" would be a second
+invention on top of the first. So a chart about the report's own sourcing has
+no denominator on any record, ever — which makes it unlike every other verdict
+here, none of which can be settled without asking the inventory.
+
+It earns its own verdict because of what a reader does with it: it is the one
+chart used to decide how much to trust every other number in the document, and
+it was the least supported thing in it.
+
+Measured across the stored corpus — **11 distinct documents, 216 directives,
+102 of them titled, 64 distinct titles** — the rule is judged on the **title
+alone**, the conservative reading, and matches five:
+
+| kind | title | ×
+|---|---|---|
+| donut | Evidence mix | 3 |
+| donut | Primary data foundations | 1 |
+| heatmap | Evidence quality at the property level | 1 |
+
+Every one is a self-assessment; nothing else in those 64 titles matches. A
+label that happens to say "confidence" inside a chart about something else —
+`{{wheel: … labels=Crime,Environmental,…,Data confidence | title=Composite
+risk}}` — is not caught, and a test pins that.
+
+The claim type is not part of the rule, because the reason does not depend on
+it: a share of the report's sourcing, a rating of its reliability and a grid of
+ticks against "High / Moderate / Limited" are the same assertion in three
+primitives. Across the corpus the contract now removes 79 of 216 directives:
+
+| verdict | × |
+|---|---|
+| `unrecorded_rating` | 51 |
+| `population_not_held` | 18 |
+| **`self_assessment_not_measured`** | **8** |
+| `distance_not_measured` | 6 |
+| `market_not_held` | 5 |
+| `series_withheld` | 1 |
+
+The eight include three copies of `Data resolution mix`
+(`bars: Address-specific data 60, Suburb/postcode data 30, General market
+context 10 | max=100`), which the rating guard already removed for declaring a
+0–100 scale — two rules, two independent reasons, and the self-assessment one
+still holds if the `max=100` is ever dropped. 5 specs, and the earlier test is
+renegotiated to pin **both** rules rather than deleted.
+
 ---
 
 ## 4. What Stage B has not closed

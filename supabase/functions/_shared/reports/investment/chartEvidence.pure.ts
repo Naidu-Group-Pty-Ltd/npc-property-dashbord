@@ -68,7 +68,7 @@ export type ChartClaim = 'rating' | 'share' | 'series' | 'measurement' | 'qualit
 /** Why a visual could not be verified, or that it was. */
 export type ChartVerdict =
   | 'supported' | 'unrecorded_rating' | 'population_not_held' | 'series_withheld'
-  | 'market_not_held' | 'distance_not_measured';
+  | 'market_not_held' | 'distance_not_measured' | 'self_assessment_not_measured';
 
 export interface EvidenceInventory {
   /** Every value the scoring engine recorded, which is what a rating may assert. */
@@ -352,6 +352,45 @@ function assessStatFences(markdown: string, inv: EvidenceInventory): ChartEviden
  *
  * Reports, and does not change anything. `enforceChartEvidence` is what acts.
  */
+/**
+ * A chart whose SUBJECT is the report's own evidence, sourcing or reliability.
+ *
+ * Nothing in this system counts what share of a report's statements came from
+ * which class of source. The acquisition ledger records which PRODUCERS
+ * answered — it says nothing about the composition of the finished prose, and
+ * turning producer outcomes into a percentage of "evidence" would be a second
+ * invention on top of the first. So a share or a rating about the report's own
+ * sourcing has no denominator anywhere, ever, on any record.
+ *
+ * It is worth its own verdict because of what a reader does with it. Measured
+ * 19 Sep 2026 across the stored corpus — 11 distinct documents, 216 directives,
+ * 102 of them titled, 64 distinct titles — five directives match, and all five
+ * are this: three copies of `{{donut: Official statistics 40, Major property
+ * portals 35, Local intelligence 25 | title=Evidence mix}}`, a `Primary data
+ * foundations` donut and an `Evidence quality at the property level` heatmap.
+ * The Cowra report drew the first on page 17 of the delivered Financial
+ * Analysis, on a record holding `marketData: null`, `location_intelligence:
+ * NULL` and `demographics_data: NULL`. It is the one chart a reader uses to
+ * decide how much to trust every other number in the document, and it was the
+ * least supported thing in it.
+ *
+ * Judged on the TITLE alone, which is the conservative reading: a label that
+ * happens to mention confidence inside a chart about something else does not
+ * make the chart a self-assessment, and on this corpus the title catches all
+ * five with no other title matching.
+ */
+const SELF_ASSESSMENT_TITLE =
+  /\b(evidence|sourc\w*|provenance|citation\w*|methodolog\w*|data\s+(?:quality|reliability|confidence|resolution|foundation\w*|coverage))\b/i;
+
+function titleOf(d: VizDirective): string {
+  const t = (d as { title?: unknown }).title;
+  return typeof t === 'string' ? t : '';
+}
+
+function assessesItsOwnEvidence(d: VizDirective): boolean {
+  return SELF_ASSESSMENT_TITLE.test(titleOf(d));
+}
+
 export function assessChartEvidence(
   markdown: string,
   inv: EvidenceInventory,
@@ -365,6 +404,25 @@ export function assessChartEvidence(
     const d = parsed[0];
     const claim = claimOf(d);
     const directive = t.length > 190 ? `${t.slice(0, 189)}…` : t;
+
+    // Every claim type, because the reason does not depend on one: a share of
+    // the report's sourcing, a rating of its reliability and a grid of ticks
+    // against "High / Moderate / Limited" are the same assertion in three
+    // primitives, and nothing measures any of them.
+    if (assessesItsOwnEvidence(d)) {
+      out.push({
+        verdict: 'self_assessment_not_measured',
+        claim,
+        kind: d.kind,
+        directive,
+        reason:
+          'The chart is titled for the report\'s own evidence, sourcing or reliability, and nothing '
+          + 'in this system counts that. The acquisition ledger records which producers answered; it '
+          + 'does not measure what share of the finished report each class of source contributed, so '
+          + 'the figures have no denominator on any record.',
+      });
+      continue;
+    }
 
     if (claim === 'share' && shareDescribesAPopulation(d) && !inv.demographics) {
       out.push({
