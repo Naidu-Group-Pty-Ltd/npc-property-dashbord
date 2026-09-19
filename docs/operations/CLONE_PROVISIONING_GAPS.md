@@ -15,11 +15,17 @@ deployment.
 | aurixa-clone-Preflight Property Group | `egrmsulhtmqnmhvuccxr` | `20261123000000` | — | — |
 | aurixa-builders (**the network**) | `htfluofznhxeumblwbww` | — | — | 1,066 stock items, 91 outbox events |
 
-Two facts carry everything below.
+Three facts carry everything below.
 
 **All three clones stop at `20261123000000`** and are missing the same
 seventeen migrations, `20261124000000` through `20261204010000`. That is a
 fleet-wide gap, not three coincidences.
+
+**Two of the three items are not clone problems at all.** The Firecrawl key is
+already fleet policy on Mission Control with no value behind it (§2), and the
+Builders Network connection is empty on the **prime** as well as every clone,
+because the act that creates it was never implemented on any side (§3). Both
+read, from a clone, exactly like something that clone is missing.
 
 **A clone's migration LEDGER is not a record of what ran.** On
 `plisdzywzleljorrphxv` all seven `market_sources` seeding migrations are
@@ -158,10 +164,46 @@ It now falls back to the base table and reports `ranked: false`, so a clone
 that HAS stock will show it, newest first, saying plainly that the order is not
 merit.
 
-**Reason two, not fixable from code.** `builder_network_connections` holds zero
-rows on the clone, so no events are delivered and the mirror stays empty. A
-connection is a two-sided record with a shared HMAC secret and cannot be
-created by one side alone.
+**Reason two: the row that would carry them has no writer anywhere.**
+`builder_network_connections` holds zero rows on the clone — and on the prime —
+so no event is delivered and the mirror stays empty. This was first written up
+here as "cannot be created by one side alone", which is true and is not the
+problem. The problem is that the side which is supposed to create it never had
+the code.
+
+Read across the three repositories, one act has three owners and no
+implementation:
+
+| Where | What it says |
+|---|---|
+| clone — `20261121000000_builder_network_mirror.sql` | the transport credential "is written into `outbound_hmac_secret` by Mission Control's provisioning machinery" |
+| Mission Control — `20260914130000_builders_network_trust_anchor.sql` | it is "the trust anchor and nothing else … operator visibility only, never authoritative" |
+| extraction plan §2 | per-connection credentials are "minted by the clone at connection time" |
+
+The product reads `builder_network_connections` in four places
+(`builder-stock-marketplace`, `cross-portal-outbox-worker`, and twice in
+`_shared/builderNetwork.ts`) and writes it in **none**. `builderNetwork.ts`
+states the rule outright: *"Nothing here invents a connection."*
+
+The network side is not the gap. `builder-network-admin` already offers
+`upsert_workspace`, `create_connection`, `provision_transport`,
+`rotate_transport` and `set_inbound_url`; acceptance mints the shared
+credential, and `provision_transport` hands it back — once — under a comment
+naming the catcher:
+
+> Returned ONCE, for MC to install in the clone's
+> `builder_network_connections` row alongside this URL.
+
+**Mission Control never wrote that catcher.** Its console can register a
+workspace, mint an invite, revoke, and set the network's inbound URL
+(`setNetworkConnectionTransport` → `set_inbound_url`). Nothing in it calls
+`provision_transport`, and nothing in it writes a workspace's
+`builder_network_connections` row — though it holds every clone's
+`supabase_url` and service credentials in `clone_backends` and already writes
+to clone projects elsewhere (`branding/mirror.ts`, `cloneSigningPair.server.ts`).
+
+So the feature is complete on both ends and unjoined in the middle, which is
+why the table is empty on every deployment rather than only on the clones.
 
 ### Finishing it
 
@@ -188,18 +230,44 @@ Read `apply-migration.yml`'s header first. It deliberately does **not** run
 magnitude, so a push would replay ~130 already-applied migrations including
 data mutations where a second application is not a no-op.
 
-**Step B — establish the connection.** Both sides, same `network_connection_id`
-and the same symmetric `outbound_hmac_secret`:
+**Step B — establish the connection.** An earlier version of this runbook said
+to generate the shared credential by hand and write it into both sides. That is
+wrong: the network mints it itself when the builder accepts, and writing a
+different value over `workspace_connections.outbound_hmac_secret` puts the row
+out of step with the state machine that produced it.
 
-- on `aurixa-builders`: a `workspace_connections` row naming the clone and its
-  inbound URL;
-- on the clone: a `builder_network_connections` row with `state = 'active'`,
-  the same secret, and `network_inbound_url` pointing at the network's
-  `builder-network-inbound`.
+The designed sequence is four acts, on Mission Control's `/builders-network`
+console:
 
-Mint the secret with `openssl rand -hex 32`. It is symmetric — both directions
-sign `${timestamp}.${rawBody}` with it — so it must be identical on both sides
-and must never be committed anywhere.
+1. **Register the workspace** — `upsert_workspace`, which puts the clone in the
+   network's directory.
+2. **Mint the connection invite** — `create_connection`, which returns an invite
+   code shown once and writes the shadow-ledger row tying this connection to a
+   clone.
+3. **The builder accepts**, in their own portal. Acceptance is what mints the
+   shared transport credential; it is RLS-closed and no read returns it.
+4. **Install the transport on the clone** — `provision_transport` hands the
+   credential back once, with the network's inbound URL, and it has to be
+   written into the clone's `builder_network_connections` row in the same act.
+
+**Act 4 is the one with no implementation**, so the sequence cannot be completed
+by an operator at all today: the value is returned to whoever calls
+`provision_transport`, that call is reachable only through the console's
+federation-asserted admin client, and the console has no control that makes it.
+A second call answers `transport_already_provisioned`, so a value taken and
+dropped is recoverable only by `rotate_transport`.
+
+Three constraints anything built for act 4 has to respect:
+
+- **Prove the clone writable before asking the network.** The grant is
+  one-shot, so every refusal discoverable first — no backend, backend not
+  `ready`, incomplete credentials, no mirror table, stale key — costs nothing,
+  and every one discovered after costs a rotation.
+- **Fetch and install inside one server act**, never returning the value to a
+  browser.
+- **Installing transport is not opening the door.**
+  `feature_flags.builder_network_enabled` is a separate decision and must stay
+  one; a credential that enables itself is how a dark feature turns itself on.
 
 **Step C — confirm by effect, never by configuration.** The one-minute sweep
 (`builder_network_apply_inbound_events`) should move rows into
