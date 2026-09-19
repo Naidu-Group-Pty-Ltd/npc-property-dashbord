@@ -4502,6 +4502,28 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       console.log('Enhanced data fetch failed, proceeding with basic analysis:', error?.message || 'Unknown error');
     }
 
+    // ── The measurement this incident needed and did not have ──────────────
+    //
+    // `traceStartRun` is called AFTER this block, so `report_generation_runs`
+    // has never once included the acquisition phase in its own clock. That is
+    // why "21 minutes at 0 of 15" could not be attributed to anything from the
+    // record: the only phase that could have consumed the invocation was the
+    // one phase nothing timed.
+    //
+    // One structured line, greppable in the edge logs, costing nothing. It is
+    // deliberately a log and not a column: the run trace's schema is a contract
+    // with its own readers, and a number nobody has asked to store does not
+    // earn a migration.
+    const acquisitionMs = Date.now() - runStartedAt;
+    console.log(
+      `⏱️ acquisition finished at +${(acquisitionMs / 1000).toFixed(1)}s of the run's `
+      + `${Math.round(SECTION_CALL_HARD_STOP_MS / 1000)}s budget · `
+      + `${isContinuation ? 'continuation' : 'first invocation'}`
+      + (acquisitionExhaustedThisRun
+        ? ' · SOME CALLS DEFERRED for want of a window — not recorded as absences'
+        : '')
+    );
+
     // ========================================================================
     // RF-7.2B.1 — CLIENT-SAFE GATE ACTIVATION
     // ========================================================================
@@ -7144,6 +7166,10 @@ YOUR DEDICATED PROPERTY PARTNER
         durableProgress: handoff.durableProgress,
         ...(handoff.state === 'no_progress' ? { noProgressReason: handoff.reason } : {}),
         contentLength: combinedContent.length,
+        // What the research phase cost this invocation, so speed can be
+        // measured from the network tab rather than from edge-log access.
+        acquisitionMs,
+        sectionMsThisRun: sectionDurationsMs,
       }), {
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

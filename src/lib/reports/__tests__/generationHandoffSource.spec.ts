@@ -208,3 +208,32 @@ describe('the four geography-dependent registers are one wave', () => {
     expect(starter).toContain('return pending;');
   });
 });
+
+
+describe('the research phase is timed', () => {
+  /**
+   * `traceStartRun` is called AFTER the acquisition block, so
+   * `report_generation_runs` has never once included acquisition in its own
+   * clock — which is why "21 minutes at 0 of 15" could not be attributed to
+   * anything from the record. The only phase that could have consumed the
+   * invocation was the one phase nothing timed.
+   */
+  it('measures the phase from the run clock, at its close', () => {
+    const measured = source.indexOf('const acquisitionMs = Date.now() - runStartedAt;');
+    const traceStart = source.indexOf('await traceStartRun(');
+    expect(measured).toBeGreaterThan(-1);
+    // It has to be taken BEFORE the trace starts, or it measures nothing new.
+    expect(measured).toBeLessThan(traceStart);
+  });
+
+  it('hands the figure back, so measuring needs no edge-log access', () => {
+    const handoff = source.slice(source.indexOf('=== BUDGET HANDOFF ==='));
+    expect(handoff).toContain('acquisitionMs,');
+    expect(handoff).toContain('sectionMsThisRun: sectionDurationsMs,');
+  });
+
+  it('says when calls were deferred, and that a deferral is not an absence', () => {
+    expect(source).toContain('SOME CALLS DEFERRED for want of a window');
+    expect(source).toContain('not recorded as absences');
+  });
+});

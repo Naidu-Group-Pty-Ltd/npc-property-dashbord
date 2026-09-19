@@ -193,6 +193,42 @@ long research phase and a hang are otherwise indistinguishable from outside.
 
 ---
 
+## 2a · And the widget had been drawing that line since the first second
+
+Two things were wrong with `Section 1 of 15 · 0/15 · 0% · 21m 2s elapsed`, and
+only one of them was the run.
+
+`toReportProgress` falls back to the tier registry when the row states no
+`total_sections`. The fallback is right for the arithmetic — the bar needs a
+denominator and cannot divide by zero — and wrong for the words, because it
+meant the widget printed a section count the record had never stated. A healthy
+forty-second research phase and a twenty-one minute hang produced **the same
+line**, so no reader could tell them apart by looking, and the operator who
+reported this had no way to know which they were watching.
+
+`total_sections` is written by the first progressive save, which is also the
+first moment any prose exists. Its absence is therefore a real, readable signal
+rather than a second guess at one, and `generationPhase` reads it: *Researching
+the property* while the record states no count, *Section N of M* once it does,
+*Assembling the document* when every section is written. The counts line says
+"No sections written yet" rather than `0/15 sections`.
+
+Three rules.
+
+**A count the server has not stated is not printed as though it had.** The
+arithmetic keeps its fallback denominator; only the reading changes.
+
+**A phase is not a fifth activity state.** Stall detection, the header counts
+and the resume decision all key on `ActivityState`, and adding a member would
+change what those mean. A phase says what is happening; a state says whether
+anything is wrong — so a run that has been *researching* for four minutes is
+still `stalled`, and a test asserts exactly that.
+
+**An absent flag reads as settled.** A row mid-flight when this shipped, or any
+caller not yet updated, renders exactly as it did before.
+
+---
+
 ## 3 · The continuation loop advanced on `success: true`
 
 A budget hand-off returns HTTP 200 `success: true` — that is how it says "resume
@@ -212,6 +248,26 @@ unconditionally, so the row went back to looking live — and the watchdog claim
 exactly `status = 'processing'`. The write now matches only
 `['pending', 'processing']`, which makes it an atomic no-op against a cancelled,
 failed or completed row with no read to race against.
+
+---
+
+## 5 · The one phase that could consume the run was the one phase nothing timed
+
+`traceStartRun` is called **after** the acquisition block, so
+`report_generation_runs` has never once included acquisition in its own clock.
+That is why "21 minutes at 0 of 15" could not be attributed to anything from
+the record alone — the phase under suspicion was invisible to the only
+telemetry the pipeline has.
+
+It is measured now, at the close of the block and from the run's own clock, and
+the figure travels two ways: a structured line in the edge logs, and
+`acquisitionMs` plus `sectionMsThisRun` on the hand-off response, so a speed
+measurement can be taken from the browser's network tab without edge-log
+access.
+
+Deliberately a log and a response field rather than a column. The run trace's
+schema is a contract with its own readers, and a number nobody has asked to
+store does not earn a migration.
 
 ---
 
