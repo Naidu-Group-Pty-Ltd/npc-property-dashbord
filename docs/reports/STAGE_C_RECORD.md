@@ -223,7 +223,7 @@ substitutes for it, and no substitute would be sound.
 
 1. **CI green on the final head** — the PR is watched and each push has
    reported a clean check suite; the final head's suite is what the merge gate
-   reads.
+   reads. The head is now `c423b3992`.
 2. **The authorised merge, deploy and browser-publish gates**, and the served
    build verified by fetching it rather than inferred from Lovable's latest
    edit.
@@ -233,3 +233,128 @@ substitutes for it, and no substitute would be sound.
    Stage B named and deliberately did not turn into rules: whether a retrieved
    growth reading can disagree with the accepted CGR unnoticed, and whether
    condensation can introduce a claim its parent did not make.
+
+---
+
+## 5. The closing pass — four evidence gaps, each measured first
+
+Four gaps were named after Stage C's first record was written. Each was
+measured before anything was written, and two of the four measurements changed
+what got built.
+
+### 5.1 Planning and infrastructure acquisition
+
+The corpus said what Stage A's diagnosis had not:
+
+```
+rows in .verify/fixtures                            105
+rows carrying a coordinate on location_intelligence   5
+rows carrying a planning key in data_sources          0
+```
+
+Stage A found the first fault — no coordinate, so the guard was false. The
+second is that **the five rows that DO carry a coordinate also have no planning
+key**. `23 MACKAY Street, Moranbah QLD 4744` was generated 2026-09-08, two days
+after `planning-data-service` went live; its `location_intelligence` column
+holds `{lat: -22.006014, lng: 148.0590271}` and its `enhanced_data` is `{}`.
+
+The guard reads the in-memory working object. Every Compass is finished by the
+resume worker, which starts `enhancedData` empty and calls back with
+`{reportId, propertyAddress, continueFrom}`; `assessEnrichmentReuse` correctly
+refuses to reuse an enrichment that cannot prove it describes this subject; and
+when the live enrichment then fails, four producers go quiet at once. That is
+`rawPropertyType`'s defect on the coordinate, and recording the skip — which
+Stage A added — is an honest account of a report that still has no planning
+content in it.
+
+`planningCoordinate.pure.ts` resolves a coordinate and then **qualifies** it.
+Only a match at the address may select a planning control, because a control is
+an attribute of the parcel: a street point may sit on the road reserve or the
+neighbour's lot, and a suburb centroid is a different property. `locality` is
+acceptable to `assessGeocodeGranularity` for a map pin and is refused here,
+which is `crimePostcodeAuthority`'s rule in another register.
+
+The published-project register had the same shape one level on, and worse: its
+empty result rendered the empty STRING and told the model *"no major public
+project near this property is recorded in this platform's register"* — a
+sentence asserting a search happened, returned identically on all 105 rows
+where no search was possible.
+
+### 5.2 Evidence-bounded content
+
+Two absolutes in `landUsePermissibility.pure.ts`, both corrections of
+substance rather than tone, and both recorded in §3.11's companion in the
+Stage B record. The sentence carries its instrument and its retrieval date
+now, and `EXISTING_DWELLING_CAVEAT` keeps the use class apart from this
+building's own approval.
+
+**A blanket table rule was measured and refused**, which is the more useful
+finding. Across the 12 distinct documents in the corpus, 316 of 620 table rows
+carry a figure and **269 of those — 85.1% — name no basis within four lines**,
+because they are the acquisition-cost and annual-cost tables whose every figure
+comes from the record's own calculation. A rule firing on 85% of a document
+teaches people to dismiss it, which is the hazard
+`FIGURE_KINDS_NEEDING_A_BASIS` already names in its own comment. What was
+actually missing was smaller: the claim rules' preamble enumerated prose,
+captions, summary strips and tables, and omitted the two formats a removed
+chart most naturally becomes — a `::: stat :::` card and a timeline stop.
+
+### 5.3 Template migration safety — and why it is NOT §1
+
+§1 measures what a **reader** of a stored report gets at two revisions. It
+touches no template and it cannot answer what a migration does.
+
+The refresh **replaces an adopted row's whole `schema`** with the library
+entry's and carries forward only `tokens.colors`. A tenant palette survives; a
+tenant typeface, page, block, section or binding does not. That is deliberate,
+and v13 and v14 had the same shape. What was missing is that there was no way
+back — so every row the update touches is written whole to
+`report_template_refresh_snapshots` first, and the restoring statement is in
+the migration's own comment.
+
+Proved by execution rather than by reading the SQL:
+`scripts/verify/template-refresh-preservation.sh` applies the migration to a
+throwaway PostgreSQL over four rows — a plain adoption, an adoption customised
+beyond colours, a row with no library lineage and an inactive draft — and
+asserts twenty things, including the two rows that must be left alone, the
+pre-refresh typeface held in the snapshot, and the documented restoration run
+verbatim. All pass. Applied twice: idempotent, and the second snapshot is taken
+rather than overwriting the first.
+
+**`differing_keys` says what CHANGES, not who changed it.** Before this
+migration the database stores no baseline for an untouched adoption, so library
+version drift and a hand edit are indistinguishable after the fact. The
+snapshot is what makes them distinguishable next time.
+
+### 5.4 The two questions that were open
+
+Both were named in the Stage B record and deliberately not made rules, because
+the corpus held no case to test either against. Waiting was the wrong call: a
+**clearly labelled synthetic fixture** is how a rule gets a positive and a
+negative case before the first real document needs it. A fixture is not a
+property acceptance and is not offered as one.
+
+`growthDivergenceRule` discloses a retrieved growth reading that disagrees with
+the accepted CGR and reconciles neither, because they are different quantities
+and replacing one with the other silently changes a client's financial model.
+It is silent where they agree or either is absent.
+
+`condense-investment-report` is handed `claimSupportRules` built from the
+**parent's** `data_sources`. It had zero occurrences of it before, so a rule
+tightened for the generator reached the parent and not the child.
+
+### 5.5 The read path, re-measured at this head
+
+```
+rows compared:                                      107
+prose byte-identical:                        107 of 107
+directives removed by the evidence contract:        847
+loan structure sentences DERIVED (base had none):   106
+unexpected differences:                            NONE
+```
+
+The row count moved from 105 to 107 because the fixture set grew by two between
+the first run and this one; the earlier figures were 105 / 831 / 104. **This is
+a field-by-field comparison over a named set, not a universal byte-for-byte
+claim** — the two differences are the work itself and are named rather than
+filtered away.
