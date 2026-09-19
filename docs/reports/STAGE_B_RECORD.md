@@ -179,6 +179,22 @@ Summary*. Re-cutting the fork's summary routing is a content decision with its
 own corpus measurement to make, so it is named here rather than changed at the
 end of a session.
 
+**The Due Diligence report has no planning, zoning or title section, and no
+due diligence checklist.** Its contents lists ten content sections;
+`sectionsForTier('strategic')` declares twenty-one. Missing, among others:
+*Planning, Zoning and Title Due Diligence*, *Infrastructure and Growth
+Context*, *Climate, Environmental, Insurance, Crime and Safety Risk*, *Due
+Diligence Checklist*, *Monitoring & Review Plan* and *Final Recommendation* —
+on the tier whose stated purpose is *"what must be verified before contract"*.
+
+This is the Stage A root cause reaching its furthest point. The fork can only
+route what the parent wrote, and the parent Compass was generated on 11 Sep
+with no planning section at all, because the planning register was never asked.
+`tierAssembly` does track what it could not place (`unplaced`), so the
+machinery is not blind; the content simply was not there to place. The register
+answering (Stage A) is what fills it, and this is the clearest single reason
+the acceptance journey has to be a fresh generation rather than a replay.
+
 **A timeline asserts horizons for infrastructure nobody retrieved.** Pages 10
 and 14 draw *Cowra infrastructure pipeline* and *Amenity & access pipeline* over
 `EXISTING / 0-2Y / 3-5Y / 5Y+`. Measured: **95 timeline directives across the
