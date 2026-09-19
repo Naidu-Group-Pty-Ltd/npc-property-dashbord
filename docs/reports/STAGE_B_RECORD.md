@@ -179,6 +179,9 @@ Summary*. Re-cutting the fork's summary routing is a content decision with its
 own corpus measurement to make, so it is named here rather than changed at the
 end of a session.
 
+**The binding half of this was closed — see §3.11.** The routing half, which is
+what the paragraph above is about, is still open.
+
 **The Due Diligence report has no planning, zoning or title section, and no
 due diligence checklist.** Its contents lists ten content sections;
 `sectionsForTier('strategic')` declares twenty-one. Missing, among others:
@@ -586,6 +589,88 @@ Planned verification"*, which is an absence named as an absence and not rated,
 exactly as the standard asks. The contrast is the point — the same table holds
 both, and the difference is whether a register answered.
 
+### 3.11 The sentence that says where the rest of the analysis is — FIXED
+
+§3.4 recorded this and did not fix it, because the reason given there was about
+the harder half of the same page: re-cutting the fork's summary routing, so
+that the Financial Analysis stops carrying the Compass's *Location verdict* and
+*Property fit* prose. That is still a content decision with its own corpus
+measurement to make, and it is still open.
+
+The other half needed none of that, and it is one binding.
+
+`TIER_CONTENT.companionNote` is the sentence each tier uses to send a reader to
+its companion document:
+
+| tier | what it says | chars |
+|---|---|---:|
+| `compass` | "Purchase costs, yield, loan structure, cash flow and the ten-year projection are set out in the Financial Analysis Report for this property." | 140 |
+| `financial` | "The location case, the planning controls mapped over the land and the risk register are set out in the Investment Compass for this property." | 140 |
+| `briefing` | "The full assessment is in the Investment Compass, and the financial position in the Financial Analysis Report." | 110 |
+| `snapshot` | "The location case is in the Investment Compass, and the full modelling in the Financial Analysis Report." | 104 |
+| `strategic` | "The financial position is set out in the Financial Analysis Report for this property." | 85 |
+| `composite` | — | — |
+
+`reportBindingProjection` publishes it as `report.companionNote`, and
+`render-investment-report-pdf` draws it. The delivered document comes through
+the **template** route, and **no master bound it** — zero occurrences across
+`scripts/template-library/`, zero in the seeded catalogue. `SAMPLE_REPORT_DATA`
+has carried a `report.companionNote` since the tier split, so the sample was
+written as though the binding existed. It did not. **The tier that is told to
+point elsewhere never did, on any page of any document a client opened.**
+
+It matters more since seed v14, not less. v14 made the three financial pages
+conditional on `report.drawsFinancialModelling`, and the contents block draws
+the pages that actually rendered — so a Compass's contents page correctly stops
+listing *Financial position* and *Ten-year projection*, and nothing then said
+where they had gone. A reader looks for a section, does not find it, and is
+told nothing.
+
+**Where it goes, and why it is not the section heading's standfirst.** The
+first attempt hung it on `sectionHeading`'s optional `standfirst`, which is the
+treatment it wants and already measures its own depth per header kind. Building
+the fifty masters counted the result: **32 of 50 carried it and 18 did not.**
+`sectionHeading` says why, in the module itself — *"only the `standfirst` kind
+draws one; `bare`, `decimal` and `eyebrow` drop it"*. That is right for a
+section opener's subtitle, which is styling, and wrong for a cross-reference.
+`hasContents` records the identical rule one level up, from the identical
+cause: `toc_style: none` was a statement about a family's decorative index and
+it silenced the contents page outright, so ten masters shipped client documents
+with no way to navigate them. **A family's styling decides how a thing is
+drawn, never whether the document carries it.**
+
+So it is its own block, `companionNote()` in `investmentCompass/blocks.ts`,
+drawn by every master in exactly the treatment the `standfirst` kind would have
+given it — italic, muted ink, body size, 1.5 leading — with its height from
+`standfirstDepth`'s own arithmetic rather than a second opinion about the same
+sentence.
+
+**Above the contents list, never below it.** `contents()`'s row count is a size
+hint with eight rows of slack, because the real list is the document's page
+count and not its section names; a document whose list outruns the hint draws
+DOWN into the space beneath, which therefore has to stay empty. Measured across
+the fifty masters, the room below the contents block runs from **122 pt**
+(Luxury Editorial's third variant) to **301 pt**.
+
+Measured after the change, by building all fifty and by rendering them:
+
+```
+overflow records:                              0 of 50
+Contents pages binding report.companionNote:  50 of 50
+note drawn above the list:                    50 of 50   (gap 32-53 pt)
+sentence present when the tier publishes one: 50 of 50
+sentence absent, and no `{{...}}` leak, without: 50 of 50
+reserved lines for the 140-character note:     2 on every master
+```
+
+Four specs pin it: every master binds it, it sits above the list, it draws the
+sentence and nothing at all without one, and `COMPANION_NOTE_CHARS` is the
+exact longest note `TIER_CONTENT` publishes — so the day a tier's sentence is
+rewritten longer than the masters reserve for it, the build fails rather than
+printing over the contents list.
+
+---
+
 ---
 
 ## 4. Every page, read
@@ -602,20 +687,23 @@ inspected**. That is done, and this is the tally:
 | Snapshot Report | 11 | §3.10 |
 | | **97** | |
 
-**Five defects were closed at the producer during the reading**, each measured
+**Six defects were closed at the producer during the reading**, each measured
 across the corpus before a line was written: §3.1 a figure in a summary strip
 (83 of 89 records), §3.2 a rating out of ten and a distance nobody measured,
 §3.6 an interest-only label over principal-and-interest figures (92 of 92
 records), §3.7 a crime row and a checklist in the financial report, §3.8 and
 §3.10 a chart and a sentence about the report's own evidence, §3.9 three pages
-of distances on a record that measured none.
+of distances on a record that measured none, and §3.11 the sentence saying
+where the rest of the analysis is, published for every tier and bound by none
+of the fifty masters.
 
 **What every one of them has in common** is that the machinery was already
 there and the gap was one step away from it: a chart rule with no prose
 counterpart, a classifier missing the words a register actually writes, a
 disclosure field the writer publishes and no stored row carries, a population
-rule that correctly declined a chart no other rule then took. None of the five
-needed a new system.
+rule that correctly declined a chart no other rule then took, a sentence the
+projection publishes and no template binds. None of the six needed a new
+system.
 
 ---
 
@@ -623,7 +711,9 @@ needed a new system.
 
 1. **No fresh generation**, for the reason Stage A gives. Every fix above
    reaches a document at its next generation, and none rewrites a stored one.
-2. **The seed has not been regenerated**, so no master change is on a page yet.
+2. **The seed regeneration is Stage C's** — `STAGE_C_RECORD.md` §2 records it
+   as v15, which carries §3.1, §3.2 and §3.11's master changes. Until that
+   migration is applied, no master change is on a page.
 3. **`briefing` and `snapshot` are read on a different property**, because the
    Cowra record has no child of either tier. Both are also the oldest documents
    in the set and predate every guard — §3.10 dates each finding rather than

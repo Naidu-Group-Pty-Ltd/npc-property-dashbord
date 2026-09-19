@@ -43,6 +43,7 @@ import {
 } from './family';
 import {
   callout,
+  companionNote,
   contents,
   contentTop,
   cover,
@@ -122,6 +123,22 @@ const FOOTER = '{{property.address}} · {{report.documentTitle}}';
  * that reservation was for prose those dimensions never write.
  */
 const DETAIL_CHARS = { location: 94, yield: 51, risk: 228 } as const;
+
+/**
+ * The longest companion note any tier publishes.
+ *
+ * Measured over `TIER_CONTENT` rather than estimated, because the set is closed
+ * and small: compass 140, financial 140, briefing 110, snapshot 104, strategic
+ * 85, composite none. `sectionHeading` refuses a bound standfirst without a
+ * measured length, and for good reason — it reserves the depth the sentence
+ * needs at the size and measure each of the six header kinds sets it in, and a
+ * heading that under-declares does not overflow the page, it prints over the
+ * contents list beneath it.
+ *
+ * `companionNoteChars.spec.ts` re-reads `TIER_CONTENT` and fails if a tier's
+ * sentence is ever rewritten longer than this.
+ */
+export const COMPANION_NOTE_CHARS = 140;
 
 /** The left half of the running head. */
 const DOCUMENT_LABEL = '{{report.documentTitle}} · {{property.address}}';
@@ -312,6 +329,32 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       ...furniture(DOCUMENT_LABEL, nextPart('Contents'), 'Contents'),
       ...flow([
         sectionHeading({ eyebrow: 'In this report', heading: 'Contents', numeral: nextNumeral() }),
+        /*
+         * Where the rest of the analysis is, above the list rather than below
+         * it.
+         *
+         * This is the one page where a reader looks for a section and does not
+         * find it. Seed v14 made the three financial pages conditional on
+         * `report.drawsFinancialModelling` and the contents block draws the
+         * pages that actually rendered — so a Compass's contents correctly stop
+         * listing "Financial position" and "Ten-year projection", and nothing
+         * then said where they had gone.
+         *
+         * Above the list, because `contents()`'s row count is a size HINT with
+         * eight rows of slack for the gap between section names and page count:
+         * a document whose real list outruns the hint draws down into the white
+         * space beneath it, and that space has to stay empty. Measured over the
+         * fifty masters, the room below the contents block runs from 122pt
+         * (Luxury Editorial's third variant) to 301pt.
+         *
+         * `put()` drops an absent value, so `composite` — the one tier that
+         * publishes no companion note — binds nothing, and the conditional
+         * stops the block being drawn at all rather than drawing an empty one.
+         */
+        {
+          ...companionNote('{{report.companionNote}}', COMPANION_NOTE_CHARS),
+          conditional: 'report && report.companionNote',
+        },
         contents([
           'The verdict and the numbers that carry it',
           'The property',
