@@ -29,6 +29,7 @@ import {
   QTRIP_LICENCE,
   QTRIP_SOURCE,
   stageSentence,
+  type ProgrammeParse,
 } from '@/lib/reports/../../../supabase/functions/_shared/planning/investmentProgramme.pure';
 import {
   buildInfrastructureEvidence,
