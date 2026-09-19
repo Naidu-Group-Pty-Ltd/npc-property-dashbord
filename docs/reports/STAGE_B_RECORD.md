@@ -474,6 +474,57 @@ context 10 | max=100`), which the rating guard already removed for declaring a
 still holds if the `max=100` is ever dropped. 5 specs, and the earlier test is
 renegotiated to pin **both** rules rather than deleted.
 
+### 3.9 Three pages of distances nobody measured — FIXED at the producer
+
+Pages 14 to 16 of the Due Diligence Report are the most detailed pages in the
+whole set, and the record behind them holds `location_intelligence: NULL` and
+`data_sources.locationIntelligence: null`.
+
+> Mulyan Public School is approximately **0.5 km** from 48 Redfern Street …
+> **as confirmed by Domain's school catchment summary for this address**.
+> Cowra High School sits around **1.1 km** … Holman Place School is listed at
+> about **0.9 km** … Cowra District Hospital … at roughly **2–3 km based on
+> town layout** … reached in around **5–10 minutes** by car … Cowra's main
+> retail strip … around **1.6 km** … **according to local agency
+> descriptions** … Coles, Woolworths and Aldi … generally about **1.5–2.0 km**
+> … Wyangala Waters … around **40+ km** away … **Cowra Bus Service's town
+> timetable lists a stop at Redfern & Bourke Streets**.
+
+Not one of those was retrieved. The Domain sentence is worse than the rest: it
+attributes a figure to a provider that answered nothing for this report, which
+is exactly what §2 means by *"a non-null provider object does not establish
+that its data supports a particular number"* — except here the object is null
+too.
+
+**`inv.location` gated a chart rule and no sentence rule at all.** Earlier in
+this branch it was wired into `distance_not_measured`, which refuses a chart
+declaring a distance unit where no location producer answered — measured then
+at **88 declared, 86 refused**. The prose counterpart was missing, and prose
+is where almost all of it is: three pages against one directive.
+
+So `claimSupportRules` gains a rule in the same two-branch shape as its
+population and market rules, and it is inserted as **rule 6** — after the
+source-note rule it is closest to — so rules 1 to 5 keep the numbers this
+repository's own documentation cites. A test asserts the list stays numbered
+once and in order on every inventory.
+
+**The prohibition is on the measurement and the attribution, never on the
+place.** A regional town has a hospital and the report may still say so, may
+still describe what a centre of this kind offers, and may still name a
+facility as somewhere that exists. What it may not do is put a distance, a
+travel time or a catchment on it — in kilometres, in metres, in minutes, as a
+range (`2–3 km`, `5–10 minutes`) or softened (`a short drive`, `within walking
+distance`, `just minutes from`) — or hang a provider's, a timetable's or a
+council map's name on a figure none of them supplied. That is the line
+`placesAvailability` already draws at the producer, where a failed lookup is
+`null` and never a measured zero, carried into the sentence.
+
+It also names the specific move this document made: *"roughly 2–3 km **based
+on town layout**"* is an estimate disclosing its own method, and estimating a
+distance from a town's shape or from a map the model has seen is inventing it.
+
+4 specs. This changes no stored document — the rules govern generation.
+
 ---
 
 ## 4. What Stage B has not closed

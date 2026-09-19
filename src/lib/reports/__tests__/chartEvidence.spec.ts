@@ -590,3 +590,53 @@ describe('a chart about the report\'s own evidence', () => {
     expect(enforceChartEvidence(md, HELD).findings.some((f) => f.verdict === 'self_assessment_not_measured')).toBe(false);
   });
 });
+
+/**
+ * The prose counterpart of `distance_not_measured`, and the larger half of the
+ * same gap: `inv.location` gated a chart rule and no sentence rule at all.
+ *
+ * Measured on the delivered Cowra Due Diligence Report, whose record holds
+ * `location_intelligence: NULL`. Pages 14–16 — the most detailed pages in the
+ * whole set — state "Mulyan Public School is approximately 0.5 km … as
+ * confirmed by Domain's school catchment summary for this address", "roughly
+ * 2–3 km based on town layout", "around 5–10 minutes by car" and a bus stop
+ * read off a timetable nobody fetched.
+ */
+describe('a distance in a sentence', () => {
+  it('forbids the measurement, the range and the softened form where no producer answered', () => {
+    const rules = claimSupportRules(readEvidenceInventory(COWRA_RECORD));
+    const rule = rules.split('\n').find((l) => l.startsWith('6.'))!;
+    expect(rule).toContain('NO location, amenity, transport or school measurement');
+    expect(rule).toContain('kilometres');
+    expect(rule).toContain('minutes');
+    expect(rule).toContain('a short drive');
+    expect(rule).toContain('within walking distance');
+    // The attribution half: a provider that supplied nothing may not be cited
+    // for a figure, which is what "confirmed by Domain's school catchment
+    // summary" was.
+    expect(rule).toContain('may not attribute one to a provider');
+  });
+
+  it('prohibits the measurement, not the place — a report may still describe the town', () => {
+    const rule = claimSupportRules(readEvidenceInventory(COWRA_RECORD))
+      .split('\n').find((l) => l.startsWith('6.'))!;
+    expect(rule).toContain('you may name a facility as a place that exists');
+    expect(rule).toContain('what a buyer would check');
+  });
+
+  it('asks for the record\'s own units where a producer DID answer', () => {
+    const rule = claimSupportRules(HELD).split('\n').find((l) => l.startsWith('6.'))!;
+    expect(rule).toContain('only as the record measured it');
+    expect(rule).not.toContain('NO location');
+  });
+
+  it('keeps every rule numbered once, in order, whatever the inventory holds', () => {
+    for (const inventory of [readEvidenceInventory(COWRA_RECORD), HELD]) {
+      const numbered = claimSupportRules(inventory).split('\n')
+        .map((l) => /^(\d+)\./.exec(l)?.[1])
+        .filter((n): n is string => Boolean(n))
+        .map(Number);
+      expect(numbered).toEqual(numbered.map((_, i) => i + 1));
+    }
+  });
+});

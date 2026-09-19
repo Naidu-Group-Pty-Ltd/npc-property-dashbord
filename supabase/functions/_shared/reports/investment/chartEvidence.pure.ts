@@ -658,9 +658,49 @@ export function claimSupportRules(inv: EvidenceInventory): string {
     + 'did not retrieve from that source, and do not cite a document nobody read.',
   );
 
+  /*
+   * Rule 6 is the prose counterpart of `distance_not_measured`, and it was the
+   * larger half of the same gap: `inv.location` gated a chart rule and no
+   * sentence rule at all.
+   *
+   * Measured on the delivered Cowra Due Diligence Report, whose record holds
+   * `location_intelligence: NULL` and `data_sources.locationIntelligence:
+   * null`. Pages 14 to 16 — the most detailed pages in the whole set — are
+   * "Mulyan Public School is approximately 0.5 km from 48 Redfern Street …
+   * as confirmed by Domain's school catchment summary for this address",
+   * "Cowra High School sits around 1.1 km", "roughly 2-3 km based on town
+   * layout", "around 5-10 minutes by car", "a veterinary surgery at 84
+   * Redfern Street", "Cowra Bus Service's town timetable lists a stop at
+   * Redfern & Bourke Streets". Not one of those was retrieved, and the Domain
+   * attribution names a provider that answered nothing for this report.
+   *
+   * The prohibition is on the MEASUREMENT and the attribution, not on the
+   * place. A regional town has a hospital and the report may say so; what it
+   * may not do is put a distance, a travel time or a catchment on it, or hang
+   * a provider's name on a figure that provider never supplied. That is the
+   * line `placesAvailability` already draws at the producer — a failed lookup
+   * is null and never a measured zero — carried into the sentence.
+   */
+  rules.push(
+    inv.location
+      ? '6. Location and amenity measurements were retrieved for this report. A distance, a '
+        + 'travel time or a catchment may be stated only as the record measured it, in the units '
+        + 'it measured, and a facility the record does not name is not named as measured.'
+      : '6. NO location, amenity, transport or school measurement was retrieved for this report. '
+        + 'Do not state a distance, a travel time, a walk score, a catchment or a count of '
+        + 'facilities near this property — not in kilometres, not in metres, not in minutes, not '
+        + 'as a range ("2-3 km", "5-10 minutes"), and not softened ("a short drive", "within '
+        + 'walking distance", "just minutes from"). Nothing in this record measured any of them, '
+        + 'and estimating one from a town\'s layout or from a map you have seen is inventing it. '
+        + 'You may still describe what a regional centre of this kind offers and what a buyer '
+        + 'would check, and you may name a facility as a place that exists — you may not put a '
+        + 'distance, a time or a catchment on it, and you may not attribute one to a provider, a '
+        + 'timetable or a council map that supplied nothing to this report.',
+  );
+
   if (inv.withheldFacts.length) {
     rules.push(
-      `6. These facts were considered for this report and WITHHELD at the data gate: `
+      `7. These facts were considered for this report and WITHHELD at the data gate: `
       + `${inv.withheldFacts.join(', ')}. They are withheld because they could not be stated `
       + 'safely, so they may not be stated in prose either, in any form, including a '
       + 'characterisation or a range.',
@@ -668,7 +708,7 @@ export function claimSupportRules(inv: EvidenceInventory): string {
   }
 
   rules.push(
-    `${inv.withheldFacts.length ? 7 : 6}. Where a claim cannot be supported, the sentence that `
+    `${inv.withheldFacts.length ? 8 : 7}. Where a claim cannot be supported, the sentence that `
     + 'replaces it says what the report does hold and what would settle the question. It never '
     + 'says "data was unavailable", never apologises, and never prints a placeholder — an '
     + 'absence is omitted or explained, not worded.',
