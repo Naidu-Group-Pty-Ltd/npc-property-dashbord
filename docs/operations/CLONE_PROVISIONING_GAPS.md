@@ -43,18 +43,57 @@ To confirm afterwards: the Market News Feed page should stop reporting
 
 ## 2. Reading a listing page
 
-**Half fixed in code.** `FIRECRAWL_API_KEY` is an Integrations credential no
-clone is provisioned with, and there is no free substitute: measured from the
-production egress, `r.jina.ai` answers **HTTP 200 with an "Access Denied"
-body** for both `realestate.com.au` and `domain.com.au`. Both portals WAF-block
-it.
+There is no free substitute for the key: measured from the production egress,
+`r.jina.ai` answers **HTTP 200 with an "Access Denied" body** for both
+`realestate.com.au` and `domain.com.au`. Both portals WAF-block it, and
+`isBadScrapeContent` correctly rejects the result — which is why a clone falls
+through to the model every time.
 
-`scrape-property-listing` now resolves a route — direct where the deployment
-holds the key, otherwise **brokered through Mission Control**, which holds the
-one key and meters its own call. A deployment with neither behaves exactly as
-it does today, so nothing regressed.
+### The remedy is one value on Mission Control, and the machinery is already built
 
-**What is still owed: Mission Control must serve the brokered path.**
+This was first written up here as "a clone cannot be given a Firecrawl key
+sensibly, so the call must travel". That was reasoning from the wrong
+precedent, and reading Mission Control settled it:
+
+* `FIRECRAWL_API_KEY` is **already fleet policy** — a `prime_secret_forwards`
+  row, alongside `ANTHROPIC_API_KEY`, `DOMAIN_API_KEY`, `PERPLEXITY_API_KEY`
+  and six others. Somebody already decided this key may travel.
+* Mission Control's own environment **holds no value under that name**, so
+  the forward is authorised and does nothing. Measured 4 Sep 2026 on the first
+  clone driven to `ready`: 72 secrets read `missing` and ten of them were
+  authorised forwards that silently did not happen, `FIRECRAWL_API_KEY` among
+  them.
+* `hooks/fleet-secret-forward-reconcile` is a scheduled cron that applies fleet
+  policy to clones **that already exist** — so a value set now reaches the three
+  live clones on the next pass, not only the next clone provisioned.
+* Mission Control's own secrets page already renders the exact remedy:
+  *"Fleet policy forwards this name and Mission Control holds nothing to
+  forward. Set it in Mission Control's own environment, or withdraw the
+  forward — not here."*
+
+**So the act is: set `FIRECRAWL_API_KEY` in Mission Control's environment.**
+Nothing needs to be built, and nothing needs to be typed on a clone.
+
+Why forwarding is right here, where `AIRTABLE_TOKEN` and the Didit key are
+brokered: those two are withheld because their SCOPE exceeds the job — an
+Airtable PAT reaches every base it was minted with, and a Didit key can list
+its application's sessions, including other tenants' passport portraits. A
+Firecrawl key fetches the URL it is handed and can read nothing of anyone
+else's. What it carries is **spend**, and spend is the case forwarding already
+handles: `_shared/apiUsageBilling.pure.ts` maps firecrawl to a billable vendor,
+so a clone's scrape is metered and recharged to that tenant.
+
+### The brokered path is the fallback, not the plan
+
+`scrape-property-listing` resolves a route — `direct` wherever the deployment
+holds the key, `broker` only where it holds none and can reach Mission
+Control, `none` otherwise, saying which. Once the forward carries a value every
+deployment takes `direct` and the broker branch is never entered.
+
+It is kept because a deployment with no key should say so rather than fall
+silently through to a model search, and because withdrawing the forward stays
+available as a decision. **It is inert until Mission Control serves the path
+below**, and that is a deliberate second choice, not an outstanding task.
 
 ```
 POST /api/public/page/read
@@ -75,10 +114,11 @@ copies is how a broker comes to accept a host the caller's own normaliser would
 have refused. The eight portals are the narrow list on purpose: widening them
 widens what any tenant can bill to the prime.
 
-Until that ships, a clone scrape still falls through to the model search and
-still draws the provenance warning, which is exactly today's behaviour.
+Until that ships — if it is ever built — a clone scrape still falls through to
+the model search and still draws the provenance warning, which is exactly
+today's behaviour.
 
-### What an operator can do today, without waiting for the broker
+### The per-clone path, if one deployment needs it before the forward is set
 
 The audit's own wording for this item — *add `FIRECRAWL_API_KEY` on the clone's
 Integrations page* — is performable right now, and it was checked end to end
@@ -101,11 +141,10 @@ returns `direct` whenever a key is held and only falls to `broker` when none
 is, so a key set today is used today, and clearing it later hands the same
 deployment to Mission Control with no code change and nothing to undo.
 
-The cost is the reason it is not the fleet answer, not a reason to avoid it on
-one deployment: a spend-bearing credential on a tenant project, a key to mint
-and rotate per tenant, and every clone provisioned tomorrow still starting with
-no page-read capability at all. Use it to unblock a specific clone; use the
-broker to stop the problem recurring.
+Prefer the fleet forward above: one value, every clone, including the ones
+already provisioned, with no second key to mint or rotate. Use this only to
+unblock a single deployment sooner, or where that deployment is meant to spend
+its own Firecrawl account rather than the prime's.
 
 ## 3. Builder Stock
 
