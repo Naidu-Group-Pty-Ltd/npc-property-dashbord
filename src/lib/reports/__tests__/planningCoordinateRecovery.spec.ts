@@ -8,8 +8,16 @@ import {
   enrichmentCoordinate,
   ledgerOutcomeFor,
   recoveredCoordinate,
+  type GeocodeOutcomeLike,
+  type SubjectCoordinateOutcome,
   type SubjectCoordinateRefusal,
 } from '../../../../supabase/functions/_shared/reports/location/planningCoordinate.pure.ts';
+
+// tsconfig.app has strict: false, which disables discriminated-union
+// narrowing by truthiness — cast explicitly after the guard.
+type RefusalOutcome = Extract<SubjectCoordinateOutcome, { usable: false }>;
+const asRefusal = (out: SubjectCoordinateOutcome): RefusalOutcome =>
+  out as RefusalOutcome;
 
 /**
  * Which coordinate may ask a planning register about this property.
