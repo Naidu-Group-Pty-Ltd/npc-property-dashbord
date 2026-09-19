@@ -45,6 +45,51 @@ describe('the budget hand-off', () => {
   });
 });
 
+describe('the generator imports only names its shared modules actually export', () => {
+  /**
+   * The gate that caught this in CI is `check-edge-functions.mjs`, which needs
+   * Deno and so cannot run in the authoring environment. A stale named import
+   * survived `esbuild --external:*` (it resolves nothing) and reached CI as
+   * TS2305 — "has no exported member" — which is fatal at load, not type debt.
+   *
+   * This is the same check, cheap enough to run locally, over the imports most
+   * likely to drift: the generator's own shared investment modules.
+   */
+  const importBlock = source.slice(0, source.indexOf('\n\nconst '));
+  const IMPORT_RE =
+    /import\s*\{([^}]+)\}\s*from\s*'(\.\.\/_shared\/reports\/investment\/[^']+)'/g;
+
+  const imports = [...importBlock.matchAll(IMPORT_RE)].map(([, names, path]) => ({
+    path,
+    names: names
+      .split(',')
+      .map((n) => n.trim().replace(/^type\s+/, ''))
+      .filter(Boolean),
+  }));
+
+  it('imports at least the modules this work added', () => {
+    expect(imports.length).toBeGreaterThan(0);
+  });
+
+  it.each(imports.map((i) => [i.path, i.names] as const))(
+    '%s exports every name the generator asks it for',
+    (path, names) => {
+      const modulePath = resolve(
+        __dirname,
+        '../../../../supabase/functions/generate-investment-report',
+        path,
+      );
+      const moduleSource = readFileSync(modulePath, 'utf8');
+      for (const name of names) {
+        const exported = new RegExp(
+          `export\\s+(?:async\\s+)?(?:function|const|type|interface|class|enum)\\s+${name}\\b`,
+        ).test(moduleSource);
+        expect(exported, `${path} does not export ${name}`).toBe(true);
+      }
+    },
+  );
+});
+
 describe('every acquisition call is bounded by the run clock', () => {
   const ACQUISITION_SERVICES = [
     'sqm-rent-service',

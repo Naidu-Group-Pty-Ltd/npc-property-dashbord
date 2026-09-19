@@ -52,7 +52,6 @@ import {
   type AcquisitionBudgetInput,
   type CallClass,
 } from '../_shared/reports/investment/acquisitionBudget.pure.ts';
-import { boundedServiceCall } from '../_shared/reports/investment/boundedServiceCall.ts';
 import {
   coordinateProvenance,
   enrichmentCoordinate,
