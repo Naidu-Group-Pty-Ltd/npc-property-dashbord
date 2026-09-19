@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { renderMarkdown } from '../../../../supabase/functions/_shared/reports/markdown.pure';
 import { packMarkdownPages } from '../../../../supabase/functions/_shared/reports/markdownPaging.pure';
-import { headingText, runningChapters } from '../runningChapters.pure';
+import { NARRATIVE_CHAPTER_SLOTS, headingText, runningChapters } from '../runningChapters.pure';
 import { breakPoints, fitLines } from '../../../../supabase/functions/_shared/reportDesign/charts.pure';
 
 const pack = (md: string, lines = 8) =>
@@ -72,7 +72,11 @@ describe('the chapter in force when a page opens', () => {
 describe('it travels the same route as the page count', () => {
   it('the projection publishes an estimate beside `pages`', () => {
     const src = readFileSync('supabase/functions/_shared/reportBindingProjection.pure.ts', 'utf8');
-    expect(src).toContain("put(out, 'chapters', runningChapters(packed, ''))");
+    // Padded to the masters' declared allowance, with the document's own name
+    // as the pad — an empty string is indistinguishable from an unresolved
+    // binding, which is exactly what `reportBindingProjection.spec.ts` counts.
+    expect(src).toContain("runningChapters(packed, fallbackChapter, NARRATIVE_CHAPTER_SLOTS)");
+    expect(src).toContain('projectReportNarrative(row.report_content, undefined, identity.title)');
     // Packed ONCE. Two packings of one source is how a count and a head
     // disagree about which page a chapter starts on.
     expect(src.match(/packNarrativePages\(blocks, profile, linesPerPage\)/g)).toHaveLength(1);
@@ -139,5 +143,36 @@ describe('a chart label breaks at a hyphen rather than being cut mid-word', () =
 
   it('plain whitespace wrapping is unchanged', () => {
     expect(breakPoints('Regional service hub')).toEqual(['Regional', 'service', 'hub']);
+  });
+});
+
+describe('the slots the catalogue binds all have a source', () => {
+  it('pads to the masters\' allowance, because an unbound index is a defect', () => {
+    // The Compass masters declare 40 conditional body pages, so the catalogue
+    // binds `narrative.chapters.0` … `.39`. A path a master binds and a real
+    // row cannot answer is what `reportBindingProjection.spec.ts` exists to
+    // catch, and its own history says the answer is to give the index a source
+    // or stop binding it. Here the first is right: a page past the body's end
+    // never draws, so the slot costs nothing.
+    const short = pack('## Only Chapter\n\nOne short paragraph.', 40);
+    expect(short.length).toBe(1);
+    const padded = runningChapters(short, 'Investment Compass', NARRATIVE_CHAPTER_SLOTS);
+    expect(padded).toHaveLength(NARRATIVE_CHAPTER_SLOTS);
+    expect(padded[0]).toBe('Only Chapter');
+    // Every pad is the document's own name — never the empty string, which is
+    // indistinguishable from an unresolved binding to anything that counts them.
+    for (const c of padded.slice(1)) expect(c).toBe('Investment Compass');
+  });
+
+  it('without a slot count it is exactly one entry per packed page', () => {
+    const pages = pack('## A\n\n' + 'x'.repeat(600) + '\n\n## B\n\n' + 'y'.repeat(600), 6);
+    expect(runningChapters(pages, 'Report')).toHaveLength(pages.length);
+  });
+
+  it('never truncates a body longer than the allowance', () => {
+    const many = Array.from({ length: 12 }, (_, i) => `## Chapter ${i}\n\n${'z'.repeat(400)}`).join('\n\n');
+    const pages = pack(many, 4);
+    expect(pages.length).toBeGreaterThan(3);
+    expect(runningChapters(pages, 'Report', 3)).toHaveLength(pages.length);
   });
 });

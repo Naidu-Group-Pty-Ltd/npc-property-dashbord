@@ -52,6 +52,25 @@ export const CHAPTER_LEVEL_MAX = 2;
 /** Longest a running head may be before it is left to the fallback. */
 export const CHAPTER_MAX_CHARS = 64;
 
+/**
+ * How many chapter slots the projection publishes.
+ *
+ * The Compass masters declare 40 conditional body pages, so the catalogue
+ * binds `narrative.chapters.0` … `narrative.chapters.39`. A path bound by a
+ * master and unresolvable against a real row is the defect
+ * `reportBindingProjection.spec.ts` exists to catch — and its own history says
+ * the answer is to stop binding an index the record cannot supply, or to give
+ * the index a source. Here the second is right: a page past the body's end
+ * never draws (its conditional is `narrative.pages > n`), so a slot for it
+ * costs nothing and its value is the honest fallback a running head takes when
+ * the chapter cannot be determined.
+ *
+ * The number is the masters', the same way `DEFAULT_LINES_PER_PAGE` is: stated
+ * once here and read by both sides, because two copies of one allowance is how
+ * a master grows a page the projection has no slot for.
+ */
+export const NARRATIVE_CHAPTER_SLOTS = 40;
+
 function levelOf(block: MarkdownBlock): number {
   return Number(/^<h(\d)/.exec(block.html)?.[1] ?? 9);
 }
@@ -86,6 +105,12 @@ export function headingText(block: MarkdownBlock): string {
 export function runningChapters(
   pages: readonly (readonly MarkdownBlock[])[],
   fallback: string,
+  /**
+   * Pad to this many slots with the fallback, for the pages a master declares
+   * and this body does not fill. Omitted, the answer is exactly one entry per
+   * packed page.
+   */
+  slots?: number,
 ): string[] {
   const out: string[] = [];
   let current = '';
@@ -103,5 +128,6 @@ export function runningChapters(
     const chosen = opening || current;
     out.push(chosen && chosen.length <= CHAPTER_MAX_CHARS ? chosen : fallback);
   }
+  while (slots !== undefined && out.length < slots) out.push(fallback);
   return out;
 }

@@ -254,7 +254,9 @@ export function planNarrative(template: ReportTemplate, ctxBase: ResolveContext)
           lines: continuationNotice(g, notes[key].label, notes[key].text).lines,
         })
         : narrativeBuckets(clean, g, chart);
-      writes[`${nsPath}.chapters`] = runningChapters(finalPages, '');
+      // Padded to the allowance this run's own master declares, which the
+      // pre-pass knows and the projection can only assume.
+      writes[`${nsPath}.chapters`] = runningChapters(finalPages, '', allowance);
     }
   }
   return { geometry, pages, notes, writes };

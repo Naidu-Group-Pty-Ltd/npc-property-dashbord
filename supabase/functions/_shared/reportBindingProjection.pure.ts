@@ -121,7 +121,7 @@ import {
   resolveNarrativeProfile,
 } from './reports/markdownPaging.pure.ts';
 import { stripBakedCover } from './reports/investment/narrativeClean.pure.ts';
-import { runningChapters } from './reports/runningChapters.pure.ts';
+import { NARRATIVE_CHAPTER_SLOTS, runningChapters } from './reports/runningChapters.pure.ts';
 import { planningChartContext, vizDirectiveRenderer } from './reports/vizFigures.pure.ts';
 import { reconcileStoredFinancials } from './reports/investment/financialEngine.pure.ts';
 import { readAnnualRent } from './reports/investment/rentBasis.pure.ts';
@@ -374,6 +374,8 @@ export interface ProjectedNamespaces {
 export function projectReportNarrative(
   content: unknown,
   linesPerPage: number = DEFAULT_LINES_PER_PAGE,
+  /** What a running head says on a page whose chapter cannot be determined. */
+  fallbackChapter = '',
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   const raw = typeof content === 'string' ? content.trim() : '';
@@ -418,7 +420,13 @@ export function projectReportNarrative(
   // are the calibrated profile's rather than the chosen master's.
   // `planNarrative` overwrites both from the real geometry in one pass, and
   // they travel together for that reason.
-  if (packed.length) put(out, 'chapters', runningChapters(packed, ''));
+  // Padded to the masters' declared allowance so every `narrative.chapters.N`
+  // the catalogue binds has a source. The pad is the fallback a running head
+  // takes when the chapter cannot be determined, and the pages it covers never
+  // draw — their conditional is `narrative.pages > n`.
+  if (packed.length) {
+    put(out, 'chapters', runningChapters(packed, fallbackChapter, NARRATIVE_CHAPTER_SLOTS));
+  }
   return out;
 }
 
@@ -1010,7 +1018,10 @@ export function projectInvestmentReport(
     // axis with no series on it.
     equitySeries: policy.financialModelling ? equitySeries : [],
     report,
-    narrative: projectReportNarrative(row.report_content),
+    // The document's own name is what a running head says on a page whose
+    // chapter cannot be determined — before the first heading, and on the
+    // pages a master declares that this body does not reach.
+    narrative: projectReportNarrative(row.report_content, undefined, identity.title),
   };
 }
 
