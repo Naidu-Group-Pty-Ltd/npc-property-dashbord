@@ -88,7 +88,7 @@ describe('an ordinary portal citation is a WARNING, not a rejection', () => {
     const md = doc('The property is advertised at $555,000.[Property.com.au listing, 2026]');
     const f = findingFor(md, 'listing-portal-as-source');
     expect(f?.severity).toBe('warning');
-    expect(runQAValidation(md, 'compass-40').passed, 'a warning must not fail the document').toBe(true);
+    expect(runQAValidation(md, 'briefing').passed, 'a warning must not fail the document').toBe(true);
     expect(rules(md)).not.toContain('portal-sourced-hazard-clearance');
   });
 
