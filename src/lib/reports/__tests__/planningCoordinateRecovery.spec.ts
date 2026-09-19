@@ -109,15 +109,15 @@ describe('recovery, and the precision it insists on', () => {
     const out = recoveredCoordinate(ok(precision), NOW);
     expect(out.usable).toBe(false);
     if (out.usable) return;
-    expect(out.refusal).toBe('too_coarse');
-    expect(out.detail).toContain(precision);
-    expect(out.detail).toMatch(/parcel/i);
+    expect(asRefusal(out).refusal).toBe('too_coarse');
+    expect(asRefusal(out).detail).toContain(precision);
+    expect(asRefusal(out).detail).toMatch(/parcel/i);
   });
 
   it('refuses a match that states no precision at all', () => {
     const out = recoveredCoordinate(ok(''), NOW);
     expect(out.usable).toBe(false);
-    if (!out.usable) expect(out.refusal).toBe('too_coarse');
+    if (!out.usable) expect(asRefusal(out).refusal).toBe('too_coarse');
   });
 
   it('refuses a match carrying no usable coordinate', () => {
@@ -126,7 +126,7 @@ describe('recovery, and the precision it insists on', () => {
       NOW,
     );
     expect(out.usable).toBe(false);
-    if (!out.usable) expect(out.refusal).toBe('provider_unavailable');
+    if (!out.usable) expect(asRefusal(out).refusal).toBe('provider_unavailable');
   });
 
   it('records the provider, what it matched and when — the provenance nothing else holds', () => {
@@ -147,7 +147,7 @@ describe('a refusal says which kind it is', () => {
    * at the parcel and holding nothing there. That one is a fact about the
    * property; none of these is.
    */
-  it.each<[string, Record<string, unknown>, SubjectCoordinateRefusal, string]>([
+  it.each<[string, GeocodeOutcomeLike, SubjectCoordinateRefusal, string]>([
     [
       'no geocoder matched the address',
       { ok: false, reason: 'no_match', providerRefused: false, detail: 'no candidates', tried: ['nominatim', 'abs_locality'] },
@@ -176,9 +176,9 @@ describe('a refusal says which kind it is', () => {
     const out = recoveredCoordinate(outcome, NOW);
     expect(out.usable).toBe(false);
     if (out.usable) return;
-    expect(out.refusal).toBe(refusal);
-    expect(ledgerOutcomeFor(out.refusal)).toBe(ledger);
-    expect(out.detail.length).toBeGreaterThan(20);
+    expect(asRefusal(out).refusal).toBe(refusal);
+    expect(ledgerOutcomeFor(asRefusal(out).refusal)).toBe(ledger);
+    expect(asRefusal(out).detail.length).toBeGreaterThan(20);
   });
 
   it('names the allowance that refused, so an operator is sent to the right place', () => {
@@ -187,8 +187,8 @@ describe('a refusal says which kind it is', () => {
       NOW,
     );
     if (out.usable) throw new Error('expected a refusal');
-    expect(out.detail).toContain('kill_switch');
-    expect(out.detail).toMatch(/a limit of ours, not an answer about the address/);
+    expect(asRefusal(out).detail).toContain('kill_switch');
+    expect(asRefusal(out).detail).toMatch(/a limit of ours, not an answer about the address/);
   });
 
   it('keeps ours apart from the address\'s, on every refusal there is', () => {
