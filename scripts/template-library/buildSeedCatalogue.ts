@@ -221,12 +221,38 @@ const REPO = resolve(__dirname, '../..');
  * WITHHOLDS the modelling bindings on those tiers, which is what makes the
  * drop clean: a page kept with nothing to bind prints labelled empty rows.
  *
+ * ## v15 — the running head names the chapter, and a column fits what it carries
+ *
+ * `20261203000000` **is recorded** — checked 19 Sep 2026 against the project's
+ * applied migration list (980 of them), which is the one-query check this
+ * header has always asked for. So v14 has run, editing it would be inert, and
+ * this is v15.
+ *
+ * Two master changes:
+ *
+ * The running head read `Part 03 · Report` on every page of every document,
+ * and a page carried a heading reading `The report`. The head now names the
+ * chapter a page is in, derived from the same packing that decides the page
+ * breaks — estimated by the projection and overwritten by the renderer's
+ * pre-pass, so the two cannot disagree — and the `The report` heading is
+ * deleted.
+ *
+ * And the Commercial Capacity constraints table printed over the explanation
+ * beneath it on 4 of 50 masters: the four value columns took a fixed 330 pt,
+ * leaving the test name 87-117 pt on the families with the deepest margins,
+ * while three of the ten `CONSTRAINT_LABELS` run 24 to 31 characters. Measured
+ * in Chromium at A4 across all fifty, for the longest string each column can
+ * carry and for the column heads: Test 147.8, Permits 66.6, Policy 42.0,
+ * This deal 53.8, Status 73.9. The value columns are 75/48/60/82 now and the
+ * name takes the rest, at least 152 pt everywhere. Re-measured: 0 of 50
+ * overlap, 0 of 400 rows wrap.
+ *
  * Run the same one-query check before editing this file: if
- * `20261203000000` is already recorded, the next change needs a v15.
+ * `20261204000000` is already recorded, the next change needs a v16.
  */
 const MIGRATION = resolve(
   REPO,
-  'supabase/migrations/20261203000000_seed_template_library_v14_tier_separation.sql',
+  'supabase/migrations/20261204000000_seed_template_library_v15_running_head_and_columns.sql',
 );
 
 /** Postgres string literal, dollar-quoted so JSON never has to be escaped. */
