@@ -277,8 +277,62 @@ const READING_SENTENCE: Readonly<Record<ProjectReading, string>> = {
  * writing task. The prose a model writes around it is governed by
  * `publishedProjectRules` below.
  */
-export function renderPublishedProjects(near: readonly NearbyProject[]): string {
-  if (!near.length) return '';
+/**
+ * Whether this register was actually consulted for this property.
+ *
+ * An empty result used to be one thing: `renderPublishedProjects([])` returned
+ * the empty STRING and `publishedProjectRules([])` told the model "no major
+ * public project near this property is recorded in this platform's register".
+ * That sentence asserts a search happened. It was returned identically when no
+ * coordinate had resolved and no search was possible — which, measured over the
+ * 105 stored reports in the verification corpus, was every one of them.
+ *
+ * The two absences are different sentences, and it is the same rule
+ * `planningConstraints` answers to: a register asked HERE that holds nothing
+ * here is a fact about the property; never having asked is a fact about us.
+ * So the caller states which, and there is no default — a caller that forgets
+ * would otherwise get the assertive reading, which is the unsafe direction.
+ */
+export type RegisterSearch =
+  | {
+      searched: true;
+      /** The radius actually swept, in kilometres. */
+      radiusKm: number;
+      /** How the coordinate it was swept around was obtained. */
+      coordinateSource: 'enrichment' | 'geocode_recovery';
+    }
+  | {
+      searched: false;
+      /** One sentence: why no search could be made. */
+      reason: string;
+    };
+
+export function renderPublishedProjects(
+  near: readonly NearbyProject[],
+  search: RegisterSearch,
+): string {
+  if (!near.length) {
+    // A blank section is indistinguishable from a register nobody consulted,
+    // and a reader cannot see the prompt rules. So the page says which.
+    if (!search.searched) {
+      return [
+        '**Not searched.** This platform holds a register of major public projects recorded from the '
+        + `responsible authority's own published pages. It could not be consulted for this property: `
+        + `${search.reason}`,
+        '',
+        'Nothing follows from that about what is or is not planned near this property.',
+        '',
+      ].join('\n');
+    }
+    return [
+      `**Searched, nothing recorded.** The register was swept within ${search.radiusKm} km of this `
+      + `property's verified coordinate and holds no major public project there.`,
+      '',
+      'That is a statement about what this register has RECORDED, not a finding about the area — its '
+      + 'coverage is set out below.',
+      '',
+    ].join('\n');
+  }
   const lines: string[] = [];
   for (const { project: p, distanceKm: d } of near) {
     lines.push(`### ${p.name}`, '');
@@ -341,7 +395,18 @@ function auDate(iso: string): string {
  * Every rule here exists because the sentence it forbids is the one a model
  * writes by default about a new hospital near a house.
  */
-export function publishedProjectRules(near: readonly NearbyProject[]): string {
+export function publishedProjectRules(
+  near: readonly NearbyProject[],
+  search: RegisterSearch,
+): string {
+  if (!near.length && !search.searched) {
+    return 'PUBLISHED PROJECT RULES — this register was NOT consulted for this property, because '
+      + `${search.reason} `
+      + 'You therefore know nothing about major public projects near it. Do not write that there are '
+      + 'none, do not write that the register holds none, do not rate the area’s infrastructure '
+      + 'outlook, and do not fill the gap from a live web search, a news article or a listing portal. '
+      + 'Say that the register could not be consulted and why, and stop there.';
+  }
   if (!near.length) {
     return 'PUBLISHED PROJECT RULES — no major public project near this property is recorded in this '
       + 'platform’s register of official publications. That is a statement about what has been '

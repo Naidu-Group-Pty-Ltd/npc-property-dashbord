@@ -86,8 +86,14 @@ describe('the Cowra hospital, reconciled across its stages', () => {
   });
 });
 
+const SEARCHED = { searched: true, radiusKm: 15, coordinateSource: 'enrichment' } as const;
+const NOT_SEARCHED = {
+  searched: false,
+  reason: 'the register is swept by coordinate and none was resolved for this property.',
+} as const;
+
 describe('the rendered block', () => {
-  const md = renderPublishedProjects(projectsNear(SUBJECT.lat, SUBJECT.lon, 15));
+  const md = renderPublishedProjects(projectsNear(SUBJECT.lat, SUBJECT.lon, 15), SEARCHED);
 
   it('says the stages are one project and one figure, in the document', () => {
     expect(md).toContain('not separate investments and must not be added together');
@@ -115,14 +121,41 @@ describe('the rendered block', () => {
     expect(md).toContain('5 January 2026 to mid-2026');
   });
 
-  it('is empty where nothing is near, rather than drawing an empty table', () => {
-    expect(renderPublishedProjects([])).toBe('');
+  /*
+   * Renegotiated. This used to assert the empty STRING, and that was the
+   * defect: a blank section is indistinguishable from a register nobody
+   * consulted, and the reader cannot see the prompt rules. Measured over the
+   * 105 stored reports in the verification corpus, 105 of 105 took this
+   * branch — 100 because no coordinate existed at all. The page says which
+   * absence it is now, and it still never draws an empty table.
+   */
+  it('says the register was searched and holds nothing, where it was', () => {
+    const md0 = renderPublishedProjects([], SEARCHED);
+    expect(md0).toContain('**Searched, nothing recorded.**');
+    expect(md0).toContain('within 15 km');
+    expect(md0).toMatch(/RECORDED, not a finding about the area/);
+    expect(md0).not.toContain('|');
+  });
+
+  it('says it was NOT searched, and why, where no coordinate was usable', () => {
+    const md0 = renderPublishedProjects([], NOT_SEARCHED);
+    expect(md0).toContain('**Not searched.**');
+    expect(md0).toContain(NOT_SEARCHED.reason);
+    expect(md0).toContain('Nothing follows from that');
+    expect(md0).not.toContain('|');
+  });
+
+  it('never tells a reader nothing is nearby when nothing was asked', () => {
+    const md0 = renderPublishedProjects([], NOT_SEARCHED);
+    expect(md0).not.toMatch(/holds no major public project/i);
+    expect(md0).not.toMatch(/nothing recorded/i);
   });
 });
 
 describe('the rules the prose answers to', () => {
-  const withProject = publishedProjectRules(projectsNear(SUBJECT.lat, SUBJECT.lon, 15));
-  const without = publishedProjectRules([]);
+  const withProject = publishedProjectRules(projectsNear(SUBJECT.lat, SUBJECT.lon, 15), SEARCHED);
+  const without = publishedProjectRules([], SEARCHED);
+  const unsearched = publishedProjectRules([], NOT_SEARCHED);
 
   it('forbids stating or implying an effect on values, rents, yields or growth', () => {
     expect(withProject).toMatch(/Do NOT state or imply an effect on property values/);
@@ -156,9 +189,28 @@ describe('the rules the prose answers to', () => {
 describe('the generator reads it', () => {
   const src = readFileSync('supabase/functions/generate-investment-report/index.ts', 'utf8');
 
-  it('keys on the verified coordinate, so no coordinate names no project', () => {
-    expect(src).toContain('const publishedProjectCoords = enhancedData.locationIntelligence?.coordinates;');
+  /*
+   * Renegotiated, and this is the finding rather than a rename. It used to
+   * pin `enhancedData.locationIntelligence?.coordinates`, which is the
+   * in-memory working object of the run that is executing — empty on the
+   * resume run that writes every Compass. Measured over the 105 stored
+   * reports: 5 carry a coordinate on `location_intelligence` and 0 carry a
+   * planning key, so this register named a project on none of them.
+   *
+   * It keys on the QUALIFIED coordinate now — this run's own enrichment, or
+   * the address geocoded through the shared chain and accepted only at parcel
+   * grade — so a project is still never named near a guess.
+   */
+  it('keys on the qualified coordinate, so no coordinate names no project', () => {
+    expect(src).toContain('const publishedProjectCoords = subjectCoordinate;');
     expect(src).toMatch(/publishedProjectCoords\?\.lat && publishedProjectCoords\?\.lng/);
+    expect(src).not.toContain('const publishedProjectCoords = enhancedData.locationIntelligence?.coordinates;');
+  });
+
+  it('tells the register whether it was searched, rather than leaving it to infer', () => {
+    expect(src).toContain('const publishedProjectSearch: RegisterSearch =');
+    expect(src).toContain('renderPublishedProjects(nearbyPublishedProjects, publishedProjectSearch)');
+    expect(src).toContain('publishedProjectRules(nearbyPublishedProjects, publishedProjectSearch)');
   });
 
   it('pins the block so a trim cannot cut the evidence and leave the rule', () => {
@@ -171,5 +223,36 @@ describe('the generator reads it', () => {
   it('appends the block verbatim rather than asking a model to reproduce it', () => {
     expect(src).toContain('### Major public projects near this property');
     expect(src).toContain('PUBLISHED_PROJECT_COVERAGE.join');
+  });
+});
+
+describe('the two absences are two different instructions', () => {
+  const searchedEmpty = publishedProjectRules([], SEARCHED);
+  const neverSearched = publishedProjectRules(
+    [],
+    { searched: false, reason: 'no parcel-grade coordinate resolved.' },
+  );
+
+  it('does not tell the model a search happened when none did', () => {
+    expect(searchedEmpty).toMatch(/is recorded in this/);
+    expect(neverSearched).toMatch(/was NOT consulted/);
+    expect(neverSearched).not.toMatch(/no major public project near this property is recorded/);
+  });
+
+  it('forbids inventing the answer either way', () => {
+    for (const rules of [searchedEmpty, neverSearched]) {
+      expect(rules).toMatch(/do not fill the gap from a live web search/i);
+      expect(rules.toLowerCase()).toContain('listing portal');
+    }
+  });
+
+  it('forbids rating the area from an absence, in both', () => {
+    for (const rules of [searchedEmpty, neverSearched]) {
+      expect(rules.toLowerCase()).toMatch(/do not rate the area/);
+    }
+  });
+
+  it('names the reason, so an operator can act on it', () => {
+    expect(neverSearched).toContain('no parcel-grade coordinate resolved.');
   });
 });

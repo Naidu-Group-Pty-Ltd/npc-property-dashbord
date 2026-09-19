@@ -26,6 +26,7 @@ import {
   projectsNear,
   publishedProjectRules,
   renderPublishedProjects,
+  type RegisterSearch,
   PUBLISHED_PROJECT_COVERAGE,
 } from '../_shared/planning/publishedProjectRegister.pure.ts';
 import { withPlanningEvidence } from '../_shared/reports/location/planningEvidenceRecord.pure.ts';
@@ -40,6 +41,14 @@ import {
   recordAcquisitionAttempt,
 } from '../_shared/reports/location/locationEnrichmentReuse.pure.ts';
 import { AcquisitionRecorder } from '../_shared/reports/acquisitionLedger.pure.ts';
+import {
+  coordinateProvenance,
+  enrichmentCoordinate,
+  ledgerOutcomeFor,
+  recoveredCoordinate,
+  type SubjectCoordinate,
+} from '../_shared/reports/location/planningCoordinate.pure.ts';
+import { geocodeAddress } from '../_shared/geocode/geocoder.ts';
 import { claimSupportRules } from '../_shared/reports/investment/chartEvidence.pure.ts';
 import {
   resolveCrimePostcodeAuthority,
@@ -2724,6 +2733,16 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     
     let enhancedData: EnhancedData = {};
 
+    /*
+     * The coordinate the planning registers and the published-project register
+     * are asked at, resolved once and qualified once. Declared here beside
+     * `enhancedData` because both producers read it and they sit in different
+     * blocks — see the resolution below for what it closes and why only a
+     * parcel-grade match is usable.
+     */
+    let subjectCoordinate: SubjectCoordinate | null = null;
+    let coordinateRefusal: { refusal: string; detail: string; tried: string[] } | null = null;
+
     /**
      * What happened when this run asked for each piece of evidence.
      *
@@ -3597,7 +3616,102 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       // gap from the prompt template. Every branch below now records what
       // happened, because "we did not ask" and "the register holds nothing
       // here" are opposite statements about a property.
-      const planningCoords = enhancedData.locationIntelligence?.coordinates;
+      /*
+       * The coordinate that may ask a register about THIS property.
+       *
+       * This used to be `enhancedData.locationIntelligence?.coordinates` and
+       * nothing else, which is an in-memory working object belonging to the
+       * run that is executing. Measured over the 105 stored reports in the
+       * verification corpus: 5 carry a coordinate, and **0 carry a planning
+       * key in `data_sources`** — including all five that have one.
+       * `23 MACKAY Street, Moranbah QLD 4744`, generated 2026-09-08 (two days
+       * after `planning-data-service` went live), holds
+       * `{lat: -22.006014, lng: 148.0590271}` on its `location_intelligence`
+       * column and `{}` in `enhanced_data`. The coordinate the report already
+       * owned sat one column away from a guard that read `undefined`.
+       *
+       * That is `rawPropertyType`'s defect on the coordinate: every Compass is
+       * finished by the resume worker, `enhancedData` starts empty on that
+       * run, `assessEnrichmentReuse` rightly refuses an unstamped stored
+       * enrichment, and when the live enrichment then fails — Google refused
+       * every geocode from 12 Sep 2026 — four producers go quiet at once with
+       * nothing but a skip line to show for it.
+       *
+       * So where this run's own enrichment produced no coordinate, the address
+       * is geocoded through the shared chain (cache first, then Nominatim,
+       * then the ABS locality centroid, then Google only where an operator
+       * lists it). `planningCoordinate.pure.ts` then QUALIFIES the answer:
+       * only a match at the address may select a planning control, because a
+       * control is an attribute of the parcel and a street or suburb point may
+       * sit on the road reserve or on the neighbour's lot. A coarser match is
+       * a named refusal, never a stand-in — `crimePostcodeAuthority`'s rule in
+       * another register.
+       *
+       * Climate and the regional read deliberately keep their own guard below:
+       * they answer different questions with different evidence rules, and
+       * widening this beyond the two producers that were asked about is not
+       * this change's to make.
+       */
+      const resolvedAt = new Date().toISOString();
+      subjectCoordinate = enrichmentCoordinate(enhancedData.locationIntelligence, resolvedAt);
+      if (!subjectCoordinate) {
+        if (!formattedInput || !String(formattedInput).trim()) {
+          coordinateRefusal = {
+            refusal: 'no_address',
+            detail: 'This run was given no address to resolve',
+            tried: [],
+          };
+        } else if (!supabaseClient) {
+          coordinateRefusal = {
+            refusal: 'provider_unavailable',
+            detail: 'No database client was available to read the geocode cache',
+            tried: [],
+          };
+        } else {
+          try {
+            const recovery = await geocodeAddress(
+              supabaseClient,
+              { address: String(formattedInput), suburb: null, state, postcode },
+              { feature: 'planning-coordinate-recovery' },
+            );
+            const judged = recoveredCoordinate(recovery, resolvedAt);
+            if (judged.usable) {
+              subjectCoordinate = judged.coordinate;
+              console.log('📍 Coordinate recovered for the registers:', coordinateProvenance(judged.coordinate));
+            } else {
+              coordinateRefusal = { refusal: judged.refusal, detail: judged.detail, tried: judged.tried };
+            }
+          } catch (error: any) {
+            coordinateRefusal = {
+              refusal: 'provider_unavailable',
+              detail: String(error?.message ?? 'The recovery geocode threw and reported no message'),
+              tried: [],
+            };
+          }
+        }
+        if (coordinateRefusal) {
+          console.log('📍 No parcel-grade coordinate:', coordinateRefusal.refusal, '—', coordinateRefusal.detail);
+        }
+      }
+      if (subjectCoordinate) {
+        const provenance = coordinateProvenance(subjectCoordinate);
+        acquisition.record({
+          producer: 'subjectCoordinate',
+          outcome: 'answered',
+          detail: provenance
+            ?? 'The coordinate this run\'s own location enrichment resolved for this address',
+          service: subjectCoordinate.source === 'geocode_recovery' ? 'geocode-chain' : 'location-intelligence-service',
+        });
+      } else if (coordinateRefusal) {
+        acquisition.record({
+          producer: 'subjectCoordinate',
+          outcome: ledgerOutcomeFor(coordinateRefusal.refusal as any),
+          detail: coordinateRefusal.detail,
+          service: 'geocode-chain',
+        });
+      }
+
+      const planningCoords = subjectCoordinate;
       if (planningCoords?.lat && planningCoords?.lng) {
         const planningStart = Date.now();
         try {
@@ -3642,11 +3756,17 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
           acquisition.failed('planning', String(error?.message ?? 'The planning request threw and reported no message'), 'planning-data-service');
         }
       } else {
-        acquisition.skipped(
-          'planning',
-          'No verified coordinate was resolved for this property, and the planning registers are queried by coordinate',
-          'planning-data-service',
-        );
+        // Four different sentences, and the ledger must not collapse them: a
+        // register asked at the parcel and holding nothing there is a fact
+        // about the property, and none of these is that.
+        acquisition.record({
+          producer: 'planning',
+          outcome: ledgerOutcomeFor((coordinateRefusal?.refusal ?? 'no_address') as any),
+          detail: coordinateRefusal
+            ? `The planning registers are queried by coordinate, and none was usable: ${coordinateRefusal.detail}`
+            : 'The planning registers are queried by coordinate, and none was resolved for this property',
+          service: 'planning-data-service',
+        });
       }
 
       // Climate is read from SILO at the verified coordinate, which exists
@@ -4981,12 +5101,42 @@ Produce a comprehensive statewide investment analysis following the structure ab
      * Keyed on the verified coordinate, so a report with no trustworthy
      * coordinate names no project rather than one near a guess.
      */
-    const publishedProjectCoords = enhancedData.locationIntelligence?.coordinates;
+    // The same qualified coordinate the planning registers were asked at, for
+    // the same reason: "keyed on the verified coordinate" was keyed on an
+    // in-memory object the resume run does not have, so this register named no
+    // project on 105 of 105 stored reports. A recovered coordinate is accepted
+    // only at parcel grade, so a project is still never named near a guess.
+    const publishedProjectCoords = subjectCoordinate;
     const nearbyPublishedProjects = publishedProjectCoords?.lat && publishedProjectCoords?.lng
       ? projectsNear(publishedProjectCoords.lat, publishedProjectCoords.lng, 15)
       : [];
-    const publishedProjectBlock = renderPublishedProjects(nearbyPublishedProjects);
-    const publishedProjectSectionRules = publishedProjectRules(nearbyPublishedProjects);
+    // Searched, or not searched — and the register now says which on the page.
+    // An empty result used to render the empty string and tell the model "no
+    // major public project ... is recorded", which asserts a search happened;
+    // it was returned identically on the 105 stored reports where no
+    // coordinate existed and no search was possible.
+    const publishedProjectSearch: RegisterSearch = publishedProjectCoords
+      ? { searched: true, radiusKm: 15, coordinateSource: publishedProjectCoords.source }
+      : {
+          searched: false,
+          reason: coordinateRefusal
+            ? `the register is swept by coordinate and none was usable — ${coordinateRefusal.detail}.`
+            : 'the register is swept by coordinate and none was resolved for this property.',
+        };
+    const publishedProjectBlock = renderPublishedProjects(nearbyPublishedProjects, publishedProjectSearch);
+    const publishedProjectSectionRules = publishedProjectRules(nearbyPublishedProjects, publishedProjectSearch);
+    acquisition.record({
+      producer: 'publishedProjects',
+      outcome: publishedProjectSearch.searched
+        ? (nearbyPublishedProjects.length ? 'answered' : 'unavailable_in_coverage')
+        : ledgerOutcomeFor((coordinateRefusal?.refusal ?? 'no_address') as any),
+      detail: publishedProjectSearch.searched
+        ? (nearbyPublishedProjects.length
+          ? `Recorded within 15 km: ${nearbyPublishedProjects.map((n) => n.project.name).join('; ')}`
+          : 'The register was swept within 15 km of the verified coordinate and holds nothing there')
+        : publishedProjectSearch.reason,
+      service: 'published-project-register',
+    });
     console.log(
       `🏗️ Published projects within 15 km: ${nearbyPublishedProjects.length}`
       + (nearbyPublishedProjects.length
