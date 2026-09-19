@@ -33,6 +33,7 @@ import {
   nextAcquisitionAttempt,
   recordAcquisitionAttempt,
 } from '../_shared/reports/location/locationEnrichmentReuse.pure.ts';
+import { AcquisitionRecorder } from '../_shared/reports/acquisitionLedger.pure.ts';
 import {
   resolveCrimePostcodeAuthority,
   CRIME_EVIDENCE_WITHHELD_NOTE,
@@ -2717,6 +2718,16 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     let enhancedData: EnhancedData = {};
 
     /**
+     * What happened when this run asked for each piece of evidence.
+     *
+     * Declared here rather than inside the enrichment try block because the
+     * ledger has to survive a throw: a run that died halfway through its
+     * producers is exactly the run whose reader most needs to know which
+     * ones were reached.
+     */
+    const acquisition = new AcquisitionRecorder();
+
+    /**
      * RF-7.2B.1 §2 — the subject's TRUSTED geography, resolved from the
      * verified coordinate during this run rather than read back from a sweep
      * that has not visited this report yet. Declared out here because the
@@ -2926,9 +2937,22 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         const fulfilled = result.status === 'fulfilled'
           ? (result.value as ServiceResult<any>)
           : null;
+        // The producer name `data_sources` and the acquisition ledger use,
+        // which is not always the name of the service that answered.
+        const producerNames: Record<string, string> = {
+          domain: 'marketData',
+          demographics: 'demographics',
+          economics: 'economics',
+          seifaData: 'seifa',
+          crimeStatistics: 'crimeStatistics',
+          employmentData: 'employment',
+          climateData: 'climate',
+        };
+        const producer = producerNames[serviceName] ?? serviceName;
         if (fulfilled && fulfilled.success && fulfilled.data) {
           enhancedData = { ...enhancedData, [serviceName === 'domain' ? 'domainData' : serviceName]: fulfilled.data };
           successCount++;
+          acquisition.fromServiceResult(producer, fulfilled, { service: fulfilled.serviceName });
         } else {
           failCount++;
           const reason = result.status === 'rejected' 
@@ -2936,6 +2960,22 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             : (result.value as ServiceResult<any>).error;
           if (reason && !reason.includes('Missing')) {
             console.log(`  ⚠️ ${serviceName}: ${reason}`);
+          }
+          // A rejected promise, a `Missing …` precondition and a provider that
+          // answered nothing are three different things and were all one null.
+          // The two coordinate-keyed slots are re-recorded in phase 2 where
+          // they are genuinely fetched; last write wins, so a skip recorded
+          // here never survives a real attempt later in the same run.
+          if (result.status === 'rejected') {
+            acquisition.failed(producer, String(result.reason?.message ?? 'The fetch threw and reported no message'), `${serviceName}-service`);
+          } else if (typeof reason === 'string' && /^missing\b/i.test(reason.trim())) {
+            acquisition.skipped(producer, reason, `${serviceName}-service`);
+          } else if (typeof reason === 'string' && reason.trim() && !fulfilled?.success) {
+            acquisition.fromServiceResult(producer, fulfilled ?? { success: false, error: reason }, {
+              service: (fulfilled as ServiceResult<any> | null)?.serviceName ?? `${serviceName}-service`,
+            });
+          } else {
+            acquisition.fromServiceResult(producer, fulfilled, { service: `${serviceName}-service` });
           }
         }
       });
@@ -2966,11 +3006,19 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             if (riskData.success && riskData.data) {
               enhancedData = { ...enhancedData, riskAssessment: riskData.data };
               console.log('✓ Risk assessment data fetched');
+              acquisition.answered('riskAssessment', 'Retrieved and used', 'risk-assessment-service');
+            } else {
+              acquisition.empty('riskAssessment', 'The risk service answered and holds nothing for this location', 'risk-assessment-service');
             }
+          } else {
+            acquisition.failed('riskAssessment', `risk-assessment-service answered HTTP ${riskResponse.status}`, 'risk-assessment-service');
           }
         } catch (error: any) {
           console.log('⚠️ Risk assessment skipped:', error?.message?.substring(0, 50));
+          acquisition.failed('riskAssessment', String(error?.message ?? 'The risk request threw and reported no message'), 'risk-assessment-service');
         }
+      } else {
+        acquisition.skipped('riskAssessment', 'No postcode and state were resolved, and the risk register is keyed on both', 'risk-assessment-service');
       }
 
       // NOTE: ABS demographics and RBA economics are now fetched in Phase 1 parallel block above
@@ -3116,6 +3164,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             }
             
             console.log('Financial calculations completed successfully');
+            acquisition.answered('financials', 'Computed by the financial engine from the recorded inputs', 'financial-calculation-service');
             
             // Run validation on financial calculations - USE EFFECTIVE VALUES
             try {
@@ -3196,6 +3245,11 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
           locationIntelligence: existingEnhancedFields.locationIntelligence,
         };
         console.log(`♻️ ${reuse.note}`);
+        acquisition.answered(
+          'locationIntelligence',
+          `Reused the enrichment this report already holds: ${reuse.note}`,
+          'location-intelligence-service',
+        );
       } else {
       // Fetch location intelligence data
       try {
@@ -3233,19 +3287,38 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               ),
             };
             console.log('✓ Location intelligence data fetched successfully');
+            acquisition.answered('locationIntelligence', 'Retrieved and used', 'location-intelligence-service');
             
             if (locationData.usingMockData) {
               console.warn('⚠️ Using mock location data:', locationData.message);
             }
           } else {
             console.warn('⚠️ Location intelligence returned no data');
+            acquisition.empty(
+              'locationIntelligence',
+              'The location service answered and returned nothing for this address',
+              'location-intelligence-service',
+            );
           }
         } else {
           const errorText = await locationResponse.text();
           console.error('❌ Location intelligence API error:', locationResponse.status, errorText);
+          // The body is the provider's own words and is what an operator needs
+          // to tell a geocoder refusal from a boot failure; it is bounded here
+          // because a ledger entry is read by a person, not parsed.
+          acquisition.failed(
+            'locationIntelligence',
+            `location-intelligence-service answered HTTP ${locationResponse.status}: ${String(errorText).slice(0, 200)}`,
+            'location-intelligence-service',
+          );
         }
       } catch (error: any) {
         console.error('❌ Location intelligence fetch failed:', error?.message || 'Unknown error');
+        acquisition.failed(
+          'locationIntelligence',
+          String(error?.message ?? 'The location request threw and reported no message'),
+          'location-intelligence-service',
+        );
       }
       }
 
@@ -3509,8 +3582,17 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       // planning services. It keys on the verified coordinate the location
       // step just resolved, so a report with no trustworthy coordinate gets
       // an honest absence rather than another jurisdiction's zone.
+      //
+      // This guard is why the Cowra report printed planning content with no
+      // planning source: the location enrichment produced nothing, so there was
+      // no coordinate, so the call was never made — silently, with no error, no
+      // log line and no key in `data_sources` at all. The report then filled the
+      // gap from the prompt template. Every branch below now records what
+      // happened, because "we did not ask" and "the register holds nothing
+      // here" are opposite statements about a property.
       const planningCoords = enhancedData.locationIntelligence?.coordinates;
       if (planningCoords?.lat && planningCoords?.lng) {
+        const planningStart = Date.now();
         try {
           const planningResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/planning-data-service`, {
             method: 'POST',
@@ -3527,11 +3609,37 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             if (planningBody.success && planningBody.data) {
               enhancedData = { ...enhancedData, planningData: planningBody.data };
               console.log('✓ Planning data fetched:', { jurisdiction: planningBody.data.jurisdiction });
+              acquisition.record({
+                producer: 'planning',
+                outcome: 'answered',
+                detail: `Retrieved from the ${planningBody.data.jurisdiction ?? 'jurisdiction'} planning layers`,
+                service: 'planning-data-service',
+                ms: Date.now() - planningStart,
+              });
+            } else {
+              acquisition.empty(
+                'planning',
+                'The planning service answered and returned no controls for this coordinate',
+                'planning-data-service',
+              );
             }
+          } else {
+            acquisition.failed(
+              'planning',
+              `planning-data-service answered HTTP ${planningResponse.status}`,
+              'planning-data-service',
+            );
           }
         } catch (error: any) {
           console.log('⚠️ Planning data skipped:', error?.message?.substring(0, 80));
+          acquisition.failed('planning', String(error?.message ?? 'The planning request threw and reported no message'), 'planning-data-service');
         }
+      } else {
+        acquisition.skipped(
+          'planning',
+          'No verified coordinate was resolved for this property, and the planning registers are queried by coordinate',
+          'planning-data-service',
+        );
       }
 
       // Climate is read from SILO at the verified coordinate, which exists
@@ -3555,11 +3663,19 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             if (climateBody.success && climateBody.data) {
               enhancedData = { ...enhancedData, climateData: climateBody.data };
               console.log('✓ Climate reading fetched (SILO grid cell)');
+              acquisition.answered('climate', 'Retrieved from the SILO grid cell at the verified coordinate', 'climate-data-service');
+            } else {
+              acquisition.empty('climate', 'The climate service answered and holds no reading for this grid cell', 'climate-data-service');
             }
+          } else {
+            acquisition.failed('climate', `climate-data-service answered HTTP ${climateResponse.status}`, 'climate-data-service');
           }
         } catch (error: any) {
           console.log('⚠️ Climate reading skipped:', error?.message?.substring(0, 80));
+          acquisition.failed('climate', String(error?.message ?? 'The climate request threw and reported no message'), 'climate-data-service');
         }
+      } else {
+        acquisition.skipped('climate', 'No verified coordinate was resolved, and SILO is read by grid cell', 'climate-data-service');
       }
 
       // Regional trends (the SA2's measured population series and growth)
@@ -3875,16 +3991,26 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               if (Array.isArray(scoreData.data?.gradeGaps) && scoreData.data.gradeGaps.length) {
                 console.log('  Grade gaps:', scoreData.data.gradeGaps.map((g: any) => `${g.dimension}: ${g.detail}`).join(' | '));
               }
+              // A WITHHELD grade is an answer, not a failure: the engine ran,
+              // measured what it could and declined to publish a letter. The
+              // ledger records the attempt; the withholding is the scoring
+              // policy's own reading and is published separately.
+              acquisition.answered('investmentScore', 'Scored by the investment scoring service', 'investment-scoring-service');
             } else if (scoreData) {
               enhancedData = { ...enhancedData, investmentScore: scoreData };
               console.log('✓ Investment score (direct):', scoreData?.grade, scoreData?.totalScore);
+              acquisition.answered('investmentScore', 'Scored by the investment scoring service', 'investment-scoring-service');
+            } else {
+              acquisition.empty('investmentScore', 'The scoring service answered with no body', 'investment-scoring-service');
             }
           } else {
             const errorText = await scoreResponse.text();
             console.error('❌ Investment scoring service error:', scoreResponse.status, errorText);
+            acquisition.failed('investmentScore', `investment-scoring-service answered HTTP ${scoreResponse.status}: ${String(errorText).slice(0, 200)}`, 'investment-scoring-service');
           }
         } catch (error: any) {
           console.error('❌ Investment score calculation failed:', error?.message || 'Unknown error');
+          acquisition.failed('investmentScore', String(error?.message ?? 'The scoring request threw and reported no message'), 'investment-scoring-service');
         }
       } else if (isAreaReport) {
         // Area-level scoring (suburb/postcode/statewide)
@@ -3921,13 +4047,16 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               enhancedData = { ...enhancedData, investmentScore: scoreData.data };
               areaScoreCalculated = true;
               console.log('✓ Area score calculated via service:', scoreData.data?.grade, scoreData.data?.totalScore);
+              acquisition.answered('investmentScore', 'Scored by the investment scoring service', 'investment-scoring-service');
             }
           } else {
             const errorText = await scoreResponse.text();
             console.error('❌ Area scoring service error:', scoreResponse.status, errorText);
+            acquisition.failed('investmentScore', `investment-scoring-service answered HTTP ${scoreResponse.status}: ${String(errorText).slice(0, 200)}`, 'investment-scoring-service');
           }
         } catch (error: any) {
           console.error('❌ Area scoring service call failed:', error?.message || 'Unknown error');
+          acquisition.failed('investmentScore', String(error?.message ?? 'The scoring request threw and reported no message'), 'investment-scoring-service');
         }
         
         // FALLBACK: Calculate area score inline if service call failed
@@ -6992,10 +7121,19 @@ YOUR DEDICATED PROPERTY PARTNER
       });
       
       // Prepare data sources tracking. Every source the generation ATTEMPTED
-      // is recorded — present with its provenance, or null — so the viewer's
-      // coverage disclosure can say "9 of 11 sources" instead of the four
-      // this block used to name. A null is a fact ("we asked and got
-      // nothing"), never an error.
+      // is recorded — present with its provenance, or null.
+      //
+      // That null used to be the whole answer, under a comment reading "a null
+      // is a fact ('we asked and got nothing'), never an error". It could not
+      // be: the composition reads `enhancedData.X`, which is the RESULT, and a
+      // result says nothing about the attempt. Five different things arrived
+      // here as one null — never asked, asked and failed, answered and lost,
+      // answered and empty, answered and used — and on the Cowra report six
+      // producers were null beside `errorsEncountered: 0`.
+      //
+      // `_acquisition` is the ledger that tells them apart. The nulls below are
+      // unchanged, so nothing downstream moves; what is added is the record
+      // that lets a reader and an operator know which of the five they have.
       const sourceStamp = (source: string, confidence: number) => ({
         source,
         confidence,
@@ -7037,6 +7175,30 @@ YOUR DEDICATED PROPERTY PARTNER
           verificationUrl: planningFacts.zoning.sourceUrl,
         } : null
       };
+
+      /**
+       * The acquisition ledger for this run.
+       *
+       * Built last so a producer fetched late — climate and planning are keyed
+       * on a coordinate that does not exist in phase 1 — is recorded at its
+       * real outcome rather than at the skip that was true earlier.
+       *
+       * `unaccounted` is the part that earns its keep over time: a producer
+       * added to the pipeline and not recorded here appears in that list rather
+       * than silently becoming another unexplained null.
+       */
+      const acquisitionLedger = acquisition.build();
+      (dataSources as Record<string, unknown>)._acquisition = acquisitionLedger;
+      console.log(
+        `📒 Acquisition: ${acquisitionLedger.tally.answered} answered, `
+        + `${acquisitionLedger.tally.never_requested} never requested, `
+        + `${acquisitionLedger.tally.requested_failed} failed, `
+        + `${acquisitionLedger.tally.unavailable_in_coverage} empty, `
+        + `${acquisitionLedger.tally.retrieved_not_bound} lost`
+        + (acquisitionLedger.unaccounted.length
+          ? ` — UNACCOUNTED: ${acquisitionLedger.unaccounted.join(', ')}`
+          : ''),
+      );
 
       // Fact reconciliation: does the written analysis agree with the record
       // it rides on? Findings DISCLOSE (validation_flags → the viewer's
