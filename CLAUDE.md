@@ -2277,16 +2277,31 @@ unbounded.** Read
 [`GENERATION_STALL_AND_ACQUISITION_BUDGET.md`](./docs/reports/GENERATION_STALL_AND_ACQUISITION_BUDGET.md)
 before touching the acquisition block, `acquisitionFetch`, the budget hand-off
 or `useChunkedRegeneration`. One run read `Section 1 of 15 · 0/15 · 21m 2s
-elapsed` having banked nothing, and three things were true at once. **Seven of
-the eight acquisition calls were a plain `fetch` with no `AbortSignal`** and
-the eighth used a 90s default, against a 125s hard stop the sections must also
-fit inside — so one slow provider spent the invocation and the first section
-was never attempted. Every acquisition call now answers to the same run clock,
-through the generator's own `fetchWithTimeout` so the circuit breaker still
-applies, and a call with no window is NOT made and records a **failure**, never
-an empty answer: **a timeout is not evidence of absence**, and the conservative
-side keeps the dependency outstanding rather than writing "no overlay applies"
-from a four-second silence. **The hand-off then wrote the row at zero
+elapsed` having banked nothing, and three things were true at once. **The
+acquisition block's twenty-one service calls carried 290 seconds of timeout
+allowance inside a 125-second invocation** — a plain `fetch` with no
+`AbortSignal`, a 90s default, and nine sequential awaits declaring 20 to 45
+seconds each — so one slow provider spent the whole run and the first section
+was never attempted. Every acquisition call now answers to the same run clock
+through `acquisitionFetch`, which delegates to the generator's own
+`fetchWithTimeout` so the circuit breaker still applies; **a site keeps its own
+declared ceiling** and the clock takes the smaller of the two, because
+shortening a register's patience buys speed with evidence. A call with no window
+is NOT made and records a **failure**, never an empty answer: **a timeout is not
+evidence of absence**, and the conservative side keeps the dependency
+outstanding rather than writing "no overlay applies" from a four-second silence.
+The first fix bound only seven of the twenty-one and its spec named six services
+by hand — **a hand-list cannot see the call it does not mention**, so the guard
+now reads every `functions/v1/` call out of the source. Converting the rest
+exposed an older fault of the same kind: a null from a phase-1 wrapper reaches
+the ledger as `unavailable_in_coverage`, *"the provider answered and holds
+nothing"*, so an HTTP 500 was already being recorded as a statement about the
+property; `assertAcquisitionAnswered` makes it a failure instead. And **the four
+registers that depend only on the resolved geography are one wave** — planning,
+climate, regional and Domain were awaited in series for 145 seconds of ceiling
+and now cost the slowest of them; only the REQUEST moves, every answer is read
+and bound exactly where it was, and the QLD crime re-key stays behind planning
+because it reads planning's own LGA. **The hand-off then wrote the row at zero
 sections**, and `investment_reports` carries a `BEFORE UPDATE` trigger that
 stamps `updated_at` on any write — so it refreshed the very clock the watchdog
 (`updated_at < now() - interval '2 minutes'`) and the widget both read, and

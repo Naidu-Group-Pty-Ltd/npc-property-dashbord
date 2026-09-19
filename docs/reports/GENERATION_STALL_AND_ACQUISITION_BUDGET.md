@@ -67,6 +67,84 @@ Places `count: 0` defect in [`RF72B1B1`](./RF72B1B1_ENRICHMENT_AND_POSTCODE.md) 
 
 ---
 
+## 1a · The first fix bound a third of the calls
+
+Worth recording, because the shape of the mistake is the point: **the fix was
+written from the calls I had found, not from the calls that exist.** Reading the
+*deployed* bundle back afterwards is what showed the rest.
+
+Measured on the deployed revision (`generate-investment-report` v417):
+
+| | calls | timeout allowance |
+| --- | --- | --- |
+| bound to the run clock | 7 | the run's own |
+| **not** bound | **14** | **290 s** |
+
+Of the fourteen, nine sat after phase 1 and were awaited **one after another** —
+45 s planning + 40 s climate + 30 s regional + 30 s Domain + 25 s risk + three
+crime asks at 20 s — summing to 260 s of ceiling. The phase-1 wave adds up to
+30 s more. The invocation's whole hard stop is **125 s**.
+
+So the incident was never closed by the first release: one slow register could
+still spend the run on its own, and the document would still never start. Every
+call in the acquisition region now goes through `acquisitionFetch`, and the site
+keeps **its own declared ceiling** rather than being clamped to a class default
+— a planning register that needs 45 s still asks for 45 s, and the run's clock
+takes the smaller of the two. Buying speed by shortening a register's patience
+would be buying it with evidence.
+
+The guard is derived rather than listed. The first version of the spec named six
+services by hand and passed with those fourteen calls in place, which is exactly
+the failure mode: **a hand-list cannot see the call it does not mention.** The
+spec now reads every `functions/v1/…` call out of the generator's source and
+requires each one to be on the bounded wrapper, and it is mutation-tested.
+
+### And a non-answer was being recorded as an absence
+
+Converting phase 1 exposed a second fault in the same class, older than this
+work. Those wrappers read `if (response.ok) { … } return null`, and a null there
+reaches `fetchServiceWithFallback` as the string `"No data returned"`, which
+`acquisitionLedger.fromServiceResult` maps to `unavailable_in_coverage` —
+*"the provider answered and holds nothing for this subject"*. So an HTTP 500
+from the ABS service was already being written into the record as a statement
+about the property. `assertAcquisitionAnswered` throws instead, which lands in
+the same wrapper's catch and records `requested_failed`. `return null` still
+means what it always meant: the service answered 200 and said it holds nothing,
+which is real and worth printing.
+
+---
+
+## 1b · One wave, not four queues
+
+Planning, climate, regional trends and Domain depend on the geography that has
+just resolved and on **nothing else**. They were awaited in series, so the
+invocation paid 45 + 40 + 30 + 30 seconds of ceiling one at a time. Started
+together they cost the slowest of them instead of the sum.
+
+Only the **request** moves. Every answer is still read, recorded and bound
+exactly where it was and in the same order, by the same code, so the acquisition
+ledger and `enhancedData` are written in one sequence whatever order the network
+answers in — a wave is not a second way to assemble the record.
+
+Three rules hold it.
+
+**A dependency is not made concurrent by wishing.** The QLD crime re-key is
+keyed on `planningData.parcel.lga`, the cadastre's own answer, so it stays
+behind planning and a test asserts there is no `crimeRekeyRequest`.
+
+**A started request is marked handled.** A promise that rejects before anything
+awaits it is an unhandled rejection, which Deno treats as fatal. The no-op
+`catch` in `startAcquisition` swallows nothing — the call site awaits the
+original promise, so the same error still surfaces inside the same `try` it
+always did.
+
+**The condition that starts a call is the condition that reads it.** Each block
+now guards on the request handle rather than re-testing the coordinate, so the
+two can never drift apart and leave a started request unread or an unstarted one
+awaited.
+
+---
+
 ## 2 · A no-progress hand-off wrote the row, and that blinded the watchdog
 
 This is the one that hid the other two for 21 minutes.
