@@ -68,7 +68,7 @@ export type ChartClaim = 'rating' | 'share' | 'series' | 'measurement' | 'qualit
 /** Why a visual could not be verified, or that it was. */
 export type ChartVerdict =
   | 'supported' | 'unrecorded_rating' | 'population_not_held' | 'series_withheld'
-  | 'market_not_held';
+  | 'market_not_held' | 'distance_not_measured';
 
 export interface EvidenceInventory {
   /** Every value the scoring engine recorded, which is what a rating may assert. */
@@ -174,6 +174,40 @@ function shareDescribesAPopulation(d: VizDirective): boolean {
   ].join(' ');
   if (SELF_MEASURED_SHARE.test(text) && !POPULATION_SHARE.test(text)) return false;
   return POPULATION_SHARE.test(text);
+}
+
+/**
+ * A distance nobody measured.
+ *
+ * Page 10 of the Cowra Compass draws *Proximity of 48 Redfern Street to key
+ * Cowra amenities* — `Core CBD & shops 1.6 km, Primary school ~0.7 km,
+ * Hospital & medical hub ~2.0 km` — and page 12 sets *Indicative reach from 48
+ * Redfern Street* as a five-row TABLE of the same kind of figure.
+ * `location_intelligence` on that row is **NULL**, so no producer measured any
+ * of them; the prose beside the chart says where they came from —
+ * *"Approximately 1.6 km from Cowra's CBD **as indicated by recent sale
+ * listings**"*. §2 is explicit that a search snippet is not a verified source,
+ * and that an unsupported dataset must not become a table of unsupported
+ * numbers.
+ *
+ * `readEvidenceInventory` has computed `location` since it was written and
+ * nothing has ever read it. This is what reads it.
+ *
+ * Measured across the 89 retained reports: **88 directives declare a distance
+ * or travel-time unit, and 86 sit on a record whose location producer did not
+ * answer.** The two that stand are Muswellbrook's *"road distance to key
+ * centres"* and *"Everyday errands – typical travel times"*, on a record where
+ * it did — the same separation the market and population rules make, from the
+ * same `data_sources`.
+ *
+ * The unit is the tell, as it is for a rating: a chart of kilometres declares
+ * kilometres. A figure in prose is not touched, because prose is not scrubbed.
+ */
+const DISTANCE_UNIT = /^(?:km|kms|kilometres?|kilometers?|metres?|meters?|mins?|minutes?|hrs?|hours?)$/i;
+
+function declaresADistance(d: VizDirective): boolean {
+  const unit = 'unit' in d && typeof d.unit === 'string' ? d.unit.trim() : '';
+  return DISTANCE_UNIT.test(unit);
 }
 
 /** A `margin` spark of a quantity the client-safe gate refused to publish. */
@@ -342,6 +376,19 @@ export function assessChartEvidence(
           'The shares describe a population — households, dwellings, occupiers or transactions — and '
           + 'no demographics producer answered for this report, so there is no table behind the '
           + 'denominator and no period the shares belong to.',
+      });
+      continue;
+    }
+
+    if (claim === 'measurement' && declaresADistance(d) && !inv.location) {
+      out.push({
+        verdict: 'distance_not_measured',
+        claim,
+        kind: d.kind,
+        directive,
+        reason:
+          'The chart declares a distance or travel-time unit and no location producer answered for '
+          + 'this report, so nothing in the record measured any of the figures it plots.',
       });
       continue;
     }

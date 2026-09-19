@@ -236,6 +236,47 @@ describe('enforcement removes the unsupported visual and records it', () => {
  * provenance nothing holds. It is in 83 of the 89 stored reports, because it
  * rides the parent's content into every fork.
  */
+/*
+ * Page 10 of the Cowra Compass drew "Proximity of 48 Redfern Street to key
+ * Cowra amenities" — 1.6 km, ~0.7 km, ~2.0 km — and page 12 set "Indicative
+ * reach" as a five-row TABLE of the same figures. `location_intelligence` on
+ * that row is NULL: nothing measured any of them, and the prose beside the
+ * chart says where they came from — "as indicated by recent sale listings".
+ *
+ * `readEvidenceInventory` has computed `location` since it was written and
+ * nothing read it. This is what reads it.
+ */
+describe('a distance nobody measured', () => {
+  const NOTHING = readEvidenceInventory(COWRA_RECORD);
+  const PROXIMITY = '{{bars: Core CBD & shops 1.6 km, Primary school ~0.7 km, '
+    + 'Hospital & medical hub ~2.0 km | title=Proximity to key amenities | max=3 | unit=km}}';
+
+  it('refuses a chart of kilometres where no location producer answered', () => {
+    const [finding] = assessChartEvidence(PROXIMITY, NOTHING);
+    expect(finding?.verdict).toBe('distance_not_measured');
+    expect(finding?.reason).toMatch(/no location producer answered/);
+  });
+
+  it('keeps it where the producer DID answer', () => {
+    expect(assessChartEvidence(PROXIMITY, { ...NOTHING, location: true })).toEqual([]);
+  });
+
+  it('reads the declared unit, so a travel time is judged and a dollar series is not', () => {
+    const minutes = '{{bars: Shops 6 min, School 4 min | title=Everyday errands | unit=min}}';
+    expect(assessChartEvidence(minutes, NOTHING)[0]?.verdict).toBe('distance_not_measured');
+    const dollars = '{{bars: Subject 565000, Suburb median 498000 | title=Price | unit=$}}';
+    expect(assessChartEvidence(dollars, NOTHING)).toEqual([]);
+  });
+
+  it('removes the chart and leaves the paragraph that introduces it', () => {
+    const doc = ['The property sits close to the town centre.', '', PROXIMITY, '', 'Schools are within reach.'].join('\n');
+    const { markdown } = enforceChartEvidence(doc, NOTHING);
+    expect(markdown).not.toContain('Core CBD & shops');
+    expect(markdown).toContain('The property sits close to the town centre.');
+    expect(markdown).toContain('Schools are within reach.');
+  });
+});
+
 describe('a figure in a summary strip', () => {
   const NOTHING_HELD = readEvidenceInventory(COWRA_RECORD);
   const GROWTH = [
@@ -316,11 +357,26 @@ describe('the read path adopts it without changing anything else', () => {
     expect(presentStoredMarkdown(DOC)).toBe(presentStoredMarkdown(DOC, null));
   });
 
-  it('a measurement in kilometres is never withheld — the record is not what is wrong with it', () => {
+  /*
+   * This test used to assert the opposite — "a measurement in kilometres is
+   * never withheld, the record is not what is wrong with it" — and reading the
+   * delivered document is what changed the evidence. `location_intelligence`
+   * on the Cowra row is NULL, which is the platform's own statement that no
+   * producer measured anything, and the prose beside the chart says where the
+   * figures came from instead: "as indicated by recent sale listings". The
+   * record IS what is wrong with it, in exactly the sense the population rule
+   * already recognised.
+   */
+  it('withholds a distance where no location producer answered, and keeps the prose', () => {
     const out = presentStoredMarkdown(DOC, readEvidenceInventory(COWRA_RECORD));
-    expect(out).toContain('{{bars: CBD 1.6 km');
+    expect(out).not.toContain('{{bars: CBD 1.6 km');
     expect(out).not.toContain('{{gauge');
     expect(out).toContain('Prose that must survive.');
+  });
+
+  it('keeps the same chart where the location producer DID answer', () => {
+    const held = { ...readEvidenceInventory(COWRA_RECORD), location: true };
+    expect(presentStoredMarkdown(DOC, held)).toContain('{{bars: CBD 1.6 km');
   });
 });
 

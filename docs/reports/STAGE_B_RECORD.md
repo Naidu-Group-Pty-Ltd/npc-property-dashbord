@@ -102,7 +102,55 @@ The prose half moved with it: `claimSupportRules` rule 2 forbade a proportion
 of sales and said nothing about a growth rate, a median, a yield or a vacancy
 rate. It names them now, and names the stat card.
 
-### 3.2 The editorial changes have not reached a document — EXPECTED, AND VISIBLE
+### 3.2 A rating spelled out of ten, and a distance nobody measured — FIXED
+
+Two more, found the same way and measured the same way.
+
+**Page 15 drew `7.5 / 8.0 / 6.5`** — *Relative positioning within regional
+residential markets*, rating a property, a town and a region, on a record that
+issued no grade. §2 names that chart by its numbers. It survived because
+`declaresRatingScale` read `max=100` and nothing else, so a scorecard spelled
+`unit=/10` was a "measurement". Every declared unit in the 89 retained reports
+is one of `%` (94), `km` (87), `/10` (43), `m²` (2) and one each of `min`,
+`relative`, `incidents`, `score`, `$` — and **all 43 of the `/10` directives
+are that one chart**. A measured series does not announce that it is out of ten
+either, so the tell is widened by exactly that form. The `max` is deliberately
+NOT read: a proximity chart legitimately declares `max=3`, and condemning it
+for the shape of its axis would take a real measurement off the page.
+
+One thing the widening forced: **the scale decides, not the digits.**
+`ratingValues` rounds, so `7.5` reads as `8` — and a child carrying a recorded
+score of 8 would have "supported" it by a coincidence of digits. The engine
+records 0–100; nothing it records is *7.5 out of 10*, so an off-100 scale is
+unsupportable outright.
+
+**Pages 10 and 12 drew distances nobody measured.** *Proximity of 48 Redfern
+Street to key Cowra amenities* — 1.6 km, ~0.7 km, ~2.0 km — and *Indicative
+reach*, set as a five-row **table** of the same figures.
+`location_intelligence` on that row is NULL, and the prose says where they came
+from: *"Approximately 1.6 km from Cowra's CBD **as indicated by recent sale
+listings**"*. §2 is explicit that a search snippet is not a verified source and
+that an unsupported dataset must not become a table of unsupported numbers.
+
+`readEvidenceInventory` has computed `location` since it was written and
+**nothing had ever read it**. Measured: 88 directives declare a distance or
+travel-time unit, **86** on a record whose location producer did not answer.
+The two that stand are Muswellbrook's *"road distance to key centres"* and
+*"Everyday errands – typical travel times"*, on a record where it answered.
+
+An earlier test asserted the opposite — *"a measurement in kilometres is never
+withheld, the record is not what is wrong with it"*. Reading the delivered
+document is what changed the evidence, and the test now pins the current rule
+with that reasoning recorded in it.
+
+**The whole contract, executed across 91 stored reports:** 411
+`unrecorded_rating`, 178 `population_not_held`, 86 `distance_not_measured`, 85
+`market_not_held`, 1 `series_withheld` — 43 distinct refusals. Every visual §2
+names by its numbers is in that list. Re-rendered, the Compass is 31 pages,
+33/33 journey checks, VISUAL PASS, and carries none of `3.52`, `7.5`,
+`Core CBD & shops` or `Indicative reach`.
+
+### 3.3 The editorial changes have not reached a document — EXPECTED, AND VISIBLE
 
 Page 4 still runs `Part 03 · Report` in the running head and still carries the
 heading *"The report"*. Both were fixed in Stage A. They have not reached the
@@ -110,7 +158,7 @@ page because **the seeded catalogue has not been regenerated** — §5.5 of the
 Stage A record — and this render is the proof of that caveat rather than a
 counter-example to it.
 
-### 3.3 What still stands in the stored documents
+### 3.4 What still stands in the stored documents
 
 Every §2 claim traced in Stage A §5.2 is visible on these pages, exactly as
 that record says: *"detached, renovated 3-bedroom residential home"*,
@@ -141,4 +189,4 @@ Two more, recorded rather than fixed, because both need the regeneration:
 2. **The seed has not been regenerated**, so no master change is on a page yet.
 3. **`briefing` and `snapshot` are read on a different property**, because the
    Cowra record has no child of either tier.
-4. The two findings in §3.3 are recorded and not fixed.
+4. The two findings in §3.4 are recorded and not fixed.
