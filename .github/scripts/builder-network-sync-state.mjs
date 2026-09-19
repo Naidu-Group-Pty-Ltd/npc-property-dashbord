@@ -224,11 +224,11 @@ await section('6. builder_network_stamps', `
 // ---------------------------------------------------------------------------
 await section('7. portal_operational_events — builder_network_*, last 14 days', `
   select event_name, severity, success, count(*) as events,
-         min(created_at) as first_seen, max(created_at) as last_seen,
+         min(occurred_at) as first_seen, max(occurred_at) as last_seen,
          left(max(metadata::text), 200) as sample_metadata
   from public.portal_operational_events
   where event_name ilike 'builder_network%'
-    and created_at > now() - interval '14 days'
+    and occurred_at > now() - interval '14 days'
   group by 1, 2, 3
   order by 6 desc
   limit 30
