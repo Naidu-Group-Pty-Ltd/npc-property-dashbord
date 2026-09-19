@@ -2972,6 +2972,59 @@ column's own constraint puts them under `manual_stats->'values'`, so every
 lookup is NULL and it looks exactly like a builder who stated nothing. That one
 is named and deliberately not fixed in a capture migration.
 
+## A linked stock list, and the delete that was never a delete
+Read [`docs/builder-portal/49-re-importing-a-linked-stock-list.md`](./docs/builder-portal/49-re-importing-a-linked-stock-list.md)
+before touching `_shared/builderStock/linkedSource.ts`, `sourceReread.pure.ts`,
+the `reprocess_upload` / `import_url` operations or
+`scripts/ops/stock-source-restore.ts` — all on **aurixa-builders**. A builder's
+own Stock List read `Properties listed 0 · Stock lists uploaded 0` while this
+Command Centre published 46 of their properties, and **both screens were
+correct**: the session was acting as the right organisation, `inventory:view`
+resolved, and the organisation genuinely held 0 active items behind 47 archived
+rows and 6 deleted sources.
+
+A linked source is snapshotted when it is imported, and "Read again" re-ran the
+parsers over that snapshot — right for an uploaded FILE, whose bytes are the
+builder's own and have not changed, and the opposite of what a LINK is for. A
+builder links their sheet BECAUSE they keep editing it, so re-reading the
+day-old copy reported "47 updated" having imported none of their edits, and the
+only route that worked was to DELETE the source and add it back — which
+archives every property it supplies. The log shows the loop three times:
+`archived: 47` at 18 Sep 09:41:29, 19 Sep 08:39:36 and 19 Sep 09:23:44, the
+first two followed within 25 seconds by the same docs.google.com address being
+added again. **Delete-then-re-add-the-same-address is nobody removing stock; it
+is a builder re-importing.** The third was not followed by an add and left the
+marketplace empty. `reprocess_upload`'s own header had already condemned exactly
+this and closed it for files; a link is the case where the source genuinely
+changes, and it was the half left open.
+
+Five rules bite. **A fetch that failed is never laundered into a re-read of the
+stale copy** — a sheet that has been unshared says so and leaves the live rows
+standing, and it is prepared BEFORE anything is marked so a healthy list is not
+parked in "being read" by a fetch that returned nothing. **A re-fetch is never
+more permissive than the first import**, because the rows it writes replace ones
+that are live — which is why reaching a link (normalisation, five refusals, MIME
+detection, classification, the Notion recovery with its access-gate and
+missing-view findings) moved to ONE module both callers use. **Link discovery is
+read from THIS fetch**, so a sheet whose export permissions were since fixed
+stops being stamped "we could not see the links" for ever. **A control that does
+two different things has to say which** — `rereadNaming` is one rule the label,
+the accessible name and the confirmation all read, and an unreadable
+`source_type` names the FILE act, the one that cannot reach the network. And
+**a read that FAILED is not a builder who has added nothing**: the same page
+drew `Stock lists uploaded 0` off `uploads.length`, which is `[]` in flight and
+`[]` on error, so a lost signal made a headline statement about a builder with
+six of them.
+
+The repair is the **exact inverse of one logged delete** and nothing more, and
+**the photograph rule is not relaxed to restore a row**: a property returns to
+`active` only where `builder_stock_photo_is_source_ready` says so and everything
+else returns to `staged` — 46 and 1 on the repair, Lot 1037 holding its place in
+Action Required exactly as it should. It refuses unless the count matches what
+that delete recorded, refuses to join a newer live generation, and un-stamps the
+upload FIRST so there is no moment where properties are listed under no stock
+list at all.
+
 ## Frontend loop (summary — full detail in `FRONTEND_TOOLING.md`)
 1. Design new surfaces with the **frontend-design** skill.
 2. Build shadcn-first; use **@21st-dev/magic** for net-new components, then adapt to
