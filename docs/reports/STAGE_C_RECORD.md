@@ -223,7 +223,8 @@ substitutes for it, and no substitute would be sound.
 
 1. **CI green on the final head** — the PR is watched and each push has
    reported a clean check suite; the final head's suite is what the merge gate
-   reads. The head is now `c423b3992`.
+   reads. The head is now `b61c454f7`, on `main` at `066ed9f98`. §5.6 records
+   what was re-run there and what it answered.
 2. **The authorised merge, deploy and browser-publish gates**, and the served
    build verified by fetching it rather than inferred from Lovable's latest
    edit.
@@ -429,3 +430,52 @@ the first run and this one; the earlier figures were 105 / 831 / 104. **This is
 a field-by-field comparison over a named set, not a universal byte-for-byte
 claim** — the two differences are the work itself and are named rather than
 filtered away.
+
+### 5.6 The release candidate — which revisions the evidence covers
+
+The release candidate is head **`b61c454f7`** on `main` at **`066ed9f98`**,
+which is the merge base: the branch fully contains that main and
+`git merge-tree --write-tree` exits 0 against it.
+
+The gate table below is measured **at that head**. Any commit after it on this
+branch is documentation only — this record and the PR body — so the final head
+differs from the gate-measured head in Markdown alone, and CI runs the full
+suite on the final head regardless. §5.5's 107-row read-path
+comparison was run earlier, at `c43ced016`, and is not restated here: the
+commits between the two change `supabase/migration-object-index.json`, one RLS
+migration, `CLAUDE.md` and two builder-stock modules, and the comparison reads
+none of them. That is a checkable statement about a diff, not an assumption
+that nothing moved.
+
+`main` moved three times while this pass ran (`6d2a9c987` → `19237d6f9` →
+`421e1f7a3` → `066ed9f98`) and each was merged in rather than left to the merge
+button. The second of those conflicted, in exactly one file —
+`supabase/migration-object-index.json`, which is **generated**. It was resolved
+by running `npm run migrations:index`, never by hand, and the regenerated file
+passes its own `--check`.
+
+**A clean merge is the absence of a conflict, not tested integration**, so the
+gates were re-run in full on the merged head rather than carried forward:
+
+| gate | at `b61c454f7` |
+|---|---|
+| `npx vitest run src/lib` | **1,078 files passed**, 4 skipped; **22,112 tests passed**, 25 skipped |
+| Deno edge type-check | **413 entry points, 334 errors, baseline 334** — held |
+| `npm run templates:compass:qa` | **510 renders in real Chromium** — no block overflows its page, none prints over another |
+| `scripts/verify/template-refresh-preservation.sh` | 6 rows, **33 assertions, all passed** |
+| migration object index | current — **998 migrations, 2,721 created, 524 dropped** |
+| migration version collisions | passed (998 files; 32 frozen, **0 new**) |
+| migration dependency order | passed (998 migrations; 33 frozen, **0 new**) |
+| migration security | passed (97 at or after 20260909000000; 20 reviewed exemptions) |
+| `check-edge-column-names` | passed |
+| `check-verify-jwt-declared` | **413 of 413 declared, 0 missing** |
+| `npx tsc --noEmit` | clean |
+| `npm run audit:style` | under baseline |
+| `npm run build` | succeeds |
+
+**One earlier claim on the PR is corrected here.** It said "ESLint 0 errors".
+ESLint is not a CI gate in `ci.yml` at all, and the repository carries **46
+errors across 32 files** at this head. **None of them is in any of the files
+this branch touches** — checked by intersecting the ESLint JSON report against
+`git diff --name-only <merge-base>..HEAD`, which is empty. The accurate
+statement is the narrow one, and it is the one that should have been made.
