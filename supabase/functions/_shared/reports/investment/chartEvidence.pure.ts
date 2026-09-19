@@ -313,3 +313,117 @@ export function enforceChartEvidence(
   }
   return { markdown: out.join('\n').replace(/\n{3,}/g, '\n\n'), findings };
 }
+
+// ---------------------------------------------------------------------------
+// The prose half of the same contract
+// ---------------------------------------------------------------------------
+
+/**
+ * What the PROSE may claim, judged against the same inventory the charts are.
+ *
+ * ── Why this is a prompt rule and not a scrub ────────────────────────────
+ *
+ * `enforceChartEvidence` removes an unsupported directive because a directive
+ * is a structure: it has a kind, a set of values and a declared basis, and a
+ * module can read all three. A sentence is not. The programme's own rule is
+ * that **prose is never regex-scrubbed, on read or on write** —
+ * `neverAPlaceholder.spec.ts` scans structure and source and deliberately not
+ * sentences — because a regex over prose deletes the qualification along with
+ * the claim, and a half-deleted sentence is worse than the claim was.
+ *
+ * So the prose half is a contract the model writes UNDER, composed from the
+ * same `EvidenceInventory` the charts are judged against. One inventory, two
+ * consumers: the page and the sentence beside it cannot then disagree about
+ * what the record holds.
+ *
+ * ── The six classes, and why each is named ───────────────────────────────
+ *
+ * Every rule here exists because a specific sentence reached a client. The
+ * removed occupier donut had a prose twin — *"roughly 45% of tenants are
+ * families"* — and removing the drawing while leaving the sentence moves an
+ * unsupported figure rather than withdrawing it. A proportion of TRANSACTIONS
+ * ("7 in 10 sales") is the same claim with a different denominator. A rating
+ * in words ("scores strongly for liveability") is the gauge again. And the
+ * three qualitative words the standard names — **renovated**, **strong
+ * demand**, **low risk** — are factual or evaluative claims that happen to
+ * carry no digit, which is exactly why a numeric rule never caught them.
+ *
+ * The last is the source note. A `data_sources` entry says a producer
+ * ANSWERED; it does not say the answer contains the figure a sentence is
+ * attributing to it, and "Source: Domain" under a median Domain never supplied
+ * is a citation that cannot be checked and is worse than none.
+ */
+export function claimSupportRules(inv: EvidenceInventory): string {
+  const rules: string[] = [
+    'CLAIM SUPPORT — these govern the PROSE, the captions, the summary strips, the tables you '
+    + 'write and every recommendation. They override any example elsewhere in this prompt, and a '
+    + 'figure a live web search returns is still a figure this report did not retrieve.',
+  ];
+
+  rules.push(
+    inv.demographics
+      ? '1. Population and household composition were retrieved for this report. A share of the '
+        + 'population may be stated only with the dataset, the period and the geography it '
+        + 'describes, in the same sentence.'
+      : '1. NO population or household composition was retrieved for this report. Do not state, '
+        + 'estimate, approximate or characterise what proportion of residents or tenants are '
+        + 'families, professionals, owner-occupiers, renters, retirees or any other group — not as '
+        + 'a percentage, not as "roughly", not as "around half", not as "predominantly", and not '
+        + 'in a table. A suburb’s demographic composition is also not the predicted tenant mix '
+        + 'of this particular property, and may never be presented as one.',
+  );
+
+  rules.push(
+    inv.marketData
+      ? '2. Market data was retrieved. A proportion of sales, listings or transactions may be '
+        + 'stated only with the source, the period and the geography.'
+      : '2. NO transaction, sales or listing data was retrieved for this report. Do not state what '
+        + 'proportion of sales, listings, buyers or transactions anything represents — not as a '
+        + 'percentage, not as "7 in 10", not as "the majority", not as "most". There is no '
+        + 'denominator in this record for any such claim.',
+  );
+
+  rules.push(
+    inv.recordedScores.length
+      ? `3. The scoring engine recorded ${inv.recordedScores.join(', ')}. A rating may be stated `
+        + 'only where it is one of those, and only with what it rates and out of what.'
+      : '3. The scoring engine issued NO grade for this property. Do not state a rating, a score, '
+        + 'a rank, a percentile or a band — in figures OR in words. "Rates strongly", "scores '
+        + 'well", "sits in the upper tier", "an above-average performer" and "a solid 7 out of 10" '
+        + 'are all ratings, and this record supports none of them.',
+  );
+
+  rules.push(
+    '4. A qualitative claim needs support exactly as a number does. **Renovated**, **recently '
+    + 'updated**, **well presented**, **strong demand**, **tightly held**, **low risk** and '
+    + '**verified** are factual or evaluative assertions that happen to carry no digit. State one '
+    + 'only where the record names the evidence for it; where it does not, say what is not known '
+    + 'rather than reaching for a softer version of the same claim.',
+  );
+
+  rules.push(
+    '5. A source note names what a figure CAME FROM, and may be written only where that provider '
+    + 'actually supplied that figure to this report. A provider appearing in the record means it '
+    + 'answered; it does not mean its answer contains the number beside your citation. Do not '
+    + 'write "Source: …", "according to …" or "data from …" for a figure this report '
+    + 'did not retrieve from that source, and do not cite a document nobody read.',
+  );
+
+  if (inv.withheldFacts.length) {
+    rules.push(
+      `6. These facts were considered for this report and WITHHELD at the data gate: `
+      + `${inv.withheldFacts.join(', ')}. They are withheld because they could not be stated `
+      + 'safely, so they may not be stated in prose either, in any form, including a '
+      + 'characterisation or a range.',
+    );
+  }
+
+  rules.push(
+    `${inv.withheldFacts.length ? 7 : 6}. Where a claim cannot be supported, the sentence that `
+    + 'replaces it says what the report does hold and what would settle the question. It never '
+    + 'says "data was unavailable", never apologises, and never prints a placeholder — an '
+    + 'absence is omitted or explained, not worded.',
+  );
+
+  return rules.join('\n');
+}

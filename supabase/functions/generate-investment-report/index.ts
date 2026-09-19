@@ -40,6 +40,7 @@ import {
   recordAcquisitionAttempt,
 } from '../_shared/reports/location/locationEnrichmentReuse.pure.ts';
 import { AcquisitionRecorder } from '../_shared/reports/acquisitionLedger.pure.ts';
+import { claimSupportRules } from '../_shared/reports/investment/chartEvidence.pure.ts';
 import {
   resolveCrimePostcodeAuthority,
   CRIME_EVIDENCE_WITHHELD_NOTE,
@@ -5214,6 +5215,42 @@ Produce a comprehensive statewide investment analysis following the structure ab
        */
       strategyRules,
       planningCitationRule,
+      /*
+       * And the PROSE half of the chart evidence contract.
+       *
+       * `enforceChartEvidence` removes an unsupported directive on every read
+       * path, which is right for a structure and impossible for a sentence:
+       * this programme's rule is that prose is never regex-scrubbed, because a
+       * regex deletes the qualification with the claim and a half-deleted
+       * sentence is worse than the claim was.
+       *
+       * So the sentence is governed at the prompt instead, from the SAME
+       * inventory the drawings are judged against. One inventory, two
+       * consumers — otherwise the page and the sentence beside it disagree
+       * about what the record holds, which is exactly what happened when the
+       * occupier donut was withdrawn and "roughly 45% of tenants are families"
+       * stayed in the paragraph above it.
+       *
+       * Built from what this RUN holds rather than from a stored row, because
+       * the row does not exist yet; the shape is the one
+       * `readEvidenceInventory` produces so the two cannot drift.
+       */
+      claimSupportRules({
+        recordedScores: Array.isArray(enhancedData.investmentScore?.breakdown)
+          ? enhancedData.investmentScore.breakdown
+            .map((b: { score?: unknown }) => Number(b?.score))
+            .filter((n: number) => Number.isFinite(n))
+          : [],
+        demographics: !!enhancedData.demographics,
+        marketData: !!enhancedData.domainData,
+        location: !!enhancedData.locationIntelligence,
+        // What the Client-Safe Gate withheld for this report, from the same
+        // `marketFacts` the market table renders — so the prose rule and the
+        // page name the same withheld facts.
+        withheldFacts: (marketFacts.withheld ?? [])
+          .map((w: { label?: unknown; name?: unknown }) => String(w?.label ?? w?.name ?? ''))
+          .filter(Boolean),
+      }),
     ].join('\n\n');
     console.log(`📌 Pinned planning/infrastructure/market context: ${pinnedPlanningContext.length} chars`);
 

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 /**
  * The chart-evidence contract, pinned against the record it was measured on.
  *
@@ -13,6 +15,7 @@ import {
   assessChartEvidence,
   claimOf,
   enforceChartEvidence,
+  claimSupportRules,
   readEvidenceInventory,
   type EvidenceInventory,
 } from '../investment/chartEvidence.pure';
@@ -241,5 +244,89 @@ describe('the read path adopts it without changing anything else', () => {
     expect(out).toContain('{{bars: CBD 1.6 km');
     expect(out).not.toContain('{{gauge');
     expect(out).toContain('Prose that must survive.');
+  });
+});
+
+describe('the prose half of the same contract', () => {
+  const HELD_NOTHING = readEvidenceInventory(COWRA_RECORD);
+
+  it('forbids a share of a population where none was retrieved', () => {
+    // The removed occupier donut had a prose twin — "roughly 45% of tenants
+    // are families". Removing the drawing and leaving the sentence moves an
+    // unsupported figure rather than withdrawing it.
+    const rules = claimSupportRules(HELD_NOTHING);
+    expect(rules).toMatch(/NO population or household composition was retrieved/);
+    expect(rules).toMatch(/not as "roughly", not as "around half", not as "predominantly"/);
+    // §3's rule, restated where the sentence is written.
+    expect(rules).toMatch(/not the predicted tenant mix\s+of this particular property/);
+  });
+
+  it('forbids a proportion of transactions, which is the "7 in 10" claim', () => {
+    const rules = claimSupportRules(HELD_NOTHING);
+    expect(rules).toMatch(/not as "7 in 10", not as "the majority", not as "most"/);
+    expect(rules).toMatch(/no denominator in this record/i);
+  });
+
+  it('forbids a rating in WORDS, not only in figures', () => {
+    const rules = claimSupportRules(HELD_NOTHING);
+    expect(rules).toMatch(/in figures OR in words/);
+    for (const phrase of ['Rates strongly', 'scores\nwell', 'upper tier', 'above-average']) {
+      expect(rules.replace(/\s+/g, ' ')).toContain(phrase.replace(/\s+/g, ' '));
+    }
+  });
+
+  it('names the three qualitative claims the standard names', () => {
+    const rules = claimSupportRules(HELD_NOTHING).replace(/\s+/g, ' ');
+    for (const word of ['Renovated', 'strong demand', 'low risk', 'verified']) {
+      expect(rules).toContain(word);
+    }
+    // And says why they need support: no digit is not no claim.
+    expect(rules).toContain('happen to carry no digit');
+  });
+
+  it('a provider answering is not that provider supplying the figure', () => {
+    const rules = claimSupportRules(HELD_NOTHING).replace(/\s+/g, ' ');
+    expect(rules).toContain('it does not mean its answer contains the number beside your citation');
+    expect(rules).toContain('do not cite a document nobody read');
+  });
+
+  it('where evidence IS held the rule permits the claim, with its basis', () => {
+    // A prohibition with no permitted form is one a model routes around —
+    // the lesson the Compass document contract already paid for.
+    const held = { ...HELD_NOTHING, demographics: true, marketData: true, recordedScores: [72, 61] };
+    const rules = claimSupportRules(held);
+    expect(rules).toMatch(/may be stated only with the dataset, the period and the geography/);
+    expect(rules).toMatch(/The scoring engine recorded 72, 61/);
+  });
+
+  it('a withheld fact may not be re-stated in prose in any form', () => {
+    const withheld = { ...HELD_NOTHING, withheldFacts: ['Suburb median price'] };
+    const rules = claimSupportRules(withheld);
+    expect(rules).toContain('Suburb median price');
+    expect(rules).toMatch(/including a\s+characterisation or a range/);
+  });
+
+  it('never asks for a placeholder or an apology in the replacement sentence', () => {
+    const rules = claimSupportRules(HELD_NOTHING);
+    expect(rules).toMatch(/never says "data was unavailable", never apologises/);
+    expect(rules).toMatch(/an\s+absence is omitted or explained, not worded/);
+  });
+});
+
+describe('the generator writes under it', () => {
+  it('pins the prose rules from the same inventory shape the charts are judged on', () => {
+    const src = readFileSync(
+      resolve(__dirname, '../../../../supabase/functions/generate-investment-report/index.ts'),
+      'utf8',
+    );
+    const pin = src.indexOf('const pinnedPlanningContext = [');
+    const end = src.indexOf("].join('\\n\\n');", pin);
+    const block = src.slice(pin, end);
+    expect(block).toContain('claimSupportRules({');
+    // The five fields `readEvidenceInventory` produces — so the page and the
+    // sentence beside it cannot disagree about what the record holds.
+    for (const key of ['recordedScores', 'demographics', 'marketData', 'location', 'withheldFacts']) {
+      expect(block).toContain(`${key}:`);
+    }
   });
 });
