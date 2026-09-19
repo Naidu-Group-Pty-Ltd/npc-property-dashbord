@@ -20,8 +20,17 @@
  *     consent*. So the house is a permissible use, not a legacy one.
  *   - And it says **"Residential accommodation"** — the group term covering
  *     dual occupancies, secondary dwellings, multi dwelling housing, seniors
- *     housing and the rest — is *prohibited*. So there is no granny flat, no
- *     dual occupancy and no second dwelling on that 991 m² block, ever.
+ *     housing and the rest — is *prohibited*. So under that instrument, as
+ *     read on that date, no secondary dwelling, dual occupancy or second
+ *     dwelling could be approved on that 991 m² block whatever its size.
+ *
+ *   The word that does NOT belong in that sentence is "ever". A land use
+ *   table is one instrument read on one day. It does not account for another
+ *   environmental planning instrument that may apply to the same land, for a
+ *   variation, or for an amendment made after the reading — and a retrieval
+ *   is not advice about what an application would achieve. Every sentence
+ *   this module emits is anchored to the instrument and the date it was read,
+ *   for that reason.
  *
  * Neither of those readings is available from the zone code. The first would
  * have been stated wrongly and the second is exactly the inference §4 of the
@@ -334,20 +343,91 @@ export function readResidentialStanding(table: LandUseTable): ResidentialReading
  * Deliberately says what the INSTRUMENT does, not what a council would do:
  * "permitted with consent" is a statement about the land use table, and
  * "you can build this" is a statement about an application nobody has made.
+ *
+ * Two things this used to overclaim, and both are corrections of substance
+ * rather than of tone.
+ *
+ * **It was timeless.** "no additional dwelling may be added to this land
+ * however large it is" has no instrument and no date in it, so it reads as a
+ * permanent property of the land. What the retrieval establishes is what one
+ * instrument said on the day it was read. Instruments are amended, another
+ * environmental planning instrument may apply to the same land, and a
+ * variation is a thing that exists — none of which this module retrieves, and
+ * none of which it may therefore exclude. The sentence carries its instrument
+ * and its retrieval date now, which is `planningFacts`' own rule ("a value
+ * carries its unit, its instrument and its clause") applied to a permission.
+ *
+ * **It invited an inference about the existing house.** A table saying a
+ * dwelling house is permitted with consent is a statement about the USE
+ * CLASS. It is not a record that the dwelling standing on the land holds a
+ * consent, and it does not establish that the house is not relying on
+ * existing use rights — a reader who takes it that way has been told
+ * something the retrieval never said. `existingDwellingCaveat` says so
+ * explicitly, and it is emitted whenever a dwelling standing is reported.
  */
-export function residentialSentence(reading: ResidentialReading): string {
+export function residentialSentence(
+  reading: ResidentialReading,
+  table: LandUseTable | null | undefined,
+): string {
+  const anchor = instrumentAnchor(table);
   const dwelling = (() => {
     switch (reading.dwellingHouse) {
       case 'permitted_with_consent':
-        return 'A dwelling house is permitted with development consent on this land.';
+        return `${anchor} a dwelling house is permitted with development consent on this land.`;
       case 'permitted_without_consent':
-        return 'A dwelling house is permitted without development consent on this land.';
+        return `${anchor} a dwelling house is permitted without development consent on this land.`;
       case 'prohibited':
-        return 'A dwelling house is prohibited on this land under the instrument in force.';
+        return `${anchor} a dwelling house is prohibited on this land.`;
       case 'not_stated':
-        return 'The land use table does not name a dwelling house in any of its three lists.';
+        return `${anchor} the land use table does not name a dwelling house in any of its three lists.`;
     }
   })();
   if (!reading.residentialGroupProhibited) return dwelling;
-  return `${dwelling} Every other form of residential accommodation — a secondary dwelling, a dual occupancy, multi dwelling housing and the rest of the group — is prohibited, so no additional dwelling may be added to this land however large it is.`;
+  return `${dwelling} Every other form of residential accommodation — a secondary dwelling, a `
+    + 'dual occupancy, multi dwelling housing and the rest of the group — sits in the prohibited '
+    + 'item of the same table, so on that reading no additional dwelling could be approved under '
+    + 'this instrument, whatever the size of the lot. '
+    + READING_LIMIT;
 }
+
+/**
+ * How every permissibility sentence opens: the instrument, and the day it was
+ * read. Without both, the sentence is a claim about the land rather than a
+ * reading of a document.
+ */
+export function instrumentAnchor(table: LandUseTable | null | undefined): string {
+  // Degrades to the generic anchor rather than throwing: a sentence with no
+  // instrument named is weaker than it should be, and a crash in the middle of
+  // composing a planning chapter loses the whole chapter.
+  const instrument = table?.instrument?.trim();
+  const at = table?.retrievedAt?.slice(0, 10);
+  if (instrument && at) return `Under ${instrument}, as read on ${at},`;
+  if (instrument) return `Under ${instrument},`;
+  if (at) return `Under the instrument in force for this land, as read on ${at},`;
+  return 'Under the instrument in force for this land,';
+}
+
+/**
+ * What a land use table cannot reach, said wherever it is read.
+ *
+ * Not a disclaimer bolted on: each clause names a thing this retrieval
+ * genuinely does not fetch, so none of them can be answered by reading harder.
+ */
+export const READING_LIMIT =
+  'That is one instrument read on one day: it does not account for any other environmental '
+  + 'planning instrument applying to the same land, for a variation, or for an amendment made '
+  + 'after that date, and it is a reading of what is permissible rather than advice about what '
+  + 'an application would achieve.';
+
+/**
+ * The line that keeps the use class apart from this building's own approval.
+ *
+ * A dwelling house being permitted with consent says nothing about whether
+ * the house now standing there holds one, or stands on existing use rights.
+ * Nothing this platform retrieves answers that, so the sentence says where
+ * the answer actually lives.
+ */
+export const EXISTING_DWELLING_CAVEAT =
+  'That describes the use class, not this building: whether the dwelling now on the land holds a '
+  + 'development consent, or stands on existing use rights, is answered by the title, the '
+  + "council's own records and the contract, and nothing retrieved here establishes it.";

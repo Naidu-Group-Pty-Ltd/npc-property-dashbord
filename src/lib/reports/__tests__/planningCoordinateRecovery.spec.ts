@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { claimSupportRules } from '../../../../supabase/functions/_shared/reports/investment/chartEvidence.pure.ts';
 import {
   PARCEL_GRADE_PRECISION,
   coordinateProvenance,
@@ -221,5 +222,50 @@ describe('the generator asks at the qualified coordinate, and nowhere else', () 
 
   it('records the coordinate as its own acquisition producer', () => {
     expect(generator).toContain("producer: 'subjectCoordinate'");
+  });
+});
+
+describe('a refused claim is refused in every form it could take', () => {
+  /*
+   * "Unsupported figures must not simply move to another format."
+   *
+   * The evidence contract REMOVES an unsupported chart rather than tabulating
+   * it, and the prose rules are the counterpart that stops the model writing
+   * the same claim in words. The preamble enumerated prose, captions, summary
+   * strips and tables — and not the two formats a removed chart most naturally
+   * becomes: a `::: stat :::` card and a timeline stop.
+   *
+   * Measured before widening anything further: across the 12 distinct
+   * documents in the verification corpus, 316 of 620 table rows carry a
+   * figure and 269 of those (85.1%) name no basis within four lines — because
+   * they are the acquisition-cost and annual-cost tables, every figure of
+   * which comes from the record's own stored calculation. A blanket
+   * "every table figure needs a basis" rule would fire on 85% of a document
+   * and teach people to dismiss it, which is the hazard
+   * `FIGURE_KINDS_NEEDING_A_BASIS` already names in its own comment. So the
+   * correction is to the ENUMERATION the rules already carry, not a new rule.
+   */
+  const rules = claimSupportRules({
+    recordedScores: [],
+    demographics: false,
+    marketData: false,
+    location: false,
+    withheldFacts: [],
+  });
+
+  it('names every format a refused figure could move to', () => {
+    for (const format of ['PROSE', 'captions', 'summary strips', 'tables', '::: stat ::: cards', 'timeline stops']) {
+      expect(rules).toContain(format);
+    }
+  });
+
+  it('says in terms that moving a figure does not support it', () => {
+    expect(rules).toMatch(/refused in EVERY form/);
+    expect(rules).toMatch(/does not make it supported/);
+    expect(rules).toMatch(/may not reappear as a list of the same numbers/);
+  });
+
+  it('still forbids the population share in a table, which it always did', () => {
+    expect(rules).toContain('not in a table');
   });
 });

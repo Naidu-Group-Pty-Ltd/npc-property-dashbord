@@ -81,6 +81,7 @@ import {
   emptyLandUseTable,
   readResidentialStanding,
   residentialSentence,
+  EXISTING_DWELLING_CAVEAT,
   type LandUseTable,
   type ResidentialReading,
 } from './landUsePermissibility.pure.ts';
@@ -887,7 +888,12 @@ export function renderLandUseTable(facts: PlanningFacts): string {
 
   const r = facts.residential;
   if (r) {
-    lines.push(residentialSentence(r), '');
+    // The sentence carries its instrument and its retrieval date, and the
+    // caveat keeps the USE CLASS apart from this building's own approval —
+    // "a dwelling house is permitted with consent" is not a record that the
+    // house standing there holds one.
+    lines.push(residentialSentence(r, facts.landUse), '');
+    lines.push(EXISTING_DWELLING_CAVEAT, '');
     if (r.otherResidential.length) {
       lines.push('| Residential use | Standing under the instrument |');
       lines.push('|---|---|');

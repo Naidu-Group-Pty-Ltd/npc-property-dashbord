@@ -598,8 +598,12 @@ export function enforceChartEvidence(
 export function claimSupportRules(inv: EvidenceInventory): string {
   const rules: string[] = [
     'CLAIM SUPPORT — these govern the PROSE, the captions, the summary strips, the tables you '
-    + 'write and every recommendation. They override any example elsewhere in this prompt, and a '
-    + 'figure a live web search returns is still a figure this report did not retrieve.',
+    + 'write, the ::: stat ::: cards, the timeline stops and every recommendation. A claim these '
+    + 'rules refuse is refused in EVERY form: moving an unsupported figure out of a chart and into '
+    + 'a table row, a stat card or a timeline stop does not make it supported, and a chart this '
+    + 'report declined to draw may not reappear as a list of the same numbers. They override any '
+    + 'example elsewhere in this prompt, and a figure a live web search returns is still a figure '
+    + 'this report did not retrieve.',
   ];
 
   rules.push(

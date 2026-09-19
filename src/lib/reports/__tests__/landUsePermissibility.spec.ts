@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   buildNswPermissibilityRequest,
@@ -5,6 +7,8 @@ import {
   parseNswPermissibility,
   readResidentialStanding,
   residentialSentence,
+  instrumentAnchor,
+  EXISTING_DWELLING_CAVEAT,
   type LandUseTable,
 } from '../landUsePermissibility.pure';
 
@@ -153,8 +157,9 @@ describe('the residential reading — specific beats the group term, one way onl
 });
 
 describe('the sentence the reading supports, and not one word further', () => {
-  const r = readResidentialStanding(parseNswPermissibility(COWRA_E3, 'E3', AT))!;
-  const said = residentialSentence(r);
+  const table = parseNswPermissibility(COWRA_E3, 'E3', AT);
+  const r = readResidentialStanding(table)!;
+  const said = residentialSentence(r, table);
 
   it('states what the instrument does, never what a council would decide', () => {
     expect(said).toContain('permitted with development consent');
@@ -162,12 +167,64 @@ describe('the sentence the reading supports, and not one word further', () => {
     expect(said).not.toMatch(/\b(likely|should be|would be) (approved|granted)\b/i);
   });
 
-  it('forecloses the granny-flat inference explicitly, and names block size', () => {
+  it('forecloses the granny-flat inference explicitly, and names lot size', () => {
     // §4: "a large block alone does not establish subdivision or
     // secondary-dwelling potential". Here the instrument settles it the other
     // way, and only the table says so.
     expect(said).toMatch(/secondary dwelling/i);
-    expect(said).toMatch(/however large/i);
+    expect(said).toMatch(/whatever the size of the lot/i);
+  });
+
+  /*
+   * Renegotiated, and the correction is of substance. The sentence used to
+   * read "no additional dwelling may be added to this land however large it
+   * is" — no instrument in it and no date, so it reads as a permanent
+   * property of the land rather than as a reading of one document on one day.
+   * A land use table does not reach another instrument applying to the same
+   * land, a variation, or an amendment made after the reading, so it may not
+   * exclude them.
+   */
+  it('anchors itself in the instrument and the day it was read', () => {
+    expect(said).toMatch(/^Under .+, as read on \d{4}-\d{2}-\d{2},/);
+    expect(said).toContain(AT.slice(0, 10));
+  });
+
+  it('never states the prohibition as permanent', () => {
+    expect(said).not.toMatch(/\bever\b/i);
+    expect(said).not.toMatch(/\bnever\b/i);
+    expect(said).not.toMatch(/\bpermanently\b/i);
+    expect(said).toMatch(/could be approved under this instrument/);
+  });
+
+  it('says what one instrument read on one day does not reach', () => {
+    expect(said).toContain('one instrument read on one day');
+    expect(said).toMatch(/any other environmental planning instrument/);
+    expect(said).toMatch(/a variation/);
+    expect(said).toMatch(/an amendment made after that date/);
+    expect(said).toMatch(/rather than advice about what an application would achieve/);
+  });
+
+  it('keeps the use class apart from this building\'s own approval', () => {
+    // "A dwelling house is permitted with consent" is a statement about the
+    // USE CLASS. It is not a record that the house standing there holds one,
+    // and it does not establish that it is not on existing use rights.
+    expect(EXISTING_DWELLING_CAVEAT).toMatch(/describes the use class, not this building/);
+    expect(EXISTING_DWELLING_CAVEAT).toMatch(/existing use rights/);
+    expect(EXISTING_DWELLING_CAVEAT).toMatch(/nothing retrieved here establishes it/);
+    // and it is emitted wherever the standing is reported
+    const facts = readFileSync(
+      resolve(__dirname, '../../../../supabase/functions/_shared/planning/planningFacts.pure.ts'),
+      'utf8',
+    );
+    expect(facts).toContain('EXISTING_DWELLING_CAVEAT');
+  });
+
+  it('anchors generically rather than throwing when no instrument was named', () => {
+    expect(instrumentAnchor(null)).toBe('Under the instrument in force for this land,');
+    expect(instrumentAnchor({ ...table, instrument: null, retrievedAt: null }))
+      .toBe('Under the instrument in force for this land,');
+    expect(instrumentAnchor({ ...table, instrument: null }))
+      .toMatch(/^Under the instrument in force for this land, as read on /);
   });
 
   it('a prohibited dwelling house is stated plainly rather than softened', () => {
@@ -177,6 +234,6 @@ describe('the sentence the reading supports, and not one word further', () => {
     };
     const reading = readResidentialStanding(t)!;
     expect(reading.dwellingHouse).toBe('prohibited');
-    expect(residentialSentence(reading)).toContain('prohibited');
+    expect(residentialSentence(reading, table)).toContain('prohibited');
   });
 });

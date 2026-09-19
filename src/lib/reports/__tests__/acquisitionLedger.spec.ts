@@ -155,13 +155,39 @@ describe('reading a ledger back', () => {
 describe('the generator records what it does', () => {
   const src = readFileSync(GENERATOR, 'utf8');
 
-  it('the planning guard records a skip rather than falling through silently', () => {
-    // This is the defect: `if (planningCoords?.lat && planningCoords?.lng)`
-    // with no else, which is why the Cowra report has no planning key at all.
-    const guard = src.indexOf('const planningCoords = enhancedData.locationIntelligence?.coordinates;');
+  /*
+   * Renegotiated twice, each time by the same finding going one level deeper.
+   *
+   * First: `if (planningCoords?.lat && planningCoords?.lng)` with no else,
+   * which is why the Cowra report has no planning key at all. That was closed
+   * by recording the skip.
+   *
+   * Then the measurement said recording it was not enough. Of the 105 stored
+   * reports, 5 carry a coordinate on `location_intelligence` and 0 carry a
+   * planning key — so the guard was false even where the report owned a
+   * coordinate, because it reads the in-memory working object and the resume
+   * worker starts that empty. The guard reads the QUALIFIED coordinate now
+   * (this run's enrichment, or the address geocoded and accepted only at
+   * parcel grade), and the else branch classifies WHICH refusal it was rather
+   * than giving four causes one sentence.
+   */
+  it('the planning guard reads the qualified coordinate, not the working object', () => {
+    const guard = src.indexOf('const planningCoords = subjectCoordinate;');
     expect(guard).toBeGreaterThan(-1);
-    const window = src.slice(guard, guard + 4000);
-    expect(window).toContain("acquisition.skipped(\n          'planning',");
+    expect(src).not.toContain('const planningCoords = enhancedData.locationIntelligence?.coordinates;');
+  });
+
+  it('the planning guard names which refusal it was, never one sentence for four', () => {
+    const guard = src.indexOf('const planningCoords = subjectCoordinate;');
+    const window = src.slice(guard, guard + 6000);
+    expect(window).toContain("producer: 'planning',");
+    expect(window).toContain('ledgerOutcomeFor(');
+    expect(window).toContain('coordinateRefusal');
+  });
+
+  it('records the coordinate itself as a producer, with its provenance', () => {
+    expect(src).toContain("producer: 'subjectCoordinate'");
+    expect(src).toContain('coordinateProvenance(');
   });
 
   it('every producer the ledger expects is recorded somewhere in the generator', () => {
