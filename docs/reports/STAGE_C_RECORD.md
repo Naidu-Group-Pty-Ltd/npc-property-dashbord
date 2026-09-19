@@ -152,7 +152,43 @@ that is not mine to open.
 
 ---
 
-## 3. What Stage C still owes
+## 3. How the served build can be verified, and which half cannot
+
+Stage C asks for the served build to be **verified rather than inferred from
+Lovable's latest edit**. That is worth settling before the deploy rather than
+after, because half of it cannot be done from here — and finding that out
+afterwards is how a gate becomes a formality.
+
+Measured 19 Sep 2026 from the production egress, read-only GETs, no
+credentials:
+
+| origin | answer |
+|---|---|
+| `https://npc-property-dashbord.lovable.app` | **302** → `https://command-centre.npcservices.com.au/` |
+| `https://command-centre.npcservices.com.au` | **403**, Cloudflare managed challenge (`Just a moment…`, 5,402 bytes) |
+| `https://dduzbchuswwbefdunfct.supabase.co/functions/v1/render-template-pdf` | **405** — the function's own answer |
+| `https://dduzbchuswwbefdunfct.supabase.co/functions/v1/generate-investment-report` | **400** — the function's own answer |
+
+This refines what Stage A recorded. That record said *"401 at both Lovable
+origins"*; the Lovable origin now **redirects to the custom domain**, so there
+are not two independent refusals — there is one WAF and one answer. The
+conclusion is unchanged and now rests on a measurement of both paths.
+
+So the verification splits:
+
+| what this branch changed | where it runs | verifiable from here after the deploy |
+|---|---|---|
+| the read-path rules, the evidence contract, the loan structure sentence, the fork classifier — everything in `supabase/functions/_shared/` | edge functions | **Yes.** The origin answers this egress with the functions' own 405/400, so a deployed change can be proven by production effect, unauthenticated, as this programme has done before. |
+| the seeded masters (v15) and the PDF outline in `src/lib/reportTemplate/` | the browser bundle | **No.** Behind the challenge above. Fetching the bundle and grepping for a marker only the new code carries is the usual method and it is unavailable. |
+
+**One human action, named once and unchanged:** open
+`command-centre.npcservices.com.au` signed in to the tenant, or the Lovable
+editor, and confirm the last **publish** — not the last edit. Nothing here
+substitutes for it, and no substitute would be sound.
+
+---
+
+## 4. What Stage C still owes
 
 1. **CI green on the final head** — the PR is watched and each push has
    reported a clean check suite; the final head's suite is what the merge gate
