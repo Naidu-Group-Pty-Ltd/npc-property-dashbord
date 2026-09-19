@@ -104,6 +104,32 @@ const scope = await sql('mirror scope', `
 heading('MIRROR SCOPE');
 for (const row of scope) console.log(`  ${JSON.stringify(row)}`);
 
+/*
+ * AND THE BREAKDOWN, because "0 active" is a claim about an empty page.
+ *
+ * The mirror's `lifecycle_status` DEFAULTS to 'active' and the marketplace
+ * filters on it, so a zero there means this surface draws no Builder Stock
+ * card at all. That is a big enough statement to be asked for directly
+ * rather than inferred from one count, and the freshest row's timestamp says
+ * whether the mirror is being fed or was seeded once and left.
+ */
+const lifecycles = await sql('lifecycle breakdown', `
+  select lifecycle_status,
+         count(*) as items,
+         count(primary_image_id) as with_primary,
+         max(last_seen_at)::text as newest_last_seen,
+         max(updated_at)::text as newest_update
+    from public.builder_network_stock_items
+   group by lifecycle_status
+   order by items desc`);
+heading('MIRROR SCOPE — by lifecycle, and how fresh it is');
+for (const row of lifecycles) {
+  console.log(`  ${String(row.lifecycle_status).padEnd(12)} ${
+    String(row.items).padStart(5)} item(s)  with_primary=${
+    String(row.with_primary).padStart(5)}  last_seen<=${row.newest_last_seen
+    }  updated<=${row.newest_update}`);
+}
+
 // ---------------------------------------------------------------------------
 // 2. Which column each active card's primary image came out of.
 //
