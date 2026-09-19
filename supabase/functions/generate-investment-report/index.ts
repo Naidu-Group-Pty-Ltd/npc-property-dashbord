@@ -42,6 +42,17 @@ import {
 } from '../_shared/reports/location/locationEnrichmentReuse.pure.ts';
 import { AcquisitionRecorder } from '../_shared/reports/acquisitionLedger.pure.ts';
 import {
+  classifyProgress,
+  describeHandoff,
+  mayTouchRow,
+} from '../_shared/reports/investment/runProgress.pure.ts';
+import {
+  CALL_CEILING_MS,
+  acquisitionWindowMs,
+  type AcquisitionBudgetInput,
+  type CallClass,
+} from '../_shared/reports/investment/acquisitionBudget.pure.ts';
+import {
   coordinateProvenance,
   enrichmentCoordinate,
   ledgerOutcomeFor,
@@ -164,6 +175,15 @@ const SECTION_SECOND_ATTEMPT_RESERVE_MS = 30_000;
 const SECTION_MIN_CALL_WINDOW_MS = 20_000;
 /** From the run's start: the last moment a model call may still be in flight. */
 const SECTION_CALL_HARD_STOP_MS = 125_000;
+/**
+ * Held back from acquisition so the research that DID land can be persisted.
+ *
+ * Research nobody banked is research the next invocation buys again, which is
+ * how one report came to re-purchase eighty Google calls across eleven resumes.
+ */
+const ACQUISITION_CHECKPOINT_RESERVE_MS = 5_000;
+/** Below this an acquisition call is not worth starting. */
+const ACQUISITION_MIN_CALL_MS = 1_500;
 /** The error a section returns when it made no call for want of a window. */
 const SECTION_BUDGET_DEFERRED = 'SECTION_BUDGET_DEFERRED';
 
@@ -2148,6 +2168,71 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
   // browser pump). See docs/reports/INVESTMENT_REPORT_RESUME.md.
   const runStartedAt = Date.now();
 
+  /**
+   * True once the acquisition phase gave up its remaining work to protect the
+   * section loop. Distinguishes "research ran long" from "a model call failed"
+   * in the hand-off, which are different problems with different remedies.
+   */
+  let acquisitionExhaustedThisRun = false;
+
+  /**
+   * The run clock, as the acquisition calls see it.
+   *
+   * `perCallCeilingMs` is supplied per dependency by `acquisitionBudgetFor`.
+   * The reserves are what stop a slow provider consuming the invocation: the
+   * section loop keeps enough to start one model call, and the checkpoint keeps
+   * enough to persist what research DID land — research that is not persisted
+   * is research the next invocation has to buy again.
+   */
+  const acquisitionBudgetBase = (): Omit<AcquisitionBudgetInput, 'perCallCeilingMs'> => ({
+    runStartedAt,
+    now: Date.now(),
+    hardStopMs: SECTION_CALL_HARD_STOP_MS,
+    sectionReserveMs: SECTION_MIN_CALL_WINDOW_MS,
+    checkpointReserveMs: ACQUISITION_CHECKPOINT_RESERVE_MS,
+    minCallMs: ACQUISITION_MIN_CALL_MS,
+  });
+
+  const acquisitionBudgetFor = (callClass: CallClass): AcquisitionBudgetInput => ({
+    ...acquisitionBudgetBase(),
+    perCallCeilingMs: CALL_CEILING_MS[callClass],
+  });
+
+  /**
+   * An acquisition call, bounded by the run's own clock.
+   *
+   * Delegates to `fetchWithTimeout` so the circuit breaker still applies — one
+   * fetch wrapper, not two. What this adds is the window: `fetchWithTimeout`
+   * defaults to 90s, which is most of an invocation that must also write
+   * fifteen sections, so leaving a call site to its default is how the section
+   * loop ends up with nothing.
+   *
+   * When no window remains the call is NOT made and a synthetic 598 is
+   * returned, which every call site's existing `!response.ok` branch records as
+   * a FAILURE rather than as an empty answer. That is the conservative side and
+   * the correct one: we did not ask, so we know nothing, and the dependency
+   * stays outstanding for the next invocation instead of being written into the
+   * record as an absence. See `acquisitionBudget.pure.ts`.
+   */
+  const NO_WINDOW_STATUS = 598;
+  const acquisitionFetch = async (
+    url: string,
+    options: RequestInit,
+    callClass: CallClass,
+    serviceName: string,
+  ): Promise<Response> => {
+    const windowMs = acquisitionWindowMs(acquisitionBudgetFor(callClass));
+    if (windowMs === null) {
+      acquisitionExhaustedThisRun = true;
+      console.log(
+        `⏳ ${serviceName}: no window left in this invocation (${Math.round((Date.now() - runStartedAt) / 1000)}s elapsed) — ` +
+        `deferred to the next one. NOT recorded as an absence.`
+      );
+      return new Response(null, { status: NO_WINDOW_STATUS });
+    }
+    return await fetchWithTimeout(url, options, windowMs, serviceName);
+  };
+
   console.log('Investment report function invoked with method:', req.method);
   
   if (req.method === 'OPTIONS') {
@@ -2327,7 +2412,16 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       economics?: any;
       locationIntelligence?: any;
     } = {};
-    
+
+    /**
+     * The section plan already on the row, if any.
+     *
+     * Learning it for the first time is durable progress — the widget cannot
+     * draw "of 15" without it — while re-writing the same number is not. The
+     * hand-off needs the distinction; see `runProgress.pure.ts`.
+     */
+    let existingTotalSections: number | null = null;
+
     // Get pre-generation overrides from request (passed from frontend)
     const frontendManualOverrides = propertyDetails?.manualOverrides || null;
     if (frontendManualOverrides && Object.keys(frontendManualOverrides).length > 0) {
@@ -2411,6 +2505,8 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             economics: (existingReport as any).economic_data,
             locationIntelligence: (existingReport as any).location_intelligence,
           };
+          const storedTotal = Number((existingReport as any).total_sections);
+          existingTotalSections = Number.isFinite(storedTotal) && storedTotal > 0 ? storedTotal : null;
         }
         
         // If continuing, use the stored last_completed_section index for reliable resume
@@ -3056,7 +3152,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       if (!weeklyRent && suburb && state) {
         try {
           console.log('📊 Weekly rent not provided, fetching from SQM Research cache...');
-          const rentResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/sqm-rent-service`, {
+          const rentResponse = await acquisitionFetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/sqm-rent-service`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -3077,7 +3173,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               propertyType: propertyDetails?.propertyType?.toLowerCase() || 'house',
               bedrooms: modelledBeds
             })
-          });
+          }, 'register', 'sqm-rent-service');
           
           if (rentResponse.ok) {
             const rentData = await rentResponse.json();
@@ -3110,7 +3206,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
           console.log(`  First Home Buyer: ${effectiveIsFirstHomeBuyer}`);
           console.log(`  New Build: ${effectiveIsNewBuild}`);
           
-          const financialResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/financial-calculator-service`, {
+          const financialResponse = await acquisitionFetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/financial-calculator-service`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -3167,7 +3263,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               ...(toFiniteNumber(mergedOverrides.occupancyRate) !== undefined
                 ? { occupancyWeeks: toFiniteNumber(mergedOverrides.occupancyRate) } : {}),
             })
-          });
+          }, 'local', 'financial-calculator-service');
           
           if (financialResponse.ok) {
             const financialData = await financialResponse.json();
@@ -3194,7 +3290,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             
             // Run validation on financial calculations - USE EFFECTIVE VALUES
             try {
-              const validationResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/financial-validation-service`, {
+              const validationResponse = await acquisitionFetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/financial-validation-service`, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
@@ -3212,7 +3308,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
                   state: state,
                   propertyType: effectivePropertyType
                 })
-              });
+              }, 'local', 'financial-validation-service');
               
               if (validationResponse.ok) {
                 const validationData = await validationResponse.json();
@@ -3280,7 +3376,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       // Fetch location intelligence data
       try {
         console.log(`Fetching location intelligence for: ${formattedInput} (${reuse.verdict})`);
-        const locationResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/location-intelligence-service`, {
+        const locationResponse = await acquisitionFetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/location-intelligence-service`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -3292,7 +3388,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             postcode: postcode,
             state: state
           })
-        });
+        }, 'vendor', 'location-intelligence-service');
         
         if (locationResponse.ok) {
           const locationData = await locationResponse.json();
@@ -4063,7 +4159,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
           console.log(`  Price: $${effectivePurchasePrice.toLocaleString()}`);
           console.log(`  Weekly Rent: $${effectiveWeeklyRent}`);
           
-          const scoreResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/investment-scoring-service`, {
+          const scoreResponse = await acquisitionFetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/investment-scoring-service`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -4108,7 +4204,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               // verification itself; nothing here asserts trust.
               locationSubject: enrichmentSubject,
             })
-          });
+          }, 'local', 'investment-scoring-service');
           
           if (scoreResponse.ok) {
             const scoreData = await scoreResponse.json();
@@ -4150,7 +4246,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         
         // Try service call first
         try {
-          const scoreResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/investment-scoring-service`, {
+          const scoreResponse = await acquisitionFetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/investment-scoring-service`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -4163,7 +4259,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               locationIntelligence: enhancedData.locationIntelligence || {},
               state: state || undefined
             })
-          });
+          }, 'local', 'investment-scoring-service');
           
           console.log(`📊 Area scoring service response status: ${scoreResponse.status}`);
           
@@ -4280,7 +4376,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
           const latitude = enhancedData.locationIntelligence?.coordinates?.lat;
           const longitude = enhancedData.locationIntelligence?.coordinates?.lng;
           
-          const schoolResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/school-data-service`, {
+          const schoolResponse = await acquisitionFetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/school-data-service`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -4294,7 +4390,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               latitude: latitude || undefined,
               longitude: longitude || undefined
             })
-          });
+          }, 'register', 'school-data-service');
           
           if (schoolResponse.ok) {
             const schoolData = await schoolResponse.json();
@@ -6355,6 +6451,14 @@ YOUR DEDICATED PROPERTY PARTNER
     // Track section quality for final validation
     const sectionResults: Array<{ id: string; name: string; content: string; valid: boolean; score: number; attempts: number }> = [];
 
+    // Durable progress this invocation banked, for the hand-off. See
+    // `_shared/reports/investment/runProgress.pure.ts`: a write that carries
+    // nothing new still stamps `updated_at` through the table's trigger and
+    // blinds every stall detector watching the row, so the hand-off has to know
+    // what it actually achieved before it decides whether to write at all.
+    let acquisitionFieldsBankedThisRun = 0;
+    const sectionPlanNewlyKnown = existingTotalSections === null;
+
     // ============================================================================
     // EARLY ENHANCED DATA PERSISTENCE
     // Persist scoring + calculations before section generation so chunked/resume calls
@@ -6396,6 +6500,11 @@ YOUR DEDICATED PROPERTY PARTNER
         // had already put in front of a reader.
         earlyUpdate.market_fact_snapshot = safeGeneration.snapshot;
 
+        // Counted BEFORE the write so a zero-progress hand-off can tell the
+        // truth about what this invocation banked. `updated_at` is always in
+        // the payload, so it never counts as a field.
+        acquisitionFieldsBankedThisRun = Object.keys(earlyUpdate)
+          .filter((k) => k !== 'updated_at').length;
         const hasAnyEnhancedField = Object.keys(earlyUpdate).length > 1;
         const alreadyHasAnyEnhancedField = !!(
           existingEnhancedFields.investmentScore ||
@@ -6864,20 +6973,44 @@ YOUR DEDICATED PROPERTY PARTNER
     // old silent kill, where the caller learned nothing at all.
     if (budgetExhausted) {
       const remaining = filteredSections.length - lastCompletedSectionIndex;
+
+      // What this invocation actually banked, decided before anything is
+      // written. `sectionDurationsMs` counts sections completed by THIS run —
+      // `lastCompletedSectionIndex` is the absolute position and is already
+      // non-zero on a continuation that banks nothing.
+      const progress = classifyProgress({
+        sectionsWrittenThisRun: sectionDurationsMs.length,
+        acquisitionFieldsBanked: acquisitionFieldsBankedThisRun,
+        sectionPlanNewlyKnown,
+      });
+      const handoff = describeHandoff(progress, false, sectionDurationsMs.length === 0
+        ? (acquisitionExhaustedThisRun ? 'acquisition_exhausted_invocation' : 'no_section_window')
+        : 'no_section_window');
+
       console.log(
         `🔁 Handing off after ${lastCompletedSectionIndex}/${filteredSections.length} sections ` +
-        `(${remaining} remaining, ${combinedContent.length} chars banked)`
+        `(${remaining} remaining, ${combinedContent.length} chars banked; ` +
+        `this run: ${progress.kind}${progress.made ? '' : ' — NOTHING BANKED'})`
       );
       await traceFinishRun(_traceSb, _traceRunId, {
         status: 'paused',
         error: `Wall-clock budget reached at section ${lastCompletedSectionIndex}/${filteredSections.length}`,
       });
 
-      // Persist the true section count (the progress widget and the watchdog
-      // both read it) and clear any error left by an earlier failed attempt —
-      // this run succeeded, it just is not finished. updated_at is stamped so
-      // the watchdog's staleness window runs from real progress.
-      if (reportId && supabaseClient) {
+      // ONLY write the row when this invocation advanced the record.
+      //
+      // `investment_reports` carries a BEFORE UPDATE trigger
+      // (`update_investment_reports_updated_at`) that stamps `updated_at` on
+      // ANY write, so a status write with nothing new in it refreshes the
+      // staleness clock that both stall detectors read — the watchdog's
+      // `updated_at < now() - interval '2 minutes'` and the widget's
+      // three-minute no-progress window. That is what let the 18 Annabelle
+      // Crescent run sit at 0 of 15 for 21 minutes while every surface
+      // reported it healthy. Omitting the column from the payload would not
+      // help; the trigger does not read the payload. Not writing is the only
+      // way to let the clock age, and letting it age is what hands the run to
+      // the watchdog — whose own `resume_attempts < 8` then bounds it.
+      if (reportId && supabaseClient && mayTouchRow(progress)) {
         await supabaseClient
           .from('investment_reports')
           .update({
@@ -6886,16 +7019,38 @@ YOUR DEDICATED PROPERTY PARTNER
             total_sections: filteredSections.length,
             updated_at: new Date().toISOString(),
           })
-          .eq('id', reportId);
+          .eq('id', reportId)
+          // A run already in flight when the operator pressed Stop still
+          // finishes its section and lands this write afterwards. Without this
+          // predicate it re-wrote `processing` over the cancellation — the row
+          // went back to looking live, and the watchdog, which claims exactly
+          // `status = 'processing'`, would then resurrect work a person had
+          // explicitly stopped. Matching only the states a live run can be in
+          // makes the write a no-op against a cancelled, failed or completed
+          // row, atomically and with no read to race against.
+          .in('status', ['pending', 'processing']);
+      } else if (reportId) {
+        console.log(
+          '⏸️ No durable progress this invocation — leaving the row untouched so ' +
+          'the staleness clock can age and the watchdog can claim it.'
+        );
       }
 
       return new Response(JSON.stringify({
+        // `success` still describes the INVOCATION (it did not crash). What a
+        // caller must key on to advance a section is `sectionCompleted` and
+        // `durableProgress`, never this flag — see `sectionWasWritten`.
         success: true,
-        message: `Generated ${lastCompletedSectionIndex}/${filteredSections.length} sections; resume required`,
+        message: progress.made
+          ? `Generated ${lastCompletedSectionIndex}/${filteredSections.length} sections; resume required`
+          : `No section could be written in this invocation (${handoff.state === 'no_progress' ? handoff.reason : 'unknown'}); resume required`,
         sectionCompleted: lastCompletedSectionIndex,
         totalSections: filteredSections.length,
         isComplete: false,
         resumeRequired: true,
+        state: handoff.state,
+        durableProgress: handoff.durableProgress,
+        ...(handoff.state === 'no_progress' ? { noProgressReason: handoff.reason } : {}),
         contentLength: combinedContent.length,
       }), {
         status: 200,

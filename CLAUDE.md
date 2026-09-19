@@ -2272,6 +2272,36 @@ every run and 43 invocations were killed with nothing written; every call now
 answers to the run's own deadline, and a section with no window left is
 deferred as a hand-off rather than written up as a failed section.
 
+**That rule stopped at the section loop, and the research in front of it ran
+unbounded.** Read
+[`GENERATION_STALL_AND_ACQUISITION_BUDGET.md`](./docs/reports/GENERATION_STALL_AND_ACQUISITION_BUDGET.md)
+before touching the acquisition block, `acquisitionFetch`, the budget hand-off
+or `useChunkedRegeneration`. One run read `Section 1 of 15 · 0/15 · 21m 2s
+elapsed` having banked nothing, and three things were true at once. **Seven of
+the eight acquisition calls were a plain `fetch` with no `AbortSignal`** and
+the eighth used a 90s default, against a 125s hard stop the sections must also
+fit inside — so one slow provider spent the invocation and the first section
+was never attempted. Every acquisition call now answers to the same run clock,
+through the generator's own `fetchWithTimeout` so the circuit breaker still
+applies, and a call with no window is NOT made and records a **failure**, never
+an empty answer: **a timeout is not evidence of absence**, and the conservative
+side keeps the dependency outstanding rather than writing "no overlay applies"
+from a four-second silence. **The hand-off then wrote the row at zero
+sections**, and `investment_reports` carries a `BEFORE UPDATE` trigger that
+stamps `updated_at` on any write — so it refreshed the very clock the watchdog
+(`updated_at < now() - interval '2 minutes'`) and the widget both read, and
+nothing reported the stall. Omitting the column would change nothing because
+the trigger does not read the payload; **not writing is the only remedy**, and
+it restores the watchdog's own `resume_attempts < 8` bound. **Activity is not
+progress** — a saved acquisition checkpoint is real progress before any prose
+exists, re-running the same research is not. And **the continuation loop
+advanced on `success: true`**, which a budget hand-off returns, so it would
+have stepped over a section that was never written; it reads the server's
+`sectionCompleted` now. A blanket "skip acquisition on continuation" gate must
+never be added: `acquisitionReuse.pure.ts` decides per dependency and refuses
+an unstamped object, a changed subject or input revision, an expired shelf life
+and a previously failed attempt.
+
 Ten formats have been migrated onto it, and each carries its own contract:
 [`INVESTMENT.md`](./docs/reports/INVESTMENT.md),
 [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md),
