@@ -299,32 +299,103 @@ actually missing was smaller: the claim rules' preamble enumerated prose,
 captions, summary strips and tables, and omitted the two formats a removed
 chart most naturally becomes — a `::: stat :::` card and a timeline stop.
 
-### 5.3 Template migration safety — and why it is NOT §1
+### 5.3 Template migration — preservation, not recoverability
+
+**This section was wrong on its first pass and is corrected here.** It reported
+that the refresh replaces an adopted row's whole schema keeping only
+`tokens.colors`, called that deliberate because v13 and v14 did the same, and
+offered a snapshot as the remedy. Precedent is not authorisation, and a
+snapshot makes destruction *undoable* — it does not *preserve* anything. A
+tenant whose typeface, page, block, binding or branding is overwritten has lost
+it until somebody notices and restores it.
 
 §1 measures what a **reader** of a stored report gets at two revisions. It
-touches no template and it cannot answer what a migration does.
+touches no template and cannot answer what a migration does. The two are kept
+apart deliberately.
 
-The refresh **replaces an adopted row's whole `schema`** with the library
-entry's and carries forward only `tokens.colors`. A tenant palette survives; a
-tenant typeface, page, block, section or binding does not. That is deliberate,
-and v13 and v14 had the same shape. What was missing is that there was no way
-back — so every row the update touches is written whole to
-`report_template_refresh_snapshots` first, and the restoring statement is in
-the migration's own comment.
+**What v15 does now.** It changes a master only where it can PROVE the master
+is an unedited copy of what the library last published.
 
-Proved by execution rather than by reading the SQL:
-`scripts/verify/template-refresh-preservation.sh` applies the migration to a
-throwaway PostgreSQL over four rows — a plain adoption, an adoption customised
-beyond colours, a row with no library lineage and an inactive draft — and
-asserts twenty things, including the two rows that must be left alone, the
-pre-refresh typeface held in the snapshot, and the documented restoration run
-verbatim. All pass. Applied twice: idempotent, and the second snapshot is taken
-rather than overwriting the first.
+The proof had to be built, because nothing retained the baseline. The seed is
+`ON CONFLICT (slug, version)` with `version` = 1 on every entry, so there is one
+row per slug, `schema` is overwritten in place, and no history table exists —
+the previous release's bytes are gone the moment the seed runs. So the seed
+captures a digest of every entry's schema immediately BEFORE it upserts,
+emitted by `buildSeedCatalogue.ts` rather than hand-written into a generated
+file.
 
-**`differing_keys` says what CHANGES, not who changed it.** Before this
-migration the database stores no baseline for an untouched adoption, so library
-version drift and a hand edit are indistinguishable after the fact. The
-snapshot is what makes them distinguishable next time.
+`tokens.colors` is the only path excluded from that digest. That is not a
+convenience: `applyColourwayToSchema` spreads `...tokens` and replaces `colors`
+alone, so excluding exactly that path accounts for a supported colourway
+difference precisely and leaves a tenant typeface under `tokens.fonts` fully
+visible. **Library lineage is never taken as evidence of an unedited copy.**
+
+| verdict | what it means | what happens |
+|---|---|---|
+| `already_current` | the row already matches the new entry | nothing; this is what a second application sees, and it is why re-running cannot mislabel a row it already refreshed |
+| `refreshed` | proven unedited against the baseline | replaced, palette carried forward, `releaseApplied` stamped |
+| `deferred_customised` | a baseline exists and the row does not match it | **untouched**, recorded for review |
+| `deferred_no_baseline` | no baseline captured for this entry | **untouched**, recorded for review |
+
+A deferred row keeps its schema, its config and its lineage, and **nothing marks
+it as carrying this release.** `releaseApplied` is written only where the
+release was actually applied — `entryVersion` is 1 on every entry and never
+tracked a seed release at all, which the first pass of this record got wrong.
+
+**What is deliberately not attempted.** No attempt is made to graft v15 into a
+customised master. The release alters a running-head binding, a section
+heading, a table's column widths and a Contents-page block; applying those
+surgically to an arbitrary edited schema cannot be shown to preserve that
+tenant's layout, so the smallest correct action on an unproven row is to leave
+it and say so.
+
+**What the rollout will actually reach, and the limit on saying so.** The v14
+refresh itself normalised every active adopted row to the v14 entry's schema
+with the row's palette — so any row not edited *since* that refresh hashes to
+the baseline and is refreshed automatically. Only rows edited in the Template
+Builder since then defer. That is the mechanism by which this is a real rollout
+rather than a blanket skip.
+
+The **counts**, however, cannot be stated from here: the production inventory
+is not queryable in this session, so how many masters are eligible and how many
+deferred is not known and is not guessed. The migration records it by effect —
+`template_master_refresh_decisions` holds one row per active adopted master
+with its verdict and what differed — and the queries to read it are in the
+migration's own comment. That is the same rule the retention purge and the
+verification self-test already answer to: **asserted by effect, never by
+configuration.**
+
+**The Annabelle and Pallas acceptance masters** are ordinary adopted library
+copies. Unedited since v14 they are refreshed automatically with everything
+else; edited, they defer and are named in the decisions table, and the safe
+upgrade path is to re-adopt from the library — a deliberate act with the edit
+in view — rather than to have it silently overwritten.
+
+**Proved by execution** in a throwaway PostgreSQL, six rows covering every
+branch, **33 assertions** in
+`scripts/verify/template-refresh-preservation.sh`: a plain adoption takes the
+release and keeps its palette; a master customised beyond colours keeps its
+typeface, branding, extra page and own binding and is byte-identical to its
+snapshot; a row whose baseline was never captured is untouched; a row already
+at v15 is `already_current` rather than falsely deferred; rows with no lineage
+and inactive drafts are neither touched nor classified; only the refreshed row
+claims the release; a second application changes nothing and the first
+snapshot survives; and restoring one row leaves every other alone. The seed's
+own baseline capture is run verbatim out of the generated migration rather
+than restated.
+
+The snapshot stays, as additional protection rather than as the answer, now
+one row per template per release so a re-application cannot overwrite the
+original.
+
+### 5.3a The superseded reading, kept because it was published
+
+The first version of this section said the destructive refresh was
+"deliberate — a master fix has to reach the copies people generate from" and
+presented the snapshot as the safety. Both halves of that were reported on the
+PR and are retained here rather than quietly rewritten: the first is a
+description of v13 and v14 rather than a justification, and the second answers
+a different question from the one that was asked.
 
 ### 5.4 The two questions that were open
 
