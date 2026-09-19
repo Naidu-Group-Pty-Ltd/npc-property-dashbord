@@ -640,3 +640,28 @@ describe('a distance in a sentence', () => {
     }
   });
 });
+
+/**
+ * The prose counterpart of `self_assessment_not_measured`, and the same
+ * relationship rule 6 has to `distance_not_measured`: the chart verdict judges
+ * directives, and page 10 of the delivered Snapshot writes the claim as a
+ * bullet instead —
+ *
+ *   "Evidence mix underpinning this report: Official statistics **40%**,
+ *    Commercial property data **35%**, Local intelligence **15%**, Advisory
+ *    interpretation **10%**."
+ *
+ * Measured: 1 prose line across the 11 stored documents, against 5 directives.
+ * It belongs in rule 5 rather than a rule of its own, because rule 5 is
+ * already the provenance rule and this is a claim about provenance.
+ */
+describe('the report\'s own evidence base, in a sentence', () => {
+  it('is named in the source-note rule, on every inventory', () => {
+    for (const inventory of [readEvidenceInventory(COWRA_RECORD), HELD]) {
+      const rule = claimSupportRules(inventory).split('\n').find((l) => l.startsWith('5.'))!;
+      expect(rule).toContain('is not a measured quantity');
+      expect(rule).toContain('evidence mix');
+      expect(rule).toContain('Name the sources you actually used instead');
+    }
+  });
+});

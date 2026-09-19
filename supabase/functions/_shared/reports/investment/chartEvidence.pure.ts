@@ -655,7 +655,12 @@ export function claimSupportRules(inv: EvidenceInventory): string {
     + 'actually supplied that figure to this report. A provider appearing in the record means it '
     + 'answered; it does not mean its answer contains the number beside your citation. Do not '
     + 'write "Source: …", "according to …" or "data from …" for a figure this report '
-    + 'did not retrieve from that source, and do not cite a document nobody read.',
+    + 'did not retrieve from that source, and do not cite a document nobody read. '
+    + 'The report’s OWN evidence base is not a measured quantity either: nothing here counts what '
+    + 'share of this report rests on official statistics, property portals, commercial data, local '
+    + 'intelligence or advisory interpretation, so do not state one — not as an "evidence mix", a '
+    + '"data resolution mix", a "primary data foundation" or a reliability rating, and not in a '
+    + 'sentence, a table or a chart. Name the sources you actually used instead.',
   );
 
   /*

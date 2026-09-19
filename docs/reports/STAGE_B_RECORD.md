@@ -525,6 +525,67 @@ distance from a town's shape or from a map the model has seen is inventing it.
 
 4 specs. This changes no stored document — the rules govern generation.
 
+### 3.10 The Briefing and the Snapshot — every finding is dated, and closed
+
+Both condensed documents are the oldest in the set (`created_at`
+**2026-09-04**) and both are children of one parent, `0478c410`, which is not
+in the retained fixtures. Read page by page, everything they carry is a class
+this programme has already closed, and the dates prove it rather than assert
+it:
+
+| what the page says | class | closed |
+|---|---|---|
+| p4 *"Note: Specific market activity metrics … were not provided numerically in the original report"* | the condenser narrating its own input to a client | the condense prompt names **this row by id** in the comment beside the fix |
+| p7 *"Total Score: 60/100"* beside p3's *"Graded B at 62 out of 100"* | a score the engine never recorded — it holds `[62, 75, 65, 58]` | `scoreClaims.pure.ts` **born 2026-09-15**, eleven days after this row |
+| *"Mining & Energy 30-32% (approx. 3,500 workers)"*, *"Agriculture 10% (indicative)"* ×4 | a workforce share with no denominator, hedged rather than withheld | rules 1, 2 and 4 |
+| *"5-10 min drive"*, *"Short drive"*, *"7-8 min drive"*, *"within a 5–10 minute drive"* | distances | rule 6 — and see below |
+| *"Flood · Moderate"*, *"Bushfire · Moderate to High — Regional NSW locations **can** sit within designated bushfire-prone land"* | a rating inferred from the general character of an area | §9's *an absence may not be rated* |
+| *"12,272 people"*, *"median age 35"*, *"owner-occupation 59–60%"*, *"couple & family households 64%"*, *"around 17,000 residents"* | population, on a record whose `demographics_data` is **NULL** and whose `data_sources.demographics` did not answer | rule 1 |
+
+**`suppressUnrecordedScores` is already wired into the condenser** and takes
+`parentContent`, so a claim the parent made is left as the parent's. Executed
+without that argument it removes exactly one line from this Briefing — *"Total
+Score: 60/100 (Overall Risk Score)"* — and nothing else, on either document. It
+did not run when this row was condensed because it did not exist.
+
+**Neither condensed document carries a single `{{…}}` directive**, so the chart
+half of the evidence contract has nothing to act on there — measured, not
+assumed.
+
+Two things the reading did add:
+
+**The Muswellbrook record is the positive case for rule 6.** Its inventory is
+`demographics=false, marketData=false, **location=true**`, with a full
+`location_intelligence` object — commute, schools, amenities, transport,
+walkScore, healthcare, coordinates. So the new location rule's *did answer*
+branch is not hypothetical: on Cowra it forbids a distance outright, on
+Muswellbrook it asks for the record's own measurement in the record's own
+units. The two branches are exercised by two real records.
+
+**Page 10 writes the evidence mix as a sentence.** *"Evidence mix underpinning
+this report: Official statistics **40%**, Commercial property data **35%**,
+Local intelligence **15%**, Advisory interpretation **10%**."* §3.8's verdict
+judges directives, and this is prose — the same relationship rule 6 has to
+`distance_not_measured`, one level down. Measured: **1 prose line across the 11
+stored documents, against 5 directives.** It is added to **rule 5** rather than
+given a rule of its own, because rule 5 is already the provenance rule and this
+is a claim about provenance; the sentence names the shapes the corpus writes
+(`evidence mix`, `data resolution mix`, `primary data foundation`, a
+reliability rating) and says what to do instead — name the sources actually
+used. 1 spec.
+
+**And not everything in these documents is unsupported, which the record should
+say.** The Due Diligence crime register (p18) is the counter-example: *"1,144
+incidents over the most recent 12-month window, up from 1,111 in the previous
+year (+3%), with a rate of 10,891 per 100,000 residents versus a NSW
+postal-area average of 7,598"*, with the offence breakdown beneath it and a
+`Verified` chip that is earned — BOCSAR answered, by postcode and month. Its
+bushfire row is better still: *"block-level bushfire exposure for 48 Redfern
+Street is not published in the available summary data … Confidence chip:
+Planned verification"*, which is an absence named as an absence and not rated,
+exactly as the standard asks. The contrast is the point — the same table holds
+both, and the difference is whether a register answered.
+
 ---
 
 ## 4. What Stage B has not closed
