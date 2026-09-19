@@ -2193,9 +2193,18 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     minCallMs: ACQUISITION_MIN_CALL_MS,
   });
 
-  const acquisitionBudgetFor = (callClass: CallClass): AcquisitionBudgetInput => ({
+  /**
+   * A call's own ceiling, before the run's clock is applied.
+   *
+   * A dependency class picks a default; a number is the site's own declared
+   * budget, kept verbatim. Both are CEILINGS — `acquisitionWindowMs` takes the
+   * smaller of this and what the invocation can actually spare, so declaring 45s
+   * for a planning register that needs it cannot overrun the run, and clamping
+   * it to a class default would quietly buy speed with evidence.
+   */
+  const acquisitionBudgetFor = (ceiling: CallClass | number): AcquisitionBudgetInput => ({
     ...acquisitionBudgetBase(),
-    perCallCeilingMs: CALL_CEILING_MS[callClass],
+    perCallCeilingMs: typeof ceiling === 'number' ? ceiling : CALL_CEILING_MS[ceiling],
   });
 
   /**
@@ -2218,10 +2227,10 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
   const acquisitionFetch = async (
     url: string,
     options: RequestInit,
-    callClass: CallClass,
+    ceiling: CallClass | number,
     serviceName: string,
   ): Promise<Response> => {
-    const windowMs = acquisitionWindowMs(acquisitionBudgetFor(callClass));
+    const windowMs = acquisitionWindowMs(acquisitionBudgetFor(ceiling));
     if (windowMs === null) {
       acquisitionExhaustedThisRun = true;
       console.log(
@@ -2231,6 +2240,51 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       return new Response(null, { status: NO_WINDOW_STATUS });
     }
     return await fetchWithTimeout(url, options, windowMs, serviceName);
+  };
+
+  /**
+   * Start an acquisition call now, and read it where its answer is handled.
+   *
+   * A promise that rejects before anything awaits it is an unhandled
+   * rejection, which Deno treats as fatal. The no-op `catch` marks it handled
+   * and swallows nothing: the call site awaits the ORIGINAL promise, so the
+   * same error still surfaces inside the same `try` it always did.
+   */
+  const startAcquisition = (
+    url: string,
+    options: RequestInit,
+    ceiling: CallClass | number,
+    serviceName: string,
+  ): Promise<Response> => {
+    const pending = acquisitionFetch(url, options, ceiling, serviceName);
+    pending.catch(() => {});
+    return pending;
+  };
+
+  /**
+   * A non-ok answer is never "the provider holds nothing".
+   *
+   * The phase-1 wrappers read `if (response.ok) { … } return null`, and a null
+   * there reaches `fetchServiceWithFallback` as the string "No data returned",
+   * which `acquisitionLedger.fromServiceResult` maps to
+   * `unavailable_in_coverage` — *the provider answered and holds nothing for
+   * this subject*. That is a statement about the property, and an HTTP 500 or a
+   * call we never made is not entitled to make it.
+   *
+   * Throwing instead lands in the same wrapper's catch, which records
+   * `requested_failed` and leaves the dependency outstanding. `return null`
+   * still means what it always meant: the service answered 200 and said it
+   * holds nothing here, which is real and worth printing.
+   */
+  const assertAcquisitionAnswered = (response: Response, serviceName: string): void => {
+    if (response.status === NO_WINDOW_STATUS) {
+      throw new Error(
+        `${serviceName} was not attempted: no window left in this invocation. Not an absence.`,
+      );
+    }
+    if (!response.ok) {
+      throw new Error(`${serviceName} answered HTTP ${response.status}`);
+    }
   };
 
   console.log('Investment report function invoked with method:', req.method);
@@ -2947,11 +3001,12 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
 
         // 2. ABS demographic data
         postcode ? fetchServiceWithFallback('abs-data-service', async () => {
-          const response = await fetchWithTimeout(`${supabaseUrl}/functions/v1/abs-data-service`, {
+          const response = await acquisitionFetch(`${supabaseUrl}/functions/v1/abs-data-service`, {
             method: 'POST',
             headers,
             body: JSON.stringify({ postcode, state })
           }, 30000, 'abs-data-service');
+          assertAcquisitionAnswered(response, 'abs-data-service');
           if (response.ok) {
             const data = await response.json();
             return data.success ? data.data : null;
@@ -2961,10 +3016,11 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
 
         // 3. RBA economic data
         fetchServiceWithFallback('rba-data-service', async () => {
-          const response = await fetchWithTimeout(`${supabaseUrl}/functions/v1/rba-data-service`, {
+          const response = await acquisitionFetch(`${supabaseUrl}/functions/v1/rba-data-service`, {
             method: 'POST',
             headers
           }, 20000, 'rba-data-service');
+          assertAcquisitionAnswered(response, 'rba-data-service');
           if (response.ok) {
             const data = await response.json();
             return data.data || null;
@@ -2974,11 +3030,12 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
 
         // 4. SEIFA socioeconomic data
         postcode ? fetchServiceWithFallback('abs-seifa-service', async () => {
-          const response = await fetchWithTimeout(`${supabaseUrl}/functions/v1/abs-seifa-service`, {
+          const response = await acquisitionFetch(`${supabaseUrl}/functions/v1/abs-seifa-service`, {
             method: 'POST',
             headers,
             body: JSON.stringify({ postcode, state })
           }, 25000, 'abs-seifa-service');
+          assertAcquisitionAnswered(response, 'abs-seifa-service');
           if (response.ok) {
             const data = await response.json();
             return data.success ? data.data : null;
@@ -3004,11 +3061,12 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         // all, and the re-key below picks it up once the coordinate lands.
         (suburb && state && crimePostcodeAtIntake.trusted)
           ? fetchServiceWithFallback('crime-statistics-service', async () => {
-          const response = await fetchWithTimeout(`${supabaseUrl}/functions/v1/crime-statistics-service`, {
+          const response = await acquisitionFetch(`${supabaseUrl}/functions/v1/crime-statistics-service`, {
             method: 'POST',
             headers,
             body: JSON.stringify({ suburb, state, postcode: crimePostcodeAtIntake.postcode })
           }, 30000, 'crime-statistics-service');
+          assertAcquisitionAnswered(response, 'crime-statistics-service');
           if (response.ok) {
             const data = await response.json();
             return data.success ? data.data : null;
@@ -3022,11 +3080,12 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
 
         // 6. Employment data
         state ? fetchServiceWithFallback('abs-employment-service', async () => {
-          const response = await fetchWithTimeout(`${supabaseUrl}/functions/v1/abs-employment-service`, {
+          const response = await acquisitionFetch(`${supabaseUrl}/functions/v1/abs-employment-service`, {
             method: 'POST',
             headers,
             body: JSON.stringify({ suburb, state, postcode })
           }, 25000, 'abs-employment-service');
+          assertAcquisitionAnswered(response, 'abs-employment-service');
           if (response.ok) {
             const data = await response.json();
             return data.success ? data.data : null;
@@ -3113,7 +3172,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       // Fetch risk assessment data (can use coordinates from location intelligence)
       if (postcode && state) {
         try {
-          const riskResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/risk-assessment-service`, {
+          const riskResponse = await acquisitionFetch(`${supabaseUrl}/functions/v1/risk-assessment-service`, {
             method: 'POST',
             headers,
             body: JSON.stringify({ 
@@ -3539,7 +3598,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         );
         const requery = async (fn: string, payload: Record<string, unknown>) => {
           try {
-            const res = await fetchWithTimeout(`${supabaseUrl}/functions/v1/${fn}`, {
+            const res = await acquisitionFetch(`${supabaseUrl}/functions/v1/${fn}`, {
               method: 'POST',
               headers,
               body: JSON.stringify(payload),
@@ -3628,7 +3687,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         // with the structured field. Counts only — the rate, if it is owed, is
         // added by the admitted-population call below.
         try {
-          const recount = await fetchWithTimeout(`${supabaseUrl}/functions/v1/crime-statistics-service`, {
+          const recount = await acquisitionFetch(`${supabaseUrl}/functions/v1/crime-statistics-service`, {
             method: 'POST',
             headers,
             body: JSON.stringify({
@@ -3657,7 +3716,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
 
       if (crimePoa && admittedPopValue && (state === 'NSW' || state === 'SA')) {
         try {
-          const crimeAgain = await fetchWithTimeout(`${supabaseUrl}/functions/v1/crime-statistics-service`, {
+          const crimeAgain = await acquisitionFetch(`${supabaseUrl}/functions/v1/crime-statistics-service`, {
             method: 'POST',
             headers,
             body: JSON.stringify({
@@ -3807,20 +3866,90 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         });
       }
 
+      // ──────────────────────────────────────────────────────────────────
+      // ONE WAVE, NOT FOUR QUEUES
+      //
+      // Planning, climate, regional trends and Domain depend on the geography
+      // that has just resolved and on nothing else, and were awaited one after
+      // another — so the invocation paid 45 + 40 + 30 + 30 seconds of ceiling
+      // IN SERIES inside a run whose whole hard stop is 125s. Started together
+      // they cost the slowest of them instead of the sum.
+      //
+      // Only the REQUEST moves. Every answer is still read, recorded and bound
+      // exactly where it was and in the same order, by the same code — so the
+      // acquisition ledger and `enhancedData` are written in one sequence
+      // whatever order the network answers in, and a wave is not a second way
+      // to assemble the record.
+      //
+      // The QLD crime re-key deliberately stays behind planning: it is keyed on
+      // the cadastre's LGA, which is planning's own answer. A dependency is not
+      // made concurrent by wishing.
+      // ──────────────────────────────────────────────────────────────────
       const planningCoords = subjectCoordinate;
-      if (planningCoords?.lat && planningCoords?.lng) {
-        const planningStart = Date.now();
-        try {
-          const planningResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/planning-data-service`, {
+      const climateCoords = enhancedData.locationIntelligence?.coordinates;
+      const regionalCoords = enhancedData.locationIntelligence?.coordinates;
+      const marketPostcode = subjectPostcodeOf(subjectGeography);
+      const marketSuburb = typeof subjectGeography?.suburb === 'string' && subjectGeography.suburb.trim()
+        ? subjectGeography.suburb.trim() : null;
+      const marketState = abbreviateState(typeof subjectGeography?.state === 'string' ? subjectGeography.state : null)
+        ?? abbreviateState(state);
+
+      const planningRequest = (planningCoords?.lat && planningCoords?.lng)
+        ? startAcquisition(`${supabaseUrl}/functions/v1/planning-data-service`, {
             method: 'POST',
             headers,
             body: JSON.stringify({
               latitude: planningCoords.lat,
               longitude: planningCoords.lng,
               state: state,
-              postcode: postcode
-            })
-          }, 45000, 'planning-data-service');
+              postcode: postcode,
+            }),
+          }, 45000, 'planning-data-service')
+        : null;
+      const climateRequest = (climateCoords?.lat && climateCoords?.lng)
+        ? startAcquisition(`${supabaseUrl}/functions/v1/climate-data-service`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              latitude: climateCoords.lat,
+              longitude: climateCoords.lng,
+              state: state,
+              suburb: suburb,
+              postcode: postcode,
+            }),
+          }, 40000, 'climate-data-service')
+        : null;
+      const regionalRequest = (regionalCoords?.lat && regionalCoords?.lng)
+        ? startAcquisition(`${supabaseUrl}/functions/v1/abs-regional-service`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              latitude: regionalCoords.lat,
+              longitude: regionalCoords.lng,
+              state: state,
+              suburb: suburb,
+              postcode: postcode,
+            }),
+          }, 30000, 'abs-regional-service')
+        : null;
+      const domainRequest = (!isAreaReport && marketPostcode && marketSuburb && marketState)
+        ? startAcquisition(`${supabaseUrl}/functions/v1/domain-data-service`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              suburb: marketSuburb,
+              state: marketState,
+              postcode: marketPostcode,
+              propertyCategory: domainCategoryFor(effectivePropertyType),
+              propertyType: effectivePropertyType,
+            }),
+          }, 30000, 'domain-data-service')
+        : null;
+
+      if (planningRequest) {
+        const planningStart = Date.now();
+        try {
+          const planningResponse = await planningRequest;
           if (planningResponse.ok) {
             const planningBody = await planningResponse.json();
             if (planningBody.success && planningBody.data) {
@@ -3867,20 +3996,9 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
 
       // Climate is read from SILO at the verified coordinate, which exists
       // only now — the phase-1 slot above deliberately skipped.
-      const climateCoords = enhancedData.locationIntelligence?.coordinates;
-      if (climateCoords?.lat && climateCoords?.lng) {
+      if (climateRequest) {
         try {
-          const climateResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/climate-data-service`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              latitude: climateCoords.lat,
-              longitude: climateCoords.lng,
-              state: state,
-              suburb: suburb,
-              postcode: postcode
-            })
-          }, 40000, 'climate-data-service');
+          const climateResponse = await climateRequest;
           if (climateResponse.ok) {
             const climateBody = await climateResponse.json();
             if (climateBody.success && climateBody.data) {
@@ -3904,20 +4022,9 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       // Regional trends (the SA2's measured population series and growth)
       // are likewise coordinate-keyed: the service resolves the containing
       // SA2 and serves its own ERP series.
-      const regionalCoords = enhancedData.locationIntelligence?.coordinates;
-      if (regionalCoords?.lat && regionalCoords?.lng) {
+      if (regionalRequest) {
         try {
-          const regionalResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/abs-regional-service`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              latitude: regionalCoords.lat,
-              longitude: regionalCoords.lng,
-              state: state,
-              suburb: suburb,
-              postcode: postcode
-            })
-          }, 30000, 'abs-regional-service');
+          const regionalResponse = await regionalRequest;
           if (regionalResponse.ok) {
             const regionalBody = await regionalResponse.json();
             if (regionalBody.success && regionalBody.data) {
@@ -3939,7 +4046,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         : null;
       if (!enhancedData.crimeStatistics && state === 'QLD' && qldLga) {
         try {
-          const crimeResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/crime-statistics-service`, {
+          const crimeResponse = await acquisitionFetch(`${supabaseUrl}/functions/v1/crime-statistics-service`, {
             method: 'POST',
             headers,
             // RF-7.2B.1B1 — the LGA is QLD's own published grain and comes from
@@ -3978,26 +4085,11 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       const providersConsulted: string[] = [];
       const providersUnavailable: Array<{ provider: string; reason: string }> = [];
       let evidenceWithheldReason: string | null = null;
-      const marketPostcode = subjectPostcodeOf(subjectGeography);
-      const marketSuburb = typeof subjectGeography?.suburb === 'string' && subjectGeography.suburb.trim()
-        ? subjectGeography.suburb.trim() : null;
-      const marketState = abbreviateState(typeof subjectGeography?.state === 'string' ? subjectGeography.state : null)
-        ?? abbreviateState(state);
       if (!isAreaReport) {
-        if (marketPostcode && marketSuburb && marketState) {
+        if (domainRequest) {
           providersConsulted.push('domain');
           try {
-            const domainResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/domain-data-service`, {
-              method: 'POST',
-              headers,
-              body: JSON.stringify({
-                suburb: marketSuburb,
-                state: marketState,
-                postcode: marketPostcode,
-                propertyCategory: domainCategoryFor(effectivePropertyType),
-                propertyType: effectivePropertyType,
-              }),
-            }, 30000, 'domain-data-service');
+            const domainResponse = await domainRequest;
             const domainBody = domainResponse.ok ? await domainResponse.json() : null;
             if (domainBody?.success && domainBody.data) {
               enhancedData = { ...enhancedData, domainData: domainBody.data };
@@ -4409,6 +4501,28 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     } catch (error: any) {
       console.log('Enhanced data fetch failed, proceeding with basic analysis:', error?.message || 'Unknown error');
     }
+
+    // ── The measurement this incident needed and did not have ──────────────
+    //
+    // `traceStartRun` is called AFTER this block, so `report_generation_runs`
+    // has never once included the acquisition phase in its own clock. That is
+    // why "21 minutes at 0 of 15" could not be attributed to anything from the
+    // record: the only phase that could have consumed the invocation was the
+    // one phase nothing timed.
+    //
+    // One structured line, greppable in the edge logs, costing nothing. It is
+    // deliberately a log and not a column: the run trace's schema is a contract
+    // with its own readers, and a number nobody has asked to store does not
+    // earn a migration.
+    const acquisitionMs = Date.now() - runStartedAt;
+    console.log(
+      `⏱️ acquisition finished at +${(acquisitionMs / 1000).toFixed(1)}s of the run's `
+      + `${Math.round(SECTION_CALL_HARD_STOP_MS / 1000)}s budget · `
+      + `${isContinuation ? 'continuation' : 'first invocation'}`
+      + (acquisitionExhaustedThisRun
+        ? ' · SOME CALLS DEFERRED for want of a window — not recorded as absences'
+        : '')
+    );
 
     // ========================================================================
     // RF-7.2B.1 — CLIENT-SAFE GATE ACTIVATION
@@ -7052,6 +7166,10 @@ YOUR DEDICATED PROPERTY PARTNER
         durableProgress: handoff.durableProgress,
         ...(handoff.state === 'no_progress' ? { noProgressReason: handoff.reason } : {}),
         contentLength: combinedContent.length,
+        // What the research phase cost this invocation, so speed can be
+        // measured from the network tab rather than from edge-log access.
+        acquisitionMs,
+        sectionMsThisRun: sectionDurationsMs,
       }), {
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

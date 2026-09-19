@@ -67,6 +67,84 @@ Places `count: 0` defect in [`RF72B1B1`](./RF72B1B1_ENRICHMENT_AND_POSTCODE.md) 
 
 ---
 
+## 1a · The first fix bound a third of the calls
+
+Worth recording, because the shape of the mistake is the point: **the fix was
+written from the calls I had found, not from the calls that exist.** Reading the
+*deployed* bundle back afterwards is what showed the rest.
+
+Measured on the deployed revision (`generate-investment-report` v417):
+
+| | calls | timeout allowance |
+| --- | --- | --- |
+| bound to the run clock | 7 | the run's own |
+| **not** bound | **14** | **290 s** |
+
+Of the fourteen, nine sat after phase 1 and were awaited **one after another** —
+45 s planning + 40 s climate + 30 s regional + 30 s Domain + 25 s risk + three
+crime asks at 20 s — summing to 260 s of ceiling. The phase-1 wave adds up to
+30 s more. The invocation's whole hard stop is **125 s**.
+
+So the incident was never closed by the first release: one slow register could
+still spend the run on its own, and the document would still never start. Every
+call in the acquisition region now goes through `acquisitionFetch`, and the site
+keeps **its own declared ceiling** rather than being clamped to a class default
+— a planning register that needs 45 s still asks for 45 s, and the run's clock
+takes the smaller of the two. Buying speed by shortening a register's patience
+would be buying it with evidence.
+
+The guard is derived rather than listed. The first version of the spec named six
+services by hand and passed with those fourteen calls in place, which is exactly
+the failure mode: **a hand-list cannot see the call it does not mention.** The
+spec now reads every `functions/v1/…` call out of the generator's source and
+requires each one to be on the bounded wrapper, and it is mutation-tested.
+
+### And a non-answer was being recorded as an absence
+
+Converting phase 1 exposed a second fault in the same class, older than this
+work. Those wrappers read `if (response.ok) { … } return null`, and a null there
+reaches `fetchServiceWithFallback` as the string `"No data returned"`, which
+`acquisitionLedger.fromServiceResult` maps to `unavailable_in_coverage` —
+*"the provider answered and holds nothing for this subject"*. So an HTTP 500
+from the ABS service was already being written into the record as a statement
+about the property. `assertAcquisitionAnswered` throws instead, which lands in
+the same wrapper's catch and records `requested_failed`. `return null` still
+means what it always meant: the service answered 200 and said it holds nothing,
+which is real and worth printing.
+
+---
+
+## 1b · One wave, not four queues
+
+Planning, climate, regional trends and Domain depend on the geography that has
+just resolved and on **nothing else**. They were awaited in series, so the
+invocation paid 45 + 40 + 30 + 30 seconds of ceiling one at a time. Started
+together they cost the slowest of them instead of the sum.
+
+Only the **request** moves. Every answer is still read, recorded and bound
+exactly where it was and in the same order, by the same code, so the acquisition
+ledger and `enhancedData` are written in one sequence whatever order the network
+answers in — a wave is not a second way to assemble the record.
+
+Three rules hold it.
+
+**A dependency is not made concurrent by wishing.** The QLD crime re-key is
+keyed on `planningData.parcel.lga`, the cadastre's own answer, so it stays
+behind planning and a test asserts there is no `crimeRekeyRequest`.
+
+**A started request is marked handled.** A promise that rejects before anything
+awaits it is an unhandled rejection, which Deno treats as fatal. The no-op
+`catch` in `startAcquisition` swallows nothing — the call site awaits the
+original promise, so the same error still surfaces inside the same `try` it
+always did.
+
+**The condition that starts a call is the condition that reads it.** Each block
+now guards on the request handle rather than re-testing the coordinate, so the
+two can never drift apart and leave a started request unread or an unstarted one
+awaited.
+
+---
+
 ## 2 · A no-progress hand-off wrote the row, and that blinded the watchdog
 
 This is the one that hid the other two for 21 minutes.
@@ -115,6 +193,42 @@ long research phase and a hang are otherwise indistinguishable from outside.
 
 ---
 
+## 2a · And the widget had been drawing that line since the first second
+
+Two things were wrong with `Section 1 of 15 · 0/15 · 0% · 21m 2s elapsed`, and
+only one of them was the run.
+
+`toReportProgress` falls back to the tier registry when the row states no
+`total_sections`. The fallback is right for the arithmetic — the bar needs a
+denominator and cannot divide by zero — and wrong for the words, because it
+meant the widget printed a section count the record had never stated. A healthy
+forty-second research phase and a twenty-one minute hang produced **the same
+line**, so no reader could tell them apart by looking, and the operator who
+reported this had no way to know which they were watching.
+
+`total_sections` is written by the first progressive save, which is also the
+first moment any prose exists. Its absence is therefore a real, readable signal
+rather than a second guess at one, and `generationPhase` reads it: *Researching
+the property* while the record states no count, *Section N of M* once it does,
+*Assembling the document* when every section is written. The counts line says
+"No sections written yet" rather than `0/15 sections`.
+
+Three rules.
+
+**A count the server has not stated is not printed as though it had.** The
+arithmetic keeps its fallback denominator; only the reading changes.
+
+**A phase is not a fifth activity state.** Stall detection, the header counts
+and the resume decision all key on `ActivityState`, and adding a member would
+change what those mean. A phase says what is happening; a state says whether
+anything is wrong — so a run that has been *researching* for four minutes is
+still `stalled`, and a test asserts exactly that.
+
+**An absent flag reads as settled.** A row mid-flight when this shipped, or any
+caller not yet updated, renders exactly as it did before.
+
+---
+
 ## 3 · The continuation loop advanced on `success: true`
 
 A budget hand-off returns HTTP 200 `success: true` — that is how it says "resume
@@ -134,6 +248,26 @@ unconditionally, so the row went back to looking live — and the watchdog claim
 exactly `status = 'processing'`. The write now matches only
 `['pending', 'processing']`, which makes it an atomic no-op against a cancelled,
 failed or completed row with no read to race against.
+
+---
+
+## 5 · The one phase that could consume the run was the one phase nothing timed
+
+`traceStartRun` is called **after** the acquisition block, so
+`report_generation_runs` has never once included acquisition in its own clock.
+That is why "21 minutes at 0 of 15" could not be attributed to anything from
+the record alone — the phase under suspicion was invisible to the only
+telemetry the pipeline has.
+
+It is measured now, at the close of the block and from the run's own clock, and
+the figure travels two ways: a structured line in the edge logs, and
+`acquisitionMs` plus `sectionMsThisRun` on the hand-off response, so a speed
+measurement can be taken from the browser's network tab without edge-log
+access.
+
+Deliberately a log and a response field rather than a column. The run trace's
+schema is a contract with its own readers, and a number nobody has asked to
+store does not earn a migration.
 
 ---
 

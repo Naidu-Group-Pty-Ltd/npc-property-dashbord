@@ -91,36 +91,149 @@ describe('the generator imports only names its shared modules actually export', 
 });
 
 describe('every acquisition call is bounded by the run clock', () => {
-  const ACQUISITION_SERVICES = [
-    'sqm-rent-service',
-    'financial-calculator-service',
-    'financial-validation-service',
-    'location-intelligence-service',
-    'investment-scoring-service',
-    'school-data-service',
-  ];
+  /**
+   * Derived, not listed.
+   *
+   * The first version of this test named six services by hand and passed while
+   * FOURTEEN other acquisition calls still carried their own fixed ceilings —
+   * 290 seconds of timeout allowance inside a run whose hard stop is 125. A
+   * hand-list cannot see the call it does not mention, which is the whole
+   * failure mode, so the assertion reads the source instead.
+   */
+  // Any identifier applied to an internal service URL, awaited or not — the
+  // wave starts four of them inside a ternary, with the `await` far below.
+  const SERVICE_CALL =
+    /(\w+)\(`\$\{(?:supabaseUrl|Deno\.env\.get\('SUPABASE_URL'\))\}\/functions\/v1\/([^`]+)`/g;
 
-  it.each(ACQUISITION_SERVICES)('%s goes through acquisitionFetch', (service) => {
-    const callPattern = new RegExp(
-      `await (fetch|acquisitionFetch)\\(\`\\$\\{Deno\\.env\\.get\\('SUPABASE_URL'\\)\\}/functions/v1/${service}\``,
-      'g',
+  const calls = [...source.matchAll(SERVICE_CALL)].map(([, wrapper, service]) => ({
+    wrapper,
+    service: service.replace(/\$\{.*/, '${…}'),
+  }));
+
+  it('finds the acquisition calls at all', () => {
+    // A regex that matches nothing passes every assertion under it.
+    expect(calls.length).toBeGreaterThanOrEqual(20);
+  });
+
+  it.each(calls.map((c, i) => [`${i}:${c.service}`, c.wrapper] as const))(
+    '%s goes through the bounded wrapper',
+    (_label, wrapper) => {
+      // A bare `fetch` has no AbortSignal at all; `fetchWithTimeout` has a
+      // constant that knows nothing about how much of the invocation is left.
+      // Both are how one slow provider consumes a run that must also write
+      // fifteen sections.
+      expect(['acquisitionFetch', 'startAcquisition']).toContain(wrapper);
+    },
+  );
+
+  it('leaves no `fetchWithTimeout` pointed at an internal service', () => {
+    expect(source).not.toMatch(/fetchWithTimeout\(`\$\{supabaseUrl\}\/functions\/v1\//);
+    expect(source).not.toMatch(
+      /fetchWithTimeout\(`\$\{Deno\.env\.get\('SUPABASE_URL'\)\}\/functions\/v1\//,
     );
-    const calls = source.match(callPattern) ?? [];
-    expect(calls.length).toBeGreaterThan(0);
-    for (const call of calls) {
-      // A bare `fetch` here has no AbortSignal and no share of the run's clock,
-      // which is how one slow provider consumed a whole invocation.
-      expect(call).toContain('acquisitionFetch');
-    }
   });
 
   it('refuses to start a call with no window rather than calling it anyway', () => {
-    expect(source).toContain('acquisitionWindowMs(acquisitionBudgetFor(callClass))');
+    expect(source).toContain('acquisitionWindowMs(acquisitionBudgetFor(ceiling))');
     expect(source).toContain('NO_WINDOW_STATUS');
   });
 
   it('reserves room for the section loop and for persisting the checkpoint', () => {
     expect(source).toContain('sectionReserveMs: SECTION_MIN_CALL_WINDOW_MS');
     expect(source).toContain('checkpointReserveMs: ACQUISITION_CHECKPOINT_RESERVE_MS');
+  });
+
+  it('never lets a non-answer be recorded as "the provider holds nothing"', () => {
+    // `fetchServiceWithFallback` turns a null into "No data returned", which the
+    // acquisition ledger maps to `unavailable_in_coverage` — a statement about
+    // the property. An HTTP error, and a call with no window that was never
+    // made, are not entitled to make it.
+    expect(source).toContain('assertAcquisitionAnswered');
+    const phase1 = source.slice(
+      source.indexOf('PHASE 1: PARALLEL INDEPENDENT DATA FETCHING'),
+      source.indexOf('PHASE 2: SEQUENTIAL DEPENDENT DATA FETCHING'),
+    );
+    const wrapped = phase1.match(/await acquisitionFetch\(/g) ?? [];
+    const guarded = phase1.match(/assertAcquisitionAnswered\(/g) ?? [];
+    expect(guarded.length).toBe(wrapped.length);
+    expect(wrapped.length).toBeGreaterThan(0);
+  });
+});
+
+describe('the four geography-dependent registers are one wave', () => {
+  /**
+   * Planning, climate, regional trends and Domain depend on the resolved
+   * geography and on nothing else, and were awaited in series — 45 + 40 + 30 +
+   * 30 seconds of ceiling inside a 125s run. Starting them together costs the
+   * slowest instead of the sum.
+   *
+   * What is asserted is the SHAPE: every one of the four is started before any
+   * of them is awaited. Ordering of the answers is deliberately not asserted,
+   * because each is still read and bound exactly where it was.
+   */
+  const REQUESTS = ['planningRequest', 'climateRequest', 'regionalRequest', 'domainRequest'];
+
+  it.each(REQUESTS)('%s is started, then awaited later', (name) => {
+    const started = source.indexOf(`const ${name} = (`);
+    const awaited = source.indexOf(`await ${name}`);
+    expect(started, `${name} is never started`).toBeGreaterThan(-1);
+    expect(awaited, `${name} is never awaited`).toBeGreaterThan(-1);
+    expect(awaited).toBeGreaterThan(started);
+  });
+
+  it('starts all four before it awaits any of them', () => {
+    const lastStart = Math.max(...REQUESTS.map((n) => source.indexOf(`const ${n} = (`)));
+    const firstAwait = Math.min(...REQUESTS.map((n) => source.indexOf(`await ${n}`)));
+    expect(firstAwait).toBeGreaterThan(lastStart);
+  });
+
+  it('keeps the QLD crime re-key behind planning, because it reads planning\'s answer', () => {
+    // It is keyed on `planningData.parcel.lga` — the cadastre's own LGA. A
+    // dependency is not made concurrent by wishing.
+    const crimeRekey = source.indexOf("state === 'QLD' && qldLga");
+    const planningAwait = source.indexOf('await planningRequest');
+    expect(crimeRekey).toBeGreaterThan(planningAwait);
+    expect(source).not.toContain('const crimeRekeyRequest');
+  });
+
+  it('marks every started request handled so an early rejection cannot kill the isolate', () => {
+    // Deno treats an unhandled rejection as fatal, and a request started before
+    // anything awaits it can reject first. The no-op catch swallows nothing:
+    // the call site awaits the original promise.
+    const starter = source.slice(
+      source.indexOf('const startAcquisition = ('),
+      source.indexOf('const assertAcquisitionAnswered'),
+    );
+    expect(starter).toContain('pending.catch(() => {});');
+    expect(starter).toContain('return pending;');
+  });
+});
+
+
+describe('the research phase is timed', () => {
+  /**
+   * `traceStartRun` is called AFTER the acquisition block, so
+   * `report_generation_runs` has never once included acquisition in its own
+   * clock — which is why "21 minutes at 0 of 15" could not be attributed to
+   * anything from the record. The only phase that could have consumed the
+   * invocation was the one phase nothing timed.
+   */
+  it('measures the phase from the run clock, at its close', () => {
+    const measured = source.indexOf('const acquisitionMs = Date.now() - runStartedAt;');
+    const traceStart = source.indexOf('await traceStartRun(');
+    expect(measured).toBeGreaterThan(-1);
+    // It has to be taken BEFORE the trace starts, or it measures nothing new.
+    expect(measured).toBeLessThan(traceStart);
+  });
+
+  it('hands the figure back, so measuring needs no edge-log access', () => {
+    const handoff = source.slice(source.indexOf('=== BUDGET HANDOFF ==='));
+    expect(handoff).toContain('acquisitionMs,');
+    expect(handoff).toContain('sectionMsThisRun: sectionDurationsMs,');
+  });
+
+  it('says when calls were deferred, and that a deferral is not an absence', () => {
+    expect(source).toContain('SOME CALLS DEFERRED for want of a window');
+    expect(source).toContain('not recorded as absences');
   });
 });
