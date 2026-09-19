@@ -275,11 +275,27 @@ Three constraints anything built for act 4 has to respect:
 and `net._http_response.status_code` rather than the pg_cron run's own status:
 pg_cron reports on the SQL that queued the HTTP call, not on the call.
 
-## Why all three were silent
+## Why all three were silent, and why two were misread
 
-Each of these is a deployment that is missing something, and in each case the
-product reported the *consequence* rather than the *cause* — an empty feed, a
-scrape about the wrong property, a marketplace that could not be loaded. The
-fixes above make each one say which absence it is. That is the part worth
-keeping: the next gap of this shape should be readable from the screen rather
-than from a migration ledger.
+In each case the product reported the *consequence* rather than the *cause* —
+an empty feed, a scrape about the wrong property, a marketplace that could not
+be loaded. The fixes above make each one say which absence it is, and that is
+the part worth keeping: the next gap of this shape should be readable from the
+screen rather than from a migration ledger.
+
+The second lesson cost more. All three presented as *"this clone is missing
+something"*, and only one of them was:
+
+- §1 **was** a clone gap — rows a migration inserts do not travel.
+- §2 was a value absent on **Mission Control**, for a forward already
+  authorised fleet-wide, with a cron already scheduled to deliver it.
+- §3 is absent on **every deployment including the prime**, because the act
+  that creates it was never implemented on any side.
+
+Both misreadings came from measuring the clone and stopping there. A clone is
+a copy, so almost anything broken on one is also worth checking on the prime
+and on whatever is supposed to supply it — and the cheap test is the one §3
+failed for weeks: **a feature absent on every deployment is unbuilt, not
+unprovisioned.** Where a comment names another system as the owner of an act,
+read that system before believing it; two of the three owners named here
+disclaim the act in their own source.
