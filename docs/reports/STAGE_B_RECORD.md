@@ -331,6 +331,81 @@ is that the document no longer asserts two incompatible things in silence.
 row that predated the field from one whose figures contradict its label. 9
 specs.
 
+### 3.7 The Financial Analysis promises not to restate locality risk, then restates it — FIXED
+
+Page 13 of the Financial Analysis carries a sentence this repository composes:
+
+> The financial exposures the recorded calculation states … **Property and
+> locality risks (crime, environmental, planning, condition) are assessed in
+> the Property & Location Due Diligence Report and are not restated here.**
+
+Page 14 opens the Consolidated Risk Register with
+
+> *Offence mix (theft, assault, property damage) · Moderate–High · Within the
+> 1,144 recorded incidents, theft (330) … Confidence chip: Verified*
+
+and page 15 lists seven planning, flood, bushfire and title actions under **Due
+Diligence Actions**. The promise and its breach are one page apart, and the
+sentence names crime first.
+
+The machinery to prevent it already existed and was doing exactly what it says.
+`splitRiskRegister` classifies each entry from its name and gives the Financial
+variant the financial rows — that is QA-31's fix, and it worked: **8 of the
+register's 10 entries were dropped from the Financial report.** The two that
+survived did so through the module's own deliberate default, *an entry nobody
+can classify goes to both variants rather than to neither* — and both are
+classifiable.
+
+Measured over every risk register in the stored Compass corpus, parents only
+(**3 documents, 3 registers, all recognised, 24 distinct entry names**):
+
+| classification | before | after |
+|---|---|---|
+| financial | 0 | 0 |
+| property | 19 | 21 |
+| **both (fall-through)** | **5** | **3** |
+
+The five were `Offence mix (theft, assault, property damage)`, `Drug-related
+offences`, `Due Diligence Actions`, `Supply and market concentration` and `Data
+gaps and monitoring needs`. The last two are genuinely unclassifiable — one
+trips both vocabularies, the other is about the record rather than the money or
+the place — and still go to both. The first three are two distinct causes:
+
+**The register does not write "crime" when it breaks crime down.**
+`PROPERTY_RISK` carried `crime` and `safety` and none of the words an offence
+row actually uses. It now carries `offence`, `offense`, `theft`, `assault`,
+`burglar`, `break-in`, `robber`, `vandal`, `stolen` and `violent` — unambiguous
+offence nouns only, none of which collides with `FINANCIAL_RISK`. Re-measured,
+the two crime rows moved and **nothing else changed**.
+
+**A list of things to do is not an unclassifiable risk.** `Due Diligence
+Actions` is a checklist, so "nobody can classify it" is the wrong reading of
+it — the module already has the test (`riskDashboardContract`'s QA-32
+detector: three or more bullets, most imperative, nothing rated). That test is
+now one function both callers share, and an entry that falls through to `both`
+whose own body reads as a checklist is admitted by the Due Diligence variant
+alone. A checklist about the money still carries financial vocabulary in its
+name and is classified before the rule is reached, so only the genuinely
+unclassifiable one moves.
+
+Executed on the real parent through `composeForkDocuments` with the production
+registry defaults:
+
+| | before | after |
+|---|---|---|
+| Financial Analysis carries "Consolidated Risk Register" | yes | **no** |
+| Financial Analysis carries the offence-mix row | yes | **no** |
+| Due Diligence carries both | yes | **yes** |
+
+The Financial variant is left with nothing to print from that register — every
+one of its ten entries is a property or locality row, as the register's own
+preamble says — and `assembleForVariant` already drops a section a variant has
+emptied. The composed `Financial Risk Dashboard` chapter stands alone, and page
+13's sentence is now true. 4 specs.
+
+This does not change a stored document: a fork is a generation, so the fix
+reaches the next one.
+
 ---
 
 ## 4. What Stage B has not closed
