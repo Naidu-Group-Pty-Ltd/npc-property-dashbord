@@ -5590,15 +5590,41 @@ table carries no row for an attribute, the attribute is NOT RECORDED: say so
 if it matters, and never supply it from here. A listing's own figures are the
 agent's marketing copy, and this report does not repeat them as facts about
 the asset.`;
+      /**
+       * A description is evidence of what was ADVERTISED, never of the asset.
+       *
+       * The list below used to say "Include all relevant property features,
+       * upgrades, and selling points" and "Note any specific renovations,
+       * improvements, or unique characteristics" — with no instruction to say
+       * where any of it came from, three lines under a rule declaring
+       * CONDITION to be governed by the record. The record holds no condition
+       * field at all, so that rule resolves to "not recorded" on every
+       * property in the corpus, and the two statements contradict each other
+       * in one numbered list.
+       *
+       * Measured on the Cowra Compass (11 Sep 2026): the document asserts
+       * "Well-presented renovated home", "a detached, renovated 3-bedroom
+       * residential home" and "given the renovated interiors" — three
+       * unattributed claims about the condition of somebody's house, sourced
+       * to nothing, in a document a client acts on. §2 of the acceptance
+       * standard names `Renovated` as a factual claim precisely because it
+       * carries no digit and reads as description.
+       *
+       * So the listing keeps everything only it can supply, and every one of
+       * those things arrives ATTRIBUTED: the sentence says the listing says
+       * it. That is a true sentence about evidence the report actually holds,
+       * and it is the same rule `claimSupportRules` states for the prose —
+       * one rule, in the two places the model reads.
+       */
       const sourceLabel = fromPdfUpload ? 'PDF-UPLOADED LISTING' : 'URL-SCRAPED LISTING';
       const sourceNoun = fromPdfUpload ? 'document' : 'listing';
       const sourceSpecificInstructions = `**CRITICAL INSTRUCTIONS FOR THIS ${sourceLabel}:**
 1. The above content came from the property ${sourceNoun}, and is the primary source for its DESCRIPTION, features and selling points
 2. ${RECORD_GOVERNS_PHYSICAL_ATTRIBUTES}
 3. Use the property address exactly as shown in the ${sourceNoun}
-4. Include all relevant property features, upgrades, and selling points mentioned in the ${sourceNoun}
+4. A ${sourceNoun} is an ADVERTISEMENT. Its features, upgrades and selling points are evidence of what the seller states, not of the property's condition — so carry them ATTRIBUTED, in the sentence that uses them ("the ${sourceNoun} describes …", "the ${sourceNoun} states …"), and never as an assertion of your own. Write "renovated", "updated", "well presented", "as new" or any other characterisation of condition ONLY in that attributed form
 5. If a price is mentioned (guide, asking, or range), use it for financial calculations
-6. Note any specific renovations, improvements, or unique characteristics
+6. Renovations, improvements and unique characteristics the ${sourceNoun} names are carried the same way, under the same attribution, and a reader is told the property has not been inspected for this report
 7. Consider the property description when assessing investment potential
 8. Verify the suburb/postcode from the ${sourceNoun} for accurate location analysis${fromPdfUpload ? `
 9. For new builds: Use the land + build package price for total property value` : ''}`;

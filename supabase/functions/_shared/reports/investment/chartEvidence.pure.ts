@@ -398,7 +398,10 @@ export function claimSupportRules(inv: EvidenceInventory): string {
     + 'updated**, **well presented**, **strong demand**, **tightly held**, **low risk** and '
     + '**verified** are factual or evaluative assertions that happen to carry no digit. State one '
     + 'only where the record names the evidence for it; where it does not, say what is not known '
-    + 'rather than reaching for a softer version of the same claim.',
+    + 'rather than reaching for a softer version of the same claim. A seller’s listing is '
+    + 'evidence of what was ADVERTISED and not of the asset, so a characterisation taken from one '
+    + 'is written as the listing’s claim, in the sentence that uses it, and never as this '
+    + 'report’s own. No property in this report has been inspected.',
   );
 
   rules.push(

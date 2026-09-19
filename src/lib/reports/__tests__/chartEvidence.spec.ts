@@ -284,6 +284,22 @@ describe('the prose half of the same contract', () => {
     expect(rules).toContain('happen to carry no digit');
   });
 
+  /*
+   * The Cowra document asserts "Well-presented renovated home", "a detached,
+   * renovated 3-bedroom residential home" and "given the renovated interiors"
+   * — three unattributed claims about the condition of somebody's house, from
+   * a record that holds no condition field at all. The claim can only have
+   * come from the agent's listing, and an advertisement is evidence of what
+   * was advertised.
+   */
+  it('lets a listing claim be carried, attributed, and never as the report’s own', () => {
+    const rules = claimSupportRules(HELD_NOTHING).replace(/\s+/g, ' ');
+    expect(rules).toContain('evidence of what was ADVERTISED and not of the asset');
+    expect(rules).toContain('written as the listing’s claim, in the sentence that uses it');
+    expect(rules).toContain('never as this report’s own');
+    expect(rules).toContain('No property in this report has been inspected');
+  });
+
   it('a provider answering is not that provider supplying the figure', () => {
     const rules = claimSupportRules(HELD_NOTHING).replace(/\s+/g, ' ');
     expect(rules).toContain('it does not mean its answer contains the number beside your citation');
@@ -328,5 +344,34 @@ describe('the generator writes under it', () => {
     for (const key of ['recordedScores', 'demographics', 'marketData', 'location', 'withheldFacts']) {
       expect(block).toContain(`${key}:`);
     }
+  });
+
+  /*
+   * Two statements of one rule is how the two come to disagree, and this pair
+   * disagreed inside a single numbered list: item 2 declares CONDITION
+   * governed by a record that holds no condition field, while items 4 and 6
+   * asked for the listing's "features, upgrades, and selling points" and "any
+   * specific renovations, improvements" with nothing saying where they came
+   * from. The listing keeps what only it can supply; the attribution is what
+   * makes carrying it a true sentence.
+   */
+  it('asks the listing’s own claims to arrive attributed, in the list that asks for them', () => {
+    const src = readFileSync(
+      resolve(__dirname, '../../../../supabase/functions/generate-investment-report/index.ts'),
+      'utf8',
+    );
+    const start = src.indexOf('const sourceSpecificInstructions = `');
+    expect(start).toBeGreaterThan(-1);
+    const block = src.slice(start, src.indexOf('`;', start));
+    expect(block).toContain('is an ADVERTISEMENT');
+    expect(block).toContain('carry them ATTRIBUTED');
+    expect(block).toContain('never as an assertion of your own');
+    // The words that were being asserted, named so the rule reaches them.
+    for (const word of ['renovated', 'updated', 'well presented']) {
+      expect(block).toContain(`"${word}"`);
+    }
+    // And the instruction that used to ask for them bare is gone.
+    expect(block).not.toContain('Include all relevant property features, upgrades, and selling points');
+    expect(block).not.toContain('Note any specific renovations, improvements, or unique characteristics');
   });
 });
