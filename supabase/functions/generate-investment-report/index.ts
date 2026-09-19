@@ -22,6 +22,12 @@ import {
   infrastructureRules,
   renderInfrastructureOutlook,
 } from '../_shared/planning/infrastructureEvidence.pure.ts';
+import {
+  projectsNear,
+  publishedProjectRules,
+  renderPublishedProjects,
+  PUBLISHED_PROJECT_COVERAGE,
+} from '../_shared/planning/publishedProjectRegister.pure.ts';
 import { withPlanningEvidence } from '../_shared/reports/location/planningEvidenceRecord.pure.ts';
 import { crimeStatBlocks } from '../_shared/reports/crimePromptBlocks.pure.ts';
 import { climateStatBlocks } from '../_shared/reports/climatePromptBlocks.pure.ts';
@@ -4960,6 +4966,34 @@ Produce a comprehensive statewide investment analysis following the structure ab
     const infrastructureSectionRules = infrastructureRules(infrastructure);
 
     /*
+     * And the major public projects no machine-readable register carries.
+     *
+     * `PROGRAMME_PUBLISHERS` records that seven of the eight jurisdictions
+     * publish their forward programme as budget papers and agency pages rather
+     * than a feed, and marks them `ingested: false`. Honest, and on its own it
+     * means a New South Wales report names no infrastructure project at all —
+     * on 48 Redfern Street, Cowra, a $110.2m hospital 1.09 km away that opened
+     * while the report was being written.
+     *
+     * A row in this register is RECORDED from the responsible authority's own
+     * dated pages, never retrieved from a feed, and it says so on the page.
+     * Keyed on the verified coordinate, so a report with no trustworthy
+     * coordinate names no project rather than one near a guess.
+     */
+    const publishedProjectCoords = enhancedData.locationIntelligence?.coordinates;
+    const nearbyPublishedProjects = publishedProjectCoords?.lat && publishedProjectCoords?.lng
+      ? projectsNear(publishedProjectCoords.lat, publishedProjectCoords.lng, 15)
+      : [];
+    const publishedProjectBlock = renderPublishedProjects(nearbyPublishedProjects);
+    const publishedProjectSectionRules = publishedProjectRules(nearbyPublishedProjects);
+    console.log(
+      `🏗️ Published projects within 15 km: ${nearbyPublishedProjects.length}`
+      + (nearbyPublishedProjects.length
+        ? ` (${nearbyPublishedProjects.map((n) => `${n.project.name} ${n.distanceKm.toFixed(1)}km`).join('; ')})`
+        : ''),
+    );
+
+    /*
      * And the market evidence, which reached the SCORING SERVICE and nothing
      * else.
      *
@@ -5147,6 +5181,15 @@ Produce a comprehensive statewide investment analysis following the structure ab
       '# Infrastructure & Development Outlook — what the registers answered',
       infrastructureTable,
       infrastructureSectionRules,
+      // Recorded from official publications rather than retrieved from a
+      // register, and pinned for the same reason everything else here is:
+      // it is the AUTHORITY for a set of figures and dates, and a rule that
+      // survives while its evidence is trimmed is the §6 defect.
+      ...(publishedProjectBlock
+        ? ['# Major public projects near this property — recorded from their publisher\'s own pages',
+          publishedProjectBlock]
+        : []),
+      publishedProjectSectionRules,
       // The market evidence rides the same pin, for the same reason: the base
       // prompt measured 92,129 bytes on 262 Pallas Street and every section
       // trimmed it to ~52,830, so anything that is the AUTHORITY for a figure
@@ -6975,8 +7018,17 @@ YOUR DEDICATED PROPERTY PARTNER
       reportContent += `\n\n---\n\n## Planning controls and development registers\n\n`
         + `### Planning controls retrieved for this property\n\n${planningControlsTable}\n\n`
         + `### Infrastructure and development retrieved for this property\n\n${infrastructureTable}\n`;
+      // Appended verbatim for the reason the two tables above are: asking a
+      // model to reproduce a table is how a table comes back paraphrased, and
+      // every date and figure here is one an authority published.
+      if (publishedProjectBlock) {
+        reportContent += `\n### Major public projects near this property\n\n`
+          + `${publishedProjectBlock}\n`
+          + `**What this register covers.** ${PUBLISHED_PROJECT_COVERAGE.join(' ')}\n`;
+      }
       console.log(
-        `📋 Appended retrieved planning + infrastructure evidence (${planningControlsTable.length + infrastructureTable.length} chars)`,
+        `📋 Appended retrieved planning + infrastructure evidence `
+        + `(${planningControlsTable.length + infrastructureTable.length + publishedProjectBlock.length} chars)`,
       );
     }
 
