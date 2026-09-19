@@ -66,7 +66,9 @@ import { recordedScoreValues, suppressUnrecordedVerdictVisuals } from './scoreCl
 export type ChartClaim = 'rating' | 'share' | 'series' | 'measurement' | 'qualitative';
 
 /** Why a visual could not be verified, or that it was. */
-export type ChartVerdict = 'supported' | 'unrecorded_rating' | 'population_not_held' | 'series_withheld';
+export type ChartVerdict =
+  | 'supported' | 'unrecorded_rating' | 'population_not_held' | 'series_withheld'
+  | 'market_not_held';
 
 export interface EvidenceInventory {
   /** Every value the scoring engine recorded, which is what a rating may assert. */
@@ -191,6 +193,127 @@ function seriesIsWithheld(d: VizDirective, inv: EvidenceInventory): string | nul
 }
 
 /**
+ * A `::: stat` fence is a figure in a summary strip, and it was the one
+ * quantitative structure this contract could not see.
+ *
+ * ── What reached a client ────────────────────────────────────────────────
+ *
+ * Measured 19 September 2026 by rendering the five tier documents and reading
+ * the pages: page 4 of the Cowra Compass draws
+ *
+ *     INDICATIVE LOCAL GROWTH
+ *     3.52%
+ *     Annual house price growth, Cowra (latest published)
+ *
+ * at display size. `3.52` appears exactly once in the whole record — inside
+ * the model's own prose, as the fence itself — and `data_sources.marketData`
+ * is `null`. The words "(latest published)" assert a provenance nothing holds.
+ * It is in **83 of the 89** stored reports measured, because it rides the
+ * parent's content into every fork.
+ *
+ * The directive contract could not reach it: `assessChartEvidence` walks lines
+ * beginning `{{`, and a fence is one of the five `:::` blocks `renderMarkdown`
+ * draws. §2 of the acceptance standard asks for the contract to hold over
+ * "charts, tables, prose, captions, summary strips and recommendations", and a
+ * stat fence is a summary strip.
+ *
+ * ── Why judging it is not scrubbing prose ────────────────────────────────
+ *
+ * The programme's rule is that prose is never regex-scrubbed. A fence is not
+ * prose: it is a STRUCTURE with a kind, a label, a unit, a subtitle and a
+ * single value, and a module can read all five — the same property that makes
+ * a directive judgeable. The sentence beside it is untouched.
+ *
+ * ── The subject decides the evidence ─────────────────────────────────────
+ *
+ * The same two producer questions the charts already ask. A market quantity
+ * needs a market producer; a population or workforce quantity needs a
+ * demographics producer. Measured on the corpus's three distinct fences, the
+ * rule separates them correctly: the Cowra growth stat is refused
+ * (`marketData: null`), and Moranbah's "Mining share of workforce" and
+ * "10-year population change" stand, because that record's demographics and
+ * employment producers both answered.
+ *
+ * Anything else — a figure about the asset itself, a count the report made —
+ * is not judged, for the reason the module's header gives: a warning that
+ * fires on two-thirds of a corpus is one nobody reads.
+ */
+const STAT_MARKET_SUBJECT =
+  /\b(?:growth|median|price|prices|rent|rents|rental|yield|vacancy|sale|sales|turnover|capital|value|values|days\s+on\s+market|clearance)\b/i;
+const STAT_POPULATION_SUBJECT =
+  /\b(?:population|resident|residents|household|households|demograph\w*|workforce|employment|unemployment|labour|occupier|occupiers|tenure|renter|renters|migration|age)\b/i;
+
+/** Every `::: stat` fence, with the line that opens it. */
+export interface StatFence {
+  /** The fence's opening line, verbatim and trimmed. */
+  open: string;
+  /** `label`, `sub` and any other attribute text on the opening line. */
+  attrs: string;
+  /** The single value between the fences. */
+  value: string;
+  /** Index of the opening line in the document's lines. */
+  line: number;
+}
+
+export function readStatFences(markdown: string): StatFence[] {
+  const lines = markdown.split('\n');
+  const out: StatFence[] = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const t = lines[i].trim();
+    const m = /^:::\s*stat\b(.*)$/.exec(t);
+    if (!m) continue;
+    const parts: string[] = [];
+    let j = i + 1;
+    for (; j < lines.length; j += 1) {
+      if (lines[j].trim() === ':::') break;
+      if (lines[j].trim()) parts.push(lines[j].trim());
+    }
+    out.push({ open: t, attrs: m[1].trim(), value: parts.join(' ').trim(), line: i });
+  }
+  return out;
+}
+
+function assessStatFences(markdown: string, inv: EvidenceInventory): ChartEvidenceFinding[] {
+  const out: ChartEvidenceFinding[] = [];
+  for (const fence of readStatFences(markdown)) {
+    // A fence with no figure in it is a label, not a claim.
+    if (!/\d/.test(fence.value)) continue;
+    const subject = `${fence.attrs} ${fence.value}`;
+    const directive = fence.open.length > 190 ? `${fence.open.slice(0, 189)}\u2026` : fence.open;
+
+    const withheld = inv.withheldFacts.find((n) => /demograph|population/i.test(n))
+      && STAT_POPULATION_SUBJECT.test(subject) && !inv.demographics;
+    if (STAT_MARKET_SUBJECT.test(subject) && !STAT_POPULATION_SUBJECT.test(subject) && !inv.marketData) {
+      out.push({
+        verdict: 'market_not_held',
+        claim: 'measurement',
+        kind: 'stat',
+        directive,
+        reason:
+          'The figure is a market quantity — a growth rate, a median, a price, a rent or a yield — '
+          + 'and no market producer answered for this report, so nothing in the record can be the '
+          + '"latest published" figure the strip attributes to it.',
+      });
+      continue;
+    }
+    if (STAT_POPULATION_SUBJECT.test(subject) && !inv.demographics) {
+      out.push({
+        verdict: withheld ? 'series_withheld' : 'population_not_held',
+        claim: 'share',
+        kind: 'stat',
+        directive,
+        reason: withheld
+          ? 'The report-time snapshot records this quantity as absent, which is the platform\u2019s own '
+            + 'refusal to publish it. A stat card of it restores what the gate withheld.'
+          : 'The figure describes a population or a workforce and no demographics producer answered '
+            + 'for this report, so there is no table behind it and no period it belongs to.',
+      });
+    }
+  }
+  return out;
+}
+
+/**
  * Judge every directive in a document against what its record holds.
  *
  * Reports, and does not change anything. `enforceChartEvidence` is what acts.
@@ -236,6 +359,9 @@ export function assessChartEvidence(
       });
     }
   }
+
+  // The summary strip's own structure, judged on the same inventory.
+  out.push(...assessStatFences(markdown, inv));
 
   // Ratings are judged by the rule that already exists, so the two cannot
   // drift: one implementation, extended to every path rather than copied.
@@ -305,10 +431,21 @@ export function enforceChartEvidence(
 
   const remove = new Set(findings.map((f) => f.directive));
   const out: string[] = [];
+  // A directive is one line; a `::: stat` fence is three or more, and half a
+  // fence left behind prints its own delimiter as body copy. So a removed
+  // opening line takes the block it opens with it.
+  let insideRemovedFence = false;
   for (const line of markdown.split('\n')) {
     const t = line.trim();
+    if (insideRemovedFence) {
+      if (t === ':::') insideRemovedFence = false;
+      continue;
+    }
     const key = t.length > 190 ? `${t.slice(0, 189)}\u2026` : t;
-    if (remove.has(key)) continue;
+    if (remove.has(key)) {
+      if (/^:::\s*\w/.test(t)) insideRemovedFence = true;
+      continue;
+    }
     out.push(line);
   }
   return { markdown: out.join('\n').replace(/\n{3,}/g, '\n\n'), findings };
@@ -380,7 +517,11 @@ export function claimSupportRules(inv: EvidenceInventory): string {
       : '2. NO transaction, sales or listing data was retrieved for this report. Do not state what '
         + 'proportion of sales, listings, buyers or transactions anything represents — not as a '
         + 'percentage, not as "7 in 10", not as "the majority", not as "most". There is no '
-        + 'denominator in this record for any such claim.',
+        + 'denominator in this record for any such claim. The same applies to every OTHER market '
+        + 'quantity: a capital growth rate, a median price or rent, a yield, a vacancy rate, a '
+        + 'clearance rate or days on market. Nothing in this record can be the "latest published" '
+        + 'figure for this suburb, so do not write one in a sentence, a caption, a table or a '
+        + 'stat card.',
   );
 
   rules.push(

@@ -17,6 +17,7 @@ import {
   enforceChartEvidence,
   claimSupportRules,
   readEvidenceInventory,
+  readStatFences,
   type EvidenceInventory,
 } from '../investment/chartEvidence.pure';
 import { parseVizDirectives } from '../vizDirectives.pure';
@@ -224,6 +225,82 @@ describe('enforcement removes the unsupported visual and records it', () => {
   });
 });
 
+/*
+ * The Cowra Compass draws
+ *
+ *     INDICATIVE LOCAL GROWTH / 3.52% / Annual house price growth, Cowra (latest published)
+ *
+ * at display size on page 4. `3.52` appears exactly once in the whole record —
+ * inside the model's own prose, as the fence itself — while
+ * `data_sources.marketData` is null, so "(latest published)" attributes a
+ * provenance nothing holds. It is in 83 of the 89 stored reports, because it
+ * rides the parent's content into every fork.
+ */
+describe('a figure in a summary strip', () => {
+  const NOTHING_HELD = readEvidenceInventory(COWRA_RECORD);
+  const GROWTH = [
+    '## Location verdict',
+    '',
+    'The suburb is characterised by free-standing houses on generous blocks.',
+    '',
+    '::: stat label="Indicative local growth" unit="%" sub="Annual house price growth, Cowra (latest published)"',
+    '3.52',
+    ':::',
+    '',
+    'Tenant demand is driven by everyday needs.',
+  ].join('\n');
+
+  it('reads a fence as a structure: its label, its subtitle and its one value', () => {
+    const [fence] = readStatFences(GROWTH);
+    expect(fence.attrs).toContain('Indicative local growth');
+    expect(fence.value).toBe('3.52');
+  });
+
+  it('refuses a market figure where no market producer answered', () => {
+    const findings = assessChartEvidence(GROWTH, NOTHING_HELD);
+    const stat = findings.find((f) => f.kind === 'stat');
+    expect(stat?.verdict).toBe('market_not_held');
+    expect(stat?.reason).toMatch(/no market producer answered/);
+  });
+
+  it('keeps it where the producer DID answer — the rule is the record, not the words', () => {
+    const findings = assessChartEvidence(GROWTH, { ...NOTHING_HELD, marketData: true });
+    expect(findings.filter((f) => f.kind === 'stat')).toEqual([]);
+  });
+
+  it('refuses a population or workforce figure on the same test', () => {
+    const src = [
+      '::: stat label="10-year population change" unit="%" sub="SA2 Moranbah"',
+      '9.7',
+      ':::',
+    ].join('\n');
+    // Nothing held and nothing withheld: the producer simply did not answer.
+    const nothingWithheld = { ...NOTHING_HELD, withheldFacts: [] };
+    expect(assessChartEvidence(src, nothingWithheld)[0]?.verdict).toBe('population_not_held');
+    // The Cowra record's gate refused population by name, so the same figure
+    // is the stronger reading: not absent, REFUSED.
+    expect(assessChartEvidence(src, NOTHING_HELD)[0]?.verdict).toBe('series_withheld');
+    expect(assessChartEvidence(src, { ...NOTHING_HELD, demographics: true })).toEqual([]);
+  });
+
+  it('a fence with no figure in it is a label, not a claim', () => {
+    const src = ['::: stat label="Median price" sub="not published for this suburb"', 'Not published', ':::'].join('\n');
+    expect(assessChartEvidence(src, NOTHING_HELD)).toEqual([]);
+  });
+
+  it('removal takes the whole block, never half a fence', () => {
+    const { markdown, findings } = enforceChartEvidence(GROWTH, NOTHING_HELD);
+    expect(findings.some((f) => f.kind === 'stat')).toBe(true);
+    expect(readStatFences(markdown)).toEqual([]);
+    expect(markdown).not.toContain('3.52');
+    expect(markdown).not.toContain(':::');
+    // The prose either side is untouched, which is the whole point.
+    expect(markdown).toContain('free-standing houses on generous blocks');
+    expect(markdown).toContain('Tenant demand is driven by everyday needs');
+    expect(markdown).toContain('## Location verdict');
+  });
+});
+
 describe('the read path adopts it without changing anything else', () => {
   const DOC = [
     '## Section',
@@ -265,6 +342,13 @@ describe('the prose half of the same contract', () => {
     const rules = claimSupportRules(HELD_NOTHING);
     expect(rules).toMatch(/not as "7 in 10", not as "the majority", not as "most"/);
     expect(rules).toMatch(/no denominator in this record/i);
+  });
+
+  it('forbids every other market quantity too — the strip said 3.52% "latest published"', () => {
+    const rules = claimSupportRules(HELD_NOTHING).replace(/\s+/g, ' ');
+    expect(rules).toContain('a capital growth rate, a median price or rent, a yield');
+    expect(rules).toContain('latest published');
+    expect(rules).toContain('a stat card');
   });
 
   it('forbids a rating in WORDS, not only in figures', () => {
