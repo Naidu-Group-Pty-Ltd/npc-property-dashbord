@@ -121,12 +121,19 @@ Stated plainly rather than left to be discovered.
    family at least 152 pt for the name. Re-measured: **0 of 50 overlap, 0 of 400
    rows wrap.** `investmentCompassCatalogue.spec.ts` and
    `investmentCompassSource.spec.ts` pass (1,327 assertions).
-3. **The remaining §2 claims** — the "7 in 10" transaction claim, the
-   population statements around the removed chart, and the bedroom / bathroom /
-   renovation contradictions — are prose defects in the STORED document. The
-   chart contract removes the unsupported visuals; the prose versions need the
-   regeneration that §1 says is not yet possible. They are not fixed and are
-   not claimed to be.
+3. **The remaining §2 claims are closed at the PRODUCER and still stand in the
+   STORED document.** Each was traced to the code that produced it rather than
+   assumed:
+
+   | claim in the document | what the record holds | where it is closed |
+   |---|---|---|
+   | "seven in ten sales are traditional family houses" | no sales register was read; `marketData: null` | `claimSupportRules` rule 2 — names "7 in 10", "the majority", "most" and says there is no denominator |
+   | population and occupier-mix statements around the removed chart | `demographics_data: NULL`, population withheld at the client-safe gate | rule 1 — forbids "roughly", "around half", "predominantly", and a suburb's composition as this property's tenant mix |
+   | "Bedrooms: 3", "Bathrooms: 1", "the classic three-bedroom, one-bathroom layout" — beside two sections saying the counts are not recorded | `property_specs.bedrooms: null`, `bathrooms: null` | `RECORD_GOVERNS_PHYSICAL_ATTRIBUTES`, landed 17 Sep 2026; this report was generated 11 Sep 2026 |
+   | "Well-presented renovated home", "a detached, renovated 3-bedroom residential home", "given the renovated interiors" | the record holds **no condition field at all** | the listing instructions and rule 4, this branch — a listing is an advertisement and its claims arrive attributed |
+
+   None of that changes the stored document, and nothing here rewrites it. A
+   corrected revision is a generation, which §1 says needs the deploy.
 4. **Cowra Shire Council's capital works programme, its DA register and its
    Development Control Plan** were not retrieved. The infrastructure register
    states that limitation on the page.
