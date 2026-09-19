@@ -111,11 +111,21 @@ export function seedRowFor(source: CanonicalMarketSource): Record<string, unknow
     registry_status: source.registry_status,
     legal_storage_policy: 'metadata_excerpt_transformative_summary',
     health_status: 'healthy',
-    // `ingest_mode` is what the ingest query actually filters on. The column
-    // defaults to 'live', but naming it here means a seeded row is ingestable
-    // by the same rule a migrated one is rather than by a default that could
-    // change underneath this.
-    ingest_mode: source.enabled ? 'live' : 'shadow',
+    /*
+      `ingest_mode` is what the ingest query filters on, and a BEFORE INSERT
+      trigger (`market_sources_sync_ingest_mode`) derives `enabled` back from
+      it — so this field decides both, and `enabled` above is only the input
+      to it.
+    
+      The mapping is the trigger's OWN rule for a row that names no mode:
+      `enabled ? 'live' : 'disabled'`. Writing `'shadow'` for a disabled source
+      would be a different thing entirely — shadow sources ARE fetched and
+      classified on every run, they simply never publish. The four sources the
+      migrations disabled are paywalled or unreachable (AFR, Bloomberg, ASIC's
+      newsroom, NAB economics), so shadowing them would spend a request per
+      source per run, for ever, on pages known not to answer.
+    */
+    ingest_mode: source.enabled ? 'live' : 'disabled',
   };
 }
 

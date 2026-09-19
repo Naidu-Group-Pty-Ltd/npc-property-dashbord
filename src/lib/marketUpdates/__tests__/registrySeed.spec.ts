@@ -81,7 +81,8 @@ describe('seedRowFor', () => {
     for (const source of CANONICAL_MARKET_SOURCES) {
       const row = seedRowFor(source);
       expect(row.registry_status, source.source_key).toBe('canonical');
-      expect(['live', 'shadow'], source.source_key).toContain(row.ingest_mode);
+      // An enabled source must land in the set the ingest query reads.
+      if (source.enabled) expect(row.ingest_mode, source.source_key).toBe('live');
     }
   });
 
@@ -90,9 +91,16 @@ describe('seedRowFor', () => {
     expect(disabled, 'the catalogue should carry at least one disabled source').toBeTruthy();
     const row = seedRowFor(disabled!);
     expect(row.enabled).toBe(false);
-    // Disabled means shadow, never live — a source the migrations switched off
-    // must not start publishing because it arrived by a different route.
-    expect(row.ingest_mode).toBe('shadow');
+    /*
+      'disabled', not 'shadow'. A BEFORE INSERT trigger derives `enabled` from
+      `ingest_mode`, and its own rule for a row naming no mode is
+      `enabled ? 'live' : 'disabled'` — so this reproduces what the migration
+      would have produced. Shadow is not the same thing: a shadow source IS
+      fetched and classified every run and merely never publishes, and these
+      four are paywalled or unreachable, so shadowing them would spend a
+      request per source per run for ever on pages known not to answer.
+    */
+    expect(row.ingest_mode).toBe('disabled');
   });
 
   it('derives the hourly cadence from the minute one rather than inventing it', () => {
@@ -104,6 +112,35 @@ describe('seedRowFor', () => {
 
   it('produces one row per catalogue entry', () => {
     expect(seedRows().length).toBe(CANONICAL_MARKET_SOURCE_COUNT);
+  });
+
+  it('keeps every cadence inside the column\'s CHECK', () => {
+    // `market_sources_refresh_frequency_minutes_check` is
+    // `between 15 and 10080`. One row outside it fails the whole insert, and
+    // the seeder writes all 43 in a single statement.
+    for (const source of CANONICAL_MARKET_SOURCES) {
+      const minutes = seedRowFor(source).refresh_frequency_minutes as number;
+      expect(minutes, source.source_key).toBeGreaterThanOrEqual(15);
+      expect(minutes, source.source_key).toBeLessThanOrEqual(10080);
+    }
+  });
+
+  it('writes only values the column CHECKs accept', () => {
+    // Every one of these is a constraint a single bad row would fail the whole
+    // 43-row insert on, silently, into a catch that logs and carries on.
+    for (const source of CANONICAL_MARKET_SOURCES) {
+      const row = seedRowFor(source);
+      expect(['live', 'shadow', 'disabled'], source.source_key).toContain(row.ingest_mode);
+      expect(['canonical', 'archived_legacy', 'unresolved_legacy'], source.source_key)
+        .toContain(row.registry_status);
+      expect(['healthy', 'degraded', 'failed', 'disabled'], source.source_key)
+        .toContain(row.health_status);
+      expect([
+        'link_metadata_only',
+        'metadata_excerpt_transformative_summary',
+        'licensed_metadata_excerpt_transformative_summary',
+      ], source.source_key).toContain(row.legal_storage_policy);
+    }
   });
 });
 

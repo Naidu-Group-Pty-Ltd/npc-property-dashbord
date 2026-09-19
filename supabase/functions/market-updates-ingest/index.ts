@@ -314,19 +314,41 @@ Deno.serve(async (req) => {
     const decision = decideRegistrySeed({ total: totalCount ?? 0 });
     if (decision.seed) {
       const rows = seedRows(decision.sources);
-      // `ignoreDuplicates` so a repeat, or two runs racing, add nothing twice.
-      // A failure is logged and then ignored: the run reports the condition it
-      // already had rather than a second, more confusing one about the repair.
-      const { error: seedError } = await sb
-        .from("market_sources")
-        .upsert(rows, { onConflict: 'source_key', ignoreDuplicates: true });
-      if (seedError) {
-        console.error('[market-updates-ingest] registry self-seed failed:', seedError.message);
-        logMarketEvent('error',{function:'market-updates-ingest',stage:'registry_seed',correlation_id:correlationId,status:'failed',run_id:run.id});
-      } else {
+      /*
+        A PLAIN INSERT, NOT AN UPSERT.
+
+        The only unique index on `source_key` is PARTIAL —
+        `create unique index market_sources_source_key_uidx on
+        public.market_sources(source_key) where source_key is not null`. Postgres
+        will infer a partial index for ON CONFLICT only when the statement
+        repeats its predicate, which is why the seeding migrations all write
+        `on conflict(source_key) where source_key is not null`. PostgREST's
+        `on_conflict=` emits no predicate, so an upsert here answers 42P10
+        "no unique or exclusion constraint matching the ON CONFLICT
+        specification" — on every deployment, every time, into a catch that
+        logs and carries on. The repair would never once have run.
+
+        A plain insert is right anyway: this only ever acts on an EMPTY
+        registry, so there is nothing to conflict with. The one case left is
+        two runs racing, and 23505 from the loser means the winner filled it —
+        which is the outcome either way.
+      */
+      const { error: seedError } = await sb.from("market_sources").insert(rows);
+      if (!seedError) {
         seeded = rows.length;
         console.log('[market-updates-ingest] registry self-seeded from the built-in catalogue:', rows.length, 'source(s)');
         logMarketEvent('info',{function:'market-updates-ingest',stage:'registry_seed',correlation_id:correlationId,status:'seeded',run_id:run.id});
+      } else if (seedError.code === '23505') {
+        // Another run seeded first. The re-read below is what decides whether
+        // there is anything to ingest from, so treat this as filled and verify.
+        seeded = rows.length;
+        console.log('[market-updates-ingest] registry seeded concurrently by another run');
+        logMarketEvent('info',{function:'market-updates-ingest',stage:'registry_seed',correlation_id:correlationId,status:'seeded_concurrently',run_id:run.id});
+      } else {
+        // Logged and then ignored: the run reports the condition it already
+        // had rather than a second, more confusing one about the repair.
+        console.error('[market-updates-ingest] registry self-seed failed:', seedError.code, seedError.message);
+        logMarketEvent('error',{function:'market-updates-ingest',stage:'registry_seed',correlation_id:correlationId,status:'failed',run_id:run.id});
       }
     }
 
