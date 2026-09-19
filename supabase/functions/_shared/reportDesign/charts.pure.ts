@@ -927,15 +927,31 @@ export function renderBars(
   const h = padT + items.length * rowH + padB;
   const max = (opts.max ?? Math.max(...items.map((i) => Math.abs(i.value)))) || 1;
 
-  const toneColour = (tone: BarItem['tone'], pct: number) => {
+  /*
+   * Colour is chosen, never derived from size.
+   *
+   * This used to read `pct >= 0.66 ? positive : pct >= 0.4 ? accent : pct >=
+   * 0.2 ? caution : negative` under the comment "magnitude reads as strength",
+   * and on a distance chart that is exactly inverted. Measured on page 12 of
+   * the Cowra Compass (`max=3`, kilometres): the primary school at 0.7 km —
+   * the NEAREST amenity — was drawn amber as a warning, and the hospital at
+   * 2.0 km, the furthest, was drawn green as a success. The same default
+   * painted the risk wheel, where 75 ("Transport reliance", the worst of six)
+   * read as the good news.
+   *
+   * There is no reading of a bar's length that tells a renderer whether long
+   * is good. A caller that knows says so with `tone`; a caller that does not
+   * gets one accent for every bar, which is what a comparison of like things
+   * should look like anyway — the differing lengths already carry the
+   * comparison, and spending four hues on it adds a meaning the data has not
+   * got. Colour then stops being the only channel, which is the other half of
+   * the same rule.
+   */
+  const toneColour = (tone: BarItem['tone']) => {
     if (tone === 'positive') return ctx.palette.positive;
     if (tone === 'caution') return ctx.palette.caution;
     if (tone === 'negative') return ctx.palette.negative;
-    if (tone === 'accent') return ctx.palette.accent;
-    // Unspecified: magnitude reads as strength, which is the original behaviour.
-    return pct >= 0.66 ? ctx.palette.positive
-      : pct >= 0.4 ? ctx.palette.accent
-        : pct >= 0.2 ? ctx.palette.caution : ctx.palette.negative;
+    return ctx.palette.accent;
   };
 
   const rows = items.map((it, i) => {
@@ -946,7 +962,7 @@ export function renderBars(
       ?? `${Number.isInteger(it.value) ? String(it.value) : it.value.toFixed(1)}${opts.unit ?? ''}`;
     return text(ctx, w, { x: labelW, y: y + 17, pt: 'micro', fill: ctx.palette.ink, anchor: 'end' }, svgEscape(it.label))
       + `<rect x="${barX}" y="${y + 8}" width="${barW}" height="12" fill="${ctx.palette.groundAlt}" rx="2"/>`
-      + `<rect x="${barX}" y="${y + 8}" width="${bw.toFixed(1)}" height="12" fill="${toneColour(it.tone, pct)}" rx="2"/>`
+      + `<rect x="${barX}" y="${y + 8}" width="${bw.toFixed(1)}" height="12" fill="${toneColour(it.tone)}" rx="2"/>`
       + text(ctx, w, { x: barX + barW + 10, y: y + 17, pt: 'micro', fill: ctx.palette.ink, weight: 700, tabular: true }, svgEscape(display));
   }).join('');
 

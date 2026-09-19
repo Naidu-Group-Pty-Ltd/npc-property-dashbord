@@ -220,9 +220,11 @@ export function renderVizDirective(
 
   switch (d.kind) {
     case 'bars':
-      if (d.refused?.length) {
+      if (d.basisWithheld || d.refused?.length) {
         return asTable(
-          (d.sources ?? []).map(splitRefusedItem),
+          d.sources?.length
+            ? d.sources.map(splitRefusedItem)
+            : d.items.map((i) => ({ label: i.label, value: i.display ?? String(i.value) })),
           d.unit ? `Value (${d.unit})` : 'Value',
         );
       }
@@ -233,6 +235,12 @@ export function renderVizDirective(
       ));
 
     case 'donut':
+      if (d.basisWithheld) {
+        return asTable(
+          d.segments.map((sg) => ({ label: sg.label, value: sg.display ?? String(sg.value) })),
+          'Share',
+        );
+      }
       if (d.refused?.length) {
         return asTable((d.sources ?? []).map(splitRefusedItem), 'Share');
       }
@@ -266,7 +274,14 @@ export function renderVizDirective(
     case 'margin': {
       // A sidenote, not a chart: the directive's whole purpose is to push
       // secondary context out of the main column. The spark rides inside it.
-      const spark = d.spark.length >= 2 ? renderMarginSpark(ctx, d.spark) : '';
+      //
+      // Where the basis is withheld the SIDENOTE stays and the plot goes: the
+      // heading and the note are the model's own prose about the area, which
+      // the contract does not touch, while the line is the claim that the
+      // quantity was measured. On page 11 of the Cowra Compass that line drew
+      // a full-height red decline from a 0.8% movement in a series the
+      // client-safe gate had already refused to publish.
+      const spark = !d.basisWithheld && d.spark.length >= 2 ? renderMarginSpark(ctx, d.spark) : '';
       const body = (d.heading ? `<p><strong>${escapeHtml(d.heading)}</strong></p>` : '')
         + (d.note ? `<p>${escapeHtml(d.note)}</p>` : '')
         + spark;
@@ -280,6 +295,15 @@ export function renderVizDirective(
     }
 
     case 'pictograph':
+      // The icons are the claim: ten houses with seven filled asserts a
+      // measured share of a population. Withheld, it becomes the one row it
+      // always was, with the model's own label and figure kept verbatim.
+      if (d.basisWithheld) {
+        return asTable(
+          [{ label: d.label ?? d.sub ?? 'Proportion', value: `${d.filled} in ${d.total}` }],
+          'Stated proportion',
+        );
+      }
       return wrap(renderPictograph(drawCtx, d.filled, d.total, {
         icon: d.icon, label: d.label, sub: d.sub, cols: d.cols,
       }));

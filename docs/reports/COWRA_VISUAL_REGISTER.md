@@ -238,3 +238,40 @@ Alongside those, five losses that *are* visible once looked for:
 
 Each is carried by a named module and a test in the sections that follow this
 register.
+
+---
+
+## 8. What was built against this register
+
+Committed on `claude/reporting-engine-audit-4850hs`, each traceable to a row
+above.
+
+| Module | Rule | Register rows it closes |
+|---|---|---|
+| `vizDirectives.pure.ts` | a `timeline` label may contain a comma; a `bars` item that cannot be plotted is REPORTED, not skipped | 5, 7, 8, 18 |
+| `vizFigures.pure.ts` | a chart that cannot plot everything it was given is set as a table of its own labels, in the model's own order | 7, 18 |
+| `chartEvidence.pure.ts` | a rating the engine did not record, a share of a population the record does not hold, and a series the client-safe gate refused are withheld from the DRAWING | 1, 2, 3, 4, 10, 11, 12, 13, 14, 15, 17 |
+| `chartScale.pure.ts` | one scale per quantity per document | 6, 7 |
+| `charts.pure.ts` | colour is chosen, never derived from magnitude | 6, 7, 14 |
+| `derivedHygiene.pure.ts` | all of the above run on the READ path, so a stored document and every child forked from it are reached | all |
+| `fork-investment-report` | the contract runs on the child as it is written, and a QA error reaches `validation_flags` and `client_ready` | all |
+
+Measured on this document, through `presentStoredMarkdown` with its own record:
+
+| | before | after |
+|---|---|---|
+| gauges drawn | 3 | **0** |
+| risk wheels drawn | 1 | **0** |
+| rating bars drawn | 3 | **0** |
+| population donuts drawn | 2 | **0** (tabulated, every label and figure kept) |
+| population pictographs drawn | 1 | **0** (tabulated) |
+| population sparklines drawn | 1 | **0** (the sidenote's prose stays) |
+| distance charts on one scale | no — 3 and 5 | **yes — 5 and 5** |
+| amenity rows reaching the page | 1 of 5 | **5 of 5** |
+| timeline bands reaching the page | 3 of 4, 1 of 3 | **4 of 4, 3 of 3** |
+| non-blank prose lines | 231 | **231, byte-identical** |
+| headings | 44 | **44** |
+
+The last two rows are the constraint that made the rest safe: **§2 asks for the
+material finding and the next action to be preserved, and they live in the
+prose.** Nothing this work does can reach a sentence.

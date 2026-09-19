@@ -102,13 +102,13 @@ export interface TileEntry { label: string; value: string; sub?: string; intensi
 export interface GlanceItem { symbol: string; text: string }
 
 export type VizDirective =
-  | { kind: 'bars'; items: LabelledValue[]; title?: string; max?: number; unit?: string; refused?: string[]; sources?: string[] }
-  | { kind: 'donut'; segments: LabelledValue[]; title?: string; center?: string; centerSub?: string; refused?: string[]; sources?: string[] }
+  | { kind: 'bars'; items: LabelledValue[]; title?: string; max?: number; unit?: string; refused?: string[]; sources?: string[]; basisWithheld?: true }
+  | { kind: 'donut'; segments: LabelledValue[]; title?: string; center?: string; centerSub?: string; refused?: string[]; sources?: string[]; basisWithheld?: true }
   | { kind: 'gauge'; value: number; max: number; label?: string; caption?: string }
   | { kind: 'glance'; items: GlanceItem[] }
   | { kind: 'heatmap'; grid: number[][]; rowLabels: string[]; colLabels: string[]; title?: string }
-  | { kind: 'margin'; label?: string; note?: string; spark: number[]; heading?: string }
-  | { kind: 'pictograph'; filled: number; total: number; icon: 'person' | 'house' | 'dollar'; label?: string; sub?: string; cols?: number }
+  | { kind: 'margin'; label?: string; note?: string; spark: number[]; heading?: string; basisWithheld?: true }
+  | { kind: 'pictograph'; filled: number; total: number; icon: 'person' | 'house' | 'dollar'; label?: string; sub?: string; cols?: number; basisWithheld?: true }
   | { kind: 'quadrant'; points: QuadrantDot[]; xLabel?: string; yLabel?: string; xMax?: number; yMax?: number; title?: string; q1?: string; q2?: string; q3?: string; q4?: string }
   | { kind: 'tiles'; tiles: TileEntry[]; title?: string; cols?: number }
   | { kind: 'timeline'; items: TimelineEntry[]; title?: string }
@@ -418,6 +418,17 @@ export function splitRefusedItem(item: string): { label: string; value: string }
   return { label: trimmed, value: '' };
 }
 
+/**
+ * `basis=withheld` — the chart-evidence contract's own mark.
+ *
+ * It rides in the directive's option syntax so every parser on every path
+ * already reads it, which is what lets the contract reach the fork, the
+ * condensation and both renderers without a second channel. It withholds a
+ * DRAWING and never a figure: the values stay exactly as written and the
+ * renderer sets them as a table.
+ */
+const BASIS_WITHHELD = 'withheld';
+
 export function parseVizDirective(kind: string, body: string): VizDirective | null {
   const k = kind.toLowerCase() as VizDirectiveKind;
   if (!VIZ_DIRECTIVE_KINDS.includes(k)) return null;
@@ -426,6 +437,7 @@ export function parseVizDirective(kind: string, body: string): VizDirective | nu
   const positionalKinds = k === 'gauge' || k === 'glance';
   const { payload, options, positional } = segments(body, positionalKinds);
 
+  const withheld = String(options.basis ?? '').trim().toLowerCase() === BASIS_WITHHELD;
   switch (k) {
     case 'bars': {
       const { values, refused, sources } = labelledValues(payload);
@@ -441,6 +453,7 @@ export function parseVizDirective(kind: string, body: string): VizDirective | nu
         // built from survivors-then-refusals reorders the reader's list, and
         // on a proximity chart that order is the finding.
         ...(refused.length ? { refused, sources } : {}),
+        ...(withheld ? { basisWithheld: true as const } : {}),
       };
     }
 
@@ -451,6 +464,7 @@ export function parseVizDirective(kind: string, body: string): VizDirective | nu
         kind: 'donut', segments: values, title: options.title,
         center: options.center, centerSub: options.centersub,
         ...(refused.length ? { refused, sources } : {}),
+        ...(withheld ? { basisWithheld: true as const } : {}),
       };
     }
 
@@ -489,7 +503,11 @@ export function parseVizDirective(kind: string, body: string): VizDirective | nu
     case 'margin': {
       const spark = csv(options.spark).map(Number).filter((n) => Number.isFinite(n));
       if (!spark.length && !options.note) return null;
-      return { kind: 'margin', heading: payload || undefined, label: options.label, note: options.note, spark };
+      return {
+        kind: 'margin', heading: payload || undefined, label: options.label,
+        note: options.note, spark,
+        ...(withheld ? { basisWithheld: true as const } : {}),
+      };
     }
 
     case 'pictograph': {
@@ -499,6 +517,7 @@ export function parseVizDirective(kind: string, body: string): VizDirective | nu
       return {
         kind: 'pictograph', filled: Number(m[1]), total: Number(m[2]),
         icon, label: options.label, sub: options.sub, cols: num(options.cols),
+        ...(withheld ? { basisWithheld: true as const } : {}),
       };
     }
 
