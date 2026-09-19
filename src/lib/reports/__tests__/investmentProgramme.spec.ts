@@ -43,7 +43,7 @@ const answer = () => JSON.parse(
 );
 const parsed = () => {
   const out = parseQtripAnswer(answer(), CURRENT, SUBJECT, PROGRAMME_RADIUS_KM);
-  if (!out.ok) throw new Error(out.reason);
+  if (!out.ok) throw new Error((out as Extract<ProgrammeParse, { ok: false }>).reason);
   return out;
 };
 
