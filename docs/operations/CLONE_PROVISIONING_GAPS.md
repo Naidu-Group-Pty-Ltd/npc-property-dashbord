@@ -78,9 +78,34 @@ widens what any tenant can bill to the prime.
 Until that ships, a clone scrape still falls through to the model search and
 still draws the provenance warning, which is exactly today's behaviour.
 
-The alternative — a Firecrawl key per clone — was rejected: a spend-bearing
-credential on every tenant project, a key to mint and rotate per tenant, and
-every clone provisioned tomorrow still starting with no page-read capability.
+### What an operator can do today, without waiting for the broker
+
+The audit's own wording for this item — *add `FIRECRAWL_API_KEY` on the clone's
+Integrations page* — is performable right now, and it was checked end to end
+rather than assumed:
+
+* the **Firecrawl** card exists on the Integrations page under Automation, with
+  one required field, `FIRECRAWL_API_KEY`;
+* that name is in `ALLOWED_INTEGRATION_SECRETS` and is **not** one of the six
+  `LISTINGS_PIPELINE_SECRETS` the page refuses, so the write is accepted;
+* `update-integration-secret` puts it in the **project environment** — on a
+  clone through Mission Control's broker, because a clone must never hold the
+  Supabase management token — which is where
+  `Deno.env.get("FIRECRAWL_API_KEY")` reads it from.
+
+Saving it requires a superadmin and a recent reauthentication
+(`step_up`, capability `secrets.update`).
+
+**Doing this now does not conflict with the broker.** `resolvePageReadRoute`
+returns `direct` whenever a key is held and only falls to `broker` when none
+is, so a key set today is used today, and clearing it later hands the same
+deployment to Mission Control with no code change and nothing to undo.
+
+The cost is the reason it is not the fleet answer, not a reason to avoid it on
+one deployment: a spend-bearing credential on a tenant project, a key to mint
+and rotate per tenant, and every clone provisioned tomorrow still starting with
+no page-read capability at all. Use it to unblock a specific clone; use the
+broker to stop the problem recurring.
 
 ## 3. Builder Stock
 
