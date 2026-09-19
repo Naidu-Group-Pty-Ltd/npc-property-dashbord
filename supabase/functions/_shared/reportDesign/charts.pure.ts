@@ -1263,12 +1263,27 @@ export function renderDonut(
   // The sub-label only fits inside the hole at full size; in the stacked
   // layout the ring is smaller and it would overlap the figure. It is fitted
   // to the hole's width, on up to two lines, rather than drawn through the ring.
-  const subLines = stacked ? [] : fitLines(
+  /*
+   * The hole's label is drawn WHOLE or not at all.
+   *
+   * `fitLines` ends an overlong run with an ellipsis, which inside a ring is
+   * the worst place for one: the Cowra Compass printed "FAMILY HOUSEHOL…" on
+   * page 19 and "OFFICIAL STATISTI…" on page 30, each directly beside a
+   * legend row carrying the same words in full. §7 asks for truncated labels
+   * to be eliminated, and here the elimination costs nothing — the reader
+   * loses a restatement, not a fact.
+   *
+   * A wider ring is not the answer either: the hole is sized by the drawing,
+   * and growing it to fit an arbitrary label shrinks the ring the segments
+   * are read from.
+   */
+  const fitted = stacked ? [] : fitLines(
     (opts.centerSub ?? segments[0]?.label ?? '').toUpperCase(),
     2 * r - 12,
     unitsPerChar(ctx, w, 'micro', true) + ptToUnits(1, w, ctx.widthMm),
     2,
   );
+  const subLines = fitted.some((l) => l.endsWith('…')) ? [] : fitted;
   const centerSub = subLines.map((line, i) => text(ctx, w,
     { x: cx, y: cy + 20 + i * 13, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle', tracking: 1 },
     svgEscape(line))).join('');
@@ -1489,15 +1504,43 @@ export function renderTimelineRibbon(
   const labelUnits = step - gap * 2;
   const labelChar = unitsPerChar(ctx, w, 'micro');
 
-  const phaseOf = (p: string) => {
-    const s = p.toLowerCase();
-    if (/existing|now|current/.test(s)) return 'Existing';
-    if (/0\s*-?\s*2|short/.test(s)) return '0-2y';
-    if (/3\s*-?\s*5|medium/.test(s)) return '3-5y';
-    return '5y+';
+  /*
+   * Which stop an item belongs to — or none, which is not the same as 5y+.
+   *
+   * Two faults, both measured on the Cowra Compass's second timeline. The
+   * range separators were `-?`, a plain hyphen, so `0–2y` and `3–5y` written
+   * with EN-DASHES matched neither branch; and the function ended
+   * `return '5y+'`, so both fell through to it. The rendered page put
+   * "Ongoing park & sportsfield maintenance" — the model's NEXT TWO YEARS —
+   * under "5Y+", and stacked a second item on top of it.
+   *
+   * Placing an unrecognised phase at the far end of an axis is inventing a
+   * horizon, which is exactly what §3 forbids: unknown timing stays unknown.
+   * So the separator now admits every dash a model writes, and anything still
+   * unrecognised returns null and the ribbon refuses — the caller tabulates
+   * the model's own phase words instead, which is the only honest reading.
+   */
+  const DASH = '[-–—]';
+  const phaseOf = (p: string): string | null => {
+    const t = p.toLowerCase().trim();
+    if (/existing|now|current|today|in\s+place/.test(t)) return 'Existing';
+    if (new RegExp(`0\\s*(?:${DASH}|to)?\\s*2|short(?:[-\\s]?term)?`).test(t)) return '0-2y';
+    if (new RegExp(`3\\s*(?:${DASH}|to)?\\s*5|medium(?:[-\\s]?term)?`).test(t)) return '3-5y';
+    if (/\b5\s*(?:y|yr|year)?s?\s*\+|beyond|long(?:[-\s]?term)?/.test(t)) return '5y+';
+    return null;
   };
   const grouped = new Map<string, TimelineItem[]>(phases.map((p) => [p, []]));
-  for (const it of items) grouped.get(phaseOf(it.phase))?.push(it);
+  for (const it of items) {
+    const phase = phaseOf(it.phase);
+    // One unreadable phase and the whole ribbon declines: drawing the rest
+    // would print a pipeline missing a stage with nothing to say so.
+    if (phase === null) return '';
+    grouped.get(phase)?.push(it);
+  }
+  // A stop draws two items. A third would be dropped silently, and a dropped
+  // milestone leaves no mark on the page — the defect this whole pass is
+  // about.
+  for (const list of grouped.values()) if (list.length > 2) return '';
 
   const markers = phases.map((phase, i) => {
     const x = padX + i * step;
@@ -1513,9 +1556,26 @@ export function renderTimelineRibbon(
     const last = phases.length - 1;
     const anchor = i === 0 ? 'start' : i === last ? 'end' : 'middle';
     const labelX = i === 0 ? edge : i === last ? w - edge : x;
-    // Each item wraps to at most two lines of the marker's measure; what does
-    // not fit is cut with an ellipsis by `fitLines` rather than allowed to run.
-    const rows = list.flatMap((it, j) => fitLines(it.label, labelUnits, labelChar, 2).map((line) => ({ line, weight: j === 0 ? 700 : 500 })));
+    /*
+     * A milestone gets the lines it needs, and the drawing grows for them.
+     *
+     * Two lines cut five labels on the Cowra Compass — "Redfern St,
+     * hospital,…", "sportsfield maintenance,…", "community facility…",
+     * "community and civic…", "transport improvements…" — so the reader was
+     * told a pipeline stage exists and not what it is. §4's rule is to
+     * increase the component's space before shrinking its text, and the space
+     * is already elastic: `deepest` below sizes the drawing to the tallest
+     * stack, so more lines cost height rather than legibility.
+     *
+     * Four, not unbounded. A marker whose measure is a quarter of the width
+     * cannot absorb a sentence, and a stop that needed more than four lines
+     * would push the ribbon past a page on its own; `fitLines` still ends the
+     * last line with an ellipsis in that case, which is now the rare
+     * exception rather than the ordinary outcome. Where BOTH items at a stop
+     * are long the pair shares the budget, so two of four each.
+     */
+    const linesPerItem = list.length > 1 ? 2 : 4;
+    const rows = list.flatMap((it, j) => fitLines(it.label, labelUnits, labelChar, linesPerItem).map((line) => ({ line, weight: j === 0 ? 700 : 500 })));
     const labels = rows.map((row, k) => text(ctx, w,
       { x: labelX, y: axisY + 36 + k * lineStep, pt: 'micro', fill: ctx.palette.ink, anchor, weight: row.weight },
       svgEscape(row.line))).join('');

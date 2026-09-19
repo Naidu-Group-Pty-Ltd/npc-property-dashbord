@@ -322,7 +322,18 @@ export function renderVizDirective(
       ));
 
     case 'timeline':
-      return wrap(renderTimelineRibbon(ctx, d.items, { title: d.title }));
+      /*
+       * The ribbon has four fixed stops, so it can only draw a phase it
+       * recognises and at most two items per stop. It refuses otherwise, and
+       * a refusal must not delete the milestones — placing an unreadable
+       * phase at the far end of the axis is inventing a horizon, which is
+       * what §3 forbids, and the Cowra Compass printed the model's NEXT TWO
+       * YEARS under "5Y+" for exactly that reason.
+       *
+       * Tabulated, the reader gets the model's own phase words verbatim.
+       */
+      return wrap(renderTimelineRibbon(ctx, d.items, { title: d.title }))
+        ?? asTable(d.items.map((i) => ({ label: i.phase, value: i.label })), 'Milestone');
 
     case 'waterfall':
       return wrap(renderWaterfall(ctx, d.items, { mode: 'money' }));
