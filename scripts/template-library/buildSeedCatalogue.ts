@@ -258,6 +258,13 @@ const REPO = resolve(__dirname, '../..');
  * Run the same one-query check before editing this file: if
  * `20261204020000` is already recorded, the next change needs a v16.
  */
+/**
+ * The identifier this release records against a baseline and against a
+ * refreshed master. It is the seed migration's own basename, so a row that
+ * says it carries this release names the artefact that put it there.
+ */
+const RELEASE_ID = '20261204020000_seed_template_library_v15_running_head_and_columns';
+
 const MIGRATION = resolve(
   REPO,
   'supabase/migrations/20261204020000_seed_template_library_v15_running_head_and_columns.sql',
@@ -573,6 +580,44 @@ function main(): void {
 -- and never duplicates them. Rows an operator promoted themselves are matched
 -- by neither slug nor version and are therefore never touched.
 -- =====================================================================
+
+-- ── The baseline this release is judged against ───────────────────────────
+--
+-- Captured BEFORE the upsert below, because the upsert overwrites \`schema\` in
+-- place: \`ON CONFLICT (slug, version)\` with \`version\` = 1 for every entry, so
+-- there is exactly one row per slug and the previous release's schema is gone
+-- the moment this statement runs. Nothing else in the database retains it.
+--
+-- What it is for: the refresh that follows this seed must not replace a master
+-- a tenant has edited. It can only know that by comparing the tenant's copy
+-- against what the library held when they took it — which is this digest.
+--
+-- \`tokens.colors\` is removed before hashing, and ONLY that path, because
+-- \`applyColourwayToSchema\` spreads \`...tokens\` and replaces \`colors\` alone.
+-- So a supported colourway difference is accounted for exactly, and a tenant's
+-- typeface (\`tokens.fonts\`), page, block, section, binding or branding is
+-- fully visible to the comparison rather than hidden by a loose exclusion.
+--
+-- jsonb's text form is canonical — keys sorted, whitespace normalised — so the
+-- digest is stable across writes and comparable between rows.
+CREATE TABLE IF NOT EXISTS public.template_library_release_baselines (
+  entry_id uuid NOT NULL,
+  release text NOT NULL,
+  schema_digest text NOT NULL,
+  captured_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (entry_id, release)
+);
+
+COMMENT ON TABLE public.template_library_release_baselines IS
+  'Digest of each library entry schema as it stood immediately BEFORE a seed release overwrote it, so a later refresh can prove whether an adopted copy is unedited. Service role only.';
+
+ALTER TABLE public.template_library_release_baselines ENABLE ROW LEVEL SECURITY;
+
+INSERT INTO public.template_library_release_baselines (entry_id, release, schema_digest)
+SELECT e.id, '${RELEASE_ID}', md5((e.schema #- '{tokens,colors}')::text)
+FROM public.template_library_entries e
+WHERE e.schema IS NOT NULL
+ON CONFLICT (entry_id, release) DO NOTHING;
 
 INSERT INTO public.template_library_entries (
   slug, version, name, description,
