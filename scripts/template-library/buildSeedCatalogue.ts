@@ -247,12 +247,20 @@ const REPO = resolve(__dirname, '../..');
  * name takes the rest, at least 152 pt everywhere. Re-measured: 0 of 50
  * overlap, 0 of 400 rows wrap.
  *
+ * The version is `20261204020000`, not `...000000`: two other migrations
+ * already hold `20261204000000` and `20261204010000`, and
+ * `check-migration-version-collisions.mjs` is right that one version records
+ * one ledger row, so a second file at that version can never be told apart
+ * from applied. And a seed alone is not the change — `20261204030000`
+ * re-copies the ACTIVE masters from it, because an adopted master is a COPY
+ * and nothing else updates a copy after adoption.
+ *
  * Run the same one-query check before editing this file: if
- * `20261204000000` is already recorded, the next change needs a v16.
+ * `20261204020000` is already recorded, the next change needs a v16.
  */
 const MIGRATION = resolve(
   REPO,
-  'supabase/migrations/20261204000000_seed_template_library_v15_running_head_and_columns.sql',
+  'supabase/migrations/20261204020000_seed_template_library_v15_running_head_and_columns.sql',
 );
 
 /** Postgres string literal, dollar-quoted so JSON never has to be escaped. */

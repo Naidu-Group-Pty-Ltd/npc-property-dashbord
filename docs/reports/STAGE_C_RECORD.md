@@ -126,7 +126,7 @@ editing v14 is correct only if it had not.
   Details Form, 50 Cash Flow Comparison, 50 Report Q&A, 50 Commercial &
   Industrial Capacity, 50 Market Intelligence
   477 production-ready, 66 preview-only
-  → 20261204000000_seed_template_library_v15_running_head_and_columns.sql (40,679 KB)
+  → 20261204020000_seed_template_library_v15_running_head_and_columns.sql (40,679 KB)
 ```
 
 The master changes are in it, by count against v14:
@@ -142,6 +142,37 @@ The third change is the constraints table's column widths, which the QA gate
 measured directly (`0 of 50 overlap, 0 of 400 rows wrap`) and which
 `commercialCapacityCatalogue.spec.ts` fails on the old values — all three come
 from one generation off one source tree, in one run.
+
+### Two things the first attempt got wrong, both caught by a gate
+
+**The version collided.** `20261204000000` is already carried by
+`20261204000000_client_files_bucket_and_accrual_repair.sql`, and
+`20261204010000` by `20261204010000_email_followup_reminders.sql`.
+`check-migration-version-collisions.mjs` failed the `security` job and is right
+about why: *one version records one ledger row, so the others can never be told
+apart from applied.* The seed is **`20261204020000`**.
+
+**And a seed alone is not the change.** The v14 refresh's own comment states
+it: *"adopted masters are COPIES, and nothing else updates a copy after
+adoption. A library seed alone changes what a NEW adoption gets and leaves
+every document people already generate drawing the old page."* Seeding the
+library without refreshing the active masters would have changed the running
+head for a future adoption and left every existing report drawing
+`Part 03 · Report` — the silent half-fix this programme keeps finding, in the
+release step itself.
+
+So **`20261204030000_refresh_active_masters_from_library_v15.sql`** follows it,
+with the mechanics of the v13 and v14 refreshes unchanged: the entry's current
+schema with **this row's own token colours carried forward** (the colourway
+bake is exactly that merge, so no palette is invented), `entryVersion` advanced
+so the picker keeps recognising the copy, and rows with no library lineage,
+inactive drafts and rows the library no longer lists left untouched.
+Idempotent.
+
+Re-run: `check-migration-version-collisions.mjs` **passes** (997 files, 32
+frozen collisions over 77 files, **0 new**), `check-migration-security.mjs`
+passes (96 migrations at or after 20260909000000), gate wiring and gate-env
+wiring pass.
 
 `npm run templates:library:verify`: **30 files, 2,869 tests passed.**
 `npx tsc --noEmit` clean.
