@@ -249,6 +249,88 @@ Two more, recorded rather than fixed, because both need the regeneration:
   *"⚠ Off-street parking to be confirmed on inspection"*. `property_specs`
   holds `parking: 1`. One record, three confidences.
 
+### 3.6 An interest-only label over a principal-and-interest loan — FIXED
+
+The Financial Analysis prints the loan on one table. On `8b0c7c8d` it read:
+
+| Item | Value |
+|---|---|
+| Loan type | Interest only |
+| Interest-only period | 2 years, then principal and interest |
+| Monthly repayment (first year) | $2,806 |
+| Annual repayments (first year) | $33,677 |
+
+and the **"Loan structure" row did not print at all.**
+
+$2,806 is not an interest-only repayment on $444,000 at 6.5%. Executed:
+`buildLoanLedger` for the record's own stated product and term gives
+`firstMonthlyPayment` **2,405.00** and a year-one debt service of **28,860**.
+The gap is **$401 a month, $4,817 a year**, on the page a client reads the
+loan from.
+
+**The stored figure is the thirty-year principal-and-interest schedule, to
+the cent.** Measured on all three independent parents in the retained set —
+the only three there are, since the other 89 rows are forks of them:
+
+| record | loan | stored monthly | stated product's schedule | P&I schedule | agreement with P&I |
+|---|---|---|---|---|---|
+| `09f8569e` Cowra | $444,000 @ 6.5% | 2,806.38 | 2,405.00 | 2,806.38 | $0.0000 |
+| `c21ed1fa` | $440,000 @ 6.5% | 2,781.10 | 2,383.33 | 2,781.10 | $0.0007 |
+| `c6ed90e6` | $391,200 @ 6.5% | 2,472.65 | 2,119.00 | 2,472.65 | $0.0001 |
+
+That is **QA-04 exactly** — the interest-only label as a display override no
+arithmetic ever read — and it was **fixed at the writer and never at the
+reader.** `financial-calculator-service` has published `monthlyPayment =
+ledger.firstMonthlyPayment`, `annualPayment` and `structure` since the ledger
+was wired into it on **15 Sep 2026** (`e6dd0a959`), so the live writer is
+correct and every one of these rows predates it. `financialChapters` prints
+`structure` in the row directly under "Loan type" *precisely so this reads as
+one reconciled fact* — its own comment says so. And **`structure` is absent on
+92 of 92 stored reports holding a loan block**, so on every one of them that
+row does not print and the reader is left with the contradiction the row
+exists to reconcile.
+
+Not a historical artefact: 88 of those 92 are forks made on **18 and 19
+September**, and the fork carries its parent's finance block forward
+unrepaired.
+
+**The fix is a sentence derived on READ, from the figures and never from the
+label.** `describeStoredLoanStructure` runs the record's own terms through the
+one ledger and asks which schedule the stored repayment belongs to:
+
+- it matches the product the record names → the row simply predates the field,
+  and `describeLoanStructure` prints as it always would;
+- it matches principal and interest from month one → **both are stated and
+  neither is corrected**, because the loan offer settles which is right and
+  this module has never seen it;
+- it matches neither → **nothing is derived**. That is `healFinanceIdentity`'s
+  rule and the same reasoning: a repair that cannot say which figure is sound
+  is just a third opinion.
+
+The tolerance is **$1**, and it is measured rather than chosen: the three
+records agree with their schedule by $0.0000–$0.0007 while the two candidate
+schedules are $353–$401 apart, so no rounding and no near-miss can decide it.
+
+It lands in `reconcileStoredFinancials`, the one read-path healer the fork,
+the binding projection, the cash-flow projection and the fact contract all
+already call — so it reaches every reader with **no migration and no stored
+byte overwritten**, which the test asserts by comparing the input object
+before and after. Executed on `8b0c7c8d`, the row now prints:
+
+> **Loan structure** — Principal and interest over 30 years — the schedule
+> these repayments were calculated on. The record separately states interest
+> only for 2 years, which the repayment figures do not reflect.
+
+with `$2,806`, `$33,677`, `Interest only` and `2 years` all exactly as stored.
+**Nothing here changes a number**, which is what §5's preservation requires:
+the projections, the sensitivity and the CGR are untouched, and what changes
+is that the document no longer asserts two incompatible things in silence.
+
+`StoredFinancialsReconciliation.loanStructureDerived` and the fact contract's
+`integrity.readTimeHealing` carry the basis, so an audit reading can tell a
+row that predated the field from one whose figures contradict its label. 9
+specs.
+
 ---
 
 ## 4. What Stage B has not closed
@@ -258,3 +340,6 @@ Two more, recorded rather than fixed, because both need the regeneration:
 3. **`briefing` and `snapshot` are read on a different property**, because the
    Cowra record has no child of either tier.
 4. The findings in §3.4 and §3.5 are recorded and not fixed.
+5. **The loan-type contradiction is disclosed, not resolved.** §3.6 makes the
+   record say what it holds; which product the borrower actually has is a
+   question for the loan offer, and no repair may answer it from here.
