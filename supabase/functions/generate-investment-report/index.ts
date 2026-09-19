@@ -48,7 +48,6 @@ import {
 } from '../_shared/reports/investment/runProgress.pure.ts';
 import {
   CALL_CEILING_MS,
-  acquisitionExhausted,
   acquisitionWindowMs,
   type AcquisitionBudgetInput,
   type CallClass,
@@ -2199,13 +2198,6 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     ...acquisitionBudgetBase(),
     perCallCeilingMs: CALL_CEILING_MS[callClass],
   });
-
-  /** Whether acquisition must stop issuing calls and hand over. */
-  const acquisitionOutOfTime = (): boolean => {
-    const out = acquisitionExhausted(acquisitionBudgetBase());
-    if (out) acquisitionExhaustedThisRun = true;
-    return out;
-  };
 
   /**
    * An acquisition call, bounded by the run's own clock.
@@ -7028,7 +7020,16 @@ YOUR DEDICATED PROPERTY PARTNER
             total_sections: filteredSections.length,
             updated_at: new Date().toISOString(),
           })
-          .eq('id', reportId);
+          .eq('id', reportId)
+          // A run already in flight when the operator pressed Stop still
+          // finishes its section and lands this write afterwards. Without this
+          // predicate it re-wrote `processing` over the cancellation — the row
+          // went back to looking live, and the watchdog, which claims exactly
+          // `status = 'processing'`, would then resurrect work a person had
+          // explicitly stopped. Matching only the states a live run can be in
+          // makes the write a no-op against a cancelled, failed or completed
+          // row, atomically and with no read to race against.
+          .in('status', ['pending', 'processing']);
       } else if (reportId) {
         console.log(
           '⏸️ No durable progress this invocation — leaving the row untouched so ' +
