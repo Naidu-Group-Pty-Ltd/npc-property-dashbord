@@ -479,3 +479,91 @@ errors across 32 files** at this head. **None of them is in any of the files
 this branch touches** — checked by intersecting the ESLint JSON report against
 `git diff --name-only <merge-base>..HEAD`, which is empty. The accurate
 statement is the narrow one, and it is the one that should have been made.
+
+---
+
+## 6. The clarified product scope, and the verified report inventory
+
+Recorded 19 Sep 2026, from the owner's scope clarification. This section records
+a boundary; it changes no code and authorises no new engineering.
+
+### 6.1 The inventory is 13 formats, and the five are TIERS of one of them
+
+Counted from `REPORT_TEMPLATE_ADAPTERS` in
+`src/lib/reportTemplate/adapters/index.ts`, which is the authority —
+`listReportFormats()` derives from it rather than listing formats again, so
+"formats you can choose a template for" and "formats that have an adapter" are
+the same set by construction.
+
+**Thirteen entries: nine production adapters and four preview-only.**
+
+| # | format key | label | production adapter |
+|---|---|---|---|
+| 1 | `investment` | Investment Report | yes |
+| 2 | `borrowing_capacity` | Borrowing Capacity | yes |
+| 3 | `portfolio` | Portfolio Analysis | yes |
+| 4 | `comparison` | Comparison Report | yes |
+| 5 | `cashflow` | Cash Flow Analysis | yes |
+| 6 | `client_details` | Client Details | yes |
+| 7 | `qa` | Report Q&A | yes |
+| 8 | `commercial_capacity` | Commercial & Industrial Capacity | yes |
+| 9 | `market_intelligence` | Market Intelligence | yes |
+| 10 | `cash_flow_comparison` | Cash Flow Comparison | **preview only** |
+| 11 | `suburb` | Suburb Analysis | **preview only** |
+| 12 | `postcode` | Postcode Analysis | **preview only** |
+| 13 | `statewide` | Statewide Analysis | **preview only** |
+
+**The correction that matters for scoping.** Compass, Financial, Strategic,
+Briefing and Snapshot are **not five formats**. They are the five `ReportTier`
+values of the single `investment` format (`REPORT_TIERS` in
+`sectionRegistry.pure.ts`; `tierContent.pure.ts` keys `compass`, `financial`,
+`strategic`, `briefing`, `snapshot`). So the engine and content work in this PR
+lands on **one of thirteen formats**, across its five purposes — and the
+presentation-only work ahead covers **eight other production formats**, not
+nine and not fourteen.
+
+The four preview-only formats are outside the presentation phase too, and for a
+reason that is not a backlog item: they have no production adapter, so nothing
+generated routes through a template at all. `cash_flow_comparison` states its
+own cause — no comparison is persisted anywhere a template can read.
+
+### 6.2 What this PR's engine and content work applies to
+
+**The `investment` format only, across its five tiers.** These are
+property/opportunity assessments, not personalised client-suitability reports.
+They are produced by the EXISTING generation workflow and its Property,
+Financials, Income and Advanced inputs. No client-intake requirement is added
+and the workflow is not redesigned.
+
+Submitted and accepted assumptions, existing calculations and report ownership
+stand as they are. What the engine work has to keep true is that a **user
+assumption**, an **estimate**, a **calculation** and a **sourced fact** remain
+distinguishable end to end — which is what the acquisition ledger's five
+outcomes, the qualified subject coordinate, the instrument-and-date anchoring
+and the claim rules each exist to hold.
+
+**Removing unsupported content is necessary and is not sufficient.** Nothing in
+this PR may be read as demonstrating substantive completeness: that is an
+acceptance finding taken from real documents, and it is owed by the fresh
+Annabelle and Pallas journeys, not by a gate.
+
+### 6.3 What the other eight production formats get, and what they must not get
+
+Presentation only: complete content mapping into the selected template,
+professional formatting, pagination, readable tables and charts, preserved user
+edits, and faithful preview/export parity. Their **engines, prompts,
+calculations and accepted generated responses are preserved**. Content is not
+rewritten or shortened to fit a template — a template that cannot carry the
+report is composed or the body is paged, which is the rule
+`templateComposition.pure.ts` and `packMarkdownPages` already hold.
+
+This is a **bounded subsequent phase**, not an expansion of this PR. Its scope
+is those eight formats and nothing else.
+
+### 6.4 A deferred master is preserved, never upgraded
+
+For acceptance: a master the v15 refresh classifies `deferred_customised` or
+`deferred_no_baseline` is left exactly as it was and carries no
+`releaseApplied` stamp. It must therefore **not be counted as having received
+the new presentation.** `template_master_refresh_decisions` is what says which
+a given master got, and the reading queries are in the migration's own comment.
