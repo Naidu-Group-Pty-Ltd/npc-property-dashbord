@@ -663,3 +663,81 @@ under `ON CONFLICT (entry_id, release) DO NOTHING`. The terminating clause is th
 catalogue's own `ON CONFLICT (slug, version) DO UPDATE SET` (lines 5509–5530),
 and the trailing `UPDATE … SET status = 'published'` is sent once, after all 55
 row chunks.
+
+### 7.3 The deployment, verified by effect rather than by a green tick
+
+Run **638** succeeded on `1dd8e1ce7` — the Deploy step 11:00:37→11:15:46Z, then
+`verified 342 function(s)` against the CORS contract. `_shared/` changed, so the
+workflow deploys **every** function; the platform was then read back:
+
+| function | version | updated | carries |
+|---|---|---|---|
+| `condense-investment-report` | 406 `ACTIVE` | **11:03:55Z** | `runningChapters`, `NARRATIVE_CHAPTER_SLOTS`, `drawsFinancialModelling` |
+| `planning-data-service` | 317 `ACTIVE` | **11:12:52Z** | `landUsePermissibility`, `planningControlGuide` |
+| `render-template-pdf` | 405 `ACTIVE` | 16 Sep | — |
+| `custom-auth-login-v2` | 386 `ACTIVE` | 7 Sep | — |
+
+The two stale stamps are correct and not a gap. Each function's import graph was
+walked against the 24 `_shared` files this release changed: `render-template-pdf`
+has **0 of 18** and `custom-auth-login-v2` **0 of 15**, so their bundles are
+unchanged and the platform had no new version to make. The ones that did change
+— `generate-investment-report` (14 of 113), `condense-investment-report` (14 of
+49), `fork-investment-report` (12 of 56), `render-investment-report-pdf` (8 of
+31), `planning-data-service` (3 of 22) — carry today's stamps. **A deployment is
+asserted by the identifiers in the served bundle, never by the workflow's
+conclusion.**
+
+### 7.4 What the chunked path does, proven before it was pointed at production
+
+The API route sends the seed as 56 separate statements in 56 separate
+transactions, and the preservation harness has never applied the catalogue
+INSERT at all — it extracts the baseline-capture statement with `sed` and builds
+its own fixture entries. So the path that was about to run had never been
+exercised. It was, twice over.
+
+**Locally**, the real 39.77 MB file was applied to two throwaway databases, one
+whole and one chunked. Entry count, published count and a digest over every
+entry's schema are **identical**. The baseline tables differed — 2 against 540 —
+because in the chunked run an entry that did **not exist beforehand** is captured
+by a later chunk, after its own insert. Both databases agreed on what matters:
+the pre-existing entries hold their **pre-upsert** digest, and it differs from
+the post-upsert schema.
+
+**Whether that difference can arise here** is answered by the v14 apply's own
+log (run #64, 17 Sep): `template_library_entries: 543 → 543 rows`, 56 statements.
+Production already holds all 543 slugs and v15 carries the same 543 tuples, so
+every entry v15 upserts already exists, chunk 1 captures them all before any
+upsert, and every later chunk's copy is a no-op. Two further things that log
+settles: the chunked 56-statement path is the **established** production path, so
+§7.2's fix restores it rather than inventing one; and the `finance` category —
+which a bare schema rejects until `20260813054545` widens the CHECK — applied
+cleanly under an identical vocabulary.
+
+### 7.5 The two migrations, applied
+
+| | run | result |
+|---|---|---|
+| `20261204020000` v15 seed | **#67**, 11:29–11:34Z | success — 56 statements; `template_library_release_baselines`: **absent → 543 rows**; recorded in `schema_migrations` |
+| `20261204030000` active-master refresh | **#68**, 11:37Z | success — **1 statement, whole file**; `template_master_refresh_decisions`: **absent → 16 rows**; recorded in `schema_migrations` |
+
+543 baselines is the whole catalogue, which is what the refresh's proof of
+"unedited" needs. The refresh went as **one** statement because it is 10,658
+bytes, under the applier's 1,000,000-byte split threshold — which is what keeps
+its session-scoped `_v15_classified` alive across the classification and the
+three statements that read it.
+
+**Sixteen active adopted masters were classified.** Two things can be said about
+the split from the logged numbers alone, and the rest cannot:
+
+- **`deferred_no_baseline` is necessarily 0.** The classification joins only
+  entries with `status = 'published'` and a non-null `schema`, and the seed
+  captured a baseline for **every** entry with a non-null schema (543 of 543).
+  No classified row can therefore lack one.
+- **The `already_current` / `refreshed` / `deferred_customised` split is not in
+  any log** — the applier reports before/after row counts, not a group-by. It is
+  recorded here as **PENDING**, obtainable by the query in the refresh
+  migration's own footer comment. It was deliberately **not** obtained through
+  `query_database` or any other direct-SQL route.
+
+A deferred master carries no `releaseApplied` stamp and must not be counted as
+having received v15 (§6.4).
