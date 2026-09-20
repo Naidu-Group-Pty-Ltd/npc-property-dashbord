@@ -28,6 +28,8 @@ import {
   MIN_PLAUSIBLE_CENTRES,
   parseSuaFeatures,
   stateOfSuaCode,
+  isNotAnUrbanCentre,
+  pointFromRings,
 } from '../../../../supabase/functions/_shared/reports/location/urbanCentreIngest.pure';
 import { scoreLocation } from '../market/locationScoring.pure';
 
@@ -295,5 +297,152 @@ describe('a truncated answer is refused rather than pruned against', () => {
   it('still refuses the lying 200 that carries an error body', () => {
     expect(() => parseSuaFeatures({ error: { code: 400 }, features: [] }))
       .toThrow(/error body/i);
+  });
+});
+
+/*
+ * Measured against the live ABS layer on 20 Sep 2026: its FIRST feature is
+ * `1000` / "Not in any Significant Urban Area (NSW)". The classification
+ * partitions the whole country, so one pseudo-area per state carries
+ * everywhere that is NOT an urban centre — published beside the real ones.
+ *
+ * Writing one would be the worst failure this register has available, because
+ * nothing downstream would look wrong: a rural property resolves to exactly
+ * that pseudo-area, `findUrbanCentre` would match it, and the commute would be
+ * SCORED against the centre of "everywhere in NSW that is not a town".
+ */
+describe('the everywhere-else bucket is not an urban centre', () => {
+  const pseudo = (code: string, name: string) => ({
+    attributes: { sua_code_2021: code, sua_name_2021: name },
+    centroid: { x: 147.0, y: -32.0 },
+  });
+
+  it('refuses the row the live layer actually returned', () => {
+    expect(isNotAnUrbanCentre('1000', 'Not in any Significant Urban Area (NSW)')).toBe(true);
+  });
+
+  it('refuses on the CODE alone, whatever the name says', () => {
+    expect(isNotAnUrbanCentre('2000', 'Anything At All')).toBe(true);
+  });
+
+  it('refuses on the NAME alone, whatever the code says', () => {
+    expect(isNotAnUrbanCentre('2001', 'Not in any Significant Urban Area (Vic.)')).toBe(true);
+  });
+
+  it('keeps a real centre', () => {
+    expect(isNotAnUrbanCentre('2001', 'Bendigo')).toBe(false);
+    expect(isNotAnUrbanCentre('1001', 'Sydney')).toBe(false);
+  });
+
+  it('drops them from a parse and counts why', () => {
+    const r = parseSuaFeatures({
+      features: [
+        pseudo('1000', 'Not in any Significant Urban Area (NSW)'),
+        pseudo('2000', 'Not in any Significant Urban Area (Vic.)'),
+        { attributes: { sua_code_2021: '2001', sua_name_2021: 'Bendigo' },
+          centroid: { x: 144.2794, y: -36.757 } },
+      ],
+    });
+    expect(r.centres.map((c) => c.name)).toEqual(['Bendigo']);
+    expect(r.dropped.not_an_urban_centre).toBe(2);
+  });
+
+  it('never lets one become a commute destination', () => {
+    // The end-to-end consequence, not just the parse: a register built from
+    // that feed names Bendigo and nothing else, so a rural VIC property whose
+    // SUA is the bucket finds no centre and keeps the capital, unscored.
+    const register = parseSuaFeatures({
+      features: [
+        pseudo('2000', 'Not in any Significant Urban Area (Vic.)'),
+        { attributes: { sua_code_2021: '2001', sua_name_2021: 'Bendigo' },
+          centroid: { x: 144.2794, y: -36.757 } },
+      ],
+    }).centres.map((c) => ({ ...c, pointBasis: 'sua_centroid' as const }));
+
+    const rural = resolveCommuteDestination({
+      state: 'VIC',
+      sua: { code: '2000', name: 'Not in any Significant Urban Area (Vic.)' },
+      register,
+    });
+    expect(rural?.label).toBe('Melbourne');
+    expect(rural?.ownCentre).toBe('no');
+  });
+});
+
+/*
+ * The ABS SUA layer ignores `returnCentroid`, advertises no
+ * `supportsReturningGeometryCentroid`, and publishes no latitude or longitude
+ * field — measured 20 Sep 2026. So the point is OUR arithmetic over the
+ * publisher's own boundary, and it is tested as arithmetic.
+ */
+describe('a point derived from the published boundary', () => {
+  const square = [[[0, 0], [0, 2], [2, 2], [2, 0], [0, 0]]];
+
+  it('finds the centre of a square', () => {
+    expect(pointFromRings({ rings: square })).toEqual({ lat: 1, lng: 1 });
+  });
+
+  it('is unchanged by winding order', () => {
+    const reversed = [[...square[0]].reverse()];
+    expect(pointFromRings({ rings: reversed })).toEqual({ lat: 1, lng: 1 });
+  });
+
+  it('takes the LARGEST ring, so an island does not drag the centre', () => {
+    // A big body at (1,1) and a tiny island far away. The answer must be the
+    // body, not the average of the two.
+    const withIsland = [
+      square[0],
+      [[50, 50], [50, 50.01], [50.01, 50.01], [50.01, 50], [50, 50]],
+    ];
+    expect(pointFromRings({ rings: withIsland })).toEqual({ lat: 1, lng: 1 });
+  });
+
+  it('falls back to the vertex mean on a degenerate ring rather than NaN', () => {
+    // A zero-area ring: three collinear points. The shoelace denominator is 0,
+    // and NaN would pass no bound and be stored as null by the column.
+    const p = pointFromRings({ rings: [[[0, 0], [1, 1], [2, 2], [0, 0]]] });
+    expect(p).not.toBeNull();
+    expect(Number.isFinite(p!.lat)).toBe(true);
+    expect(Number.isFinite(p!.lng)).toBe(true);
+  });
+
+  it('answers null where there is no usable ring', () => {
+    expect(pointFromRings(null)).toBeNull();
+    expect(pointFromRings({})).toBeNull();
+    expect(pointFromRings({ rings: [] })).toBeNull();
+    expect(pointFromRings({ rings: [[[0, 0], [1, 1]]] })).toBeNull();
+  });
+
+  it('gives a real centre for a Bendigo-shaped boundary', () => {
+    const p = pointFromRings({ rings: [[
+      [144.20, -36.82], [144.20, -36.70], [144.36, -36.70], [144.36, -36.82], [144.20, -36.82],
+    ]] })!;
+    expect(p.lng).toBeCloseTo(144.28, 2);
+    expect(p.lat).toBeCloseTo(-36.76, 2);
+    expect(isAustralianPoint(p.lat, p.lng)).toBe(true);
+  });
+
+  it('is what parseSuaFeatures uses when the service supplies no centroid', () => {
+    const r = parseSuaFeatures({
+      features: [{
+        attributes: { sua_code_2021: '2001', sua_name_2021: 'Bendigo' },
+        geometry: { rings: [[
+          [144.20, -36.82], [144.20, -36.70], [144.36, -36.70], [144.36, -36.82], [144.20, -36.82],
+        ]] },
+      }],
+    });
+    expect(r.centres).toHaveLength(1);
+    expect(r.centres[0].lng).toBeCloseTo(144.28, 2);
+  });
+
+  it('still prefers a supplied centroid where one exists', () => {
+    const r = parseSuaFeatures({
+      features: [{
+        attributes: { sua_code_2021: '2001', sua_name_2021: 'Bendigo' },
+        centroid: { x: 144.2794, y: -36.757 },
+        geometry: { rings: [[[140, -38], [140, -37], [141, -37], [141, -38], [140, -38]]] },
+      }],
+    });
+    expect(r.centres[0].lng).toBeCloseTo(144.2794, 4);
   });
 });

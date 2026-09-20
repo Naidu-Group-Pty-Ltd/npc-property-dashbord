@@ -70,14 +70,32 @@ function queryUrl(extra: Record<string, string> = {}): string {
   const params = new URLSearchParams({
     where: '1=1',
     outFields: 'sua_code_2021,sua_name_2021',
-    returnGeometry: 'false',
-    returnCentroid: 'true',
+    returnGeometry: 'true',
+    // Server-side generalisation, and the number is the whole safety margin.
+    // 0.01 degrees is roughly a kilometre, which collapses a coastline of tens
+    // of thousands of vertices to tens while moving the derived centre by far
+    // less than the error already inherent in calling any single point "the
+    // centre of an urban area". The unsimplified request is what exceeded the
+    // worker's memory at 546.
+    maxAllowableOffset: '0.01',
+    geometryPrecision: '4',
     outSR: '4326',
     f: 'json',
     ...extra,
   });
   return `${SUA_LAYER}?${params}`;
 }
+
+/**
+ * One page of features, reduced to points before the next page is asked for.
+ *
+ * `maxRecordCount` is 2000 and there are 112 urban areas, so the service would
+ * answer this in a single response — and that is exactly the shape of request
+ * that was killed at 546. Paging is not about the record limit; it is about
+ * never holding more than a few boundaries at once. Measured: `supportsPagination`
+ * is true on this layer.
+ */
+const PAGE = 10;
 
 /** How many urban areas the release holds. Two hundred bytes, whatever it says. */
 function countUrl(): string {
@@ -118,7 +136,11 @@ async function writeCentres(supabase: any, centres: readonly ParsedCentre[], loa
     state: c.state,
     lat: c.lat,
     lng: c.lng,
-    point_basis: 'sua_centroid',
+    // Not 'sua_centroid'. The ABS supplies no centroid on this layer and
+    // advertises no capability to return one, so the word would claim a
+    // provenance that does not exist: this is the area-weighted centre of the
+    // publisher's own generalised boundary, computed here.
+    point_basis: 'sua_boundary_centroid',
     asgs_release: ASGS_RELEASE,
     source: SOURCE,
     loaded_at: loadedAt,
@@ -281,16 +303,58 @@ Deno.serve(async (req) => {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-    let body: unknown;
+    const centres: ParsedCentre[] = [];
+    const dropped: Record<string, number> = {};
+    let expected: number | null = null;
     try {
-      const res = await fetch(queryUrl(), { signal: controller.signal });
-      if (!res.ok) return await fail(`the ABS geoserver answered ${res.status}`);
-      body = await res.json();
+      // How many the release holds, asked first and in its own tiny request,
+      // so the walk below has something to be judged against that is not its
+      // own output. A page that returns nothing is then distinguishable from a
+      // release that holds nothing.
+      const countRes = await fetch(countUrl(), { signal: controller.signal });
+      if (!countRes.ok) return await fail(`the ABS geoserver answered ${countRes.status} for the count`);
+      const countBody = await countRes.json() as { count?: unknown; error?: unknown };
+      if (countBody.error) return await fail('the ABS geoserver returned an error body for the count');
+      expected = typeof countBody.count === 'number' ? countBody.count : null;
+      if (expected === null) return await fail('the ABS geoserver did not answer a feature count');
+
+      for (let offset = 0; offset < expected; offset += PAGE) {
+        const res = await fetch(
+          queryUrl({ resultOffset: String(offset), resultRecordCount: String(PAGE) }),
+          { signal: controller.signal },
+        );
+        if (!res.ok) return await fail(`the ABS geoserver answered ${res.status} at offset ${offset}`);
+        const page = await res.json();
+        // `exceededTransferLimit` is TRUE on every page of a paged walk — it
+        // means "there are more", which is the premise here rather than a
+        // fault. The guard against a truncated download is the count above,
+        // asserted after the walk. Stripping the flag per page keeps the
+        // parser's own refusal meaningful for the unpaged callers it also
+        // serves.
+        const { exceededTransferLimit: _paged, ...rest } =
+          (page ?? {}) as Record<string, unknown>;
+        const parsedPage = parseSuaFeatures(rest);
+        centres.push(...parsedPage.centres);
+        for (const [why, n] of Object.entries(parsedPage.dropped)) {
+          dropped[why] = (dropped[why] ?? 0) + n;
+        }
+      }
     } finally {
       clearTimeout(timer);
     }
 
-    const parsed = parseSuaFeatures(body);
+    // Asserted by EFFECT: every feature the service said it holds was seen,
+    // whether it was kept or refused for a named reason. A short walk is a
+    // truncated download by another route, and this load PRUNES.
+    const seen = centres.length + Object.values(dropped).reduce((a, n) => a + n, 0);
+    if (seen !== expected) {
+      return await fail(
+        `the walk saw ${seen} of ${expected} features the release declares — refused`,
+        { centres: centres.length, dropped },
+      );
+    }
+
+    const parsed = { centres, dropped };
     const verdict = assessLoad(parsed.centres.length, await lastGoodCount(supabase));
     if (!verdict.ok) {
       return await fail(verdict.reason ?? 'the load was refused', {

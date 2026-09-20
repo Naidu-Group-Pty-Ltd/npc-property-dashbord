@@ -125,6 +125,78 @@ const num = (v: unknown): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
+/**
+ * A point for an urban area, from the ABS's own boundary.
+ *
+ * Measured against the live layer on 20 Sep 2026 and this is the whole reason
+ * the register is built this way: the SUA layer **ignores `returnCentroid`**
+ * (features come back carrying `attributes` and nothing else), its
+ * `advancedQueryCapabilities` does not advertise
+ * `supportsReturningGeometryCentroid`, and its published fields are
+ * `objectid, shape, sua_code_2021, sua_name_2021, aus_code_2021,
+ * aus_name_2021, area_albers_sqkm, asgs_loci_uri_2021` — **no latitude, no
+ * longitude, no point of any kind**. The service will not do this arithmetic,
+ * and no attribute carries the answer, so the only honest options were to
+ * derive a point from the boundary or to abandon the register.
+ *
+ * It is therefore OUR arithmetic over the ABS's own geometry, and the stored
+ * `point_basis` says exactly that rather than borrowing the word "centroid"
+ * from a service that declined to supply one.
+ *
+ * The largest ring, by absolute shoelace area, so an urban area published with
+ * an island or an excluded enclave is represented by its main body rather than
+ * by the average of its parts. The shoelace centroid of that ring is the
+ * standard area-weighted centre; a degenerate ring (zero area — a slither, or
+ * a duplicated vertex list) falls back to the mean of its vertices, because a
+ * division by zero here would produce `NaN` and `NaN` passes no bound.
+ */
+export function pointFromRings(geometry: unknown): { lat: number; lng: number } | null {
+  const rings = (geometry as { rings?: unknown } | null)?.rings;
+  if (!Array.isArray(rings) || rings.length === 0) return null;
+
+  let best: Array<[number, number]> | null = null;
+  let bestArea = -1;
+  for (const ring of rings) {
+    if (!Array.isArray(ring) || ring.length < 3) continue;
+    const pts: Array<[number, number]> = [];
+    for (const pt of ring) {
+      if (!Array.isArray(pt) || pt.length < 2) continue;
+      const x = num(pt[0]);
+      const y = num(pt[1]);
+      if (x === null || y === null) continue;
+      pts.push([x, y]);
+    }
+    if (pts.length < 3) continue;
+    let twice = 0;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      twice += pts[j][0] * pts[i][1] - pts[i][0] * pts[j][1];
+    }
+    const area = Math.abs(twice / 2);
+    if (area > bestArea) { bestArea = area; best = pts; }
+  }
+  if (!best) return null;
+
+  let twice = 0;
+  let cx = 0;
+  let cy = 0;
+  for (let i = 0, j = best.length - 1; i < best.length; j = i++) {
+    const cross = best[j][0] * best[i][1] - best[j][1] * best[i][0];
+    twice += cross;
+    cx += (best[j][0] + best[i][0]) * cross;
+    cy += (best[j][1] + best[i][1]) * cross;
+  }
+  const signed = twice / 2;
+  if (!Number.isFinite(signed) || signed === 0) {
+    // Degenerate ring: the mean of its vertices, which is always defined.
+    const mx = best.reduce((a, pt) => a + pt[0], 0) / best.length;
+    const my = best.reduce((a, pt) => a + pt[1], 0) / best.length;
+    return Number.isFinite(mx) && Number.isFinite(my) ? { lat: my, lng: mx } : null;
+  }
+  const lng = cx / (6 * signed);
+  const lat = cy / (6 * signed);
+  return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+}
+
 /** Inside the continent, by the same bounds every other reading is judged on. */
 export function isAustralianPoint(lat: number, lng: number): boolean {
   return lat >= AU_BOUNDS.minLat && lat <= AU_BOUNDS.maxLat
@@ -176,9 +248,17 @@ export function parseSuaFeatures(body: unknown): CentreParse {
     if (isNotAnUrbanCentre(code, name)) { drop('not_an_urban_centre'); continue; }
     const state = stateOfSuaCode(code);
     if (!state) { drop('no_state_in_code'); continue; }
-    const point = f.centroid ?? f.geometry ?? null;
-    const lng = num(point?.x);
-    const lat = num(point?.y);
+    // Three shapes, in order of how directly the publisher stated the point:
+    // a centroid it supplied, a point geometry, or the boundary we reduce
+    // ourselves. This layer only ever gives the third, but the first two cost
+    // nothing to accept and another ASGS layer may supply them.
+    const supplied = f.centroid ?? (f.geometry as { x?: unknown; y?: unknown } | null) ?? null;
+    let lng = num(supplied?.x);
+    let lat = num(supplied?.y);
+    if (lat === null || lng === null) {
+      const derived = pointFromRings(f.geometry);
+      if (derived) { lat = derived.lat; lng = derived.lng; }
+    }
     if (lat === null || lng === null) { drop('no_point'); continue; }
     if (!isAustralianPoint(lat, lng)) { drop('point_outside_australia'); continue; }
     if (seen.has(code)) { drop('duplicate_code'); continue; }
