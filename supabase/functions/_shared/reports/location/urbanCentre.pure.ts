@@ -81,7 +81,36 @@
 import { resolveCbdDestination, type CbdDestination } from './cbdDestination.pure.ts';
 
 /** How a centre's coordinate was arrived at. */
-export type UrbanCentrePointBasis = 'capital_cbd' | 'sua_centroid';
+/**
+ * How a centre's point was arrived at, in the register's own words.
+ *
+ * `sua_boundary_centroid` is what the loader writes and what the ABS supports:
+ * the layer publishes no centroid and no coordinate field, so the point is the
+ * area-weighted centre of the publisher's own generalised boundary, computed
+ * by us. `sua_centroid` would claim the ABS supplied it.
+ *
+ * Measured 20 Sep 2026 on the first live reading: the service read a register
+ * row saying `sua_boundary_centroid` and reported `sua_centroid`, because the
+ * read coerced anything that was not `capital_cbd` into it. The register had
+ * been made honest and the reader put the overstatement back — so the value
+ * travels as written now, and an unrecognised one is refused rather than
+ * rounded to the nearest claim.
+ */
+export type UrbanCentrePointBasis =
+  | 'capital_cbd'
+  | 'sua_centroid'
+  | 'sua_boundary_centroid';
+
+const POINT_BASES: ReadonlyArray<UrbanCentrePointBasis> =
+  ['capital_cbd', 'sua_centroid', 'sua_boundary_centroid'];
+
+/** The register's own word for how a point was arrived at, or null. */
+export function readPointBasis(value: unknown): UrbanCentrePointBasis | null {
+  const raw = String(value ?? '').trim();
+  return (POINT_BASES as readonly string[]).includes(raw)
+    ? raw as UrbanCentrePointBasis
+    : null;
+}
 
 /** One row of the register. */
 export interface UrbanCentre {

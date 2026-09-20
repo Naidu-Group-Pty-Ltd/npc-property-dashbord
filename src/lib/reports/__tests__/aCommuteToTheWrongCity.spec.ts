@@ -20,6 +20,7 @@ import {
   findUrbanCentre,
   resolveCommuteDestination,
   suaNameIsCapital,
+  readPointBasis,
   type UrbanCentre,
 } from '../location/urbanCentre.pure';
 import {
@@ -444,5 +445,45 @@ describe('a point derived from the published boundary', () => {
       }],
     });
     expect(r.centres[0].lng).toBeCloseTo(144.2794, 4);
+  });
+});
+
+/*
+ * The register says how its point was arrived at, and the reader must not
+ * round that to the nearest claim.
+ *
+ * Measured on the first live reading (20 Sep 2026): the register row said
+ * `sua_boundary_centroid` — the honest word, because the ABS publishes no
+ * centroid and the point is computed from its boundary — and the enrichment
+ * recorded `sua_centroid`, because the read coerced anything that was not
+ * `capital_cbd` into it. The register had been made honest and the reader put
+ * the overstatement back.
+ */
+describe('a point basis travels as the register wrote it', () => {
+  it('accepts the three the register can hold', () => {
+    expect(readPointBasis('capital_cbd')).toBe('capital_cbd');
+    expect(readPointBasis('sua_centroid')).toBe('sua_centroid');
+    expect(readPointBasis('sua_boundary_centroid')).toBe('sua_boundary_centroid');
+  });
+
+  it('refuses an unrecognised one rather than relabelling it', () => {
+    expect(readPointBasis('something_else')).toBeNull();
+    expect(readPointBasis('')).toBeNull();
+    expect(readPointBasis(null)).toBeNull();
+    expect(readPointBasis(undefined)).toBeNull();
+  });
+
+  it('carries the register\'s own basis onto the destination', () => {
+    const d = resolveCommuteDestination({
+      state: 'VIC',
+      sua: { code: '2004', name: 'Bendigo' },
+      register: [{
+        code: '2004', name: 'Bendigo', state: 'VIC',
+        lat: -36.7458197429567, lng: 144.287894973052,
+        pointBasis: 'sua_boundary_centroid',
+      }],
+    });
+    expect(d?.label).toBe('Bendigo');
+    expect(d?.pointBasis).toBe('sua_boundary_centroid');
   });
 });

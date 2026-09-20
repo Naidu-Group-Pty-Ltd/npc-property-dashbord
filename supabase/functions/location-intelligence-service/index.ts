@@ -8,6 +8,7 @@ import {
   resolveCbdDestination,
 } from '../_shared/reports/location/cbdDestination.pure.ts';
 import {
+  readPointBasis,
   resolveCommuteDestination,
   type CommuteDestination,
   type UrbanCentre,
@@ -1119,10 +1120,13 @@ async function readUrbanCentreRegister(db: any, state: unknown): Promise<UrbanCe
         state: String(r.state ?? ''),
         lat: Number(r.lat),
         lng: Number(r.lng),
-        pointBasis: (r.point_basis === 'capital_cbd' ? 'capital_cbd' : 'sua_centroid') as
-          UrbanCentre['pointBasis'],
+        // The register's own word, never rounded to the nearest claim. A row
+        // whose basis this build does not recognise is dropped by the filter
+        // below rather than relabelled.
+        pointBasis: readPointBasis(r.point_basis),
       }))
-      .filter((c: UrbanCentre) => c.code && c.name && Number.isFinite(c.lat) && Number.isFinite(c.lng));
+      .filter((c: UrbanCentre) => c.code && c.name && c.pointBasis
+        && Number.isFinite(c.lat) && Number.isFinite(c.lng));
   } catch {
     return [];
   }
