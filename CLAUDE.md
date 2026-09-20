@@ -2198,6 +2198,40 @@ off the page edge turned out to carry two columns holding ONE value on every
 row — **a column whose every cell is identical is a footnote**, stated once
 below the table.
 
+**A register is printed once, where the register is.** The same document drew
+the planning-controls table on pages 15, 26-27 and 32, the residential
+land-use table on 16, 27 and 33, and the overlay register on 17 and 33 — and
+page 15 headed the first copy *"Planning controls table (reproduced
+exactly)"*. The generator composes each once, pins it into every section call's
+context and appends it verbatim, and the model reproduces what it is handed:
+`dedupeChartDirectives`' header had recorded "the planning controls table on
+four" since Stage 4, because that pass de-duplicates DIRECTIVES and a register
+is a table. **The register's copy is the one that stands** — it is the
+retrieval, every other copy is a reproduction, and the copies DISAGREED (five
+rows in the register, thirteen on page 27), so keeping the longest would keep a
+model's expansion. Three bounds: the headers are a CLOSED SET `planningFacts`
+composes, a dropped table leaves a pointer naming the section that carries it,
+and with no register section appended the FIRST copy stands. **Whether the
+register should have emitted thirteen rows is a separate, open question** —
+`readResidentialStanding` says it should, the page says five, and the scrub,
+the renderer and the packer were each excluded by execution; §9 of the same
+doc records the evidence rather than a guess.
+
+**And a footnote marker in a document that has no footnotes.** Five sentences
+ended in a bare digit glued to the full stop (`…do not capture.12 Median house
+prices…`). Every other form a citation could take was driven through the real
+write-path stripper and `renderMarkdown` and each survives VISIBLY different —
+`[12]` strips to nothing, `[^12]`, `¹²`, `(12)` and `\[12\]` all survive as
+written — so the model wrote them with no markup at all and neither the
+stripper nor the renderer could have seen them. This is not the prose scrub §8
+forbids, for two reasons that are checkable: it is **conditional on the
+document** (a body carrying a Notes list or an `[^id]:` definition keeps every
+marker it has), and **a digit between two sentences is in neither of them**, so
+removing it cannot change a claim. Four bounds — three lowercase letters before
+the stop, a closed abbreviation list, one or two digits, then a capital or the
+end of the block — measured at 5 matches, 5 markers, 0 false positives over all
+38 pages.
+
 **And the running head said `Part 07` twenty-six times.** v16 fixed the half
 that was DISCARDED and left the half that was REPEATED: the body is one part,
 so prefixing the chapter with it says where the reader is twenty-six times and

@@ -289,11 +289,8 @@ Read page by page and not yet acted on:
 * **Citation markers** — page 21 prints `.12` where markers 1 and 2 run
   together and page 22 prints `23` three times; the Notes list on page 36 has
   four entries. Page 25 reads `sofuture`, a space eaten where a marker was
-  stripped.
-* **Structural duplication** — the five-row planning controls table is printed
-  in full on pages 15, 26–27 **and** 32; the residential-use table on 16, 27 and
-  33; "What is mapped over this land" on 17 and 33. The verbatim appended
-  registers plus the model's own reproduction of them.
+  stripped. **The bare-digit half of this is closed in §9**; the `sofuture`
+  space and the page-36 Notes count are not, and are still open.
 * **Page 2** lists "1. Cover" and "2. Contents" as its own contents entries.
 * **Page 27** ends a sentence mid-phrase: *"the land is zoned R2 – Low Density
   Residential, which is intended"*.
@@ -307,3 +304,177 @@ Read page by page and not yet acted on:
   in the document.
 * **Page 22**'s *"Local vs NSW house price growth"* area chart has one series
   where the title promises two, and no axis, no value labels and no legend.
+
+## 9. A register is printed once, where the register is
+
+Three tables, printed three times each, in a 38-page document. Measured from
+the delivered PDF's own text positions rather than from the source that made
+it:
+
+| Table | Drawn on pages |
+|---|---|
+| Planning controls (`Control / Reading / Standing / Evidence`) | 15, 26–27, 32 |
+| Residential land use | 16, 27, 33 |
+| What is mapped over this land | 17, 33 |
+
+And page 15 carried the heading **"Planning controls table (reproduced
+exactly)"** over the first of them, which is the instruction to the writer
+reaching a client's page.
+
+### Why it happens, and why the prompt cannot fix it
+
+`generate-investment-report` composes each table once, from what the registers
+answered, and does two things with the one string: it pins it into the context
+every section call receives, and it appends it to the finished document under
+`## Planning controls and development registers`. The append exists because
+"asking a model to reproduce a table is how a table comes back paraphrased" —
+the generator says so in those words.
+
+The model, handed a table and asked to write a planning section, reproduces it.
+That is not disobedience; it is what a writer does. **An instruction is a
+request; this is the guarantee.**
+
+`dedupeChartDirectives`' own header has recorded this since Stage 4 — "the
+identical three-bar price chart was drawn on five pages **and the planning
+controls table on four**" — because that pass de-duplicates `{{…}}` directives
+and a register is a Markdown table. The half that was seen is the half that was
+never closed.
+
+### Which copy survives, and why that is not a coin toss
+
+**The copy inside the register section.** It is the composed retrieval; every
+other copy is a reproduction of it.
+
+That has teeth, because on this document the copies **disagreed**: the land-use
+table carried five rows on pages 16 and 33 and **thirteen** on page 27. Keeping
+the longest would keep a model's expansion; keeping the register's keeps what
+the platform retrieved. A row the register did not produce has no provenance,
+which is `PLANNING_CONTROLS_IN_THE_REPORT.md` rule 1 applied to a row rather
+than to a cell.
+
+### The three bounds
+
+* **A closed set of headers**, composed by `planningFacts.pure.ts` and by
+  nothing else — so this recognises this platform's own output rather than
+  guessing at a pattern a model might write. Two tables that merely look alike
+  are untouched.
+* **A dropped table leaves a pointer**, naming the section that carries it, so
+  a lead-in ending in a colon is never left with nothing under it — the
+  substitution `rewriteScaffoldingPointers` already makes, for the same reason.
+* **With no register section appended** — an area report, a format that appends
+  none — the FIRST copy stands, because the prose copy is then all the reader
+  has.
+
+Read path, in `presentStoredMarkdown`, so it repairs every stored document with
+no regeneration; first in that pipeline, because `dropEmptyTableColumns` and
+`foldConstantTableColumns` both rewrite header rows, and before
+`dropEmptySections` so an emptied heading is collected by the rule that exists
+for it.
+
+### An open question this does NOT settle
+
+The land-use table's **five rows against thirteen** is a fact about the
+document; which number is correct is not settled, and guessing is not a way to
+settle it.
+
+What is established:
+
+* `readResidentialStanding` walks a fixed list of twelve secondary residential
+  uses. Where the table's group term "residential accommodation" is prohibited,
+  **every one of the twelve is emitted**; where it is not, only those the
+  register names explicitly survive.
+* Page 33 prints the group-term sentence — *"Every other form of residential
+  accommodation … sits in the prohibited item of the same table"* — which
+  `residentialSentence` emits **only** when that flag is true. So the composed
+  table should have carried thirteen rows.
+* Page 33's table carries five, ending at `Dual occupancies (detached)` with
+  the next block starting 38 units below it — no page break, no continuation.
+* Page 27's model-written copy carries exactly `SECONDARY_RESIDENTIAL` plus the
+  dwelling house, in the module's own order and casing.
+
+What was excluded by execution: `presentStoredMarkdown` keeps all thirteen
+rows; `renderMarkdown` emits all fourteen `<tr>`; and `packMarkdownPages` at
+the production options never loses a row at any page budget from 46 lines down
+to 6 (it only ever adds, when it repeats a head across a split).
+
+So either the retrieval emitted five where the code says thirteen, or the
+deployed bundle differs from this tree. **It is not resolved here**, and the
+de-duplication above is deliberately safe under either answer: it prints what
+the register produced, whatever that turns out to be.
+
+## 10. A footnote marker in a document that has no footnotes
+
+Five sentences ended in a bare digit glued to the full stop before them, set in
+the body face at body size:
+
+```
+p21  …which medians do not capture.12 Median house prices in postcode 2155…
+p21  …over both the short and medium term.2 The 4-period median price series…
+p22  …rather than a thinly traded niche.2 This volume is specific to the…
+p22  …according to the Australian Bureau of Statistics.4 This very modest…
+p23  …than as a safety score.3 Latest recorded counts by offence category…
+```
+
+The Compass carries no footnote apparatus, so each digit refers to nothing.
+
+### What wrote them, by execution rather than inference
+
+Every other form a citation could take was driven through the real write-path
+stripper in `generate-investment-report` and then through `renderMarkdown`.
+Each survives **visibly different**, so none of them can be the source:
+
+```
+capture.[12] Median     ->  capture. Median          (stripped, correctly)
+capture.[^12] Median    ->  capture.[^12] Median     (numeric id kept as prose)
+capture.¹² Median       ->  capture.¹² Median
+capture.\[12\] Median   ->  capture.\[12\] Median
+capture.**[12]** Median ->  capture.* Median
+capture.<sup>12</sup>   ->  capture.&lt;sup&gt;12&lt;/sup&gt;
+capture.(12) Median     ->  capture.(12) Median
+capture.12 Median       ->  capture.12 Median        <- the only match
+```
+
+The model wrote the marker with **no markup at all** — what a writer does when
+it wants a superscript and the format has none. The prompt asks for `[^id]`
+and the stripper handles `[1]`, `[1][2]` and `[citation]`; this is the one form
+neither reaches, and it is the form that shipped.
+
+### Why this is not the prose scrub this repository forbids
+
+Two things, both checkable rather than argued.
+
+**It is conditional on the document.** A marker is debris only where there is
+no apparatus for it to refer to, so `stripFootnoteDebris` asks the document
+first: a body carrying a `**Notes**` list or an `[^id]:` definition keeps every
+marker it has. Same shape as "asserted by effect, never by configuration".
+
+**A digit between two sentences is in neither of them.** Removing it cannot
+change a claim, a figure or a source — which is what makes it punctuation
+rather than prose, the distinction `rewriteScaffoldingPointers` draws in those
+words one file over.
+
+### The four bounds
+
+* **Three or more lowercase letters before the stop** — what a word ends with
+  and an abbreviation does not. It is what keeps `No.3 Smith Street`, `Fig.2`
+  and `p.12` out.
+* **A closed `ABBREVIATIONS` list** for the longer ones (`para`, `approx`,
+  `vol`, `sec`, …).
+* **One or two digits**, because footnotes run 1..99 and a third digit is a
+  number.
+* **Then whitespace and a capital, or the end of the block** — a new sentence,
+  never a continuing phrase.
+
+Measured over all 38 pages of the delivered document: **5 matches, all five the
+markers, 0 false positives.** `s.10.7 planning certificate`, `(CC BY 4.0)`,
+`api.apps1.nsw.gov.au` and `Clause 4.3` are excluded by shape.
+
+One document is not a distribution and the module says so. The bounds fail
+closed: a marker left standing is the defect that shipped, and an edited
+sentence would be worse.
+
+### Still open from the same finding
+
+The `sofuture` eaten space on page 25 and the page-36 Notes list carrying four
+entries for markers the body no longer shows are **not** closed by this. They
+need the stored bytes of that report, which this branch has not read.
