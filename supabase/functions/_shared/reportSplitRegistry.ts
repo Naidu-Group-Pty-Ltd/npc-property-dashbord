@@ -113,6 +113,24 @@ export const PLDD_SECTION_ORDER: { ordinal: number; heading: string }[] = [
   { ordinal: 15, heading: 'Climate, Environmental, Insurance, Crime and Safety Risk' },
   { ordinal: 16, heading: 'Competitive Landscape and Supply Pipeline' },
   { ordinal: 17, heading: 'Property & Location Risk Dashboard' },
+  /*
+   * 18-20 are new, and they are the document's own purpose.
+   *
+   * `tierContent.pure.ts` has said since the tier existed that the strategic
+   * document carries `dueDiligenceRegister: true`, and its standfirst calls
+   * it "the verification register". This list stopped at 17, so a section
+   * routed anywhere past it had no slot: the checklist was pointed at the
+   * risk dashboard's heading and de-duplicated away, and the recommendation
+   * went to the Financial report alone. Measured on a real fork, the Due
+   * Diligence document carried neither.
+   *
+   * The order matches `sectionRegistry`'s `strategic` placements (20, 21, 22)
+   * so the two statements of this document's shape cannot disagree — which is
+   * what the drift at FIN 15 cost.
+   */
+  { ordinal: 18, heading: 'Due Diligence Checklist' },
+  { ordinal: 19, heading: 'Monitoring & Review Plan' },
+  { ordinal: 20, heading: 'Final Recommendation' },
 ];
 
 // ─── Lens framing strings ───────────────────────────────────────────────────
@@ -360,33 +378,76 @@ export const SPLIT_ROUTES: SplitRoute[] = [
     ordinalFinancial: 14,
     rule: 'financial_lens',
   },
+  /*
+   * Both documents carry the call.
+   *
+   * This was `target: 'financial'`, so the Due Diligence report — the only
+   * document a buyer reads before contract — ended on its risk dashboard with
+   * nothing telling them what to do about it, and `sectionRegistry`'s
+   * `strategic` placement honestly recorded the consequence as
+   * `depth: 'optional', producer: null`. Every other tier carries a
+   * recommendation; this one was not a decision, it was the routing table's
+   * omission written down.
+   *
+   * The FIN ordinal is 16 and not 15. `FIN_SECTION_ORDER` gained `Holding
+   * Strategy` at 15, which moved this to 16 and the verification page to 17,
+   * and the three ordinals below were left where they were — so the routed
+   * recommendation arrived at the composed Holding Strategy's ordinal and
+   * `mergeComposedChapters`, which evicts a routed section by ORDINAL, deleted
+   * it. Measured: with a strategy record present the Financial Analysis Report
+   * had no recommendation at all, and `replacedByComposedChapters` named it.
+   */
   {
     match: ['financial recommendation', 'final recommendation', 'final conclusion'],
-    target: 'financial',
+    target: 'both',
     newHeadingFinancial: 'Financial Recommendation & Portfolio Fit',
-    ordinalFinancial: 15,
+    newHeadingDueDiligence: 'Final Recommendation',
+    ordinalFinancial: 16,
+    ordinalDueDiligence: 20,
     rule: 'verbatim',
   },
 
-  // ── Due diligence checklist → FIN verification page (also retained in PLDD risk) ──
+  /*
+   * The checklist is the Due Diligence report's own section, not a second
+   * name for its risk dashboard.
+   *
+   * It used to carry `newHeadingDueDiligence: 'Property & Location Risk
+   * Dashboard'` — the heading the risk route already uses — and
+   * `assembleForVariant` de-duplicates by HEADING, keeping the longer body.
+   * So the parent's verification list was not merely retitled, it was
+   * DELETED: driven through the real fork, `- [ ] Obtain a s.10.7 planning
+   * certificate` reached the Financial report and reached nothing at all in
+   * the document whose own footer says every flagged item "must be
+   * independently confirmed … before contract".
+   */
   {
     match: ['due diligence checklist', 'due diligence'],
     target: 'both',
     newHeadingFinancial: 'Assumptions, Verification Items & Adviser Disclaimer',
-    newHeadingDueDiligence: 'Property & Location Risk Dashboard',
-    ordinalFinancial: 16,
-    ordinalDueDiligence: 17,
+    newHeadingDueDiligence: 'Due Diligence Checklist',
+    ordinalFinancial: 17,
+    ordinalDueDiligence: 18,
     rule: 'verbatim',
   },
 
-  // ── Disclaimer / appendix ──
+  /*
+   * Disclaimer / appendix — the Financial report's verification page only.
+   *
+   * The Due Diligence side of this route was the third section pointed at
+   * 'Property & Location Risk Dashboard', so the parent's source notes were
+   * destroyed by the same de-duplication (measured: `ABS Census 2021 (read
+   * 7 Aug 2026)` reached neither document). It is not routed to the Due
+   * Diligence report at all now, because that document does not lack the
+   * material: `provenance`'s `strategic` placement composes its disclaimer
+   * (`PLDD_FOOTER_DISCLAIMER`) and the fork copies the parent's
+   * `sources_content` onto the child as its own column. Routing it here as
+   * well put a disclaimer under a risk dashboard's name.
+   */
   {
     match: ['professional disclaimer', 'disclaimer', 'source appendix', 'appendix'],
-    target: 'both',
+    target: 'financial',
     newHeadingFinancial: 'Assumptions, Verification Items & Adviser Disclaimer',
-    newHeadingDueDiligence: 'Property & Location Risk Dashboard',
-    ordinalFinancial: 16,
-    ordinalDueDiligence: 17,
+    ordinalFinancial: 17,
     rule: 'verbatim',
   },
 ];

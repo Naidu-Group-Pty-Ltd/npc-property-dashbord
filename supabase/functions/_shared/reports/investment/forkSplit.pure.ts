@@ -126,13 +126,34 @@ function assembleForVariant(
   variant: ForkVariant,
   parsed: ParsedSection[],
 ): AssembledSection[] {
-  const buckets: AssembledSection[] = [];
-  const usedOrdinals = new Set<number>();
-  let fallbackOrdinal = 100;
+  /*
+   * Each bucket keeps the route that made it and the ordinal that route
+   * DECLARED, because the grouping below needs both and the allocated
+   * ordinal can answer neither question — a second section landing on a
+   * taken ordinal is pushed to a fallback, which erases exactly the fact
+   * that the two were aimed at the same slot.
+   */
+  const buckets: Array<{
+    declaredOrdinal: number | undefined;
+    heading: string;
+    lensIntro: string;
+    body: string;
+    routeIndex: number;
+  }> = [];
 
   for (const section of parsed) {
     const { route } = registry.routeCompositeSection(section.normalisedHeading);
     if (!route) continue;
+    /*
+     * Which route this came from. `-1` means the router answered with a route
+     * the registry's own list does not contain, which nothing here does — but
+     * were it ever to happen, every section would share one index and the
+     * grouping below would read two different sections as one and keep the
+     * richer, which is the deletion this is written to prevent. An unknown
+     * route is therefore given an index of its own.
+     */
+    const found = registry.routes.indexOf(route);
+    const routeIndex = found >= 0 ? found : -(buckets.length + 1);
 
     const isTargeted =
       route.target === 'both' ||
@@ -145,14 +166,10 @@ function assembleForVariant(
         ? route.newHeadingFinancial || section.normalisedHeading
         : route.newHeadingDueDiligence || section.normalisedHeading;
 
-    let ordinal =
+    const declaredOrdinal =
       variant === 'financial'
         ? route.ordinalFinancial
         : route.ordinalDueDiligence;
-    if (!ordinal || usedOrdinals.has(ordinal)) {
-      ordinal = ordinal && !usedOrdinals.has(ordinal) ? ordinal : fallbackOrdinal++;
-    }
-    usedOrdinals.add(ordinal);
 
     const lensIntro = buildLensIntro(registry, variant, route.rule);
     let body = route.rule === 'summarise_only'
@@ -189,17 +206,87 @@ function assembleForVariant(
       if (contract.lead) body = `${contract.lead}\n\n${body.trim()}\n`;
     }
 
-    buckets.push({ ordinal, heading: newHeading, body: lensIntro + body.trim() + '\n' });
+    buckets.push({ declaredOrdinal, heading: newHeading, lensIntro, body: body.trim(), routeIndex });
   }
 
-  // De-duplicate consecutive identical headings, keeping the richer body
-  const dedupedMap = new Map<string, AssembledSection>();
+  /*
+   * One slot is one section, and a slot two different routes aim at is a
+   * MERGE rather than a contest.
+   *
+   * This used to key on the heading alone and keep whichever body was
+   * longest. That is right for the case it was written for — a parent which
+   * wrote one section twice (`foldStraySections`' defect) offers the same
+   * heading through the same route, and the fork should keep the fuller
+   * copy. It was destructive for the other case. Three routes pointed the
+   * Due Diligence document at 'Property & Location Risk Dashboard' — the
+   * risk register, the due-diligence checklist and the parent's appendix —
+   * and two routes point the Financial document at 'Assumptions,
+   * Verification Items & Adviser Disclaimer'. Measured on a real fork, the
+   * parent's verification list and its source notes reached NEITHER
+   * document: not misfiled, deleted, with a section count as the only trace.
+   *
+   * So the group is (heading, the ordinal the ROUTE declared) — the slot the
+   * routing table aimed at, which the allocated ordinal cannot report
+   * because a clash is pushed to a fallback:
+   *
+   *  - one route, one slot   → a repeat; keep the richer body.
+   *  - two routes, one slot  → the table says these are one section; JOIN
+   *                            them, in the order the parent wrote them.
+   *
+   * A fork may lose a heading. It must never lose a body.
+   */
+  type Group = {
+    declaredOrdinal: number | undefined;
+    heading: string;
+    lensIntro: string;
+    bodies: string[];
+    routes: Set<number>;
+  };
+  const groups = new Map<string, Group>();
   for (const s of buckets) {
-    const existing = dedupedMap.get(s.heading);
-    if (!existing) dedupedMap.set(s.heading, s);
-    else if (s.body.length > existing.body.length) dedupedMap.set(s.heading, s);
+    const key = `${s.declaredOrdinal ?? 'none'}\u0000${s.heading}`;
+    const existing = groups.get(key);
+    if (!existing) {
+      groups.set(key, {
+        declaredOrdinal: s.declaredOrdinal,
+        heading: s.heading,
+        lensIntro: s.lensIntro,
+        bodies: [s.body],
+        routes: new Set([s.routeIndex]),
+      });
+      continue;
+    }
+    if (existing.routes.has(s.routeIndex)) {
+      // The same route twice: one section the parent wrote twice. Keep the
+      // fuller copy rather than printing it both times.
+      const richest = existing.bodies[existing.bodies.length - 1];
+      if (s.body.length > richest.length) existing.bodies[existing.bodies.length - 1] = s.body;
+      continue;
+    }
+    existing.routes.add(s.routeIndex);
+    existing.bodies.push(s.body);
   }
-  return Array.from(dedupedMap.values()).sort((a, b) => a.ordinal - b.ordinal);
+
+  /*
+   * The ordinal is allocated once per SLOT, not once per routed section, so
+   * a merged slot keeps the position the routing table gave it. A slot with
+   * no declared ordinal, or one already taken, goes to the tail where it is
+   * visible rather than overwriting somebody else's place.
+   */
+  const usedOrdinals = new Set<number>();
+  let fallbackOrdinal = 100;
+  return Array.from(groups.values())
+    .map((g) => {
+      const wanted = g.declaredOrdinal;
+      const ordinal = wanted && !usedOrdinals.has(wanted) ? wanted : fallbackOrdinal++;
+      usedOrdinals.add(ordinal);
+      return {
+        ordinal,
+        heading: g.heading,
+        body: g.lensIntro + g.bodies.join('\n\n').trim() + '\n',
+      };
+    })
+    .sort((a, b) => a.ordinal - b.ordinal);
 }
 
 const normHeading = (h: string): string => h.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -324,6 +411,14 @@ function finHeading(registry: LoadedSplitRegistry, prefix: string): string {
   return registry.finSectionOrder.find((e) => e.heading.startsWith(prefix))?.heading ?? prefix;
 }
 
+/** The same lookup for a Due Diligence section, for the same reason. */
+function plddEntry(
+  registry: LoadedSplitRegistry,
+  prefix: string,
+): { ordinal: number; heading: string } | null {
+  return registry.plddSectionOrder.find((e) => e.heading.startsWith(prefix)) ?? null;
+}
+
 /** What one fork variant came out as, with what the hygiene pass removed. */
 export interface ForkVariantOutput {
   markdown: string;
@@ -423,18 +518,49 @@ export function composeForkDocuments(input: {
     [...composedChapters, ...strategySections],
   );
 
+  /*
+   * The Due Diligence document's own composed section.
+   *
+   * `sectionRegistry`'s `monitoring` placement has declared the strategic
+   * tier's Monitoring & Review Plan as
+   * `composedFrom('strategyPositions.pure.ts', 'composeMonitoringPlan')`
+   * since the tier existed, the composer has always been there, and nothing
+   * ever called it for this document — the fork composed for the Financial
+   * report alone, so the Due Diligence report composed nothing at all. A
+   * verification document that says what to check and never says when to
+   * look again is half a plan.
+   *
+   * Gated on the strategy RECORD rather than on `composeFinancial`: it is
+   * this document's section, and tying it to the other document's switch is
+   * how the Financial report's chapters came to decide what a Due Diligence
+   * reader sees. With no record there is nothing to compose and the document
+   * is byte-identical to before.
+   */
+  const monitoringEntry = plddEntry(input.registry, 'Monitoring & Review Plan');
+  const dueDiligenceComposed: ComposedChapter[] = input.strategy && monitoringEntry
+    ? composeStrategySections(input.strategy, [
+      { id: 'monitoring', heading: monitoringEntry.heading },
+    ]).map((section: StrategySection) => ({
+      ordinal: monitoringEntry.ordinal,
+      heading: section.heading,
+      markdown: section.markdown,
+    }))
+    : [];
+
+  const mergedDueDiligence = mergeComposedChapters(dueDiligenceSections, dueDiligenceComposed);
+
   const financial = finaliseVariantMarkdown(
     renderVariantMarkdown(input.registry, 'financial', input.propertyAddress, mergedFinancial.sections, generatedOn),
   );
   const dueDiligence = finaliseVariantMarkdown(
-    renderVariantMarkdown(input.registry, 'due_diligence', input.propertyAddress, dueDiligenceSections, generatedOn),
+    renderVariantMarkdown(input.registry, 'due_diligence', input.propertyAddress, mergedDueDiligence.sections, generatedOn),
   );
 
   return {
     financial: { ...financial, sections: mergedFinancial.sections.length },
-    dueDiligence: { ...dueDiligence, sections: dueDiligenceSections.length },
-    replacedByComposedChapters: mergedFinancial.replaced,
-    composedChapters: [...composedChapters, ...strategySections].map((c) => c.heading),
+    dueDiligence: { ...dueDiligence, sections: mergedDueDiligence.sections.length },
+    replacedByComposedChapters: [...mergedFinancial.replaced, ...mergedDueDiligence.replaced],
+    composedChapters: [...composedChapters, ...strategySections, ...dueDiligenceComposed].map((c) => c.heading),
     compositeSections: sections.length,
   };
 }

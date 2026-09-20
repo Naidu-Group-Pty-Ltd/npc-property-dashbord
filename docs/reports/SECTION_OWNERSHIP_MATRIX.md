@@ -38,7 +38,7 @@ Sections: 40. Formats: Compass, Financial Analysis, Strategic / Due Diligence, E
 | Planning, Zoning and Title Due Diligence | measured | Strategic / Due Diligence | Compass; Executive Briefing | authored · generator.compass | required | — | required | summary (in riskDashboard) | — |
 | Risk Dashboard | measured | Strategic / Due Diligence | Compass; Financial Analysis; Executive Briefing | authored · generator.compass; routed · split.financial#11; routed · split.dueDiligence#17; authored · condense.briefing | required | required | required | required | — |
 | Climate, Environmental, Insurance, Crime and Safety Risk | measured | Strategic / Due Diligence | Compass; Executive Briefing | authored · generator.compass; routed · split.dueDiligence#15 | required | — | required | summary (in riskDashboard) | — |
-| Due Diligence Checklist | recorded | Compass | — | authored · generator.compass | required | — | optional | — | — |
+| Due Diligence Checklist | recorded | Strategic / Due Diligence | Compass | authored · generator.compass; routed · split.dueDiligence#18 | required | — | required | — | — |
 | Purchase Costs & Annual Holding Cost Breakdown | computed | Financial Analysis | — | composed · financialChapters.pure.ts#4 | — | required | — | — | — |
 | Rental Assessment, Gross Yield & Net Yield | computed | Financial Analysis | — | composed · financialChapters.pure.ts#5 | — | required | — | — | — |
 | Loan Structure, Repayments & Cashflow Impact | computed | Financial Analysis | — | composed · financialChapters.pure.ts#6 | — | required | — | — | — |
@@ -52,7 +52,7 @@ Sections: 40. Formats: Compass, Financial Analysis, Strategic / Due Diligence, E
 | Monitoring & Review Plan | computed | Strategic / Due Diligence | Compass | composed · strategyPositions.pure.ts#composeMonitoringPlan | required | — | required | — | — |
 | Top 3 Opportunities | authored | Executive Briefing | Snapshot | authored · condense.briefing; authored · condense.snapshot | — | — | — | required | required |
 | Top 3 Risks | authored | Executive Briefing | Snapshot | authored · condense.briefing; authored · condense.snapshot | — | — | — | required | required |
-| Final Recommendation | authored | Financial Analysis | Compass; Executive Briefing; Snapshot | authored · generator.compass; routed · split.financial#16; authored · condense.briefing; authored · condense.snapshot | required | required | optional | required | required |
+| Final Recommendation | authored | Strategic / Due Diligence | Compass; Financial Analysis; Executive Briefing; Snapshot | authored · generator.compass; routed · split.financial#16; routed · split.dueDiligence#20; authored · condense.briefing; authored · condense.snapshot | required | required | required | required | required |
 | Key Market Stats | measured | Snapshot | — | authored · condense.snapshot | — | — | — | — | required |
 | Financial Snapshot | computed | Snapshot | — | composed · financialChapters.pure.ts#composeFinancialSnapshotSection | — | — | — | — | required |
 

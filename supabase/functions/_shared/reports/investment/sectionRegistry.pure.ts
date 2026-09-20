@@ -806,7 +806,17 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     purpose: 'What must be verified before contract, as a list somebody can work through.',
     tiers: {
       compass: { depth: 'required', order: 17, label: 'Due Diligence Checklist', producer: authored('generator.compass') },
-      strategic: { depth: 'optional', order: 20, label: 'Due Diligence Checklist', producer: null },
+      /*
+       * `required`, with a producer, from 20 Sep 2026.
+       *
+       * It was `optional` with `producer: null` — an honest record of what
+       * the routing table did rather than a decision. `optional` is the one
+       * depth `PRODUCER_GAPS` does not police, so the document defined by its
+       * verification register declared that register's absence "not a
+       * defect", and nothing asked. The route now gives it its own heading
+       * and PLDD ordinal 18 instead of the risk dashboard's name.
+       */
+      strategic: { depth: 'required', order: 20, label: 'Due Diligence Checklist', producer: routed('dueDiligence', 18) },
     },
   },
 
@@ -1064,7 +1074,12 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
       briefing: { depth: 'required', order: 20, label: 'Recommendation', producer: authored('condense.briefing') },
       snapshot: { depth: 'required', order: 10, label: 'Quick Recommendation', producer: authored('condense.snapshot') },
       financial: { depth: 'required', order: 19, label: 'Financial Recommendation & Portfolio Fit', producer: routed('financial', 16) },
-      strategic: { depth: 'optional', order: 22, label: 'Final Recommendation', producer: null },
+      // `required` from 20 Sep 2026: the recommendation route is `both` now,
+      // so this document ends on the call rather than on its risk dashboard.
+      // Every other tier carried one; this tier's `optional`/null was the
+      // routing table's omission written down, not a decision about the
+      // document.
+      strategic: { depth: 'required', order: 22, label: 'Final Recommendation', producer: routed('dueDiligence', 20) },
     },
   },
 
