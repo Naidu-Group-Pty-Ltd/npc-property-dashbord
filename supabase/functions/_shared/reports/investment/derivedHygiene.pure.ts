@@ -21,6 +21,7 @@
 
 import { enforceChartEvidence, type EvidenceInventory } from './chartEvidence.pure.ts';
 import { alignChartScales } from './chartScale.pure.ts';
+import { tabulateMixedUnitCharts } from './chartUnits.pure.ts';
 import { dedupeChartDirectives } from './blockHygiene.pure.ts';
 import { limitEmphasis } from './emphasisDensity.pure.ts';
 import { foldStraySections } from './sectionFolding.pure.ts';
@@ -540,11 +541,27 @@ export function presentStoredMarkdown(
    */
   const deduped = dedupeChartDirectives(onceEach);
   const single = deduped.removed ? deduped.markdown : onceEach;
+  /*
+   * A shared axis is a claim that the quantities on it are comparable.
+   *
+   * Page 13 of the 97 Poole Road Compass plotted `99.1%`, `100%` and
+   * `~2.1 km` on one track, so the kilometres drew as a 2% sliver; page 28
+   * plotted `241` new dwellings against `$163,527,942`, so the count drew as
+   * a hairline. Both are correct arithmetic and neither says anything a
+   * reader can use.
+   *
+   * Before the scale alignment below, which unifies a maximum ACROSS charts
+   * of one unit and can do nothing for two units inside one. Nothing is
+   * dropped: every label, value and their order survive as the table the
+   * data already was.
+   */
+  const mixed = tabulateMixedUnitCharts(single);
+  const commensurable = mixed.tabulated.length ? mixed.markdown : single;
   // One scale per quantity across the whole document. Unconditional, because
   // it needs no record to know that two charts of kilometres must agree, and
   // it is a no-op on a document with one chart per unit.
-  const scaled = alignChartScales(single);
-  const levelled = scaled.aligned.length ? scaled.markdown : single;
+  const scaled = alignChartScales(commensurable);
+  const levelled = scaled.aligned.length ? scaled.markdown : commensurable;
   /*
    * Emphasis is a signal, and a signal that fires on one word in five is noise.
    *
