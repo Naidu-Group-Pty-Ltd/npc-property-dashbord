@@ -2308,6 +2308,31 @@ bindable for an unscored dimension), and its `Weight` column was the ADJUSTED
 weight unlabelled — `Demand 27 · 5%` against a published 15%. Seed **v18**
 plus the active-master refresh.
 
+**Why only three dimensions scored** (§19 of the same doc, and the answer to
+"can we reach a higher score"). Two of the three reasons were defects of ours
+and one was not, and **completing the dimensions is as likely to LOWER a grade
+as to raise it** — on 9 Hollow Street, Demand scored at the 27 its two NSW
+siblings recorded takes the composite from 65 to **59**. **Demand was
+structurally unmeasurable in Victoria and South Australia**: their sheets print
+ONE `No. of Sales` column, so their parsers emit `salesCount: null` on every
+other row, and `market-sales-ingest` sent `sales_count` for every record — which
+PostgREST writes into `ON CONFLICT DO UPDATE SET`, so every daily run rewrote
+every historical count back to null. `scoreTransactionVolume` needs four
+periods carrying one, and transaction volume is the only PRIMARY demand measure
+this deployment is entitled to. A record with no count is now written WITHOUT
+the column; the two shapes cannot share a batch. Its remedy also named the ABS
+population series, which the report already cited three times and which could
+not have restored the dimension (a driver may not carry one) — `riskRemedyFor`'s
+rule applied to Demand. **Risk is not ours and is worth ±1 point**: its nominal
+weight is 5%, and `propertyRiskSchema.pure.ts`'s own header forbids
+manufacturing it. And **the largest legitimate lever on a regional property's
+grade is the CBD destination** — Golden Square's commute is measured to
+Melbourne at 114 minutes, which scores 0 of 100 on `COMMUTE_ANCHORS` while the
+same document's prose describes its access to Bendigo. That is deliberately not
+taken: choosing the right centre needs a published register of urban centres,
+and re-anchoring a calibrated scale to raise a number is the one thing this
+programme must not do.
+
 **And a footnote marker with nothing it can refer to.** Five sentences
 ended in a bare digit glued to the full stop (`…do not capture.12 Median house
 prices…`). Every other form a citation could take was driven through the real

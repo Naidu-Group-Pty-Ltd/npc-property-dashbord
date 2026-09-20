@@ -785,8 +785,32 @@ export function presentStoredMarkdown(
    * over all 38 pages of that document: 5 matches, 5 markers, 0 false
    * positives.
    */
-  const debris = stripFootnoteDebris(levelled);
-  const unmarked = debris.removed.length ? debris.markdown : levelled;
+  /*
+   * The placeholder scrub runs AGAIN, because the chart passes make tables.
+   *
+   * Page 20 of the 9 Hollow Street Compass printed
+   * `| Victoria dwellings benchmark | n/a |` beside a subject price and a
+   * suburb median — a mixed-unit bar chart `tabulateMixedUnitCharts`
+   * correctly set as a table, carrying an item the directive parser refused
+   * because the model wrote `n/a` where a figure belonged.
+   * `stripPlaceholderRows` is the FIRST pass in this chain and the
+   * tabulations are five passes below it, so the row it exists to remove is
+   * created after it has run. The owner's rule is "N/A or unavailable,
+   * never".
+   *
+   * Idempotent by construction — the same pure function over the same
+   * markdown — so on a document whose charts produced no placeholder row it
+   * is a no-op, byte for byte. The first pass stays: it has to run before
+   * `dedupeRegisterTables` and `dropEmptyTableColumns`, which read the tables
+   * the model itself wrote.
+   */
+  const lateGaps = stripPlaceholderRows(levelled);
+  const noGaps = lateGaps.removedRows + lateGaps.removedTables
+    + lateGaps.removedLines + lateGaps.blankedCells === 0
+    ? levelled
+    : lateGaps.markdown;
+  const debris = stripFootnoteDebris(noGaps);
+  const unmarked = debris.removed.length ? debris.markdown : noGaps;
   /*
    * Emphasis is a signal, and a signal that fires on one word in five is noise.
    *

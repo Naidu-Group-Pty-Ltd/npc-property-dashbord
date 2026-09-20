@@ -10,9 +10,10 @@
 --
 -- ## What v18 changes in a master, and why it is safe to carry forward
 --
--- ONE page, on the 50 Investment Compass masters. It neither adds, removes
--- nor re-binds a block; it changes three pieces of static TEXT on
--- `The assessment`.
+-- ONE page on the 50 Investment Compass masters, and one binding on two of
+-- the 43 voice masters. Nothing adds or removes a block.
+--
+-- On `The assessment` it changes three pieces of static TEXT:
 --
 --   * The heading. It read "Five dimensions, weighted" over a table that drew
 --     THREE rows on the 9 Hollow Street Compass of 20 Sep 2026 and FOUR on
@@ -32,8 +33,18 @@
 --     than the one it replaces and no more — at two the geometry gate refused
 --     three masters, at one and a half it refused `le-03` by 7pt.
 --
--- No page can gain or lose one, no block moves, no binding changes, and the
--- other nine formats' 450 masters are byte-identical.
+-- And ONE binding, on two of the 43 VOICE masters. Their Recommendation page
+-- draws `decision('{{recommendation.headline}}', '{{recommendation.rationale}}')`
+-- and the projection publishes no `rationale` — the Investment Compass master
+-- corrected exactly this in its own block and these two kept it, so the
+-- decision body resolved to the EMPTY STRING on every render. An unresolved
+-- binding is invisible: it prints nothing rather than a visible `{{…}}`, which
+-- is how two formats once shipped a cover with no title. They bind
+-- `gradedDetailLine`, the sentence the projection composes only when the
+-- record can say it.
+--
+-- No page can gain or lose one, no block moves, and the other eight formats'
+-- 400 masters are byte-identical.
 --
 -- A row is refreshed only where it is PROVEN an unedited copy of what the
 -- library last published, so a tenant who has adjusted that page

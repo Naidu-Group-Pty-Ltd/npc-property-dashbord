@@ -1078,3 +1078,104 @@ Shipped as seed **v18** plus the active-master refresh
 (`20261209000000` / `20261209010000`), after checking that `20261208000000` was
 already in the applied migration list — 990 of them — which is the one-query
 check `buildSeedCatalogue.ts` asks for before it is edited.
+
+## 19. Why only three dimensions scored, and what a fifth would be worth
+
+The question behind this section is the owner's: *can we do better and reach a
+higher score?* The measured answer is that two of the three reasons a dimension
+went unscored were defects of ours, one was not, and **completing the
+dimensions is as likely to lower a grade as to raise it.**
+
+| | 9 Hollow Street | 1 Crestview Avenue | 97 Poole Road |
+|---|---|---|---|
+| scored | 3 of 5 | 4 of 5 | 4 of 5 |
+| missing | Demand, Risk | Risk | Risk |
+
+### Demand — ours, and fixed at the cause
+
+Hollow's remedy read *"Domain days-on-market, sales and listing counts for the
+suburb, **or the ABS population series for the property's SA2**."* The same
+document cites that series **three times** — Kangaroo Flat – Golden Square,
+20,938 to 21,369 between 2020 and 2025, on pages 7, 8 and 10. It was held, and
+acquiring it again would have restored nothing: `populationDriver` carries 0.15
+and `DEMAND_PRIMARY` exists precisely so a driver cannot carry a dimension
+alone. A remedy may never name as missing something the platform already reads
+— `riskRemedyFor`'s rule, applied here.
+
+The real reason is narrower and it is a loader defect. `scoreTransactionVolume`
+needs **four periods carrying a sales count** to measure a quarter against this
+market's own trailing rate. NSW and QLD publish a count on every row of their
+sheets; **Victoria and South Australia publish one** — the latest quarter's —
+so their parsers emit `salesCount: null` on every other row. The upsert sent
+`sales_count` for every record, and PostgREST writes `ON CONFLICT DO UPDATE SET`
+for each column a payload names, so **every daily run rewrote every historical
+Victorian and South Australian count back to null.**
+
+Those two states could therefore hold at most ONE count at any moment, and
+transaction volume — the only primary demand measure this deployment is
+entitled to, the other three being vendor feeds — was **structurally
+unmeasurable for every property in Victoria and South Australia.** That is not
+a fact about Bendigo. A record carrying no count is now written without the
+column, which leaves what is stored standing; the two shapes cannot share a
+batch, so they are partitioned.
+
+It accumulates one quarter per quarter, so Victoria reaches four some months
+out. The route to it sooner is named rather than built: the Wayback captures
+`waybackMirror.pure.ts` already ranks are each a workbook printing ITS OWN
+latest quarter's count, so walking back four captures reconstructs the series
+today — at one heavy workbook per invocation, which is the bound five DCJ
+workbooks in one call already found.
+
+### Risk — not ours, and worth ±1 point
+
+`propertyRiskSchema.pure.ts` records this at length and its own header warns
+against exactly the thing the question invites: *"Do not manufacture Risk
+merely because its nominal composite weight is 5%."*
+
+An established house's schema offers `site_hazard_exposure` and
+`planning_constraints` — which are retrieved, and are ONE category (`site`),
+because both describe the same site — and `condition_and_maintenance`, which
+this deployment does not hold at all. `MINIMUM_INDEPENDENT_CATEGORIES` is 2.
+Every route to a fifth scored dimension therefore runs through a condition
+record.
+
+And the arithmetic is worth stating, because it is the answer to *would it
+help*: Risk's nominal weight is **5%**. On Hollow's composite of 65, a Risk
+score of 50 gives 64 and a score of 80 gives 66. **±1 point.**
+
+### What completing Demand would actually do
+
+On Hollow, with Demand scored at the 27 its two New South Wales siblings
+recorded, the renormalised composite is **59** against today's 65 — six points
+and a grade band **down**. Demand would have to score about 65 to hold the
+grade. A dimension is not worth points; it is worth meaning. Completing them
+makes the grade describe more of the property, and which way the number moves
+is the evidence's business.
+
+### Where the score IS being suppressed, measured
+
+Hollow's **Location scored 49** against Crestview's 69 and Poole's 74, and its
+recorded evidence includes *"114 minutes to the CBD"*. Golden Square is a
+suburb of **Bendigo**; the CBD measured to is **Melbourne**, because
+`resolveCbdDestination` returns the state capital. `COMMUTE_ANCHORS` ends at
+`[110, 0]`, so that reading scores **0 of 100** on a component of Location —
+while the same document's prose says the property has *"practical access to
+employment, retail and services in Bendigo CBD"* and *"proximity to Bendigo's
+employment base"*.
+
+This is not a new discovery: `cbdDestination.pure.ts` names it in its own
+header — *"whether the state capital is the right destination for a given
+property at all. For a Moranbah or a Gympie it plainly is not, and choosing an
+appropriate centre is its own piece of work"* — and
+`locationProvenanceMatrix.pure.ts` already carries `wrong_destination` as a
+tracked state.
+
+**It is the largest legitimate lever on the grade of a regional property**, and
+it is deliberately not taken here. Choosing the right centre needs a published
+register of urban centres; re-anchoring `COMMUTE_ANCHORS` to make a number
+larger would be changing a calibrated scale to raise a score, which is the one
+thing this programme must not do. The stored commute does not even name its
+destination today (`{ durationMinutes, distanceKm, mode }` — the `capital` is
+in hand at the call site and discarded), so the first step is to record which
+city was measured to, and no field is added here for want of anything to
+populate it.

@@ -346,9 +346,18 @@ const REPO = resolve(__dirname, '../..');
  * weights demand at 15%, with nothing on the page to tell the two apart. The
  * header names it and the standfirst says what it is.
  *
- * Three text changes inside two blocks on one page. No page gains or loses
- * one, no block moves, no binding changes, and the other nine formats' 450
- * masters are byte-identical. The standfirst is one sentence longer than the
+ * And one BINDING, on two of the 43 voice masters: their Recommendation page
+ * bound `{{recommendation.rationale}}`, which the projection does not publish,
+ * so the decision body resolved to the empty string on every render. The
+ * Investment Compass master corrected exactly that in its own block and these
+ * two kept it. They bind `gradedDetailLine` now — found by a spec asserting
+ * that no master binds a `recommendation.*` path the projection does not
+ * publish, which is the general form of the `scopeNote` defect in the other
+ * direction.
+ *
+ * Three text changes inside two blocks on one page, plus two bindings. No page
+ * gains or loses one, no block moves, and the other eight formats' 400 masters
+ * are byte-identical. The standfirst is one sentence longer than the
  * one it replaces and no more: at two extra sentences the geometry gate
  * refused three masters, at one it refused `le-03` by 7pt, and the wording
  * shipped is the longest that clears all 50.
