@@ -435,6 +435,26 @@ Deno.serve(async (req) => {
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     await fail(message);
-    return internalError(message, cors);
+    /*
+     * `internalError` composes a BODY and never a Response, and its second
+     * parameter is the log context, not headers. The first cut here was
+     * `internalError(message, cors)`, which was wrong twice over and neither
+     * half is cosmetic: the log line would have read `[object Object]` for its
+     * context, and a `Deno.serve` handler returning a bare object throws — so
+     * the platform serves a 500 carrying NONE of this function's CORS headers,
+     * the browser discards it, and `fetch` rejects with "Failed to fetch".
+     * That is the defect `STEP_UP_ENFORCEMENT.md` records, where an auth gate
+     * presented as a broken deployment. `json()` is this handler's own
+     * responder and already carries `cors`; 500 rather than `fail`'s 200
+     * because this is the unexpected path, not a designed refusal.
+     *
+     * The body carries NO `error: message` of its own. `internalError` sets
+     * `error: 'Internal error'` deliberately — disclosing the thrown message
+     * to the caller is what `check-error-disclosure.mjs` exists to stop — and
+     * spreading it after a same-named key would have overwritten it silently
+     * anyway. The message is not lost: `fail` above wrote it to the sync
+     * ledger and `internalError` logged it against a correlation id.
+     */
+    return json({ ok: false, ...internalError(e, 'urban-centre-register-ingest') }, 500);
   }
 });
