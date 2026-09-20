@@ -32,6 +32,7 @@
  */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { createCorsHeaders, createUnauthorizedResponse, verifyAuth } from '../_shared/auth.ts';
+import { csrfDenied, enforceCsrf } from '../_shared/csrfGuard.ts';
 import { internalError } from '../_shared/errorResponse.ts';
 import { ASGS_RELEASE } from '../_shared/geography/asgsGeography.pure.ts';
 import {
@@ -167,6 +168,23 @@ async function writeCentres(supabase: any, centres: readonly ParsedCentre[], loa
 Deno.serve(async (req) => {
   const cors = createCorsHeaders(req.headers.get('origin'));
   if (req.method === 'OPTIONS') return new Response(null, { headers: cors });
+
+  /*
+   * `verifyAuth` accepts a cookie-carried staff session, so this is a
+   * cookie-auth surface whatever its intended caller is, and SEC5-CSRF's gate
+   * holds every one of them to `enforceCsrf`. Its EXEMPT list reads "none
+   * currently — every verifyAuth function is wired", and writing the first
+   * entry into it would be a weakening rather than a fact about this
+   * function: nothing stops a browser session reaching this URL.
+   *
+   * It costs the real caller nothing. `enforceCsrf` is safe by default — a
+   * request carrying no cookie passes straight through — and pg_cron's
+   * invocation carries signed headers and no cookie. Placed before the body
+   * is read, as in `market-sales-ingest`, which this function is otherwise
+   * modelled on.
+   */
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(cors, csrf);
 
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
