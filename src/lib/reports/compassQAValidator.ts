@@ -69,9 +69,12 @@ import {
 } from './investment/evidenceClaims.pure';
 import { findDocumentContradictions } from './investment/documentConsistency.pure';
 import { findFiguresWithoutABasis } from './investment/evidenceClaims.pure';
+import { promotePipedPseudoTables } from './investment/pseudoTables.pure';
 import {
   RISK_REGISTER_CELL_MAX_WORDS,
+  RISK_REGISTER_COLUMNS,
   findOverlongRegisterCells,
+  hasRiskRegister,
 } from './investment/riskRegister.pure';
 
 /**
@@ -377,6 +380,52 @@ export function runQAValidation(
         severity: 'warning',
         sectionId: def.id,
         message: `Section "${sec.heading}" has ${w} words, over cap ${def.maxWordCount}.`,
+      });
+    }
+
+    /*
+     * A section that did not produce its declared SHAPE.
+     *
+     * Every rule above this one measures a section's length, its heading
+     * density or what words it contains. None of them asks whether the
+     * section is the thing its registry entry declares — so two of the three
+     * Compass reports regenerated on 20 Sep 2026 shipped a Risk Dashboard
+     * with no summary register in it, under nine other warnings each, and
+     * nothing said so. The third produced one as two lines of prose carrying
+     * pipe characters, which `promotePipedPseudoTables` now repairs on the
+     * read path; this reports the case that cannot be repaired, because a
+     * register nobody wrote cannot be composed without inventing an exposure
+     * and an evidence reading for every row.
+     *
+     * Scoped by `def.id` rather than by heading text, and asked only of the
+     * one section whose declared shape IS a register.
+     */
+    if (def.id === 'compass.riskDashboard' && !hasRiskRegister(sec.body)) {
+      // Two different failures, and the three delivered documents had one
+      // each way: 9 Hollow Street wrote the register as pipe-separated PROSE
+      // (repairable, and repaired for the reader), 1 Crestview Avenue and
+      // 97 Poole Road wrote none at all (not repairable — composing one would
+      // mean inventing an exposure and an evidence reading for every row).
+      // Reporting them as the same finding would send an operator to the
+      // wrong remedy, which is the mistake `screeningConsumer` already paid
+      // for over a simulator reported as no provider.
+      const asMarkup = hasRiskRegister(promotePipedPseudoTables(sec.body).markdown);
+      findings.push(asMarkup ? {
+        rule: 'risk-register-not-marked-up',
+        severity: 'warning',
+        sectionId: def.id,
+        message: `Section "${sec.heading}" wrote its summary register as pipe-separated text `
+          + 'rather than as a markdown table. The reader\'s copy is repaired on the read path by '
+          + '`promotePipedPseudoTables`, so the delivered document carries a table; the stored '
+          + 'record carries prose. The instruction shows the markup — follow it.',
+      } : {
+        rule: 'risk-register-missing',
+        severity: 'error',
+        sectionId: def.id,
+        message: `Section "${sec.heading}" carries no summary register. It must open with a `
+          + `markdown table of ${RISK_REGISTER_COLUMNS.join(' | ')} — one row per risk — before `
+          + 'the detail blocks. Without it a reader has to read the whole section to learn what '
+          + 'the risks are, and no row states the exposure or the evidence held behind it.',
       });
     }
 

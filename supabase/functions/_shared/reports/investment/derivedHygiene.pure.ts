@@ -25,6 +25,7 @@ import { tabulateMixedUnitCharts } from './chartUnits.pure.ts';
 import { dedupeChartDirectives } from './blockHygiene.pure.ts';
 import { limitEmphasis } from './emphasisDensity.pure.ts';
 import { stripFootnoteDebris } from './footnoteDebris.pure.ts';
+import { promotePipedPseudoTables } from './pseudoTables.pure.ts';
 import { withholdRatedAbsenceCharts } from './ratedAbsence.pure.ts';
 import {
   PLANNING_REGISTER_SECTION,
@@ -612,8 +613,21 @@ export function presentStoredMarkdown(
   evidence?: EvidenceInventory | null,
 ): string {
   if (!markdown) return '';
-  const r = stripPlaceholderRows(markdown);
-  const scrubbed = r.removedRows + r.removedTables + r.removedLines + r.blankedCells === 0 ? markdown : r.markdown;
+  /*
+   * A row of pipes is a table the model did not mark up.
+   *
+   * Page 23 of the 9 Hollow Street Compass set the Risk Dashboard's summary
+   * register — the artefact the section is built around — as two lines of
+   * body copy with a list bullet in front of the only row. FIRST in this
+   * chain, and deliberately: promoting text into a table is worth doing only
+   * if every pass below that understands tables then sees it, and four of
+   * them do. See `promotePipedPseudoTables` for the bounds that keep it off
+   * a sentence that happens to carry a pipe.
+   */
+  const gridded = promotePipedPseudoTables(markdown);
+  const source = gridded.promoted.length ? gridded.markdown : markdown;
+  const r = stripPlaceholderRows(source);
+  const scrubbed = r.removedRows + r.removedTables + r.removedLines + r.blankedCells === 0 ? source : r.markdown;
   // A gap cell inside an at-a-glance strip is the same defect one layer down,
   // and `stripPlaceholderRows` cannot see it — it is neither a row nor a
   // bullet. Found on two issued documents in the S6 acceptance run.

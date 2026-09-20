@@ -705,3 +705,142 @@ none of its rows.
 **1 directive withheld and 1 drawing refused, across all three documents**, both
 on the one page that carried them; every other chart in all three byte-identical.
 Each fix was proved by reverting it and watching the test fail.
+
+## 14. The Risk Dashboard had no shape
+
+Measured 20 Sep 2026 on the same three delivered Compass PDFs. The Risk
+Dashboard is the section a reader most needs to scan, and its registry entry
+declares a precise shape — *"A SUMMARY REGISTER a reader can scan — Risk |
+Exposure | Evidence — followed by a DETAIL BLOCK for each MATERIAL risk"*.
+What the three documents delivered:
+
+| | 9 Hollow Street | 1 Crestview Avenue | 97 Poole Road |
+|---|---|---|---|
+| Summary register | one row, as **prose with pipes** | **none** | **none** |
+| Exposure level per risk | in that one row | **nowhere in the section** | **nowhere in the section** |
+| Evidence reading per risk | in that one row | **nowhere in the section** | **nowhere in the section** |
+| Detail blocks | 4, with `Finding / Evidence / Implication / Next check` | 3 prose sub-sections, unlabelled | 4 prose sub-sections, unlabelled |
+
+Nought of three produced the contract. Two of three carry no statement anywhere
+of what was retrieved and what is still outstanding, so their risk sections read
+as confident assessments of the area — which is the accuracy half of the same
+defect §13 closed for a chart.
+
+### The QA validator could not see it
+
+`runQAValidation` filed **nine warnings on each of those two runs** and said
+nothing about the register, because its only register rule —
+`findOverlongRegisterCells` — measures how long a CELL is. That is a rule about
+a register that exists. Every other rule in the validator measures a section's
+length, its heading density or the words it contains; **none asks whether a
+section is the thing its registry entry declares.**
+
+Two findings now, deliberately not one: `risk-register-not-marked-up` (a
+warning — the words were written, the markup was not, and the read path repairs
+it) and `risk-register-missing` (an error — nothing was written, and composing a
+register would mean inventing an exposure and an evidence reading for every
+row). Reporting both as "missing" sends an operator to the wrong remedy, which
+is the mistake `screeningConsumer` already paid for over a simulator reported as
+no provider.
+
+### The instruction was written three times and one copy was dead
+
+`riskRegisterInstruction()`, whose own header calls itself *"One declaration:
+the section registry's purpose reads it"*, had **zero production call sites**.
+`compassSectionRegistry`'s `compass.riskDashboard` purpose carried a verbatim
+copy of its output as a string literal, and the frontend mirror carried a copy
+of that. The words the model actually receives came from the registry; the
+function was ornamental; and the copies had already diverged by four paragraphs
+(coverage and the evidence chip existed only in the registry).
+
+The immediate cost: §13's new sentence, added to the function the day before,
+would have reached nothing. Both registries compose the function now, and a
+spec asserts the composition and that neither file carries a second copy of the
+words.
+
+### Why the register did not appear, and the one-line reason
+
+The instruction asked for *"a SUMMARY REGISTER a reader can scan — Risk |
+Exposure | Evidence"*. That is a description of columns written with pipe
+characters. It never said the word **table** and never showed the markup — and
+the one document that tried reproduced exactly that line:
+
+```
+Risk | Exposure level | Evidence chip | Due-diligence focus
+•Crime | Not assessed | Unverified | State crime register and local police data
+```
+
+body face, body size, a list bullet in front of the only row. **A prohibition
+with no demonstration of the permitted form is one a model routes around** —
+the rule `compassDocumentContract` already paid for, and the `{{bars}}`
+scorecard paid for again. The instruction now says "MARKDOWN TABLE", prints the
+header row, the rule row and a worked row, and shows a worked detail block.
+
+`promotePipedPseudoTables` is the guarantee behind it, on the read path, first
+in the chain — before `stripPlaceholderRows`, `dropEmptyTableColumns`,
+`foldConstantTableColumns` and `dedupeRegisterTables`, because promoting text
+into a table is only worth doing if the four passes that understand tables then
+see it.
+
+The danger there is prose, so every bound refuses rather than guesses: three
+columns and never two; every line in the run carrying the same number of cells;
+a first line that is a header and looks like one (not a list item, every cell a
+short label with no sentence punctuation); no empty cell and no cell carrying a
+paragraph; nothing already marked up and nothing inside a fence. **Measured over
+the rendered text of all three PDFs: two lines promoted, in one place, nothing
+else matched.** Reading the RENDERED text is what makes that the right
+measurement — a table that was marked up correctly draws no pipes at all, so
+every pipe on a page is by definition a table that failed.
+
+## 15. Three units on one track, with the units in the labels
+
+Page 22 of the 1 Crestview Avenue Compass, read off the PDF's own geometry —
+three labels right-aligned at x=210, three values right-aligned at x=486, which
+is `renderBars`' layout and not a table:
+
+```
+R3 Medium Density Residential zone       1
+Minimum lot size 450 m²                450
+Maximum building height 10 m            10
+```
+
+A zone code, a land area and a height on one axis with a maximum of 450. The
+height drew as a 2% sliver and the zone as a hairline — §5's defect exactly,
+and §5's module walked straight past it, because `unitOf` reads the DISPLAY and
+all three displays were bare integers. **The model had put the units in the
+labels.**
+
+The bound that makes reading a label safe is that **the label must restate the
+item's own value**: `Minimum lot size 450 m²` carries the number 450, which IS
+this item's value, so the `m²` beside it is this value's unit and nothing is
+inferred. A label that merely ends in a word — `Schools`, `Subject house` —
+states no value and contributes nothing; and a label whose trailing number is a
+DIFFERENT number — `Growth 5 yr` beside a value of 6.2 — is a period, not a
+unit, and the equality test refuses it.
+
+That equality also settles `m`. `unitOf` reads a lone k/m/b after digits as a
+magnitude, which is right for a display (`$1.2M`, `45k`) and wrong here: `10 m`
+beside a value of 10 cannot be ten million, or the value would be 10,000,000.
+
+**The unit moves into the value cell**, where a reader looks for it — nothing is
+composed, both halves are the model's own characters, moved:
+
+```
+| Item                               | Value  |
+| R3 Medium Density Residential zone | 1      |
+| Minimum lot size                   | 450 m² |
+| Maximum building height            | 10 m   |
+```
+
+Measured across all three PDFs: **one chart tabulated by this rule, no other
+chart in the three affected.**
+
+### The residual, named rather than guessed at
+
+`R3 Medium Density Residential zone | 1` is still a number the model assigned to
+a category — a zone code is not a quantity of anything. The false axis is gone,
+so the `1` no longer reads as "small compared with 450", but the cell is still
+meaningless. That is the prompt's own rule (*a rating you invented may not be
+drawn, in any primitive*) and it has no deterministic guarantee behind it:
+telling an assigned 1 from a measured 1 is not something the directive's text
+supports. It is recorded here rather than papered over.

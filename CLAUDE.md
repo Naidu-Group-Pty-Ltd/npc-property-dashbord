@@ -2165,7 +2165,8 @@ the scoring service stores is a placeholder no surface draws.
 
 Read [`A_PREMIUM_DOCUMENT.md`](./docs/reports/A_PREMIUM_DOCUMENT.md) before
 touching `emphasisDensity.pure.ts`, `glanceStrip.pure.ts`,
-`chartUnits.pure.ts`, `directiveKey`, `foldConstantTableColumns` or
+`chartUnits.pure.ts`, `ratedAbsence.pure.ts`, `pseudoTables.pure.ts`,
+`riskRegisterInstruction`, `directiveKey`, `foldConstantTableColumns` or
 `demandScoring.pure.ts`. Everything in it was measured on ONE delivered PDF —
 the Compass issued for 97 Poole Road, Kellyville on 20 Sep 2026 — by reading
 the FILE rather than the source that made it, which is what turned "too much
@@ -2216,6 +2217,41 @@ register should have emitted thirteen rows is a separate, open question** —
 `readResidentialStanding` says it should, the page says five, and the scrub,
 the renderer and the packer were each excluded by execution; §9 of the same
 doc records the evidence rather than a guess.
+
+**An absence may not be rated — on a chart either** (§13–15 of the same doc,
+measured on three regenerated Compass reports rather than one). Page 23 of the
+9 Hollow Street document drew `Risk exposure index (1=Low, 5=High, Not
+assessed shown as 5)` over a crime risk the register three lines below
+correctly reports as **Not assessed**. `PLANNING_CONTROLS_IN_THE_REPORT.md` §9
+closed that rule as a STATEMENT; a picture has no sentence for a rule about
+sentences to catch. `withholdRatedAbsenceCharts` withholds a chart whose own
+text declares an absence-to-value convention, **whole rather than by the cells
+at that value** — once 5 means both "high" and "we did not look", a chart with
+its 5s removed reads as a property with no high risks. It fires on a
+CONFESSION and never a guess, so `Risks not assessed: 3` is left alone. The
+same drawing was wrong twice: seven cells under one column label, because the
+model wrote seven risks with commas where `{{heatmap}}` separates rows with
+`/`, so `renderHeatmap` now refuses a PARTIAL label set — a grid that names
+nothing on an axis is one whose caption carries it, and both shapes are in
+production.
+
+**The Risk Dashboard had no shape, and the instruction was written three
+times.** Nought of three documents produced the declared register; two carry no
+exposure level and no evidence reading anywhere, so their risk sections read as
+confident assessments of the area. `riskRegisterInstruction()` — whose own
+header called itself "one declaration" — had **zero production call sites**,
+because both registries carried a verbatim copy of its output as a literal and
+the three had already diverged by four paragraphs. Both compose it now. The
+likely cause of the 1-of-3 is that it asked for "a SUMMARY REGISTER — Risk |
+Exposure | Evidence" and never said the word **table**: it shows the markup
+now, and `promotePipedPseudoTables` is the guarantee behind it, FIRST on the
+read path so the four passes that understand tables then see it. QA reports
+`risk-register-not-marked-up` and `risk-register-missing` as two findings and
+never one, because repairable and unrepairable send an operator to different
+remedies. And **the units were in the labels**: a zone code, 450 m² and 10 m on
+one axis walked past `tabulateMixedUnitCharts` because every display was a bare
+integer, so a label is now read for a unit — bounded by the label having to
+restate the item's OWN value, which also settles `10 m` against ten million.
 
 **And a footnote marker with nothing it can refer to.** Five sentences
 ended in a bare digit glued to the full stop (`…do not capture.12 Median house
