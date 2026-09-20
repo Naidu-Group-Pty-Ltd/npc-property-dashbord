@@ -24,6 +24,7 @@ import { alignChartScales } from './chartScale.pure.ts';
 import { tabulateMixedUnitCharts } from './chartUnits.pure.ts';
 import { dedupeChartDirectives } from './blockHygiene.pure.ts';
 import { limitEmphasis } from './emphasisDensity.pure.ts';
+import { stripFootnoteDebris } from './footnoteDebris.pure.ts';
 import {
   PLANNING_REGISTER_SECTION,
   dedupeRegisterTables,
@@ -721,6 +722,24 @@ export function presentStoredMarkdown(
   const scaled = alignChartScales(commensurable);
   const levelled = scaled.aligned.length ? scaled.markdown : commensurable;
   /*
+   * A footnote marker in a document that has no footnotes.
+   *
+   * Five sentences of the 97 Poole Road Compass ended in a bare digit glued
+   * to the full stop — `…do not capture.12 Median house prices…` — set in the
+   * body face at body size, referring to nothing, because the Compass carries
+   * no footnote apparatus. Driven through the real write-path stripper and
+   * `renderMarkdown`, every other form a citation could take survives VISIBLY
+   * different, so the model wrote them with no markup at all and neither the
+   * stripper nor the renderer could have seen them.
+   *
+   * `stripFootnoteDebris` asks the document before it acts: a body carrying a
+   * Notes list or an `[^id]:` definition keeps every marker it has. Measured
+   * over all 38 pages of that document: 5 matches, 5 markers, 0 false
+   * positives.
+   */
+  const debris = stripFootnoteDebris(levelled);
+  const unmarked = debris.removed.length ? debris.markdown : levelled;
+  /*
    * Emphasis is a signal, and a signal that fires on one word in five is noise.
    *
    * Measured off the 97 Poole Road Compass by font rather than from the
@@ -739,9 +758,9 @@ export function presentStoredMarkdown(
    * the markers from both sides and they are byte-identical, and
    * `emphasisDensity.spec.ts` asserts exactly that rather than promising it.
    */
-  const emphasised = limitEmphasis(levelled);
+  const emphasised = limitEmphasis(unmarked);
   const { clause, figure, repeat, table } = emphasised.unwrapped;
-  const calm = clause + figure + repeat + table ? emphasised.markdown : levelled;
+  const calm = clause + figure + repeat + table ? emphasised.markdown : unmarked;
   if (!evidence) return calm;
   const judged = enforceChartEvidence(calm, evidence);
   return judged.findings.length ? judged.markdown : calm;
