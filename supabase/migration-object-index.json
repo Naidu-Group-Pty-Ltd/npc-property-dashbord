@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "migration_files": 1008,
+  "migration_files": 1009,
   "created": [
     "function:aml.aml_touch_updated_at",
     "function:aml.apply_partner_material_change",
@@ -280,6 +280,7 @@
     "function:public.record_webhook_rejection",
     "function:public.refresh_email_copilot_email_addresses",
     "function:public.refresh_pdf_import_cost_daily",
+    "function:public.regenerate_investment_report",
     "function:public.register_uploaded_document_version",
     "function:public.release_investment_report_resume",
     "function:public.release_migration_job_lock",
