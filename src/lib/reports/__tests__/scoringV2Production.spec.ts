@@ -472,13 +472,40 @@ describe('Growth is no longer required before a grade is issued', () => {
 
 describe('the input policy still rules on Location', () => {
   it('refuses the unrepaired inputs unless declared verified', () => {
-    const refused = assembleEngineInput(base({ location: { walkScore: 72, commuteTimeCBD: 38, schoolsNearby: 5 } }));
-    expect(refused.locationInputs).toEqual({ walkScore: null, commuteTimeCBD: null, schoolsNearby: null });
+    const refused = assembleEngineInput(base({
+      location: {
+        walkScore: 72, commuteTimeCBD: 38, schoolsNearby: 5,
+        amenities: [{ category: 'Public Transport', count: 6, distance: 0.4 }],
+      },
+    }));
+    /*
+     * The rule is that an undeclared input is refused, so it is asserted over
+     * every input rather than against a literal key set — a fixed object pins
+     * the SHAPE, and a location input added later would then be refused
+     * correctly while failing this test, or admitted wrongly while passing a
+     * test that never names it. `amenities` is named because it is the one
+     * this is written for: it rides `walkScore`'s declaration, so refusing
+     * that declaration must refuse it too.
+     */
+    expect(Object.keys(refused.locationInputs).sort())
+      .toEqual(['amenities', 'commuteTimeCBD', 'schoolsNearby', 'walkScore']);
+    for (const [key, value] of Object.entries(refused.locationInputs)) {
+      expect(value, key).toBeNull();
+    }
     const admitted = assembleEngineInput(base({
-      location: { walkScore: 72, commuteTimeCBD: 38, schoolsNearby: 5 },
+      location: {
+        walkScore: 72, commuteTimeCBD: 38, schoolsNearby: 5,
+        amenities: [{ category: 'Public Transport', count: 6, distance: 0.4 }],
+      },
       verifiedInputs: ['walkScore', 'schoolsNearby'],
     }));
-    expect(admitted.locationInputs).toEqual({ walkScore: 72, commuteTimeCBD: null, schoolsNearby: 5 });
+    expect(admitted.locationInputs.walkScore).toBe(72);
+    expect(admitted.locationInputs.commuteTimeCBD).toBeNull();
+    expect(admitted.locationInputs.schoolsNearby).toBe(5);
+    // Admitted on `walkScore`'s declaration: it is the measurement that
+    // REPLACES the composite, so the two answer to one verification.
+    expect(admitted.locationInputs.amenities)
+      .toEqual([{ category: 'Public Transport', count: 6, distance: 0.4 }]);
   });
 
   it('the yield basis is the purchase price, declared, and the buyer position reaches finance only', () => {
