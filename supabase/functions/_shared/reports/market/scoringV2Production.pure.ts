@@ -226,6 +226,22 @@ export interface ProductionLocationInput {
     count?: number | null;
     distance?: number | null;
   }> | null;
+  /**
+   * Where the commute was measured TO, as the enrichment recorded it.
+   *
+   * Carried on the SAME admission as the commute itself — it describes that
+   * reading and nothing else, so admitting the minutes while refusing the
+   * destination would score a number whose basis had been withheld.
+   *
+   * An enrichment written before the destination was recorded carries none,
+   * and `scoreLocation` then behaves exactly as it did. See
+   * `urbanCentre.pure.ts` for why a commute to somewhere that is not this
+   * property's urban centre is not scored.
+   */
+  commuteDestination?: {
+    label?: string | null;
+    ownCentre?: 'yes' | 'no' | 'unknown' | null;
+  } | null;
 }
 
 /** The market evidence a caller assembled from its adapters. */
@@ -534,6 +550,10 @@ export function assembleEngineInput(input: ProductionScoringInput): ShadowScoreI
     locationInputs: {
       walkScore: admittedLocation.has('walkScore') ? loc.walkScore : null,
       commuteTimeCBD: admittedLocation.has('commuteTimeCBD') ? loc.commuteTimeCBD : null,
+      // The destination rides its own reading's admission: a commute that was
+      // refused has no basis to state, and one that was admitted must state it.
+      commuteDestination: admittedLocation.has('commuteTimeCBD')
+        ? (loc.commuteDestination ?? null) : null,
       schoolsNearby: admittedLocation.has('schoolsNearby') ? loc.schoolsNearby : null,
       // Same enrichment, same acquisition stamp, same admission as the walk
       // score it replaces. See `ProductionLocationInput.amenities`.

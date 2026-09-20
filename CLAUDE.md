@@ -2848,6 +2848,45 @@ vanishing. And **nothing returns a score or a mode**: the invented
 `qualityScore` is what corrupted the walk score, and mode lives behind a 399 MB
 member, so both are named as not measured on every answer.
 
+**A commute to the wrong city scored zero, and it was the right number for
+the wrong journey.** Read §20 of
+[`A_PREMIUM_DOCUMENT.md`](./docs/reports/A_PREMIUM_DOCUMENT.md) before touching
+`_shared/reports/location/urbanCentre.pure.ts`, `urbanCentreIngest.pure.ts`,
+`urban-centre-register-ingest` or the commute block in
+`location-intelligence-service`. `resolveCbdDestination` returns the STATE
+CAPITAL, so Golden Square — a suburb of Bendigo, twelve minutes from the centre
+it belongs to — was measured **114 minutes to Melbourne**, and `COMMUTE_ANCHORS`
+ends `[110, 0]`, so the reading scored **0 of 100** and Location came out at 49
+against 69 and 74 for two metropolitan properties. `cbdDestination.pure.ts`'s
+own header had named the gap since ME-5 and the methodology doc had promised
+polycentric selection since audit §58; neither was implemented.
+
+Two rules close it, and **the second works before any register exists**. A
+commute is measured to the property's own urban centre where
+`urban_centre_register` names one — the ABS Significant Urban Area at the
+verified coordinate, resolved from the same ASGS service the geography
+resolver already asks. And **a commute to somewhere that is not this
+property's centre is recorded but not scored**: `ownCentre` is `yes` / `no` /
+`unknown`, and `no` is answered by the SUA NAME alone (Golden Square's SUA is
+`Bendigo`, which is not the capital), so the zero stops being spent on the
+very first deployment, with no register loaded. `unknown` scores exactly as it
+always did, so an unreachable geoserver or an empty register leaves today's
+behaviour standing, and `commuteExcluded` names which of the two it was.
+Measured on the module against readings that reproduce Hollow's delivered
+figure (walk 96, 7 schools): **49 rated → 81 excluded → 89** once the register
+names Bendigo. The middle number is what every deployment gets before any
+ingest has run.
+
+Three more bite. **The register is seeded by nothing** — the migration creates
+the table empty and `urban-centre-register-ingest` fills it, because a
+hand-typed centroid is a coordinate nobody can defend and the ABS publishes
+one. **A load is judged by its effect** (`urbanCentreIngest.pure.ts`):
+`MIN_PLAUSIBLE_CENTRES`, a shrink cap against the last good count, and every
+point inside the continent bounds — a truncated download is a register that
+answers confidently about the wrong place. And **`Number('')` is 0**, which is
+why a feature with no centroid parsed as `(0, 0)` and was stopped only by
+those bounds; the parser refuses an empty string before it coerces.
+
 **Recorded crime now covers four states, and the fourth one changed its
 classification mid-series.** Read
 [`CRIME_SOURCES.md`](./docs/reports/CRIME_SOURCES.md) before touching

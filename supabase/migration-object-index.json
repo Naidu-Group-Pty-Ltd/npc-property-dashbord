@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "migration_files": 1004,
+  "migration_files": 1005,
   "created": [
     "function:aml.aml_touch_updated_at",
     "function:aml.apply_partner_material_change",
@@ -1567,6 +1567,7 @@
     "index:uq_pti_statement_live",
     "index:uq_purchase_files_client_deal_id",
     "index:uq_saved_views_default",
+    "index:urban_centre_register_state_idx",
     "index:user_sessions_token_hash_key",
     "index:user_sessions_user_active_idx",
     "index:user_webauthn_credentials_user_idx",
@@ -2204,6 +2205,8 @@
     "table:public.transport_data_cache",
     "table:public.transport_feed_syncs",
     "table:public.transport_stops",
+    "table:public.urban_centre_register",
+    "table:public.urban_centre_syncs",
     "table:public.user_permissions",
     "table:public.user_preferences",
     "table:public.user_roles",

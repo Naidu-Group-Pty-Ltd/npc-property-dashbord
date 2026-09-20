@@ -1179,3 +1179,142 @@ destination today (`{ durationMinutes, distanceKm, mode }` — the `capital` is
 in hand at the call site and discarded), so the first step is to record which
 city was measured to, and no field is added here for want of anything to
 populate it.
+
+## 20. A commute measured to the wrong city, and scored as access
+
+§19 named this as the largest legitimate lever on a regional property's grade
+and deliberately left it. This is it, taken.
+
+Golden Square is a suburb of **Bendigo** — a city of about 100,000 with its own
+CBD, hospital, university campus and employment base. The 9 Hollow Street
+Compass says so twice in its own prose: *"practical access to employment,
+retail and services in Bendigo CBD"* and *"proximity to Bendigo's employment
+base, amenities and services"*. Its Location dimension's recorded evidence
+reads:
+
+```
+114 minutes to the CBD
+```
+
+`resolveCbdDestination` returns the state capital, so the CBD is **Melbourne**.
+`COMMUTE_ANCHORS` ends at `[110, 0]`, so that reading scored **0 of 100** on a
+component of Location, and Location came out at **49** against 69 and 74 for
+the two metropolitan properties beside it.
+
+A 114-minute drive to Melbourne is a true fact and a real distance. It is not a
+reading about this property's access to anything, because Melbourne is not this
+property's market. `cbdDestination.pure.ts` has named the gap in its own header
+since ME-5: *"whether the state capital is the right destination for a given
+property at all. For a Moranbah or a Gympie it plainly is not, and choosing an
+appropriate centre is its own piece of work."*
+
+### The register was already half-built
+
+The ABS publishes the answer: **Significant Urban Areas**, the ASGS's own
+classification of Australia's urban centres of 10,000 people and over. And
+`resolveOneReportGeography.ts` has queried the `SUA` layer at `geo.abs.gov.au`
+since ME-5 — the platform already records which urban centre every resolved
+coordinate is in. What it has never held is a **point** for that centre, which
+is what a commute needs. `urban_centre_register` is that point, and
+`urban-centre-register-ingest` loads it from the same service, the same release
+and the same query shape that is already in production.
+
+### Two rules, and the second works before the register has run
+
+**A commute is measured to the property's own urban centre where the register
+names one.** Golden Square is measured to Bendigo.
+
+**A commute to somewhere that is NOT this property's urban centre is not
+scored.** It is still measured, recorded and reported — it is true — and it
+carries `ownCentre: 'no'`, which `scoreLocation` excludes rather than rating as
+zero. That is §9's rule again: rating the 0 states a conclusion about the
+property from a measurement of something else. The remaining components
+renormalise over what actually measured this property, which is what the module
+already does for every component it does not have.
+
+The second rule needs no register: whether the property's SUA is the capital's
+is answered by the SUA **name**. So a deployment whose ingest has never run
+stops scoring the wrong measurement immediately, and starts measuring the right
+one when the register lands. `CLONE_PROVISIONING_GAPS.md`'s rule — a feature
+the migrations have not reached degrades rather than failing — and the reason
+nothing is seeded: the rows a migration INSERTs do not travel, so a seeded
+register would be present on the prime and absent everywhere else while
+looking, from the ledger, exactly like it was there.
+
+Measured on the module. The first version of this paragraph quoted three
+numbers from an unnamed input set and read as though they were Hollow's —
+§5's lesson committed again — so the inputs are named here and chosen to
+**reproduce the delivered figure**: walk score 96, seven schools within 3 km,
+which score 49 with the commute rated, exactly as the document printed. Held
+fixed across all three readings:
+
+| the commute | destination | `ownCentre` | Location |
+| --- | --- | --- | ---: |
+| 114 min, rated (today) | Melbourne | `unknown` | **49** |
+| 114 min, excluded (no register yet) | Melbourne | `no` | **81** |
+| 6 min, measured (register names Bendigo) | Bendigo | `yes` | **89** |
+
+The middle row is what a deployment gets before any ingest has run, and it is
+most of the correction: excluding the commute renormalises walkability and
+schools from 0.35/0.25 onto 0.583/0.417, so the dimension is scored on what
+was actually measured about this location rather than being dragged to the
+floor by a journey nobody living here makes. What this does to the composite
+is not computed here — Location is 0.25 nominal and the other four dimensions
+are unchanged, so it is a real lift and not a stated one.
+
+### Four bounds
+
+* **`ownCentre` is three-state, never a boolean.** Where no SUA resolved the
+  answer is `unknown`, and an unknown is scored exactly as it is today. A rule
+  that cannot tell a Bendigo property from a Sydney one must not act as though
+  it could — and every enrichment written before this carries none.
+* **The capital match is state-scoped and on a word boundary.** The ACT's SUA
+  is `Canberra - Queanbeyan`, so equality would send every ACT property down
+  the not-my-centre path and discard a correct reading. `Perth` is a Tasmanian
+  locality as well as Western Australia's capital; the comparison is only ever
+  made against the property's own state's capital, so the two never meet.
+* **A point states how it was derived.** A capital's CBD is a placed
+  coordinate; an SUA's is the centre of a published polygon, whose error is
+  bounded by the size of the urban area it describes.
+* **Every figure names its basis.** The component's sentence reads *"6 minutes
+  to Bendigo"* rather than *"to the CBD"*: a commute whose destination is not
+  named is a number no reader can check, which is how this survived unnoticed.
+
+### The loader repeats every rule the other two registers learned
+
+`load-sanctions-lists.mjs` and `load-pep-officeholders.mjs` paid for each of
+these: refuse a zero-entry parse (a service answering 200 with nothing is a
+failure, not an empty Australia); treat a **shrink** as a truncated download
+(the ABS publishes about a hundred SUAs and that number does not halve); an
+error body under HTTP 200 is a failure, which is how ArcGIS reports one; and
+name the key in the prune's own filter rather than relying on a returning
+projection.
+
+Two more are this register's own. **A coordinate is judged against the
+continent** before it is written — `components=country:AU` restricting the
+ANSWER rather than the SEARCH is how a cluster of properties ended up in the
+desert. And **it never half-writes**: a load that fails its bounds writes no
+centre at all, because a register missing two thirds of Australia is worse than
+one nobody has loaded — the second says so and the first does not.
+
+A bug the spec found while being written, worth keeping: `Number('')` is **0**,
+which is finite, so a feature carrying no point parsed as `0, 0` and only the
+continent bounds stopped it being written as a centre in the Atlantic. A parser
+must not depend on a later rule to catch its own coercion.
+
+### BLOCKED, and stated as such
+
+**The ingest has not been run, and could not be from here.** This session's
+egress answers `403` at the CONNECT tunnel for `geo.abs.gov.au`, so the live
+query shape — specifically whether that ArcGIS release honours
+`returnCentroid=true`, and how many features it returns in one response — is
+**unverified against the service**. The parser accepts the feature's own
+geometry where no centroid is supplied, and refuses anything it cannot read
+rather than guessing, but that is a defence and not a measurement.
+
+What IS verified: the endpoint, release, layer, field names and response shape
+are the ones `resolveOneReportGeography.ts` has used in production since ME-5,
+and the parser, the refusals and the resolution are exercised by
+`aCommuteToTheWrongCity.spec.ts`. The first real load must be read before the
+register is trusted — and until it succeeds, every property keeps today's
+measurement to the capital, correctly unscored where that is not its centre.
