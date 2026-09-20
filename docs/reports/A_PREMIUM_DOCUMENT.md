@@ -291,12 +291,8 @@ Read page by page and not yet acted on:
   four entries. Page 25 reads `sofuture`, a space eaten where a marker was
   stripped. **The bare-digit half of this is closed in §9**; the `sofuture`
   space and the page-36 Notes count are not, and are still open.
-* **Page 2** lists "1. Cover" and "2. Contents" as its own contents entries.
 * **Page 27** ends a sentence mid-phrase: *"the land is zoned R2 – Low Density
   Residential, which is intended"*.
-* **Page 32** prints an ISO date `2026-09-20` in prose where the rest of the
-  document says "20 September 2026" — the `AU_LOCALE` rule, one level down in a
-  template string rather than a formatter.
 * **Pages 19 and 31** draw a planning-read callout with a large empty area and a
   lone green horizontal bar.
 * **Page 21** draws a red zigzag sparkline mid-sentence, described in the
@@ -478,3 +474,76 @@ sentence would be worse.
 The `sofuture` eaten space on page 25 and the page-36 Notes list carrying four
 entries for markers the body no longer shows are **not** closed by this. They
 need the stored bytes of that report, which this branch has not read.
+
+## 11. One date format in a planning reading
+
+Page 32 printed, in a sentence a client reads:
+
+> Under The Hills Local Environmental Plan 2019, **as read on 2026-09-20**, a
+> dwelling house is permitted with development consent on this land.
+
+while every table on that page and the two either side of it said `7 Aug 2026`,
+`27 Feb 2026` and `20 Sep 2026`. One document, two date formats, and the
+machine-readable one in the prose.
+
+`instrumentAnchor` built its date with `retrievedAt.slice(0, 10)` — an ISO
+prefix, which is the right thing to STORE and never the right thing to print —
+while `planningFacts` and `infrastructureEvidence` each carried a private,
+byte-identical `auDate` that their tables went through. **Two copies of one
+rule, and the one place that reached prose had neither.**
+
+`auDate.pure.ts` is that rule, named once and imported by all three. It is a
+pure string transform rather than `toLocaleDateString`, deliberately: the AML
+defect the `AU_LOCALE` rule came from was a formatter taking the READER'S
+machine, and an edge function has no reader's machine to take. What it cannot
+parse it hands back unchanged, because a publisher's own wording for a period
+("Q2 2026", "2025-26") is a fact and reformatting it would be inventing one.
+
+**A contract test had to be renegotiated and it was pinning the defect.**
+`landUsePermissibility.spec.ts` asserted `/^Under .+, as read on
+\d{4}-\d{2}-\d{2},/` and `AT.slice(0, 10)` — it REQUIRED the ISO form that
+shipped. Its intent (the sentence must name its instrument and the day it was
+read, or it reads as a permanent property of the land) is kept whole, beside a
+second test forbidding an ISO date in any sentence a client reads.
+
+## 12. The front matter of a list is not an entry in it
+
+Page 2 opened its twenty-two-row contents with:
+
+```
+1. Cover                                              1
+2. Contents                                           2
+3. Executive dashboard                                3
+```
+
+The first row points at the sheet before this one; the second at the sheet the
+reader is holding. A contents entry whose destination is the contents is a link
+to itself — `tpl-page-1`, from the block drawn on page 1. They are also two of
+twenty-two rows on a page `fitTocEntries` can be forced to truncate, so they are
+not free.
+
+`renderTocHtml`'s filter kept both by construction: a page with no narrative
+section is listed unless it declares `tocContinues`, and `i === 0` **forced the
+cover in past even that test**.
+
+### Structurally, never by name
+
+Both are identified by the list's own `ctx.pageIndex` and by page 0. A master
+may call its cover anything, and matching on the word "Contents" would drop a
+report section that happens to be called that.
+
+### The two bounds
+
+* **It never drops a page that opens a section.** A master that draws narrative
+  on its cover lists that page as content — the caller passes `opensSection`, so
+  this cannot be decided from a page's furniture alone.
+* **It never empties the list.** A one-page document keeps what it had, because
+  a blank contents page reads as a broken render.
+
+**Five tests were renegotiated and every one was pinning this defect** — four in
+`sectionNavigation.spec.ts` required `1. Cover` and `2. Contents` as the first
+two rows, and one in `contentsBlock.spec.ts` asserted the same strings. Each
+test's own subject is kept whole (the list names the report's sections rather
+than the archetypes carrying them, a section row links to its own heading, a
+`tocContinues` sheet folds, a document with no narrative still lists its pages)
+and each now also asserts the front matter is absent.

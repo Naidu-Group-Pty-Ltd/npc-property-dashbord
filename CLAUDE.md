@@ -2232,6 +2232,23 @@ the stop, a closed abbreviation list, one or two digits, then a capital or the
 end of the block — measured at 5 matches, 5 markers, 0 false positives over all
 38 pages.
 
+**Two more from the same document, and each was pinned by a test.** Page 32
+printed *"as read on 2026-09-20"* in prose while every table around it said
+`7 Aug 2026`: `instrumentAnchor` built its date with `retrievedAt.slice(0, 10)`
+while `planningFacts` and `infrastructureEvidence` each carried a private,
+byte-identical `auDate` their tables went through — two copies of one rule, and
+the one place that reached prose had neither. `auDate.pure.ts` is that rule now,
+named once; it is a pure string transform rather than `toLocaleDateString`
+because the AML defect `AU_LOCALE` came from was a formatter taking the READER'S
+machine, and an edge function has none. And page 2's contents opened `1. Cover /
+2. Contents` — the sheet before this one and the sheet the reader is holding,
+with the second linking to `tpl-page-1` from the block drawn on page 1. **The
+front matter of a list is not an entry in it**; `scopeContentsEntries` drops
+them by the list's own `ctx.pageIndex` and by page 0 rather than by name, never
+drops a page that OPENS A SECTION, and never empties the list. Six contract
+tests across three files were renegotiated and every one was pinning the defect
+it asserted.
+
 **And the running head said `Part 07` twenty-six times.** v16 fixed the half
 that was DISCARDED and left the half that was REPEATED: the body is one part,
 so prefixing the chapter with it says where the reader is twenty-six times and
