@@ -299,7 +299,16 @@ Read page by page and not yet acted on:
   sentence as *"a gradually rising line"*, in a colour that appears nowhere else
   in the document.
 * **Page 22**'s *"Local vs NSW house price growth"* area chart has one series
-  where the title promises two, and no axis, no value labels and no legend.
+  where the title promises two. Measured from the PDF's text positions, the
+  drawing occupies **180 units between `top=530` and `top=710` and contains
+  zero text nodes** — not one axis tick, value label or legend entry, so a
+  reader can take no number off it at all. Both figures the title compares are
+  in the document's own prose (6.3% on p21, 4.4% on p22), so the data existed
+  and the drawing did not use it. The shape of the fix is `chartUnits`': a
+  chart that cannot show what its title claims is set as the table its data
+  already is. What is NOT established is whether the single series is the
+  directive's or the primitive's — that needs the stored directive, which this
+  branch has not read.
 
 ## 9. A register is printed once, where the register is
 
