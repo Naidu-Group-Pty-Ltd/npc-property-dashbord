@@ -55,11 +55,20 @@ const dim = (r: ShadowScoreResult, key: string) => r.dimensions.find((d) => d.ke
 describe('the issued record still reproduces where nothing changed', () => {
   const r = run(pooleInput());
 
-  it('reproduces the three dimensions this change does not touch', () => {
+  it('reproduces the dimensions neither change touches', () => {
+    /*
+     * RENEGOTIATED 20 September 2026 (methodology 3.0.0). Yield left this
+     * list because 3.0.0 deliberately changes what it measures — the income
+     * against what this asset's own market pays, rather than against the
+     * whole corpus. The issued 32 was the absolute reading and is asserted
+     * where it belongs, in `incomeAdvantage.spec.ts`, against the gross yield
+     * figure the document actually printed.
+     */
     expect(dim(r, 'growth').score).toBe(POOLE_ISSUED.growth);
     expect(dim(r, 'location').score).toBe(POOLE_ISSUED.location);
-    expect(dim(r, 'yield').score).toBe(POOLE_ISSUED.yield);
     expect(dim(r, 'risk').score).toBeNull();
+    // The FIGURE the document printed is untouched; only the score's basis moved.
+    expect(r.yieldResult.grossYield?.value).toBeCloseTo(3.47, 2);
   });
 
   it('reproduces every component reading the document printed', () => {
@@ -126,12 +135,33 @@ describe('a dimension carries the weight its evidence covers', () => {
     }
   });
 
-  it('leaves a fully evidenced record where it was', () => {
-    // Every dimension of these two ran on 90-100% of its own methodology, so
-    // the discount has almost nothing to bite on. They are the control that
-    // this is not a blanket lift.
-    expect(run(strongCase()).compositeScore).toBe(82);
-    expect(run(weakCase()).compositeScore).toBe(20);
+  it('leaves a fully evidenced record where the COVERAGE rule is concerned', () => {
+    /*
+     * RENEGOTIATED 20 September 2026 (methodology 3.0.0). The literals 82 and
+     * 20 were this rule's own before/after; 3.0.0 moves them for a different
+     * reason (the income dimension's basis), so pinning them here would make
+     * this test fail for something it is not about.
+     *
+     * The property it exists for is asserted directly instead, and more
+     * strongly: on a record where every dimension ran in full, the coverage
+     * discount changes no weight at all, so each dimension carries exactly
+     * its nominal share of the measured weight.
+     */
+    for (const build of [strongCase, weakCase]) {
+      const res = run(build());
+      const full = res.dimensions.filter((d) => d.score !== null && d.coverage >= 1);
+      expect(full.length, 'the control must carry fully evidenced dimensions').toBeGreaterThan(1);
+      // Between two dimensions that each ran in full, the discount cancels:
+      // their effective weights stand in exactly their nominal ratio,
+      // whatever any OTHER dimension's coverage did to the denominator.
+      for (const a of full) {
+        for (const b of full) {
+          if (a.key === b.key) continue;
+          expect(a.effectiveWeight / b.effectiveWeight, `${build.name}: ${a.key}/${b.key}`)
+            .toBeCloseTo(a.nominalWeight / b.nominalWeight, 3);
+        }
+      }
+    }
   });
 
   it('is symmetric: a thin favourable reading loses what a thin adverse one loses', () => {

@@ -490,7 +490,22 @@ describe('closure: a measured zero and an unavailable reading are different resu
 
     const zeroYield = measuredZero.dimensions.find((d) => d.key === 'yield')!;
     const absentYield = unavailable.dimensions.find((d) => d.key === 'yield')!;
-    expect(zeroYield.score).toBe(0);
+    /*
+     * RENEGOTIATED 20 September 2026 (methodology 3.0.0). The subject is the
+     * DIFFERENCE between a measured disaster and an unmeasured one, and it is
+     * asserted in full below: the measured one participates, carries weight
+     * and drags the composite, and the absent one leaves it entirely.
+     *
+     * The literal `0` was a fact about the absolute gross-yield anchors. The
+     * dimension now scores the income against what this asset's own market
+     * pays, so $100/week on $2,000,000 — 0.26% against a market paying 2.80%
+     * — is 2.54 points of yield short and scores in the single figures rather
+     * than at exactly zero. The scale still REACHES zero (four points short
+     * of the market does), which is asserted separately so the measured-zero
+     * rule keeps a test of its own.
+     */
+    expect(zeroYield.score).not.toBeNull();
+    expect(zeroYield.score!).toBeLessThan(10);
     expect(absentYield.score).toBeNull();
 
     // The measured zero PARTICIPATES: it carries weight and drags the

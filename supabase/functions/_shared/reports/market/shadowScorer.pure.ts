@@ -58,6 +58,10 @@ import { type GrowthResult, scoreGrowth, GROWTH_METHODOLOGY_VERSION } from './gr
 import { type DemandResult, scoreDemand, DEMAND_METHODOLOGY_VERSION } from './demandScoring.pure.ts';
 import { evidenceWeightOf, isValidDimensionScore, proportionalScore } from './proportionalWeighting.pure.ts';
 import {
+  marketGrossYield, scoreIncomeAdvantage, scoreTotalReturn, TOTAL_RETURN_METHODOLOGY_VERSION,
+  type IncomeAdvantageReading, type TotalReturnReading,
+} from './totalReturnScoring.pure.ts';
+import {
   type YieldInputs, type YieldResult, scoreYield, holdingCashFlowSignal,
   YIELD_METHODOLOGY_VERSION,
 } from './yieldScoring.pure.ts';
@@ -85,7 +89,7 @@ import {
  * ever carried the suffixed string because the engine was never wired while
  * it had it.
  */
-export const SHADOW_METHODOLOGY_VERSION = '2.2.0';
+export const SHADOW_METHODOLOGY_VERSION = '3.0.0';
 /** The same version under the name the production path uses. */
 export const SCORING_V2_METHODOLOGY_VERSION = SHADOW_METHODOLOGY_VERSION;
 
@@ -185,6 +189,13 @@ export interface ShadowScoreResult {
   /** Why the grade was held down, in the operator's words. Empty when it was not. */
   gradeCapReason: ReadonlyArray<string>;
 
+  /**
+   * The total return the growth dimension was scored on (3.0.0), or null
+   * where no rent is established and it fell back to capital growth alone.
+   */
+  totalReturn: TotalReturnReading | null;
+  /** What the yield dimension was scored on (3.0.0), or null on the same terms. */
+  incomeAdvantage: IncomeAdvantageReading | null;
   /** The full underlying results, for the harness and the evidence trail. */
   growth: GrowthResult;
   demand: DemandResult;
@@ -230,10 +241,57 @@ export function scoreInvestmentV2Shadow(input: ShadowScoreInput): ShadowScoreRes
   const risk = scorePropertyRisk(input.propertyRisk, 'D2_requires_a_peer');
   const financeSuitability = assessFinanceSuitability(input.finance);
 
+  /*
+   * 3.0.0 — growth and yield are the two halves of one quantity.
+   *
+   * Scored as independent virtues they correlate -0.910 across a realistic
+   * population and destroy 53% of the composite's variance, which is why a
+   * property returning 5% scored 54 and every archetype landed 66-69. See
+   * `totalReturnScoring.pure.ts` for the measurement. The growth dimension
+   * scores TOTAL RETURN; the yield dimension scores whether the income is
+   * good for an asset of that growth profile.
+   *
+   * Both fall back to the 2.2.0 scorers when no rent is established, and the
+   * dimension NAMES which basis it used — a return is a sum, and half a sum
+   * is an unknown return rather than a smaller one.
+   */
+  const capitalGrowthPct = input.evidence.growth5YearCagr?.value
+    ?? input.evidence.growth3YearCagr?.value ?? null;
+  const grossYieldPct = yieldResult.grossYield?.value ?? null;
+  const totalReturn = scoreTotalReturn(capitalGrowthPct, grossYieldPct);
+  // The subject market's own typical yield, where it publishes both halves.
+  // Measured beats declared, so this is the first rung of the ladder.
+  const marketYieldPct = marketGrossYield(
+    input.evidence.medianRent?.value ?? null,
+    input.evidence.medianPrice?.value ?? null,
+  );
+  const incomeAdvantage = scoreIncomeAdvantage(capitalGrowthPct, grossYieldPct, marketYieldPct);
+
   const raw: Array<{ key: DimensionKey; score: number | null; coverage: number; confidence: number | null }> = [
-    { key: 'growth', score: growth.score, coverage: growth.weightCovered, confidence: growth.confidence.score },
+    {
+      key: 'growth',
+      /*
+       * Capital growth, scored absolutely, exactly as 2.2.0 scored it.
+       *
+       * Scoring it on TOTAL RETURN was tried and rejected by measurement:
+       * total return and income advantage are nearly the same linear
+       * combination of growth and yield (g + y against y + 0.743g), so the
+       * two dimensions correlated +0.808 and the spread that bought was
+       * one signal counted twice — the r = 0.97 defect `GROWTH_WEIGHTS_V3_0`
+       * records, arrived at from the other direction. `totalReturn` is
+       * published beside the score as evidence and carries no weight.
+       */
+      score: growth.score,
+      coverage: growth.weightCovered,
+      confidence: growth.confidence.score,
+    },
     { key: 'location', score: location.score, coverage: location.weightCovered, confidence: null },
-    { key: 'yield', score: yieldResult.score, coverage: yieldResult.score === null ? 0 : 1, confidence: null },
+    {
+      key: 'yield',
+      score: incomeAdvantage ? incomeAdvantage.score : yieldResult.score,
+      coverage: yieldResult.score === null ? 0 : 1,
+      confidence: null,
+    },
     { key: 'demand', score: demand.score, coverage: demand.weightCovered, confidence: demand.confidence.score },
     {
       key: 'risk',
@@ -332,6 +390,7 @@ export function scoreInvestmentV2Shadow(input: ShadowScoreInput): ShadowScoreRes
       risk: RISK_MODEL_D_VERSION,
       financeSuitability: FINANCE_SUITABILITY_VERSION,
       eligibility: ELIGIBILITY_VERSION,
+      totalReturn: TOTAL_RETURN_METHODOLOGY_VERSION,
     },
     dimensions,
     measured: measured.map((d) => d.key),
@@ -339,6 +398,8 @@ export function scoreInvestmentV2Shadow(input: ShadowScoreInput): ShadowScoreRes
     evidenceCoverage,
     evidenceQualityCoverage,
     nominalMeasuredScore,
+    totalReturn,
+    incomeAdvantage,
     growth,
     demand,
     yieldResult,

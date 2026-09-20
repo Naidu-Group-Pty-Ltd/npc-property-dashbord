@@ -120,9 +120,9 @@ describe('the activation record', () => {
   });
 
   it('the composition version dropped its shadow suffix and is the one the record names', () => {
-    expect(SHADOW_METHODOLOGY_VERSION).toBe('2.2.0');
+    expect(SHADOW_METHODOLOGY_VERSION).toBe('3.0.0');
     expect(SCORING_V2_METHODOLOGY_VERSION).toBe(SHADOW_METHODOLOGY_VERSION);
-    expect(SCORING_V2_ACTIVATION.methodologyVersion).toBe('2.2.0');
+    expect(SCORING_V2_ACTIVATION.methodologyVersion).toBe('3.0.0');
   });
 });
 
@@ -153,7 +153,7 @@ describe('a property measured on three of five — a qualified score and grade i
     expect(record.policy.authority).toBe('v2');
     expect(record.policy.gradeIssued).toBe(true);
     expect(record.policy.dimensionScoresAuthoritative).toBe(true);
-    expect(record.policy.methodologyVersion).toBe('2.2.0');
+    expect(record.policy.methodologyVersion).toBe('3.0.0');
     expect(record.policy.activation).toEqual({ reference: 'ME-8', approvedOn: '2026-09-15', productionVersion: SCORING_V2_PRODUCTION_VERSION });
     expect(record.policy.measuredDimensions.sort()).toEqual(['demand', 'growth', 'yield']);
     expect(authorityOf(record)).toBe('v2');
