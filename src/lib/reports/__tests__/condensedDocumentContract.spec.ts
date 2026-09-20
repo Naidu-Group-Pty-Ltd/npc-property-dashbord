@@ -35,13 +35,14 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { composeCondensedDocument } from '../../../../supabase/functions/_shared/reports/investment/condenseCompose.pure';
+import {
+  composeCondensedDocument, CONDENSED_PAGE_CEILING,
+} from '../../../../supabase/functions/_shared/reports/investment/condenseCompose.pure';
 import {
   estimatePages, postProcessReportMarkdown,
 } from '../../../../supabase/functions/_shared/compassPostProcessor';
 import {
-  COMPASS_40_SECTIONS, COMPASS_PAGE_BAND, CONDENSED_PAGE_CEILING,
-  FINANCIAL_ANALYSIS_SECTIONS,
+  COMPASS_40_SECTIONS, COMPASS_PAGE_BAND, FINANCIAL_ANALYSIS_SECTIONS,
 } from '../../../../supabase/functions/_shared/compassSectionRegistry';
 import {
   markdownHeadingsForTier, sectionsForTier,

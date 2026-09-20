@@ -775,24 +775,6 @@ export const FINANCIAL_PAGE_BUDGET = FINANCIAL_ANALYSIS_SECTIONS.reduce(
  */
 export const COMPASS_PAGE_BAND = { min: 30, max: 38 } as const;
 
-/**
- * What the two CONDENSED tiers declare they are.
- *
- * `condense-investment-report`'s `TIER_CONFIG` has carried these numbers since
- * the tiers existed and used them in one place: the prompt, as "~12 pages".
- * They are named here so the prompt and any check answer to one declaration —
- * a literal at each end is how two ends drift, which is the defect this whole
- * area keeps paying for.
- *
- * A CEILING and not a band. The Compass's band is measured — the budgets above
- * sum to 23 and the band is set around that. Nothing has measured a minimum
- * for a Briefing, and inventing one would be a threshold nobody took, so this
- * says only what the tier claims about its own length and is used to REPORT an
- * overrun rather than to cut one: the page-pressure trim order is written in
- * Compass section ids and has no meaning on these documents.
- */
-export const CONDENSED_PAGE_CEILING = { briefing: 12, snapshot: 5 } as const;
-
 /** Sections allowed in the Compass Report, in render order. */
 export const compassSections = (): CompassSectionDefinition[] =>
   COMPASS_40_SECTIONS.filter((s) => s.includeInCompass).sort(

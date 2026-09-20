@@ -41,10 +41,37 @@ import { assembleInDeclaredOrder, type ComposedPlacement } from './tierAssembly.
 import {
   estimatePages, postProcessReportMarkdown, stripEditorialLabelsFromMarkdown,
 } from '../../compassPostProcessor.ts';
-import { CONDENSED_PAGE_CEILING } from '../../compassSectionRegistry.ts';
 
 /** The two tiers this composes. The other three are not condensed. */
 export type CondensedTier = 'briefing' | 'snapshot';
+
+/**
+ * What the two condensed tiers declare they are, in pages.
+ *
+ * `condense-investment-report`'s `TIER_CONFIG` has carried these numbers since
+ * the tiers existed and used them in exactly one place: the prompt, as
+ * "~12 pages". They are named here — the module whose subject IS the condensed
+ * tiers — so the prompt and the check below answer to one declaration. A
+ * literal at each end is how two ends drift, which is the defect this area
+ * keeps paying for.
+ *
+ * Deliberately NOT in `compassSectionRegistry.ts` beside `COMPASS_PAGE_BAND`,
+ * which was the first attempt: that module's subject is the Compass and the
+ * Financial Analysis registries and it carries no condensed-tier content at
+ * all, and `investmentSourceOfTruth.spec.ts` keeps a canonical module's
+ * imports to its siblings and a short, individually named list of neighbours.
+ * Widening that list to reach a constant is the wrong way round when the
+ * constant belongs here.
+ *
+ * A CEILING and not a band. The Compass's band is measured — its section
+ * budgets sum to 23 and the band is set around that. Nothing has measured a
+ * minimum for a Briefing, so this says only what the tier claims about its own
+ * length, and it is used to REPORT an overrun rather than to cut one:
+ * `PAGE_PRESSURE_TRIM_ORDER` is written in Compass section ids and has no
+ * meaning on these documents.
+ */
+export const CONDENSED_PAGE_CEILING: Readonly<Record<CondensedTier, number>> =
+  Object.freeze({ briefing: 12, snapshot: 5 });
 
 export interface CondenseComposeInput {
   tier: CondensedTier;
