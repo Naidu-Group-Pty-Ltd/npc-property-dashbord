@@ -43,25 +43,45 @@ import {
 const SOURCE = 'ABS ASGS 2021 Significant Urban Areas (geo.abs.gov.au ArcGIS REST)';
 const TIMEOUT_MS = 45_000;
 
+const SUA_LAYER =
+  `https://geo.abs.gov.au/arcgis/rest/services/${ASGS_RELEASE}/SUA/MapServer/0/query`;
+
 /**
- * Every SUA, with the centre of each.
+ * Every SUA, with the centre of each — and WITHOUT the outline of any.
  *
- * `returnCentroid` is asked for and the parser accepts the feature's own
- * geometry where the service does not supply one — both are the service's
- * arithmetic over its own polygon, and neither is ours. `outSR=4326` because
- * every coordinate in this platform is WGS84 and a silent projection change is
- * how a centre lands in the ocean.
+ * `returnGeometry` is **false**, and that is the whole lesson of this file's
+ * first production call. It was `true` beside `returnCentroid: true`, on the
+ * reasoning that the parser accepts a feature's own geometry where the service
+ * supplies no centroid — which is true, and which quietly asked the ABS for
+ * every Significant Urban Area's full-resolution POLYGON. The worker was
+ * killed with HTTP 546 (WORKER_RESOURCE_LIMIT) before it could log a single
+ * line, so the only evidence it left was a status code on the edge.
+ *
+ * A centroid is two numbers. An urban-area boundary is tens of thousands of
+ * vertices, and there are about a hundred of them. Asking for both to hedge
+ * against one being missing is how a two-kilobyte answer becomes one no edge
+ * function can hold — so the hedge is gone and the ABSENCE of a centroid is a
+ * measurement the probe makes rather than something to insure against.
+ *
+ * `outSR=4326` because every coordinate in this platform is WGS84 and a silent
+ * projection change is how a centre lands in the ocean.
  */
-function queryUrl(): string {
+function queryUrl(extra: Record<string, string> = {}): string {
   const params = new URLSearchParams({
     where: '1=1',
     outFields: 'sua_code_2021,sua_name_2021',
-    returnGeometry: 'true',
+    returnGeometry: 'false',
     returnCentroid: 'true',
     outSR: '4326',
     f: 'json',
+    ...extra,
   });
-  return `https://geo.abs.gov.au/arcgis/rest/services/${ASGS_RELEASE}/SUA/MapServer/0/query?${params}`;
+  return `${SUA_LAYER}?${params}`;
+}
+
+/** How many urban areas the release holds. Two hundred bytes, whatever it says. */
+function countUrl(): string {
+  return `${SUA_LAYER}?${new URLSearchParams({ where: '1=1', returnCountOnly: 'true', f: 'json' })}`;
 }
 
 // deno-lint-ignore no-explicit-any
@@ -149,35 +169,45 @@ Deno.serve(async (req) => {
   if (String(body.stage ?? '') === 'probe') {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-    try {
-      const res = await fetch(queryUrl(), { signal: controller.signal });
+    const ask = async (label: string, url: string) => {
+      const res = await fetch(url, { signal: controller.signal });
       const text = await res.text();
-      let parsedBody: Record<string, unknown> | null = null;
-      try { parsedBody = JSON.parse(text) as Record<string, unknown>; } catch { /* below */ }
-      if (!parsedBody) {
-        const probe = { ok: false, status: res.status, unparseable: true, bytes: text.length };
-        console.log(`[urban-centre-register-ingest] probe ${JSON.stringify(probe)}`);
-        return json(probe);
-      }
-      const features = Array.isArray(parsedBody.features) ? parsedBody.features : [];
-      const first = (features[0] ?? null) as Record<string, unknown> | null;
+      let parsed: Record<string, unknown> | null = null;
+      try { parsed = JSON.parse(text) as Record<string, unknown>; } catch { /* reported */ }
+      return { label, status: res.status, bytes: text.length, parsed };
+    };
+    try {
+      // Cheapest question first, and a bounded one second. The probe must not
+      // be able to commit the fault it exists to find: the first call answers
+      // in a couple of hundred bytes whatever the release holds, and the
+      // second is capped at five features, so neither can reach the memory
+      // ceiling that killed the first attempt at 546 with nothing logged.
+      const counted = await ask('count', countUrl());
+      const shaped = await ask('shape', queryUrl({ resultRecordCount: '5' }));
+      const features = Array.isArray(shaped.parsed?.features)
+        ? shaped.parsed!.features as Array<Record<string, unknown>>
+        : [];
+      const first = features[0] ?? null;
       const probe = {
-        ok: res.ok && !parsedBody.error,
-        status: res.status,
-        url: queryUrl(),
-        errorBody: parsedBody.error ?? null,
-        exceededTransferLimit: parsedBody.exceededTransferLimit ?? null,
-        featureCount: features.length,
-        // Which of the two point sources the service actually supplied, which
-        // is the one thing `returnCentroid=true` was an assumption about.
-        firstFeatureKeys: first ? Object.keys(first) : [],
-        firstAttributes: first?.attributes ?? null,
-        firstCentroid: first?.centroid ?? null,
-        firstGeometryKeys: first?.geometry ? Object.keys(first.geometry as object) : [],
-        // What the real load would make of it, computed but never written.
+        ok: counted.status === 200 && shaped.status === 200
+          && !counted.parsed?.error && !shaped.parsed?.error,
+        count: { status: counted.status, bytes: counted.bytes, body: counted.parsed },
+        shape: {
+          status: shaped.status,
+          bytes: shaped.bytes,
+          errorBody: shaped.parsed?.error ?? null,
+          exceededTransferLimit: shaped.parsed?.exceededTransferLimit ?? null,
+          returned: features.length,
+          // The one thing `returnCentroid=true` was an assumption about.
+          firstFeatureKeys: first ? Object.keys(first) : [],
+          firstAttributes: first?.attributes ?? null,
+          firstCentroid: first?.centroid ?? null,
+          hasGeometry: first ? Object.hasOwn(first, 'geometry') : null,
+        },
+        // What the real load would make of those five, computed, never written.
         wouldParse: (() => {
           try {
-            const r = parseSuaFeatures(parsedBody);
+            const r = parseSuaFeatures(shaped.parsed);
             return { centres: r.centres.length, dropped: r.dropped, sample: r.centres.slice(0, 3) };
           } catch (e) {
             return { refused: e instanceof Error ? e.message : String(e) };
