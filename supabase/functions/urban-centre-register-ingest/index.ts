@@ -280,6 +280,60 @@ Deno.serve(async (req) => {
     }
   }
 
+  /*
+   * `stage: 'status'` reads the register back and writes nothing.
+   *
+   * A loader that can only be believed by its own success message is a loader
+   * asserted by configuration. This is the effect: how many centres are held,
+   * how they fall across the states, what the last load recorded, and the
+   * coordinates of named centres a reader can check against a map. It is the
+   * same instrument an operator needs later to answer "is this deployment's
+   * register loaded, and with what" without a database session.
+   */
+  if (String(body.stage ?? '') === 'status') {
+    const { data: rows, error: readError } = await supabase
+      .from('urban_centre_register')
+      .select('sua_code, sua_name, state, lat, lng, point_basis, asgs_release, loaded_at');
+    if (readError) return json({ ok: false, error: readError.message }, 200);
+
+    const centres = (rows ?? []) as Array<Record<string, unknown>>;
+    const byState: Record<string, number> = {};
+    for (const c of centres) {
+      const st = String(c.state);
+      byState[st] = (byState[st] ?? 0) + 1;
+    }
+    const named = String(body.named ?? 'Bendigo,Sydney,Melbourne,Geelong,Toowoomba,Ballarat')
+      .split(',').map((n) => n.trim().toLowerCase()).filter(Boolean);
+    const lookups = named.map((n) => {
+      const hit = centres.find((c) => String(c.sua_name).toLowerCase() === n);
+      return hit
+        ? { name: hit.sua_name, code: hit.sua_code, state: hit.state, lat: hit.lat, lng: hit.lng }
+        : { name: n, found: false };
+    });
+
+    const { data: syncs } = await supabase
+      .from('urban_centre_syncs')
+      .select('status, started_at, finished_at, centres_written, asgs_release, detail, error')
+      .order('started_at', { ascending: false })
+      .limit(3);
+
+    const out = {
+      ok: true,
+      held: centres.length,
+      byState,
+      pointBases: [...new Set(centres.map((c) => String(c.point_basis)))].sort(),
+      releases: [...new Set(centres.map((c) => String(c.asgs_release)))].sort(),
+      // The rule this register exists to enforce: no row may be a state's
+      // "everywhere else" bucket. Asserted against what was actually written.
+      pseudoAreasHeld: centres.filter((c) => /^\s*not\s+in\s+any\b/i.test(String(c.sua_name))
+        || /^\d000$/.test(String(c.sua_code))).map((c) => c.sua_code),
+      lookups,
+      recentSyncs: syncs ?? [],
+    };
+    console.log(`[urban-centre-register-ingest] status ${JSON.stringify(out)}`);
+    return json(out);
+  }
+
   const started = new Date().toISOString();
   const { data: run } = await supabase
     .from('urban_centre_syncs')
