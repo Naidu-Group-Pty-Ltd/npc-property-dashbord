@@ -844,3 +844,124 @@ meaningless. That is the prompt's own rule (*a rating you invented may not be
 drawn, in any primitive*) and it has no deterministic guarantee behind it:
 telling an assigned 1 from a measured 1 is not something the directive's text
 supports. It is recorded here rather than papered over.
+
+## 16. Four sections the Compass should not have had
+
+Measured on the 97 Poole Road Compass of 20 Sep 2026, read as a delivered PDF.
+Between *Market Positioning* (p18) and *Property Fit Within the Suburb* (p21)
+the document carries four H2 sections nobody asked for:
+
+```
+p19  ## Suitability Profile
+p19  ## Holding Strategy
+p20  ## Exit Outlook            …and p34  ## Resale Liquidity & Exit Outlook
+p20  ## Monitoring Plan         …and p38  ## Monitoring & Review Plan
+```
+
+The last two are **the same subject twice, fourteen and eighteen pages apart**
+— and the copies contradict each other. The composed *Resale Liquidity & Exit
+Outlook* opens:
+
+> Neither answers *how easily this sells*. Days on market, time to sell and
+> buyer depth are not measured anywhere in this report, and no figure below
+> should be read as standing in for them.
+
+The model's *Exit Outlook*, fourteen pages earlier, says "the cleanest exit
+path is to sell into the owner-occupier market … the strongest exit result
+usually comes from a well-presented, well-timed launch into a buyer pool that
+already understands the locality." That is the claim the composed section
+exists to refuse.
+
+They also rename the running head: `runningChapters` takes the current H2, so
+pages 19–20 are headed *Market Positioning*, *Holding Strategy* — chapters the
+document's structure does not have.
+
+### The cause: rules for five sections, a document with three
+
+`strategySectionRules()` opened *"they apply to the SWOT, the suitability
+profile, the holding strategy, the exit outlook and the monitoring plan"*, and
+rule 1 told the model all five were **"COMPOSED from the record and supplied to
+you complete"**. The Compass's call site composes three — `exitStrategy`,
+`swot`, `monitoring`. `suitability` and `holdingStrategy` are
+`financial:required` in `sectionRegistry.pure.ts` and declared for **no other
+tier**.
+
+So a model writing a Compass was told two sections existed, was shown neither,
+and filled the gap. It is §6 of `DA_REGISTER_RECONCILIATION.md` in the other
+direction: *a rule can reach the model and its evidence not* — and the model
+then supplies the evidence. The composed set is a parameter now, named by its
+real headings, so the rules and the composer cannot describe two different
+documents.
+
+### Why nothing could see the duplication
+
+`sectionIdForHeading('Exit Outlook')` returned **null**. So did
+`'Monitoring Plan'` and `'Suitability Profile'`. Neither was an alias, so the
+document held one section the registry knew and one it did not, and no rule
+anywhere could see they were the same subject. That also meant
+`fork-investment-report` dropped those headings from both children without
+saying so.
+
+Three aliases were added, which is what an alias list is for. Re-checking the
+registry's own rule — *a heading belongs to exactly ONE section* — then found a
+**pre-existing** collision that had nothing to do with this work:
+`Projection Assumptions` was an alias of both `assumptions` and `tenYear`. The
+`assumptions` entry comes first, so it has always won and `tenYear` silently
+lost it; removing the duplicate changes no resolution, asserted over all 251
+aliases.
+
+### The rule
+
+**Where a document carries two sections that resolve to one section the
+platform composes WHOLE, the copy under the canonical label is the composed one
+and the other is a reproduction.** The reproduction goes.
+
+It is `dedupeRegisterTables`' rule for a table — *the register's copy is the
+one that stands; it is the retrieval, every other copy is a reproduction* —
+applied to a section, and stated the same way for the same reason: the two
+disagreed, so keeping the longer or the first would keep a model's expansion
+over the record.
+
+Four bounds:
+
+* **Only the five sections `composeStrategySections` builds whole**, read from
+  `STRATEGY_SECTION_IDS` rather than restated. "Every `computed` section in the
+  registry" would be too wide — `tenYear` is computed too, and its aliases
+  carry sub-heading names (`Property Value Projections`, `Cumulative Cashflow
+  Projections`) a Financial report legitimately writes as sections of their own
+  beside the canonical one, so a wider rule would delete real content.
+* **Exactly one copy must carry the canonical label.** Neither or both, and
+  nothing here can say which is the retrieval.
+* **The canonical copy is kept wherever it sits.** Position is what
+  `dedupeChartDirectives` keys on and it is the wrong key here: the composed
+  section is appended *after* the model's prose, so "keep the first" would keep
+  the reproduction every time.
+* **A no-op on a document carrying each section once**, byte for byte.
+
+It sits directly after `foldStraySections` on the read path, and answers the
+neighbouring question with the opposite rule: that one MERGES because it cannot
+say which copy is sound; this one can, because one of the two is the record's
+own.
+
+### The other two, and where they are reported
+
+`Suitability Profile` and `Holding Strategy` are not duplicates — the Compass
+has no composed counterpart — so the fold correctly leaves them. They are
+`TIER_FRAMEWORK.md`'s defect instead: each report answering the other's
+question. QA knows the tier, so QA is where it is said —
+`section-belongs-to-another-report`, an error, naming the report the section
+belongs to.
+
+It had to be placed **above** `if (!def) continue;`. Every per-section rule in
+the validator sits below that guard, and a section the tier's registry does not
+declare has no `def` — so an undeclared section is invisible to the word cap,
+the heading density and everything else. That is why 608-word caps were
+reported on the Risk Dashboard while a page and a half of foreign prose went
+unmentioned.
+
+### The residual
+
+The two foreign sections survive in documents already stored. The cause is
+closed, so a regeneration will not carry them; deleting a page and a half of a
+client's prose on the read path is a larger call than this evidence supports,
+and it is recorded here rather than taken quietly.

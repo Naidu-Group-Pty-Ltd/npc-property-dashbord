@@ -5793,13 +5793,29 @@ Produce a comprehensive statewide investment analysis following the structure ab
         ),
       },
     );
-    const compassStrategySections = composeStrategySections(compassStrategyRecord, [
+    /*
+     * ONE list, read twice.
+     *
+     * This array is what the document carries, and it is what the model is
+     * told the document carries. `strategySectionRules` used to name five
+     * sections from a literal of its own — the SWOT, the suitability profile,
+     * the holding strategy, the exit outlook and the monitoring plan — while
+     * this call composes three. `suitability` and `holdingStrategy` are
+     * `financial:required` in `sectionRegistry.pure.ts` and belong to no other
+     * tier, so a model writing a Compass was told two sections existed, was
+     * shown neither, and wrote them both.
+     */
+    const COMPASS_STRATEGY_SECTIONS = [
       { id: 'exitStrategy', heading: 'Resale Liquidity & Exit Outlook' },
       { id: 'swot', heading: 'SWOT Analysis' },
       { id: 'monitoring', heading: 'Monitoring & Review Plan' },
-    ]);
+    ] as const;
+    const compassStrategySections = composeStrategySections(
+      compassStrategyRecord,
+      COMPASS_STRATEGY_SECTIONS,
+    );
     const strategySectionsMarkdown = compassStrategySections.map((x) => x.markdown).join('\n\n');
-    const strategyRules = strategySectionRules(compassStrategyRecord);
+    const strategyRules = strategySectionRules(compassStrategyRecord, COMPASS_STRATEGY_SECTIONS);
     console.log('🧭 Strategy sections composed:', compassStrategySections.map((x) => ({
       id: x.id, chars: x.markdown.length,
     })));

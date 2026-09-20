@@ -32,7 +32,7 @@ import {
   dedupeRegisterTables,
   stripHeadingScaffolding,
 } from './registerTables.pure.ts';
-import { foldStraySections } from './sectionFolding.pure.ts';
+import { dropComposedSectionReproductions, foldStraySections } from './sectionFolding.pure.ts';
 
 const PLACEHOLDER_CELL = /^(?:n\/?a|tbd|to be determined|not available|not provided|unknown|—|-|–)\.?$/i;
 
@@ -698,7 +698,21 @@ export function presentStoredMarkdown(
    * What a reader is shown is this module's business; what is kept is not.
    */
   const one = foldStraySections(sourced);
-  const onceEach = one.folded.length ? one.markdown : sourced;
+  const nested = one.folded.length ? one.markdown : sourced;
+  /*
+   * …and a section the PLATFORM composes, written again by the model.
+   *
+   * The 97 Poole Road Compass carried `Exit Outlook` on page 20 and the
+   * composed `Resale Liquidity & Exit Outlook` on page 34, `Monitoring Plan`
+   * on page 20 and `Monitoring & Review Plan` on page 38 — and the copies
+   * CONTRADICT each other, the composed one refusing exactly the claim the
+   * model's one makes. Directly after `foldStraySections` because it answers
+   * the neighbouring question with the opposite rule: that one MERGES, because
+   * it cannot say which copy is sound; this one can, because one of the two
+   * is the record's own.
+   */
+  const composed = dropComposedSectionReproductions(nested);
+  const onceEach = composed.dropped.length ? composed.markdown : nested;
   /*
    * The same chart, drawn five times.
    *

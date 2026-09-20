@@ -2166,8 +2166,9 @@ the scoring service stores is a placeholder no surface draws.
 Read [`A_PREMIUM_DOCUMENT.md`](./docs/reports/A_PREMIUM_DOCUMENT.md) before
 touching `emphasisDensity.pure.ts`, `glanceStrip.pure.ts`,
 `chartUnits.pure.ts`, `ratedAbsence.pure.ts`, `pseudoTables.pure.ts`,
-`riskRegisterInstruction`, `directiveKey`, `foldConstantTableColumns` or
-`demandScoring.pure.ts`. Everything in it was measured on ONE delivered PDF —
+`riskRegisterInstruction`, `strategySectionRules`,
+`dropComposedSectionReproductions`, `directiveKey`,
+`foldConstantTableColumns` or `demandScoring.pure.ts`. Everything in it was measured on ONE delivered PDF —
 the Compass issued for 97 Poole Road, Kellyville on 20 Sep 2026 — by reading
 the FILE rather than the source that made it, which is what turned "too much
 bold" into a number and what proved one reported defect had already been fixed
@@ -2252,6 +2253,31 @@ remedies. And **the units were in the labels**: a zone code, 450 m² and 10 m on
 one axis walked past `tabulateMixedUnitCharts` because every display was a bare
 integer, so a label is now read for a unit — bounded by the label having to
 restate the item's OWN value, which also settles `10 m` against ten million.
+
+**Four sections the Compass should not have had** (§16 of the same doc). The
+97 Poole Road Compass carried `Suitability Profile` and `Holding Strategy` on
+pages 19-20 — both `financial:required` in `sectionRegistry.pure.ts` and
+declared for no other tier — beside `Exit Outlook` and `Monitoring Plan`, which
+are the same subjects as the composed `Resale Liquidity & Exit Outlook` (p34)
+and `Monitoring & Review Plan` (p38). **The copies contradict each other**: the
+composed one opens "Neither answers how easily this sells … no figure below
+should be read as standing in for them", the model's says "the cleanest exit
+path is to sell into the owner-occupier market". The cause was
+`strategySectionRules`, which named FIVE composed sections from a literal of
+its own while the Compass composes three — so the model was told two sections
+existed, was shown neither, and wrote them; the composed set is a parameter
+now. **Nothing could see the duplication** because `Exit Outlook` and
+`Monitoring Plan` resolved to NOTHING — neither was an alias, which also made
+`fork-investment-report` drop them from both children silently. The rule is
+`dedupeRegisterTables`' one, applied to a section: **where two sections resolve
+to one the platform composes WHOLE, the copy under the canonical label is the
+composed one and the other is a reproduction** — bounded to the five
+`STRATEGY_SECTION_IDS`, because `tenYear` is `computed` too and its aliases are
+sub-heading names a Financial report legitimately writes. The two foreign
+sections are not duplicates, so QA reports them instead
+(`section-belongs-to-another-report`), **above `if (!def) continue;`** — every
+per-section rule sits below that guard, so a section the tier does not declare
+was invisible to all of them.
 
 **And a footnote marker with nothing it can refer to.** Five sentences
 ended in a bare digit glued to the full stop (`…do not capture.12 Median house

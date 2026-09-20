@@ -71,6 +71,11 @@ import { findDocumentContradictions } from './reports/investment/documentConsist
 import { findFiguresWithoutABasis } from './reports/investment/evidenceClaims.pure.ts';
 import { promotePipedPseudoTables } from './reports/investment/pseudoTables.pure.ts';
 import {
+  SECTION_REGISTRY as CANONICAL_SECTIONS,
+  sectionIdForHeading,
+  type ReportTier,
+} from './reports/investment/sectionRegistry.pure.ts';
+import {
   RISK_REGISTER_CELL_MAX_WORDS,
   RISK_REGISTER_COLUMNS,
   findOverlongRegisterCells,
@@ -217,6 +222,20 @@ function splitBySections(markdown: string): { heading: string; body: string }[] 
   if (current) out.push(current);
   return out;
 }
+
+/**
+ * The QA tier vocabulary, mapped onto the section registry's.
+ *
+ * Two vocabularies exist because two registries do — `compassSectionRegistry`
+ * names a Compass `compass-40`, `sectionRegistry.pure.ts` names it `compass`.
+ * Partial on purpose: a tier with no entry runs no tier-ownership rule, which
+ * is the same treatment `compassPostProcessor`'s own `SECTION_REGISTRY` and
+ * `PAGE_BAND` maps give a tier they do not describe.
+ */
+const REGISTRY_TIER: Partial<Record<QATier, ReportTier>> = {
+  'compass-40': 'compass',
+  'financial-analysis': 'financial',
+};
 
 export interface QAContext {
   /**
@@ -370,6 +389,52 @@ export function runQAValidation(
   const sections = splitBySections(markdown);
   for (const sec of sections) {
     const def = findDef(sec.heading, registry);
+
+    /*
+     * …and a section that belongs to a DIFFERENT report.
+     *
+     * The 97 Poole Road Compass of 20 Sep 2026 carried `Suitability Profile`
+     * and `Holding Strategy` as sections of its own on pages 19-20.
+     * `sectionRegistry.pure.ts` declares both `financial:required` and for no
+     * other tier: they are the Financial Analysis Report's, and a Compass
+     * carrying them is `TIER_FRAMEWORK.md`'s defect — each report answering
+     * the other's question.
+     *
+     * The cause was `strategySectionRules`, which named five composed
+     * sections where the Compass composes three, so the model was told these
+     * two existed, was shown neither, and wrote them. That is closed; this is
+     * what says so if it happens again.
+     *
+     * Scoped by the tier map below: a tier with no entry does not run this
+     * rule, because a rule that cannot name the tier cannot name what is
+     * foreign to it.
+     */
+    const registryTier = REGISTRY_TIER[tier];
+    if (registryTier) {
+      const sectionId = sectionIdForHeading(sec.heading);
+      const entry = sectionId
+        ? CANONICAL_SECTIONS.find((e) => e.id === sectionId)
+        : undefined;
+      if (entry && !entry.tiers[registryTier]) {
+        const homes = (Object.keys(entry.tiers) as ReportTier[])
+          .filter((t) => entry.tiers[t]);
+        const belongsTo = homes.length
+          ? 'It belongs to the ' + homes.join(' and ') + ' report'
+            + (homes.length > 1 ? 's' : '') + ', where it is composed from the record.'
+          : 'No report tier declares it.';
+        findings.push({
+          rule: 'section-belongs-to-another-report',
+          severity: 'error',
+          message: `Section "${sec.heading}" is ${entry.canonicalLabel}, which this report does not `
+            + `carry. ${belongsTo} Remove it: a report that answers another report's question is `
+            + 'the defect the tier framework exists to stop.',
+        });
+      }
+    }
+
+    // Above the guard, deliberately: a section with no `def` is invisible to
+    // every per-section rule below, and a section that belongs to another
+    // report is exactly a section this tier's registry does not declare.
     if (!def) continue;
 
     // 7 — per-section word cap
