@@ -2167,8 +2167,9 @@ Read [`A_PREMIUM_DOCUMENT.md`](./docs/reports/A_PREMIUM_DOCUMENT.md) before
 touching `emphasisDensity.pure.ts`, `glanceStrip.pure.ts`,
 `chartUnits.pure.ts`, `ratedAbsence.pure.ts`, `pseudoTables.pure.ts`,
 `riskRegisterInstruction`, `strategySectionRules`,
-`dropComposedSectionReproductions`, `directiveKey`,
-`foldConstantTableColumns` or `demandScoring.pure.ts`. Everything in it was measured on ONE delivered PDF —
+`dropComposedSectionReproductions`, `scoreAssessmentReading.pure.ts`,
+`assessmentPrecisionNote`, `directiveKey`, `foldConstantTableColumns` or
+`demandScoring.pure.ts`. Everything in it was measured on ONE delivered PDF —
 the Compass issued for 97 Poole Road, Kellyville on 20 Sep 2026 — by reading
 the FILE rather than the source that made it, which is what turned "too much
 bold" into a number and what proved one reported defect had already been fixed
@@ -2278,6 +2279,34 @@ sections are not duplicates, so QA reports them instead
 (`section-belongs-to-another-report`), **above `if (!def) continue;`** — every
 per-section rule sits below that guard, so a section the tier does not declare
 was invisible to all of them.
+
+**The Method page printed a different grade from the cover** (§17-18 of the
+same doc). The 97 Poole Road Compass states its composite four times — cover,
+verdict, risk page, assessment table — and each says **54**; page 38 says
+**"Composite score 51"**, directly above the line *"No figure in this table is
+re-derived by this report; the arithmetic above restates the engine's own."*
+It was re-derived. `scoreAssessmentReading` computed `adjustedWeight` as
+`nominal ÷ Σ nominal(measured)` under a comment calling the record's stored
+figure "this rounded to a whole percent" — but the engine renormalises the
+**evidence** weights (`proportionalWeighting.effectiveWeights`, nominal scaled
+by how much of each dimension's own method ran), so the record holds 47/30/18/5
+where the reconstruction produces 42/26/16/16. Both tables footed internally,
+which is why neither looked wrong alone. **`storedTotal` was computed on that
+reading and read by NOTHING**, and so was `assessmentPrecisionNote` — the
+exported sentence explaining the arithmetic, while the scorecard wrote its own
+copy. Three rules now. **The composite is the record's own figure**, with the
+reconstruction only for a row holding none, and never overriding the
+publication policy. **The weights are whichever of the two describes THIS
+grade**: where the stored whole percentages round to the reconstruction the two
+are one weighting and the exact fractions express it better (18 Annabelle's
+57/21/21 reproduces its stored 40 as 39.71 where the rounded ones give 39.48);
+where they do not, the record's own stand. And **a rounding is never asserted
+where it does not happen** — `contributionsFoot` is a property of the reading.
+On the same page-4 table, the heading **"Five dimensions, weighted"** drew three
+rows on one report and four on two others (the projection publishes nothing
+bindable for an unscored dimension), and its `Weight` column was the ADJUSTED
+weight unlabelled — `Demand 27 · 5%` against a published 15%. Seed **v18**
+plus the active-master refresh.
 
 **And a footnote marker with nothing it can refer to.** Five sentences
 ended in a bare digit glued to the full stop (`…do not capture.12 Median house

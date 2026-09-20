@@ -965,3 +965,116 @@ The two foreign sections survive in documents already stored. The cause is
 closed, so a regeneration will not carry them; deleting a page and a half of a
 client's prose on the read path is a larger call than this evidence supports,
 and it is recorded here rather than taken quietly.
+
+## 17. The Method page printed a different grade from the cover
+
+Measured on the three delivered Compass PDFs of 20 Sep 2026. The 97 Poole Road
+document states its composite **four times** — cover, verdict page, risk page
+and the page-4 assessment table — and each says **54**. Page 38 says:
+
+> **Composite score 51.** The contributions come to 50.95, and the engine
+> rounds once, on that sum.
+
+directly above the line:
+
+> Calculated by this platform's investment scoring service. **No figure in this
+> table is re-derived by this report; the arithmetic above restates the
+> engine's own.**
+
+It was re-derived, and the sentence that says otherwise is the one the whole
+section rests on.
+
+### Two weightings, not one quantity at two precisions
+
+`scoreAssessmentReading` computed `adjustedWeight` as `nominalWeight ÷ Σ
+nominal(measured)` under a comment describing the row's stored figure as "this
+rounded to a whole percent". That premise is wrong:
+
+| | growth | location | yield | demand |
+|---|---|---|---|---|
+| nominal (`COMPOSITE_WEIGHTS`) | 40% | 25% | 15% | 15% |
+| reconstruction (÷ .95) | 42% | 26% | 16% | 16% |
+| **what the record holds** | **47%** | **30%** | **18%** | **5%** |
+
+The engine renormalises the **evidence** weights —
+`proportionalWeighting.effectiveWeights`, nominal scaled by how much of each
+dimension's own method actually ran — and writes `Math.round(effectiveWeight ×
+100)`. Demand scored on a fraction of its method, so it carried 5% of the grade
+against a 15% nominal. The reconstruction is coverage-blind and describes a
+grade nobody issued.
+
+Both tables were internally consistent, which is why neither looked wrong on
+its own: 56×.47 + 74×.30 + 23×.18 + 27×.05 = 54.01, and 56×.42 + 74×.26 +
+23×.16 + 27×.16 = 50.95.
+
+### `storedTotal` was computed here and read by nothing
+
+The field that would have caught it — `totalScore` off the row, beside the
+recomputation — was on the interface, assigned in the return, and had **zero
+consumers**. So did `assessmentPrecisionNote`, the exported sentence explaining
+the arithmetic: `composeScorecard` wrote its own copy, so the one place this
+was stated was not the one a reader saw. Both are live now.
+
+### The rule, and why it is not simply "read the record"
+
+**The composite is the record's own figure.** The reconstruction survives only
+for a row that holds no total — and never overrides the publication policy, so
+a row the policy withholds an overall for still gets none whatever `totalScore`
+holds.
+
+**The weights are whichever of the two describes this grade.** The record
+stores whole percentages and the engine's exact fractions are not persisted, so
+reading the record always costs precision. Where the stored percentages *round
+to* the reconstruction, the two are one weighting and the reconstruction
+expresses it better — 18 Annabelle Crescent stores 57/21/21 against
+57.14/21.43/21.43, and the exact fractions reproduce the stored total to the
+decimal (39.71 → 40) where the rounded ones do not (39.48 → 39). Where they do
+**not** round to it, the engine discounted for coverage and the record's own
+figures stand.
+
+Measured over three real records, the printed column now reaches the printed
+total in every case: Annabelle 39.71 → 40, Pallas 62.86 → 63, Poole 54.01 → 54.
+
+**And a rounding is never asserted where it does not happen.** `contributionsFoot`
+is a property of the reading, and where the record's whole percentages cannot
+reproduce its total the sentence says to read the column as the shape of the
+result rather than as its arithmetic. A document that prints "the contributions
+come to X" beside a different Y is asking a reader to distrust both.
+
+## 18. "Five dimensions, weighted", over three
+
+The same page-4 table, two smaller defects, both in the master.
+
+**The heading promised five.** It drew **three** rows on 9 Hollow Street and
+**four** on 1 Crestview Avenue and 97 Poole Road. `reportBindingProjection`
+publishes nothing bindable for a dimension the engine did not score — an
+absence is omitted, never worded (§8 of `RUNTIME_CONSOLIDATION.md`) — so the row
+count is the count of what was measured, and a heading promising five
+contradicts the table under it on every report that could not score one. It
+reads **"Weighted across what was measured"**, which is true at three, four or
+five.
+
+**The weight column was unlabelled.** Its header was `Weight` and its figure is
+the ADJUSTED weight, so Poole printed `Demand 27 · 5%` where the published
+method weights demand at 15%, with nothing on the page to tell the two apart —
+and the four-column table that does explain it is thirty pages further on. The
+header is **`Share of grade`** and the standfirst says what the share is.
+
+### What the geometry gate cost, and why that is the gate working
+
+The standfirst wanted three sentences and the page had room for two. At the
+full wording the seed refused three masters (18pt, 14pt and 1pt past the
+footer); one sentence shorter it refused `le-03` by 7pt; the wording shipped is
+the longest that clears all fifty. Isolating it took reverting the heading and
+the column header in turn and watching the overrun stay at exactly 7pt — the
+standfirst was the only lever, and a baseline run on the unmodified source
+proved the overrun was mine rather than pre-existing.
+
+The full explanation of *why* a dimension can carry less than its original
+weight lives where there is room for it: the Method section's four-column
+table, which since §17 prints the same weights this page does.
+
+Shipped as seed **v18** plus the active-master refresh
+(`20261209000000` / `20261209010000`), after checking that `20261208000000` was
+already in the applied migration list — 990 of them — which is the one-query
+check `buildSeedCatalogue.ts` asks for before it is edited.

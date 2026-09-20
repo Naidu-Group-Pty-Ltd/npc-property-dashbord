@@ -83,6 +83,7 @@ import type { MarketFacts, MarketFactRow } from '../market/marketFactBlocks.pure
 import type { EvidenceKey } from '../market/marketEvidence.pure.ts';
 import {
   readScoreAssessment,
+  assessmentPrecisionNote,
   type ScoreAssessmentReading,
 } from '../market/scoreAssessmentReading.pure.ts';
 import type { SubjectPrice } from './subjectPrice.pure.ts';
@@ -785,17 +786,29 @@ export function composeScoreDimensionTable(rec: StrategyRecord): string | null {
         + 'figure — the **points delivered** at the ORIGINAL weights — as a ceiling the letter could not exceed. '
         + 'That rule has since been superseded; it is stated here because it is what produced this grade.'
       : unknownMethod
-      ? 'Five dimensions carry the method. Each has an **original weight**; where a dimension could not be scored '
-        + 'its weight is redistributed across the ones that could, giving the **adjusted weight** the composite is '
-        + 'built from. This record does not state which scoring methodology issued its grade, so the composite is '
-        + 'reconstructed from what it holds and the grade is reported as it was issued, without a rule being '
-        + 'attributed to it.'
+      ? 'Five dimensions carry the method. Each has an **original weight**, and the **adjusted weight** is the '
+        + 'share of the composite the dimension actually carried. '
+        + (a.weightBasis === 'recorded'
+          ? 'The adjusted weights below are the ones the record holds, so they are the weights this grade was '
+            + 'built from. '
+          : 'This record does not hold them, so they are reconstructed from the original weights of the '
+            + 'dimensions that were measured. ')
+        + 'The record does not state which scoring methodology issued its grade, so the grade is reported as it '
+        + 'was issued, without a rule being attributed to it.'
+      : a.weightBasis === 'recorded'
+      ? 'Five dimensions carry the method. Each has an **original weight**; the scoring service re-spreads those '
+        + 'weights across the dimensions the evidence could measure — discounted by how much of each '
+        + "dimension's own method actually ran — giving the **adjusted weight** the composite is built from. "
+        + 'That is why a dimension scored on part of its inputs can carry less than its original weight. The '
+        + 'adjusted weights below are the ones the record holds, so they are the weights this grade was '
+        + 'actually built from. A dimension that could not be assessed is disclosed rather than deducted: it '
+        + 'lowers no score and caps no grade, and the scope of the assessment is stated with the result instead.'
       : 'Five dimensions carry the method. Each has an **original weight**; where a dimension could not be scored '
         + 'its weight is redistributed across the ones that could, giving the **adjusted weight** the composite is '
-        + 'built from. The composite answers *how strong is what we measured*, over the original weights of the '
-        + 'dimensions that were measured. A dimension that could not be assessed is disclosed rather than '
-        + 'deducted: it lowers no score and caps no grade, and the scope of the assessment is stated with the '
-        + 'result instead.',
+        + 'built from. This record does not hold the adjusted weights the service used, so they are reconstructed '
+        + 'here from the original weights of the dimensions that were measured. A dimension that could not be '
+        + 'assessed is disclosed rather than deducted: it lowers no score and caps no grade, and the scope of the '
+        + 'assessment is stated with the result instead.',
     '',
     legacyCeiling
       ? '| Dimension | Score | Original weight | Adjusted weight | Contribution | Points delivered |'
@@ -839,13 +852,24 @@ export function composeScoreDimensionTable(rec: StrategyRecord): string | null {
 
   // The arithmetic, stated as arithmetic, at the precision the engine used.
   const steps: string[] = [];
-  if (a.compositeExact !== null && a.compositeScore !== null) {
-    steps.push(
-      `**Composite score ${a.compositeScore}.** The contributions come to ${a.compositeExact.toFixed(2)}, and the `
-      + 'engine rounds once, on that sum. Rounding each contribution first and adding them gives a different '
-      + 'answer, and the adjusted weights the table prints as whole percentages are themselves rounded — the '
-      + 'arithmetic uses the exact fractions.',
-    );
+  if (a.compositeScore !== null) {
+    /*
+     * The composite is the RECORD'S, and the sentence says so.
+     *
+     * It used to read "**Composite score N.** The contributions come to X, and
+     * the engine rounds once, on that sum" over a number this module had
+     * computed itself. On the 97 Poole Road Compass of 20 Sep 2026 that
+     * printed 51 on page 38 while the cover, the verdict, the risk page and
+     * the assessment table printed 54 — directly above the line "No figure in
+     * this table is re-derived by this report; the arithmetic above restates
+     * the engine's own."
+     *
+     * The explanation of the arithmetic is `assessmentPrecisionNote`, which
+     * already existed for exactly this and had ZERO production call sites
+     * because this function wrote its own copy. One sentence, one place.
+     */
+    const precision = assessmentPrecisionNote(a);
+    steps.push(`**Composite score ${a.compositeScore}.**${precision ? ` ${precision}` : ''}`);
   }
   if (a.uncappedGrade) {
     steps.push(`**Grade the composite alone gives: ${a.uncappedGrade}.**`);
