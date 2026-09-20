@@ -104,7 +104,10 @@ let counter = 0;
 /** A fresh identity for one run. */
 export function newDriverIdentity(kind: GenerationDriverKind): DriverIdentity {
   counter += 1;
-  let unique = '';
+  // `crypto.randomUUID` is absent over plain HTTP and in some embedded
+  // webviews, and the token only has to be unique among the drivers racing for
+  // one report — the counter already separates two in this tab.
+  let unique: string;
   try {
     unique = crypto.randomUUID();
   } catch {
