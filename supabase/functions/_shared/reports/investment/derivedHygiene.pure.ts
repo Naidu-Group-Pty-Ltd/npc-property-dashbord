@@ -24,6 +24,11 @@ import { alignChartScales } from './chartScale.pure.ts';
 import { tabulateMixedUnitCharts } from './chartUnits.pure.ts';
 import { dedupeChartDirectives } from './blockHygiene.pure.ts';
 import { limitEmphasis } from './emphasisDensity.pure.ts';
+import {
+  PLANNING_REGISTER_SECTION,
+  dedupeRegisterTables,
+  stripHeadingScaffolding,
+} from './registerTables.pure.ts';
 import { foldStraySections } from './sectionFolding.pure.ts';
 
 const PLACEHOLDER_CELL = /^(?:n\/?a|tbd|to be determined|not available|not provided|unknown|—|-|–)\.?$/i;
@@ -547,8 +552,14 @@ const SCAFFOLDING_POINTERS = [
   'Infrastructure section',
 ] as const;
 
-/** The section those tables are appended under, verbatim, by the generator. */
-export const PLANNING_REGISTER_SECTION = 'Planning controls and development registers';
+/**
+ * The section those tables are appended under, verbatim, by the generator.
+ *
+ * Defined in `registerTables.pure.ts` and re-exported here, because that
+ * module de-duplicates the tables and this one names the section in a
+ * sentence — one declaration, two readers.
+ */
+export { PLANNING_REGISTER_SECTION };
 
 const SCAFFOLDING_RE = new RegExp(
   `\\[\\s*(?:${SCAFFOLDING_POINTERS.map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\s*\\]`,
@@ -605,11 +616,34 @@ export function presentStoredMarkdown(
   // and `stripPlaceholderRows` cannot see it — it is neither a row nor a
   // bullet. Found on two issued documents in the S6 acceptance run.
   const glance = stripOwnGapCells(scrubbed);
+  /*
+   * A register is printed once, where the register is.
+   *
+   * The 97 Poole Road Compass drew the planning-controls table on pages 15,
+   * 26-27 and 32, the residential land-use table on 16, 27 and 33, and the
+   * overlay register on 17 and 33 — the generator appends each once and the
+   * model, handed the same table in its pinned context, reproduced it in the
+   * prose. The copies DISAGREED: the land-use table carried five rows in the
+   * register and thirteen on page 27.
+   *
+   * First, and deliberately: `dropEmptyTableColumns` and
+   * `foldConstantTableColumns` below both rewrite header rows, and this
+   * matches a CLOSED SET of headers `planningFacts.pure.ts` composes. Before
+   * `dropEmptySections`, too, so a heading left with nothing under it is
+   * collected by the rule that already exists for that.
+   *
+   * The scaffolding heading is the same defect one line up: page 15 was
+   * titled "Planning controls table (reproduced exactly)".
+   */
+  const headings = stripHeadingScaffolding(glance.markdown);
+  const titled = headings.stripped ? headings.markdown : glance.markdown;
+  const registers = dedupeRegisterTables(titled);
+  const printedOnce = registers.replaced.length ? registers.markdown : titled;
   // A column with a header and nothing under it, and a citation bracket with
   // nothing in it — both were on the documents supplied for acceptance, both
   // are a promise the record could not keep, and neither is prose.
-  const columns = dropEmptyTableColumns(glance.markdown);
-  const narrowed = columns.removed.length ? columns.markdown : glance.markdown;
+  const columns = dropEmptyTableColumns(printedOnce);
+  const narrowed = columns.removed.length ? columns.markdown : printedOnce;
   /*
    * And a wide table's column that says the same thing on every row.
    *
