@@ -377,6 +377,116 @@ export function dropEmptyTableColumns(markdown: string): EmptyColumnResult {
 }
 
 /**
+ * A wide table's column that says the same thing on every row.
+ *
+ * ## What page 34 of the 97 Poole Road Compass printed
+ *
+ * *Infrastructure and development retrieved for this property*, nine columns
+ * wide, guillotined at the right page edge: the header cut to `Deliver /
+ * timing` and every cell under it to `Not / publish / by this / registe`.
+ *
+ * Two of those nine columns held the SAME value on all five rows —
+ *
+ * ```
+ * Funding          Not stated — the figure is the applicant's own cost of development
+ * Delivery timing  Not published by this register
+ * ```
+ *
+ * — repeated down the page, carrying no information per row and costing the
+ * measure the width that then cut the table off. A column whose every cell is
+ * identical is a FOOTNOTE, not a column.
+ *
+ * ## The rule
+ *
+ * Stated once below the table, not repeated down it. The value is never
+ * discarded and never abbreviated: the note carries the header and the whole
+ * cell, verbatim, so a reader learns exactly what the register said.
+ *
+ * Three bounds, each so this cannot reach a table that was already right.
+ *
+ * **Only a WIDE table.** Under {@link CONSTANT_COLUMN_MIN_WIDTH} columns the
+ * measure is not under pressure and a repeated column may be a deliberate
+ * comparison — the author's "Status: Determined" beside three dates is a
+ * different thing from a register printing its own limitation five times.
+ *
+ * **Never the first column**, which is the row's identity, and never below
+ * two columns, which is the same floor `dropEmptyTableColumns` keeps.
+ *
+ * **Two rows is not a pattern.** A table of one or two body rows has no
+ * "every row" worth the name.
+ */
+export const CONSTANT_COLUMN_MIN_WIDTH = 6;
+/** Two rows agreeing is a coincidence; three is a column that says one thing. */
+export const CONSTANT_COLUMN_MIN_ROWS = 3;
+
+export interface ConstantColumnResult {
+  markdown: string;
+  /** `[table index, header, the one value]` for each column folded out. */
+  folded: Array<{ table: number; header: string; value: string }>;
+}
+
+export function foldConstantTableColumns(markdown: string): ConstantColumnResult {
+  const lines = markdown.split('\n');
+  const folded: ConstantColumnResult['folded'] = [];
+  const out: string[] = [];
+  let tableIndex = 0;
+  let i = 0;
+  const cellsAt = (n: number): string[] | null =>
+    (n >= 0 && n < lines.length ? splitRow(lines[n]) : null);
+
+  while (i < lines.length) {
+    const headerCells = cellsAt(i);
+    const ruleCells = cellsAt(i + 1);
+    if (!headerCells || !ruleCells || !isSeparatorRow(ruleCells)) {
+      out.push(lines[i]); i += 1; continue;
+    }
+    let end = i + 2;
+    while (cellsAt(end)) end += 1;
+    const block = lines.slice(i, end);
+    const header = headerCells;
+    const body = block.slice(2).map((l) => splitRow(l) ?? []);
+    const width = header.length;
+
+    const drop = new Set<number>();
+    const notes: Array<{ header: string; value: string }> = [];
+    if (width >= CONSTANT_COLUMN_MIN_WIDTH && body.length >= CONSTANT_COLUMN_MIN_ROWS) {
+      for (let c = 1; c < width; c++) {
+        const first = (body[0][c] ?? '').trim();
+        if (!first) continue;
+        if (!body.every((row) => (row[c] ?? '').trim() === first)) continue;
+        drop.add(c);
+        notes.push({ header: (header[c] ?? '').trim(), value: first });
+      }
+    }
+    // Never below two columns — a table needs to stay a table.
+    const ordered = [...drop].sort((a, b) => b - a);
+    while (width - drop.size < 2 && ordered.length) {
+      const back = ordered.pop()!;
+      drop.delete(back);
+      notes.pop();
+    }
+    if (drop.size === 0) {
+      out.push(...block); tableIndex += 1; i = end; continue;
+    }
+
+    for (const n of notes) folded.push({ table: tableIndex, header: n.header, value: n.value });
+    const keep = (cells: string[]) => cells.filter((_, c) => !drop.has(c));
+    out.push(`| ${keep(header).join(' | ')} |`);
+    out.push(`| ${keep(ruleCells).join(' | ')} |`);
+    for (const row of body) out.push(`| ${keep(row).join(' | ')} |`);
+    // The value, once, under the table it came out of. A run-in label, which
+    // `limitEmphasis` keeps, because it is a heading sharing a line.
+    out.push('');
+    for (const n of notes) {
+      out.push(n.header ? `**${n.header}:** ${n.value}` : n.value);
+    }
+    tableIndex += 1;
+    i = end;
+  }
+  return { markdown: out.join('\n'), folded };
+}
+
+/**
  * An inline citation with nothing in it.
  *
  * `[Source: ]`, `[ ]`, `[Source]` — a bracket the model opened and could not
@@ -499,8 +609,22 @@ export function presentStoredMarkdown(
   // nothing in it — both were on the documents supplied for acceptance, both
   // are a promise the record could not keep, and neither is prose.
   const columns = dropEmptyTableColumns(glance.markdown);
-  const cited = stripEmptyCitations(columns.removed.length ? columns.markdown : glance.markdown);
-  const tidied = cited.removed ? cited.markdown : (columns.removed.length ? columns.markdown : glance.markdown);
+  const narrowed = columns.removed.length ? columns.markdown : glance.markdown;
+  /*
+   * And a wide table's column that says the same thing on every row.
+   *
+   * Page 34 of the 97 Poole Road Compass ran its nine-column infrastructure
+   * register off the right edge — the header cut to `Deliver / timing`, its
+   * cells to `Not / publish / by this / registe` — while two of those nine
+   * columns held one identical value on all five rows. A column whose every
+   * cell is the same is a footnote, not a column. See
+   * `foldConstantTableColumns` for the three bounds that keep it off a table
+   * that was already right.
+   */
+  const constants = foldConstantTableColumns(narrowed);
+  const unrepeated = constants.folded.length ? constants.markdown : narrowed;
+  const cited = stripEmptyCitations(unrepeated);
+  const tidied = cited.removed ? cited.markdown : unrepeated;
   const sections = dropEmptySections(tidied);
   const clean = sections.dropped.length === 0 ? tidied : sections.markdown;
   // A bracketed pointer into the prompt's own scaffolding, rewritten into the

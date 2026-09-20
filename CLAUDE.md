@@ -2161,6 +2161,70 @@ property's grade — the child restates the parent's decision, a variant score
 never stands for the property while a composite exists, and the literal `N/A`
 the scoring service stores is a placeholder no surface draws.
 
+## A premium document, and the eighteen per cent that was bold
+
+Read [`A_PREMIUM_DOCUMENT.md`](./docs/reports/A_PREMIUM_DOCUMENT.md) before
+touching `emphasisDensity.pure.ts`, `glanceStrip.pure.ts`,
+`chartUnits.pure.ts`, `directiveKey`, `foldConstantTableColumns` or
+`demandScoring.pure.ts`. Everything in it was measured on ONE delivered PDF —
+the Compass issued for 97 Poole Road, Kellyville on 20 Sep 2026 — by reading
+the FILE rather than the source that made it, which is what turned "too much
+bold" into a number and what proved one reported defect had already been fixed
+and the document simply predated the deploy.
+
+**One character in five of the body copy was bold** — 9,570 of 51,343, at 7.2
+emphasised spans a page, the five longest running 160-246 characters each,
+which is a complete sentence apiece inside a paragraph of the same words. Four
+structural rules take it to 4.1%: a span carrying its own clause punctuation or
+running past **eight words** is a clause; a figure carries its own contrast and
+needs none; a paragraph gets ONE; a table cell gets none. The eight-word
+ceiling is DERIVED — with the punctuation rule alone the survivors split into
+two populations with a clean gap, 80% at eight words or fewer and **not one at
+nine**. A run-in label is kept and does not spend the paragraph's budget. This
+is not the prose scrub §8 forbids: `**` is markup, strip it from both sides and
+they are byte-identical, and a test asserts that rather than promising it.
+
+Three more presentation rules, each from a page of that document. **A dingbat
+is not a category** — `{{glance:}}` drew twelve washed boxes of raw `✓ ⚠ ◆ ★`,
+three to a page, whose whole meaning survived neither greyscale nor a screen
+reader; the glyph is an INPUT vocabulary now and the page prints the word.
+**The data is the chart, not the caption** — `directiveKey` normalised the
+whole directive, so eight drawings of two datasets survived the de-duplicator
+under eight different titles. And **a shared axis is a claim that the
+quantities on it are comparable**: `99.1% | 100% | ~2.1 km` on one track drew
+the kilometres as a 2% sliver, so a chart of more than one unit is set as the
+table its data already is rather than drawn. A ninth-column register that ran
+off the page edge turned out to carry two columns holding ONE value on every
+row — **a column whose every cell is identical is a footnote**, stated once
+below the table.
+
+**And the running head said `Part 07` twenty-six times.** v16 fixed the half
+that was DISCARDED and left the half that was REPEATED: the body is one part,
+so prefixing the chapter with it says where the reader is twenty-six times and
+says nothing. The marker is the chapter alone; the part structure is on the
+contents page, which is where it varies. Seed **v17** plus the active-master
+refresh — and the ten characters that frees is not a line (the marker holds ~43
+against a 64-character ceiling), it is three wrapped chapters becoming one.
+
+**The grade was 48 because a driver carried a dimension.** Demand scored 13
+from `interpolate(-0.368, POPULATION_ANCHORS)` on one ABS resident-population
+reading, and NOTHING else reached the scorer — renormalisation turned
+`populationDriver`'s 0.15 into 1.00, which `demandScoring.pure.ts`'s own header
+had forbidden in words since it was written. **A dimension is scored only where
+something measured it directly**: `DEMAND_PRIMARY` names the four that may
+carry it, the driver keeps its weight wherever a primary measure is present,
+and nothing but drivers is `null`. The primary measure this platform already
+held is `salesVolumeSeries` — the transaction count the open sales register
+prints beside every median, read until now only as a confidence sample size —
+scored by `scoreTransactionVolume` against the market's OWN trailing mean,
+because 162 sales means nothing without knowing whether this postcode usually
+does 90 or 300. Two things it is not: **Yield's 32 is correct** (3.467% gross
+against a corpus median of 4.36%) and re-anchoring it would raise every yield
+in the book, and **Risk still cannot score** for the reason recorded below. And
+the honest tail — withholding Demand redistributes its weight across three
+dimensions whose weighted mean is 54, so this is a correction rather than a
+lift: what it buys is a number that means something.
+
 ## What the page actually draws
 
 Read [`WHAT_THE_PAGE_ACTUALLY_DRAWS.md`](./docs/reports/WHAT_THE_PAGE_ACTUALLY_DRAWS.md)
