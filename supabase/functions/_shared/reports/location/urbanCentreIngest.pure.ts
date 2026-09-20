@@ -80,6 +80,36 @@ export function stateOfSuaCode(code: string): string | null {
 }
 
 /**
+ * Is this row the ABS's "everywhere else" bucket rather than an urban centre?
+ *
+ * Measured against the live layer on 20 Sep 2026: the SUA layer's FIRST
+ * feature is `1000` / `"Not in any Significant Urban Area (NSW)"`. The
+ * classification is exhaustive — it partitions the whole country — so one
+ * pseudo-area per state carries every square kilometre that is not in a
+ * significant urban centre, and the layer publishes those beside the real
+ * ones. Of 112 features, eight or nine are this.
+ *
+ * Writing them would be the worst failure available to this register, because
+ * nothing downstream would look wrong. `resolveOneReportGeography` records the
+ * SUA a coordinate falls in, so a genuinely rural property resolves to exactly
+ * this pseudo-area; `findUrbanCentre` would match it, `resolveCommuteDestination`
+ * would report `ownCentre: 'yes'`, and `scoreLocation` would then SCORE a
+ * commute measured to the centre of "everywhere in New South Wales that is not
+ * a town" — a point that stands for no place, presented as the property's own
+ * city. The capital, which is what that property gets today, is wrong in a way
+ * a reader can see; this would be wrong in a way nobody could.
+ *
+ * Two independent tests, because either alone is a single point of failure: a
+ * code whose last three digits are zero is the state's bucket by the ABS's own
+ * numbering, and the published name says what it is. A row is refused if
+ * EITHER says so.
+ */
+export function isNotAnUrbanCentre(code: string, name: string): boolean {
+  if (/^\d000$/.test(String(code ?? '').trim())) return true;
+  return /^\s*not\s+in\s+any\b/i.test(String(name ?? ''));
+}
+
+/**
  * A coordinate, or null.
  *
  * The empty check is not decoration. `Number('')` is **0**, which is finite —
@@ -143,6 +173,7 @@ export function parseSuaFeatures(body: unknown): CentreParse {
     const code = String(f?.attributes?.sua_code_2021 ?? '').trim();
     const name = String(f?.attributes?.sua_name_2021 ?? '').trim();
     if (!code || !name) { drop('no_code_or_name'); continue; }
+    if (isNotAnUrbanCentre(code, name)) { drop('not_an_urban_centre'); continue; }
     const state = stateOfSuaCode(code);
     if (!state) { drop('no_state_in_code'); continue; }
     const point = f.centroid ?? f.geometry ?? null;

@@ -84,6 +84,19 @@ function countUrl(): string {
   return `${SUA_LAYER}?${new URLSearchParams({ where: '1=1', returnCountOnly: 'true', f: 'json' })}`;
 }
 
+/**
+ * The layer's own description of itself: which fields it publishes, how many
+ * features it will return in one answer, and which query capabilities it has.
+ *
+ * Asked because the first probe proved `returnCentroid=true` is IGNORED here —
+ * the features came back with `attributes` and nothing else. Whether this
+ * layer can supply a point at all, and under what name, is a question the
+ * service can answer about itself for a few kilobytes.
+ */
+function layerUrl(): string {
+  return SUA_LAYER.replace(/\/query$/, '') + '?f=json';
+}
+
 // deno-lint-ignore no-explicit-any
 async function lastGoodCount(supabase: any): Promise<number | null> {
   const { data, error } = await supabase
@@ -182,15 +195,35 @@ Deno.serve(async (req) => {
       // in a couple of hundred bytes whatever the release holds, and the
       // second is capped at five features, so neither can reach the memory
       // ceiling that killed the first attempt at 546 with nothing logged.
+      const meta = await ask('layer', layerUrl());
       const counted = await ask('count', countUrl());
-      const shaped = await ask('shape', queryUrl({ resultRecordCount: '5' }));
+      const shaped = await ask('shape', queryUrl({ resultRecordCount: '5', outFields: '*' }));
       const features = Array.isArray(shaped.parsed?.features)
         ? shaped.parsed!.features as Array<Record<string, unknown>>
         : [];
       const first = features[0] ?? null;
+      const m = meta.parsed ?? {};
       const probe = {
         ok: counted.status === 200 && shaped.status === 200
           && !counted.parsed?.error && !shaped.parsed?.error,
+        layer: {
+          status: meta.status,
+          name: m.name ?? null,
+          geometryType: m.geometryType ?? null,
+          // The page size decides whether 112 features arrive in one answer.
+          maxRecordCount: m.maxRecordCount ?? null,
+          standardMaxRecordCount: m.standardMaxRecordCount ?? null,
+          supportsPagination: (m.advancedQueryCapabilities as Record<string, unknown> | undefined)
+            ?.supportsPagination ?? null,
+          supportsReturningGeometryCentroid:
+            (m.advancedQueryCapabilities as Record<string, unknown> | undefined)
+              ?.supportsReturningGeometryCentroid ?? null,
+          // Every field the layer publishes, which is where a point would be
+          // if the publisher supplies one as an attribute.
+          fields: Array.isArray(m.fields)
+            ? (m.fields as Array<Record<string, unknown>>).map((f) => `${f.name}:${f.type}`)
+            : null,
+        },
         count: { status: counted.status, bytes: counted.bytes, body: counted.parsed },
         shape: {
           status: shaped.status,

@@ -1318,3 +1318,38 @@ and the parser, the refusals and the resolution are exercised by
 `aCommuteToTheWrongCity.spec.ts`. The first real load must be read before the
 register is trusted — and until it succeeds, every property keeps today's
 measurement to the capital, correctly unscored where that is not its centre.
+
+### The hedge that could not be held
+
+That block was written on 20 Sep 2026 and closed the same day, by running the
+loader from the one egress that can reach the ABS: the deployment's own. What
+the first production call returned is worth more than the register it failed
+to write.
+
+**HTTP 546 — `WORKER_RESOURCE_LIMIT` — with not one line in `function_logs`.**
+The worker was killed before it could print, so the only evidence the call
+left anywhere was a status code in `function_edge_logs`. The cause was in the
+query and it was a HEDGE: `returnGeometry: 'true'` sat beside
+`returnCentroid: 'true'`, on the reasoning that the parser accepts a feature's
+own geometry where the service supplies no centroid. That reasoning is
+correct, and what it actually asked the ABS for was every Significant Urban
+Area's full-resolution BOUNDARY. A centroid is two numbers; an urban-area
+polygon is tens of thousands of vertices, and there are about a hundred of
+them. **Insuring against a missing field by requesting a second, unbounded one
+is how a two-kilobyte answer becomes one no edge function can hold.** The
+absence of a centroid is now something the probe MEASURES.
+
+**And the probe committed the fault it existed to find.** Its whole purpose
+was to learn the response shape safely, and it learned it by making the one
+unbounded call and dying with it — so the instrument failed in exactly the way
+the thing it measured failed, and told us nothing the edge status had not.
+It asks two bounded questions now: `returnCountOnly=true`, which answers in a
+couple of hundred bytes whatever the release holds, and then five features.
+Neither can reach the ceiling. **An instrument that can fail the way its
+subject fails is not an instrument** — the same shape as a fixture shorter
+than the product (§5), one layer further out.
+
+Two things this cost nothing to learn, because of where the guards already
+were: no register row and no ledger row was written by any of it, and no
+reader changed behaviour, because an unloaded register is the state every
+deployment was already in and `ownCentre` was built to make correct.
