@@ -298,6 +298,17 @@ export function scoreIncomeAdvantage(
   capitalGrowthPct: number | null | undefined,
   grossYieldPct: number | null | undefined,
   marketYieldPct?: number | null,
+  /*
+   * What the market yield describes, for the sentence a reader sees.
+   *
+   * The two halves can legitimately come from different grains — the rent is
+   * the suburb's and the price is the postcode's, because that is what each
+   * publisher offers — and the areas are named rather than elided so the
+   * comparison is checkable. Both derive from one resolved subject, so they
+   * are consistent by construction; naming them is what stops a later reader
+   * assuming they were identical.
+   */
+  marketAreaLabel?: string | null,
 ): IncomeAdvantageReading | null {
   const y = typeof grossYieldPct === 'number' && Number.isFinite(grossYieldPct) ? grossYieldPct : null;
   if (y === null) return null;
@@ -312,7 +323,8 @@ export function scoreIncomeAdvantage(
   if (market !== null) {
     expected = market;
     basis = 'market_relative';
-    against = `the ${market.toFixed(2)}% a typical property in this market yields`;
+    against = `the ${market.toFixed(2)}% a typical property `
+      + `${marketAreaLabel ? `in ${marketAreaLabel} ` : 'in this market '}yields`;
   } else if (g !== null) {
     expected = expectedYieldAt(g);
     basis = 'frontier';

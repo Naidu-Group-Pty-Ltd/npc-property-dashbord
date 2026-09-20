@@ -265,7 +265,20 @@ export function scoreInvestmentV2Shadow(input: ShadowScoreInput): ShadowScoreRes
     input.evidence.medianRent?.value ?? null,
     input.evidence.medianPrice?.value ?? null,
   );
-  const incomeAdvantage = scoreIncomeAdvantage(capitalGrowthPct, grossYieldPct, marketYieldPct);
+  /*
+   * The rent and the price can be at different grains — the rent is the
+   * suburb's and the price the postcode's, because that is what each
+   * publisher offers. Both derive from one resolved subject, so they are
+   * consistent; the label names them so the comparison is checkable rather
+   * than assumed identical.
+   */
+  const marketAreaLabel = marketYieldPct === null ? null : [
+    input.evidence.medianRent?.areaName,
+    input.evidence.medianPrice?.areaName,
+  ].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(' / ') || null;
+  const incomeAdvantage = scoreIncomeAdvantage(
+    capitalGrowthPct, grossYieldPct, marketYieldPct, marketAreaLabel,
+  );
 
   const raw: Array<{ key: DimensionKey; score: number | null; coverage: number; confidence: number | null }> = [
     {
