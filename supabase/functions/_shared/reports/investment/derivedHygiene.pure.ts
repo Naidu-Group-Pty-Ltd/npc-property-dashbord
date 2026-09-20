@@ -22,6 +22,7 @@
 import { enforceChartEvidence, type EvidenceInventory } from './chartEvidence.pure.ts';
 import { alignChartScales } from './chartScale.pure.ts';
 import { dedupeChartDirectives } from './blockHygiene.pure.ts';
+import { limitEmphasis } from './emphasisDensity.pure.ts';
 import { foldStraySections } from './sectionFolding.pure.ts';
 
 const PLACEHOLDER_CELL = /^(?:n\/?a|tbd|to be determined|not available|not provided|unknown|—|-|–)\.?$/i;
@@ -544,9 +545,31 @@ export function presentStoredMarkdown(
   // it is a no-op on a document with one chart per unit.
   const scaled = alignChartScales(single);
   const levelled = scaled.aligned.length ? scaled.markdown : single;
-  if (!evidence) return levelled;
-  const judged = enforceChartEvidence(levelled, evidence);
-  return judged.findings.length ? judged.markdown : levelled;
+  /*
+   * Emphasis is a signal, and a signal that fires on one word in five is noise.
+   *
+   * Measured off the 97 Poole Road Compass by font rather than from the
+   * source: 9,570 of 51,343 characters of body copy set bold — 18.6%, at 7.2
+   * emphasised spans a page, the five longest running 160-246 characters each,
+   * which is a complete sentence apiece. `limitEmphasis` takes that to 4.1%
+   * and 1.9 spans a page on the same document.
+   *
+   * Last, and on the read path, for the same two reasons everything above it
+   * is: an instruction in a prompt is a request and this is the guarantee, and
+   * every report already stored was written under the old habit. It is the one
+   * scrub here that touches INLINE markup rather than structure, so it runs
+   * after the structural passes have settled what the lines are.
+   *
+   * It is not the prose scrub §8 forbids — `**` is markup, not a word. Strip
+   * the markers from both sides and they are byte-identical, and
+   * `emphasisDensity.spec.ts` asserts exactly that rather than promising it.
+   */
+  const emphasised = limitEmphasis(levelled);
+  const { clause, figure, repeat, table } = emphasised.unwrapped;
+  const calm = clause + figure + repeat + table ? emphasised.markdown : levelled;
+  if (!evidence) return calm;
+  const judged = enforceChartEvidence(calm, evidence);
+  return judged.findings.length ? judged.markdown : calm;
 }
 
 const normalizeHeading = (h: string): string =>
