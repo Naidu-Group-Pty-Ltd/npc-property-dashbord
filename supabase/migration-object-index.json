@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "migration_files": 1005,
+  "migration_files": 1008,
   "created": [
     "function:aml.aml_touch_updated_at",
     "function:aml.apply_partner_material_change",
@@ -356,6 +356,7 @@
     "function:public.update_updated_at_column",
     "function:public.update_user_webauthn_credentials_updated_at",
     "function:public.upsert_report_brand_snapshot",
+    "function:public.urban_centre_refresh",
     "function:public.validate_property_comparison_report_types",
     "function:public.validate_whitelabel_settings_payload",
     "function:public.verify_legal_audit_chain_strict",

@@ -2877,15 +2877,40 @@ figure (walk 96, 7 schools): **49 rated → 81 excluded → 89** once the regist
 names Bendigo. The middle number is what every deployment gets before any
 ingest has run.
 
-Three more bite. **The register is seeded by nothing** — the migration creates
-the table empty and `urban-centre-register-ingest` fills it, because a
-hand-typed centroid is a coordinate nobody can defend and the ABS publishes
-one. **A load is judged by its effect** (`urbanCentreIngest.pure.ts`):
-`MIN_PLAUSIBLE_CENTRES`, a shrink cap against the last good count, and every
-point inside the continent bounds — a truncated download is a register that
-answers confidently about the wrong place. And **`Number('')` is 0**, which is
-why a feature with no centroid parsed as `(0, 0)` and was stopped only by
-those bounds; the parser refuses an empty string before it coerces.
+**It is loaded: 102 centres, 20 Sep 2026**, and every assumption made before
+the first live call was wrong. The ABS **publishes no point** — the layer
+ignores `returnCentroid`, advertises no `supportsReturningGeometryCentroid`,
+and its fields carry no latitude or longitude — so the register derives one
+from the publisher's own generalised boundary and stores it as
+**`sua_boundary_centroid`**, never `sua_centroid`, which would claim a
+provenance that does not exist. And the layer's FIRST feature is `1000` /
+*"Not in any Significant Urban Area (NSW)"*: the classification is exhaustive,
+so one pseudo-area per state carries everywhere that is **not** a town.
+Writing those would have been the worst failure available — a rural property
+resolves to exactly that bucket, so the commute would have been SCORED against
+the centre of "everywhere in NSW that is not a town". The capital is wrong in
+a way a reader can see; that would have been wrong in a way nobody could.
+
+Five rules bite. **The register is seeded by nothing** — the migration creates
+the table empty and `urban-centre-register-ingest` fills it, because the rows
+a migration INSERTs do not travel to a clone; it refreshes **monthly**, which
+is clone self-healing rather than polling, since the ASGS release is a
+constant in code the ABS reissues about every five years. **A load is judged
+by its effect**: the count is asked in its own request and the walk must
+account for every declared feature, kept or refused for a named reason
+(102 + 9 + 1 = 112), because this load PRUNES and a short walk is a truncated
+download by another route. **A hedge can be fatal** — `returnGeometry: 'true'`
+sat beside `returnCentroid: 'true'` to insure against a missing field, which
+asked for a hundred full-resolution polygons and killed the worker at HTTP 546
+with nothing logged; the boundary is now generalised and paged ten at a time,
+and `maxRecordCount` (2000) is not why. **An instrument that can fail the way
+its subject fails is not an instrument** — the probe committed that same fault
+and told us nothing, so it now asks bounded questions only. And **the register
+is read back rather than believed**: `stage: 'status'` reports what the table
+holds and whether any row is a pseudo-area, asserted against what was WRITTEN
+rather than against the parser that was supposed to refuse it. Also measured:
+**`Number('')` is 0**, which is why a feature with no point parsed as `(0, 0)`
+and was stopped only by the continent bounds.
 
 **Recorded crime now covers four states, and the fourth one changed its
 classification mid-series.** Read

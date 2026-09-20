@@ -1302,7 +1302,7 @@ which is finite, so a feature carrying no point parsed as `0, 0` and only the
 continent bounds stopped it being written as a centre in the Atlantic. A parser
 must not depend on a later rule to catch its own coercion.
 
-### BLOCKED, and stated as such
+### BLOCKED when written, closed the same day — and every assumption in it was wrong
 
 **The ingest has not been run, and could not be from here.** This session's
 egress answers `403` at the CONNECT tunnel for `geo.abs.gov.au`, so the live
@@ -1353,3 +1353,73 @@ Two things this cost nothing to learn, because of where the guards already
 were: no register row and no ledger row was written by any of it, and no
 reader changed behaviour, because an unloaded register is the state every
 deployment was already in and `ownCentre` was built to make correct.
+
+### What the layer actually publishes
+
+With the instrument fixed, the probe answered — and **both remaining
+assumptions were false**.
+
+**`returnCentroid=true` is ignored by this layer.** Features came back
+carrying `attributes` and nothing else; `advancedQueryCapabilities` does not
+advertise `supportsReturningGeometryCentroid`; and the published fields are
+`objectid, shape, sua_code_2021, sua_name_2021, aus_code_2021, aus_name_2021,
+area_albers_sqkm, asgs_loci_uri_2021` — **no latitude, no longitude, no point
+of any kind**. The service will not do this arithmetic and no attribute
+carries the answer, so the register derives the point from the publisher's own
+generalised boundary (`pointFromRings`: the largest ring by shoelace area, then
+that ring's area-weighted centroid) and stores it as
+**`sua_boundary_centroid`** rather than `sua_centroid` — the second would claim
+a provenance that does not exist.
+
+**The layer's first feature is `1000` / "Not in any Significant Urban Area
+(NSW)".** The classification is exhaustive, so one pseudo-area per state
+carries every square kilometre that is *not* an urban centre, published beside
+the real ones. Writing them would have been the worst failure available here,
+because nothing downstream would look wrong: a genuinely rural property
+resolves to exactly that pseudo-area, `findUrbanCentre` would match it,
+`resolveCommuteDestination` would answer `ownCentre: 'yes'`, and `scoreLocation`
+would then SCORE a commute to the centre of "everywhere in New South Wales that
+is not a town". **The capital is wrong in a way a reader can see; this would
+have been wrong in a way nobody could.** `isNotAnUrbanCentre` refuses on either
+of two independent tests — the ABS's own numbering (`\d000`) and the published
+name — because either alone is a single point of failure.
+
+### The load, and what it is asserted by
+
+| | |
+| --- | ---: |
+| Features the release declares | **112** |
+| Refused, `not_an_urban_centre` | 9 |
+| Refused, `no_state_in_code` (Other Territories) | 1 |
+| **Centres written** | **102** |
+
+NSW 36 · VIC 21 · QLD 19 · WA 10 · SA 8 · TAS 5 · NT 2 · ACT 1. Bendigo is
+`2004`, −36.7458 / 144.2879 — about 1.4 km from the town centre, which is the
+accuracy an urban-area centroid is worth and the reason the basis is named.
+
+Three things carry it. **The boundary is fetched in pages of ten and the
+record limit is not why** — `maxRecordCount` is 2000 against 112 features, so
+the service would answer in one response, which is precisely the request that
+died; paging is about never holding more than a few boundaries at once.
+**`exceededTransferLimit` is TRUE on every page of a paged walk**, meaning
+"there are more", so it is stripped per page while the parser's refusal stays
+meaningful for the unpaged callers it also serves. And **completeness is
+asserted by effect**: the count is asked first, in its own request, and the
+walk must account for every declared feature, kept or refused for a named
+reason — 102 + 9 + 1 = 112. A short walk is a truncated download by another
+route, and this load PRUNES.
+
+**And the register is read back rather than believed.** `stage: 'status'`
+reports what the table holds, including whether any row is a state's
+"everywhere else" bucket — asserted against what was WRITTEN rather than
+against the parser that was supposed to refuse it. It answers
+`pseudoAreasHeld: []`. A loader that can only be believed by its own success
+message is a loader asserted by configuration, which is the mistake the
+retention purge, the verification self-test and the `manual_stats` CHECK
+constraint each made separately.
+
+It refreshes **monthly**, not daily. The cadence of a register should be the
+cadence of its publisher, and the ASGS release is a constant in code that the
+ABS reissues about every five years — so polling buys nothing a code change did
+not already require. What a schedule buys is the thing a migration cannot:
+**clone self-healing**, because the rows a migration INSERTs do not travel.
