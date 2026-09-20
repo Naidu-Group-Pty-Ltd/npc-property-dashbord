@@ -1,5 +1,5 @@
 /**
- * A footnote marker in a document that has no footnotes.
+ * A footnote marker with nothing it can refer to.
  *
  * ## What reached the page
  *
@@ -15,7 +15,31 @@
  * p23  …than as a safety score.3 Latest recorded counts by offence category…
  * ```
  *
- * The document carries no footnotes, so each digit refers to nothing.
+ * ## The document DOES carry footnotes, and that is the whole difficulty
+ *
+ * The first reading of this defect recorded "the document carries no
+ * footnotes, so each digit refers to nothing". Measured against the delivered
+ * file rather than against a fixture of it, that is wrong: page 36 carries a
+ * `Notes` list of four entries, drawn by `markdown.pure.ts` from `[^id]:`
+ * definitions the stored body holds. So the guard below returned true, and
+ * this module was a NO-OP on the one document it was written for — the five
+ * markers shipped, and a spec asserting `hasFootnoteApparatus(DELIVERED)` was
+ * false was asserting a property of a fixture shorter than the product.
+ *
+ * Reading the digits against that list is what settles the rule:
+ *
+ * ```
+ * p21  .12  -> there are four notes; 12 is not one of them
+ * p21  .2   -> note 2 is the ABS population series; the sentence is house values
+ * p22  .2   -> note 2 again; the sentence is sales volume
+ * p22  .4   -> note 4 IS the population note              (correct)
+ * p23  .3   -> note 3 IS the crime note                   (correct)
+ * ```
+ *
+ * Two of five land, two land on the wrong source, one lands on nothing. A
+ * bare digit beside a rendered apparatus is therefore WORSE than one beside
+ * no apparatus at all: a reader follows it into the Notes list and arrives at
+ * the wrong publisher.
  *
  * ## What wrote them, established by execution rather than inferred
  *
@@ -45,11 +69,15 @@
  *
  * Two things hold it apart, and both are checkable rather than argued.
  *
- * **It is conditional on the document.** A marker is debris only where there
- * is no apparatus for it to refer to, so this asks the document first: a body
- * carrying a `**Notes**` list or any `[^id]:` definition is left entirely
- * alone, markers and all. That is the same shape as "asserted by effect, never
- * by configuration" — the document says whether its markers mean anything.
+ * **It is conditional on the document, and on WHICH KIND of apparatus.** The
+ * two kinds do not behave alike, which is the correction above. An apparatus
+ * the RENDERER draws is keyed on `[^id]` and set as superscripts: a bare digit
+ * in body copy is not one of its markers and can never become one, so it is
+ * debris there as surely as in a document with no notes. An apparatus the
+ * MODEL wrote literally — a `**Notes**` line, or `[1] text` entries — has no
+ * markup of its own, so the bare digits may be the only thing pointing at it
+ * and the document is left entirely alone, markers and all. The document says
+ * which case it is; nothing here is configured.
  *
  * **A digit between two sentences is in neither of them.** Removing it cannot
  * change a claim, a figure or a source, which is what makes this punctuation
@@ -99,13 +127,32 @@ const ABBR = new Set(ABBREVIATIONS);
  */
 const MARKER = /([A-Za-z]*[a-z]{3})\.(\d{1,2})(?=\s+[A-Z“"(]|\s*$)/gm;
 
-/** A document that carries footnotes keeps its markers, whatever they look like. */
+/**
+ * Which kind of footnote apparatus a body carries, if any.
+ *
+ * `literal` is a list the MODEL wrote out — a `**Notes**` lead-in, or `[1]
+ * text` entries as `resolveFootnotes` emits. It has no markers of its own, so
+ * a bare digit in the prose may be the only thing referring to it.
+ *
+ * `rendered` is a `[^id]: text` definition, which `markdown.pure.ts` draws as
+ * a `Notes` heading and an ordered list, and whose markers it sets from the
+ * `[^id]` references themselves. A bare digit is not one of those markers.
+ *
+ * A body carrying both answers `literal`: that is the conservative side.
+ */
+export type FootnoteApparatus = 'none' | 'literal' | 'rendered';
+
+export function footnoteApparatusOf(markdown: string): FootnoteApparatus {
+  if (!markdown) return 'none';
+  if (/^\s*\*\*Notes\*\*\s*$/m.test(markdown)) return 'literal';
+  if (/^\s*\[\d{1,2}\]\s+\S/m.test(markdown)) return 'literal';
+  if (/^\s*\[\^[^\]\s]{1,40}\]:/m.test(markdown)) return 'rendered';
+  return 'none';
+}
+
+/** A document that carries footnotes of either kind. */
 export function hasFootnoteApparatus(markdown: string): boolean {
-  if (/^\s*\*\*Notes\*\*\s*$/m.test(markdown)) return true;
-  // A definition — `[^id]: text` — at the head of a line.
-  if (/^\s*\[\^[^\]\s]{1,40}\]:/m.test(markdown)) return true;
-  // A numbered note list under a Notes lead-in, as `resolveFootnotes` emits.
-  return /^\s*\[\d{1,2}\]\s+\S/m.test(markdown);
+  return footnoteApparatusOf(markdown) !== 'none';
 }
 
 export interface FootnoteDebrisResult {
@@ -117,11 +164,11 @@ export interface FootnoteDebrisResult {
 /**
  * Remove footnote markers from a document that has no footnotes.
  *
- * Returns the source unchanged, and an empty list, for a document that carries
- * an apparatus or carries no marker.
+ * Returns the source unchanged, and an empty list, for a document whose
+ * apparatus is a list the model wrote literally, or one carrying no marker.
  */
 export function stripFootnoteDebris(markdown: string): FootnoteDebrisResult {
-  if (!markdown || hasFootnoteApparatus(markdown)) {
+  if (!markdown || footnoteApparatusOf(markdown) === 'literal') {
     return { markdown: markdown ?? '', removed: [] };
   }
   const removed: Array<{ after: string; marker: string }> = [];

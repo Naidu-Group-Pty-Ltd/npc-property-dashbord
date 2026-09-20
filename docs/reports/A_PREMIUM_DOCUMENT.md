@@ -407,7 +407,7 @@ deployed bundle differs from this tree. **It is not resolved here**, and the
 de-duplication above is deliberately safe under either answer: it prints what
 the register produced, whatever that turns out to be.
 
-## 10. A footnote marker in a document that has no footnotes
+## 10. A footnote marker with nothing it can refer to
 
 Five sentences ended in a bare digit glued to the full stop before them, set in
 the body face at body size:
@@ -420,7 +420,39 @@ p22  …according to the Australian Bureau of Statistics.4 This very modest…
 p23  …than as a safety score.3 Latest recorded counts by offence category…
 ```
 
-The Compass carries no footnote apparatus, so each digit refers to nothing.
+### The correction: the Compass DOES carry an apparatus
+
+The first reading of this recorded "the Compass carries no footnote apparatus,
+so each digit refers to nothing", and that was measured against a fixture of
+the document rather than against the document. **Page 36 carries a `Notes`
+list of four entries**, drawn by `markdown.pure.ts:1659` (`<h4>Notes</h4>` plus
+an `<ol class="fn-notes">`) from `[^id]:` definitions the stored body holds —
+confirmed in the file by font and geometry: the label is Playfair-Display at
+14, the four entries are body Inter at 14 indented to `left=104`, and the
+ordered-list markers sit in the gutter at `left=86` on the same four baselines
+(`top=236 / 283 / 330 / 378`).
+
+So the guard returned **true** and `stripFootnoteDebris` was a **no-op on the
+one document it was written for**. Both halves of the same lesson §5 records:
+the module was checked against a fixture shorter than the product, and a spec
+asserting `hasFootnoteApparatus(DELIVERED)` was `false` was asserting a
+property of the fixture.
+
+Reading the digits against that list is what settles the rule:
+
+```
+p21  .12  ->  there are four notes; 12 is not one of them
+p21  .2   ->  note 2 is the ABS population series; the sentence is house values
+p22  .2   ->  note 2 again; the sentence is sales volume
+p22  .4   ->  note 4 IS the population note                       (correct)
+p23  .3   ->  note 3 IS the crime note                            (correct)
+```
+
+Two of five land, two land on the wrong source, one lands on nothing. **A bare
+digit beside a rendered apparatus is worse than one beside no apparatus at
+all**: a reader follows it into the Notes list and arrives at the wrong
+publisher.
+
 
 ### What wrote them, by execution rather than inference
 
@@ -448,10 +480,22 @@ neither reaches, and it is the form that shipped.
 
 Two things, both checkable rather than argued.
 
-**It is conditional on the document.** A marker is debris only where there is
-no apparatus for it to refer to, so `stripFootnoteDebris` asks the document
-first: a body carrying a `**Notes**` list or an `[^id]:` definition keeps every
-marker it has. Same shape as "asserted by effect, never by configuration".
+**It is conditional on the document, and on which KIND of apparatus.** The two
+kinds do not behave alike, which is the correction above, and
+`footnoteApparatusOf` is the one place that tells them apart.
+
+* **`rendered`** — an `[^id]: text` definition. Its markers are the `[^id]`
+  references, which the renderer sets as superscripts in their own nodes. A
+  bare digit in body copy is not one of them and can never become one, so it is
+  debris here exactly as in a document with no notes.
+* **`literal`** — a `**Notes**` line, or `[1] text` entries as
+  `resolveFootnotes` emits. That list has no markup of its own, so the bare
+  digits may be the only thing pointing at it, and the document is left
+  byte-identical, markers and all.
+* A body carrying **both** answers `literal`, which is the conservative side.
+
+The document says which case it is; nothing here is configured. Same shape as
+"asserted by effect, never by configuration".
 
 **A digit between two sentences is in neither of them.** Removing it cannot
 change a claim, a figure or a source — which is what makes it punctuation
@@ -480,9 +524,23 @@ sentence would be worse.
 
 ### Still open from the same finding
 
-The `sofuture` eaten space on page 25 and the page-36 Notes list carrying four
-entries for markers the body no longer shows are **not** closed by this. They
-need the stored bytes of that report, which this branch has not read.
+The **page-36 Notes list** is closed and was never a layout defect: measured,
+the four `1.`–`4.` markers sit in the gutter on the same four baselines as
+their entries, which is an ordered list rendering correctly.
+
+The **`sofuture` eaten space on page 25** is narrowed but not closed. The same
+construct appears twice on that page, eight lines apart, and only one breaks:
+
+```
+top=330  'numbers'    (f29) + ', so future price and rent performance will…'  (f12)   OK
+top=600  'directions' (f29) + ', sofuture changes in incident numbers…'       (f12)   glued
+```
+
+Node offsets foot exactly in both cases (`86+62=148`, `86+70=156`), so the
+layout is consistent and the glue is **in the text, not in the positioning** —
+it is in the stored content or in a content transform, not the packer or the
+renderer. Which of those needs the stored bytes of that report, which this
+branch has not read.
 
 ## 11. One date format in a planning reading
 

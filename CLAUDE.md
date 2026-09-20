@@ -2217,13 +2217,25 @@ register should have emitted thirteen rows is a separate, open question** —
 the renderer and the packer were each excluded by execution; §9 of the same
 doc records the evidence rather than a guess.
 
-**And a footnote marker in a document that has no footnotes.** Five sentences
+**And a footnote marker with nothing it can refer to.** Five sentences
 ended in a bare digit glued to the full stop (`…do not capture.12 Median house
 prices…`). Every other form a citation could take was driven through the real
 write-path stripper and `renderMarkdown` and each survives VISIBLY different —
 `[12]` strips to nothing, `[^12]`, `¹²`, `(12)` and `\[12\]` all survive as
 written — so the model wrote them with no markup at all and neither the
-stripper nor the renderer could have seen them. This is not the prose scrub §8
+stripper nor the renderer could have seen them. **The first fix was a no-op on
+the document it names**, and that is the part worth keeping: the guard asked
+whether the body had an apparatus, page 36 carries a `Notes` list of four, and
+a spec asserting otherwise was asserting a property of a fixture shorter than
+the product — §5's lesson, committed again. The two kinds are not alike, so
+`footnoteApparatusOf` tells them apart: a **`rendered`** apparatus (`[^id]:`)
+sets its own superscript markers, so a bare digit in body copy is debris beside
+it — measured, of the five, two point at the right note, two at the wrong one
+and one at a note that does not exist, which makes a stray digit beside real
+notes WORSE than one beside none. A **`literal`** list (`**Notes**`, or
+`[1] text`) has no markup of its own, so the bare digits may be all that points
+at it and the document is left byte-identical; a body carrying both is read as
+literal. This is not the prose scrub §8
 forbids, for two reasons that are checkable: it is **conditional on the
 document** (a body carrying a Notes list or an `[^id]:` definition keeps every
 marker it has), and **a digit between two sentences is in neither of them**, so

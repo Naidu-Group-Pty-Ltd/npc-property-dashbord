@@ -29,6 +29,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ABBREVIATIONS,
+  footnoteApparatusOf,
   hasFootnoteApparatus,
   stripFootnoteDebris,
 } from '@/lib/reports/investment/footnoteDebris.pure';
@@ -72,23 +73,62 @@ describe('the five markers the Compass delivered', () => {
   });
 });
 
-describe('a document that has footnotes keeps its markers', () => {
-  const withNotes = `${DELIVERED}\n\n**Notes**\n\n[1] NSW DCJ Rent and Sales Report.\n`;
+describe('which kind of apparatus the body carries', () => {
+  // The delivered document's own tail: four `[^id]:` definitions, which
+  // `markdown.pure.ts` draws as the `Notes` heading and ordered list measured
+  // on page 36. This is the shape the first version of this spec was missing,
+  // and missing it is why the module was a no-op on the document it names.
+  const RENDERED_TAIL = [
+    '',
+    '[^dcj]: NSW Department of Communities and Justice, Rent and Sales Report, postcode 2155.',
+    '[^erp]: Australian Bureau of Statistics Estimated Resident Population, Kellyville – East.',
+    '[^bocsar]: Recorded offence movements for The Hills Shire.',
+    '[^growth]: Resident population growth figure describes Kellyville – East.',
+    '',
+  ].join('\n');
 
-  it('recognises a Notes list', () => {
-    expect(hasFootnoteApparatus(withNotes)).toBe(true);
+  const LITERAL_TAIL = '\n\n**Notes**\n\n[1] NSW DCJ Rent and Sales Report.\n';
+
+  it('calls a model-written Notes list literal', () => {
+    expect(footnoteApparatusOf(`${DELIVERED}${LITERAL_TAIL}`)).toBe('literal');
   });
 
-  it('recognises an `[^id]:` definition', () => {
-    expect(hasFootnoteApparatus('body\n\n[^abs]: Australian Bureau of Statistics.')).toBe(true);
+  it('calls a bare `[1] text` list literal', () => {
+    expect(footnoteApparatusOf('body\n\n[1] Australian Bureau of Statistics.')).toBe('literal');
   });
 
-  it('leaves such a document byte-identical', () => {
+  it('calls an `[^id]:` definition rendered', () => {
+    expect(footnoteApparatusOf('body\n\n[^abs]: Australian Bureau of Statistics.')).toBe('rendered');
+  });
+
+  it('answers literal where a body carries both — the conservative side', () => {
+    expect(footnoteApparatusOf(`body${RENDERED_TAIL}${LITERAL_TAIL}`)).toBe('literal');
+  });
+
+  it('answers none for a body with neither', () => {
+    expect(footnoteApparatusOf(DELIVERED)).toBe('none');
+  });
+
+  it('still reports both kinds as an apparatus', () => {
+    expect(hasFootnoteApparatus(`${DELIVERED}${LITERAL_TAIL}`)).toBe(true);
+    expect(hasFootnoteApparatus(`${DELIVERED}${RENDERED_TAIL}`)).toBe(true);
+    expect(hasFootnoteApparatus(DELIVERED)).toBe(false);
+  });
+
+  it('leaves a literal list byte-identical, markers and all', () => {
+    const withNotes = `${DELIVERED}${LITERAL_TAIL}`;
     expect(stripFootnoteDebris(withNotes)).toEqual({ markdown: withNotes, removed: [] });
   });
 
-  it('says a plain document has no apparatus', () => {
-    expect(hasFootnoteApparatus(DELIVERED)).toBe(false);
+  // The correction this spec exists for: the delivered document DOES carry an
+  // apparatus, and the first version of the module therefore did nothing to it.
+  it('takes the markers out of the document as it was actually stored', () => {
+    const asStored = `${DELIVERED}${RENDERED_TAIL}`;
+    const out = stripFootnoteDebris(asStored);
+    expect(out.removed.map((r) => r.marker)).toEqual(['12', '2', '2', '4', '3']);
+    expect(out.markdown).toContain('which medians do not capture. Median house prices');
+    // The definitions themselves are untouched — the apparatus survives.
+    expect(out.markdown).toContain('[^bocsar]: Recorded offence movements for The Hills Shire.');
   });
 });
 
