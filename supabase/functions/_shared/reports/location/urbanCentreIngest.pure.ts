@@ -115,6 +115,7 @@ export function parseSuaFeatures(body: unknown): CentreParse {
   const drop = (why: string) => { dropped[why] = (dropped[why] ?? 0) + 1; };
   const root = body as {
     error?: unknown;
+    exceededTransferLimit?: unknown;
     features?: Array<{
       attributes?: Record<string, unknown>;
       centroid?: { x?: unknown; y?: unknown };
@@ -123,6 +124,16 @@ export function parseSuaFeatures(body: unknown): CentreParse {
   } | null;
   // ArcGIS reports failure as 200 plus an error body. That is transport.
   if (!root || root.error) throw new Error('the ABS geoserver returned an error body — refused');
+  // And it reports a TRUNCATED answer the same way it reports a whole one: 200,
+  // a well-formed feature list, and one extra flag. That matters more here than
+  // anywhere else in this platform, because the load PRUNES every code it did
+  // not carry — so a silently short page would not merely under-fill the
+  // register, it would DELETE the centres that fell off the end of it. The
+  // sanctions and office-holder loaders each pay for this lesson in their own
+  // words; this is the same rule at the one place where the cost is removal.
+  if (root.exceededTransferLimit === true) {
+    throw new Error('the ABS geoserver truncated the answer (exceededTransferLimit) — refused');
+  }
   const features = Array.isArray(root.features) ? root.features : null;
   if (!features) throw new Error('the ABS geoserver answered no feature list — refused');
 

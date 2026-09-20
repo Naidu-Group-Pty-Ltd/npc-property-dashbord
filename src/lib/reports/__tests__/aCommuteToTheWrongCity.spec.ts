@@ -265,3 +265,35 @@ describe('what the correction is worth on the reported property', () => {
     expect(at(114, 'unknown')).toBe(49);
   });
 });
+
+/*
+ * The load PRUNES every code it did not carry, so a silently short answer does
+ * not under-fill this register — it DELETES the centres that fell off the end
+ * of the page. ArcGIS reports a truncated answer with HTTP 200, a well-formed
+ * feature list and one extra flag, which is the same shape as a whole one.
+ */
+describe('a truncated answer is refused rather than pruned against', () => {
+  const feature = (code: string, name: string) => ({
+    attributes: { sua_code_2021: code, sua_name_2021: name },
+    centroid: { x: 144.2794, y: -36.757 },
+  });
+
+  it('refuses a body flagged exceededTransferLimit', () => {
+    expect(() => parseSuaFeatures({
+      exceededTransferLimit: true,
+      features: [feature('2001', 'Bendigo')],
+    })).toThrow(/truncated/i);
+  });
+
+  it('accepts the same body when the service says it is complete', () => {
+    expect(parseSuaFeatures({
+      exceededTransferLimit: false,
+      features: [feature('2001', 'Bendigo')],
+    }).centres).toHaveLength(1);
+  });
+
+  it('still refuses the lying 200 that carries an error body', () => {
+    expect(() => parseSuaFeatures({ error: { code: 400 }, features: [] }))
+      .toThrow(/error body/i);
+  });
+});

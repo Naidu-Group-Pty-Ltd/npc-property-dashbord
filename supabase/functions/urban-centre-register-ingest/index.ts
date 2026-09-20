@@ -113,13 +113,87 @@ Deno.serve(async (req) => {
   const cors = createCorsHeaders(req.headers.get('origin'));
   if (req.method === 'OPTIONS') return new Response(null, { headers: cors });
 
-  const auth = await verifyAuth(req);
-  if (!auth.ok) return createUnauthorizedResponse(auth.reason, cors);
-
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
   );
+
+  // `verifyAuth(supabase, headers, body)` — the signature every other ingest
+  // here uses, and the one that accepts what `cron_service_role_headers()`
+  // sends. The first cut of this file called `verifyAuth(req)` against a
+  // three-argument function: `headers` was undefined, so the FIRST statement
+  // inside threw a TypeError and this function would have answered 500 to
+  // every request ever made of it, before reaching a single line of its own
+  // work. It is the `appendCaseEvent` class — an identifier or a shape that
+  // does not exist is never type debt — and nothing but execution or reading
+  // the callee finds it.
+  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const { error: authError } = await verifyAuth(supabase, req.headers, body);
+  if (authError) return createUnauthorizedResponse(authError, cors);
+
+  const json = (payload: unknown, status = 200) =>
+    new Response(JSON.stringify(payload), {
+      status, headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+
+  /*
+   * `stage: 'probe'` fetches and describes, and writes NOTHING — no register
+   * row, no ledger row. It exists because the query shape could not be
+   * verified from the machine this was written on: that egress answers 403 at
+   * the CONNECT tunnel for `geo.abs.gov.au` under an organisation policy, so
+   * whether this service honours `returnCentroid` on a MapServer layer, and
+   * how many features it returns in one answer, were UNVERIFIED assumptions.
+   * `market-sales-ingest` already carries a stage of exactly this shape for
+   * exactly this reason. Asserted by effect, never by configuration.
+   */
+  if (String(body.stage ?? '') === 'probe') {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    try {
+      const res = await fetch(queryUrl(), { signal: controller.signal });
+      const text = await res.text();
+      let parsedBody: Record<string, unknown> | null = null;
+      try { parsedBody = JSON.parse(text) as Record<string, unknown>; } catch { /* below */ }
+      if (!parsedBody) {
+        const probe = { ok: false, status: res.status, unparseable: true, bytes: text.length };
+        console.log(`[urban-centre-register-ingest] probe ${JSON.stringify(probe)}`);
+        return json(probe);
+      }
+      const features = Array.isArray(parsedBody.features) ? parsedBody.features : [];
+      const first = (features[0] ?? null) as Record<string, unknown> | null;
+      const probe = {
+        ok: res.ok && !parsedBody.error,
+        status: res.status,
+        url: queryUrl(),
+        errorBody: parsedBody.error ?? null,
+        exceededTransferLimit: parsedBody.exceededTransferLimit ?? null,
+        featureCount: features.length,
+        // Which of the two point sources the service actually supplied, which
+        // is the one thing `returnCentroid=true` was an assumption about.
+        firstFeatureKeys: first ? Object.keys(first) : [],
+        firstAttributes: first?.attributes ?? null,
+        firstCentroid: first?.centroid ?? null,
+        firstGeometryKeys: first?.geometry ? Object.keys(first.geometry as object) : [],
+        // What the real load would make of it, computed but never written.
+        wouldParse: (() => {
+          try {
+            const r = parseSuaFeatures(parsedBody);
+            return { centres: r.centres.length, dropped: r.dropped, sample: r.centres.slice(0, 3) };
+          } catch (e) {
+            return { refused: e instanceof Error ? e.message : String(e) };
+          }
+        })(),
+      };
+      console.log(`[urban-centre-register-ingest] probe ${JSON.stringify(probe)}`);
+      return json(probe);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error(`[urban-centre-register-ingest] probe failed: ${message}`);
+      return json({ ok: false, probeError: message });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
   const started = new Date().toISOString();
   const { data: run } = await supabase
