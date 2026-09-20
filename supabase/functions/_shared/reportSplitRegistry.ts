@@ -52,7 +52,7 @@ export interface SplitRoute {
   notes?: string;
 }
 
-// ─── FIN report structure (Report 1 — 16 sections) ──────────────────────────
+// ─── FIN report structure (Report 1 — 17 sections) ──────────────────────────
 export const FIN_REPORT_TITLE = 'Client Investment Feasibility & Financial Performance Report';
 export const FIN_REPORT_SUBTITLE =
   'Cashflow, lending, yield, sensitivity, projections and portfolio suitability assessment.';
@@ -90,28 +90,46 @@ export const FIN_SECTION_ORDER: { ordinal: number; heading: string }[] = [
   { ordinal: 17, heading: 'Assumptions, Verification Items & Adviser Disclaimer' },
 ];
 
-// ─── PLDD report structure (Report 2 — 17 sections) ─────────────────────────
+// ─── PLDD report structure (Report 2 — 14 sections) ─────────────────────────
 export const PLDD_REPORT_TITLE = 'Property & Location Due Diligence Report';
 export const PLDD_REPORT_SUBTITLE =
   'Property fundamentals, suburb profile, tenant demand, planning context and local risk assessment.';
 
 export const PLDD_SECTION_ORDER: { ordinal: number; heading: string }[] = [
+  /*
+   * Thirteen sections, not seventeen — and the four ordinals that are missing
+   * are missing on purpose.
+   *
+   * This list described the PRE-v3.0 composite, which wrote a separate
+   * heading for suburb character, SEIFA, employment, tenant demand,
+   * infrastructure and the supply pipeline. The v4.0 Compass merges every one
+   * of those into another section, so measured on 20 Sep 2026 SEVEN of the
+   * seventeen declared here could not be produced from a current parent at
+   * all: they were slots a document could only ever leave empty.
+   *
+   * A derived document cannot carry more sections than its source offers, so
+   * each merges exactly where the Compass merged it and the carrier's heading
+   * names what it now carries. The gaps at 5, 8, 10, 11, 12 and 14 are left
+   * rather than renumbered, for the reason `FIN_SECTION_ORDER` gives at its
+   * own 15: every `routed('dueDiligence', N)` in `sectionRegistry.pure.ts` is
+   * one of these ordinals, and a wholesale renumber would touch them all for
+   * no gain.
+   *
+   * The legacy ROUTES are kept and re-pointed rather than deleted, because a
+   * pre-v3.0 parent — and there are 1,199 stored reports — does still write
+   * those headings, and `assembleForVariant` joins two routes that name one
+   * slot instead of discarding one.
+   */
   { ordinal: 1,  heading: 'Client Property & Location Snapshot' },
   { ordinal: 2,  heading: 'Core Property Facts & Physical Profile' },
-  { ordinal: 3,  heading: 'Dwelling Layout & Functional Fit' },
-  { ordinal: 4,  heading: 'Position Within the Locality' },
-  { ordinal: 5,  heading: 'Suburb Character, Lifestyle & Occupier Appeal' },
+  { ordinal: 3,  heading: 'Dwelling, Suburb Character & Occupier Appeal' },
+  { ordinal: 4,  heading: 'Position Within the Locality & Infrastructure Context' },
   { ordinal: 6,  heading: 'Amenity Maturity & Daily Liveability' },
   { ordinal: 7,  heading: 'Transport, Commute & Daily Movement' },
-  { ordinal: 8,  heading: 'Socioeconomic Profile & SEIFA Interpretation' },
-  { ordinal: 9,  heading: 'Population, Household Growth & Demographic Fit' },
-  { ordinal: 10, heading: 'Employment, Income & Affordability Profile' },
-  { ordinal: 11, heading: 'Tenant Demand and Occupier Personas' },
-  { ordinal: 12, heading: 'Future Buyer and Resale Appeal' },
+  { ordinal: 9,  heading: 'Population, Socioeconomics, Employment & Tenant Demand' },
   { ordinal: 13, heading: 'Planning, Zoning and Title Due Diligence' },
-  { ordinal: 14, heading: 'Infrastructure and Growth Context' },
   { ordinal: 15, heading: 'Climate, Environmental, Insurance, Crime and Safety Risk' },
-  { ordinal: 16, heading: 'Competitive Landscape and Supply Pipeline' },
+  { ordinal: 16, heading: 'Market Position, Competitive Landscape & Supply Pipeline' },
   { ordinal: 17, heading: 'Property & Location Risk Dashboard' },
   /*
    * 18-20 are new, and they are the document's own purpose.
@@ -177,7 +195,7 @@ export const SPLIT_ROUTES: SplitRoute[] = [
   {
     match: ['dwelling layout', 'functional fit', 'property fit within the suburb', 'property fit'],
     target: 'due_diligence',
-    newHeadingDueDiligence: 'Dwelling Layout & Functional Fit',
+    newHeadingDueDiligence: 'Dwelling, Suburb Character & Occupier Appeal',
     ordinalDueDiligence: 3,
     rule: 'property_lens',
   },
@@ -186,15 +204,17 @@ export const SPLIT_ROUTES: SplitRoute[] = [
   {
     match: ['position within', 'road access', 'why this location matters', 'location overview'],
     target: 'due_diligence',
-    newHeadingDueDiligence: 'Position Within the Locality',
+    newHeadingDueDiligence: 'Position Within the Locality & Infrastructure Context',
     ordinalDueDiligence: 4,
     rule: 'property_lens',
   },
   {
     match: ['suburb character', 'community identity', 'lifestyle', 'retail, healthcare & lifestyle amenity'],
     target: 'due_diligence',
-    newHeadingDueDiligence: 'Suburb Character, Lifestyle & Occupier Appeal',
-    ordinalDueDiligence: 5,
+    // Merged away on a v4.0 Compass; the route is kept and re-pointed at the
+    // carrier, because a legacy parent still writes this heading.
+    newHeadingDueDiligence: 'Dwelling, Suburb Character & Occupier Appeal',
+    ordinalDueDiligence: 3,
     rule: 'property_lens',
   },
 
@@ -224,19 +244,36 @@ export const SPLIT_ROUTES: SplitRoute[] = [
   {
     match: ['seifa', 'socioeconomic', 'tenant & buyer profile', 'demographics & demand drivers'],
     target: 'due_diligence',
-    newHeadingDueDiligence: 'Socioeconomic Profile & SEIFA Interpretation',
-    ordinalDueDiligence: 8,
+    // Merged away on a v4.0 Compass; the route is kept and re-pointed at the
+    // carrier, because a legacy parent still writes this heading.
+    newHeadingDueDiligence: 'Population, Socioeconomics, Employment & Tenant Demand',
+    ordinalDueDiligence: 9,
     rule: 'property_lens',
   },
 
   // ── Population / household ──
   {
-    // 'demand drivers' is the v3.0 merged section (population + tenant/buyer +
-    // employment). It matched no rule before this line, and routeCompositeSection
-    // returning null drops a section from both derived variants without a word.
+    /*
+     * 'demand drivers' is the v3.0 merged section (population + tenant/buyer +
+     * employment). It matched no rule before this line, and
+     * `routeCompositeSection` returning null drops a section from both derived
+     * variants without a word.
+     *
+     * `target: 'both'` finishes that catch-up. `tenantDemand` declares
+     * 'Vacancy Risk, Tenant Income & Rent Sustainability' as `required` on
+     * the financial tier at FIN 7, and its only source on a v4.0 Compass is
+     * this merged section — so with the Due Diligence half fixed and the
+     * Financial half left behind, FIN 7 was the eighth slot nothing could
+     * fill. Who rents here and how exposed the rent is to them leaving is a
+     * financial question as much as a locational one; it is the same prose
+     * read through the other lens, which is what `rule` and the two headings
+     * are for.
+     */
     match: ['demand drivers', 'population', 'household', 'demographic', 'population & housing demand'],
-    target: 'due_diligence',
-    newHeadingDueDiligence: 'Population, Household Growth & Demographic Fit',
+    target: 'both',
+    newHeadingFinancial: 'Vacancy Risk, Tenant Income & Rent Sustainability',
+    newHeadingDueDiligence: 'Population, Socioeconomics, Employment & Tenant Demand',
+    ordinalFinancial: 7,
     ordinalDueDiligence: 9,
     rule: 'property_lens',
   },
@@ -246,9 +283,11 @@ export const SPLIT_ROUTES: SplitRoute[] = [
     match: ['employment', 'job growth', 'income', 'employment & economic linkages', 'employment hubs'],
     target: 'both',
     newHeadingFinancial: 'Vacancy Risk, Tenant Income & Rent Sustainability',
-    newHeadingDueDiligence: 'Employment, Income & Affordability Profile',
+    // Merged away on a v4.0 Compass; the route is kept and re-pointed at the
+    // carrier, because a legacy parent still writes this heading.
+    newHeadingDueDiligence: 'Population, Socioeconomics, Employment & Tenant Demand',
     ordinalFinancial: 7,
-    ordinalDueDiligence: 10,
+    ordinalDueDiligence: 9,
     rule: 'verbatim',
     notes: 'Same employment data, two lenses — financial framing for FIN, demand framing for PLDD.',
   },
@@ -257,8 +296,10 @@ export const SPLIT_ROUTES: SplitRoute[] = [
   {
     match: ['target tenant', 'tenant persona', 'tenant stickiness', 'occupier personas', 'primary and secondary tenant'],
     target: 'due_diligence',
-    newHeadingDueDiligence: 'Tenant Demand and Occupier Personas',
-    ordinalDueDiligence: 11,
+    // Merged away on a v4.0 Compass; the route is kept and re-pointed at the
+    // carrier, because a legacy parent still writes this heading.
+    newHeadingDueDiligence: 'Population, Socioeconomics, Employment & Tenant Demand',
+    ordinalDueDiligence: 9,
     rule: 'property_lens',
   },
 
@@ -267,9 +308,11 @@ export const SPLIT_ROUTES: SplitRoute[] = [
     match: ['future buyer', 'buyer comparison', 'resale appeal'],
     target: 'both',
     newHeadingFinancial: 'Resale Liquidity & Exit Strategy',
-    newHeadingDueDiligence: 'Future Buyer and Resale Appeal',
+    // `propertyFit`'s purpose already covers occupier appeal and it is the
+    // carrier now, so a legacy parent's separate heading joins it there.
+    newHeadingDueDiligence: 'Dwelling, Suburb Character & Occupier Appeal',
     ordinalFinancial: 10,
-    ordinalDueDiligence: 12,
+    ordinalDueDiligence: 3,
     rule: 'verbatim',
   },
 
@@ -286,8 +329,10 @@ export const SPLIT_ROUTES: SplitRoute[] = [
   {
     match: ['infrastructure', 'growth corridor', 'future infrastructure', 'suburb/corridor context'],
     target: 'due_diligence',
-    newHeadingDueDiligence: 'Infrastructure and Growth Context',
-    ordinalDueDiligence: 14,
+    // Merged away on a v4.0 Compass; the route is kept and re-pointed at the
+    // carrier, because a legacy parent still writes this heading.
+    newHeadingDueDiligence: 'Position Within the Locality & Infrastructure Context',
+    ordinalDueDiligence: 4,
     rule: 'property_lens',
   },
 
@@ -304,7 +349,9 @@ export const SPLIT_ROUTES: SplitRoute[] = [
   {
     match: ['competitive landscape', 'supply pipeline', 'supply & development pipeline'],
     target: 'due_diligence',
-    newHeadingDueDiligence: 'Competitive Landscape and Supply Pipeline',
+    // Merged away on a v4.0 Compass; the route is kept and re-pointed at the
+    // carrier, because a legacy parent still writes this heading.
+    newHeadingDueDiligence: 'Market Position, Competitive Landscape & Supply Pipeline',
     ordinalDueDiligence: 16,
     rule: 'property_lens',
   },
@@ -323,10 +370,19 @@ export const SPLIT_ROUTES: SplitRoute[] = [
 
   // ── FIN-only: market positioning / rental ──
   {
+    /*
+     * Both documents. The Compass merges `supplyPipeline` INTO Market
+     * Positioning, and the Due Diligence document declares a competitive
+     * landscape section — so routing this to the Financial report alone left
+     * that section with no possible source on any current parent. What each
+     * document takes from it differs by lens, which is what `rule` is for.
+     */
     match: ['market positioning', 'how the property sits in the local market', 'current market performance', 'market analysis'],
-    target: 'financial',
+    target: 'both',
     newHeadingFinancial: 'Price, Rent & Yield Market Positioning',
+    newHeadingDueDiligence: 'Market Position, Competitive Landscape & Supply Pipeline',
     ordinalFinancial: 3,
+    ordinalDueDiligence: 16,
     rule: 'financial_lens',
   },
   {

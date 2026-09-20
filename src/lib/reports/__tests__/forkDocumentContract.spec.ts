@@ -40,13 +40,14 @@ import {
 } from '../../../../supabase/functions/_shared/reports/investment/forkSplit.pure';
 import {
   SPLIT_ROUTES, FIN_SECTION_ORDER, PLDD_SECTION_ORDER, loadSplitRegistry,
+  routeCompositeSection,
   type SplitRoute,
 } from '../../../../supabase/functions/_shared/reportSplitRegistry';
 import { readStrategyRecord } from '../../../../supabase/functions/_shared/reports/investment/strategyPositions.pure';
 import { buildMarketFacts } from '../../../../supabase/functions/_shared/reports/market/marketFactBlocks.pure';
 import { describeSubjectPrice } from '../../../../supabase/functions/_shared/reports/investment/subjectPrice.pure';
 import { transportCountReading } from '../../../../supabase/functions/_shared/transportReading.pure';
-import { sectionsForTier } from '../../../../supabase/functions/_shared/reports/investment/sectionRegistry.pure';
+import { sectionsForTier, mergesForTier } from '../../../../supabase/functions/_shared/reports/investment/sectionRegistry.pure';
 
 /** A client that answers nothing, so the registry resolves to its code defaults. */
 const NO_OVERLAY = { from: () => ({ select: () => ({ in: async () => ({ data: null }) }) }) } as never;
@@ -164,6 +165,167 @@ describe('a route and the section order are one statement of the document', () =
   ] as const)('%s: the order itself carries no repeated ordinal and no repeated heading', (_n, order) => {
     expect(new Set(order.map((e) => e.ordinal)).size).toBe(order.length);
     expect(new Set(order.map((e) => e.heading)).size).toBe(order.length);
+  });
+});
+
+describe('every section a forked document declares can actually be produced', () => {
+  /*
+   * The guard that would have caught the deepest fault here.
+   *
+   * `PLDD_SECTION_ORDER` described the PRE-v3.0 composite, and the v4.0
+   * Compass merges six of its sources away — so measured 20 Sep 2026 SEVEN of
+   * seventeen declared Due Diligence sections could not be produced from a
+   * current parent by any route, and an eighth (FIN 7, Vacancy Risk) was the
+   * same fault on the Financial side, left behind when the Due Diligence half
+   * of the v3.0 catch-up was fixed. A slot a document can only ever leave
+   * empty is not a section; it is a promise the shape cannot keep.
+   *
+   * Composed sections are read from the registry rather than listed, so the
+   * exemption cannot drift into a hand-maintained allow-list.
+   */
+  const routedOrdinals = (variant: 'fin' | 'pldd') => {
+    const out = new Set<number>();
+    for (const label of sectionsForTier('compass' as never)
+      .filter((s) => s.surface === 'markdown').map((s) => s.label)) {
+      const { route } = routeCompositeSection(label);
+      if (!route) continue;
+      if (variant === 'fin' && (route.target === 'financial' || route.target === 'both') && route.ordinalFinancial) {
+        out.add(route.ordinalFinancial);
+      }
+      if (variant === 'pldd' && (route.target === 'due_diligence' || route.target === 'both') && route.ordinalDueDiligence) {
+        out.add(route.ordinalDueDiligence);
+      }
+    }
+    return out;
+  };
+
+  const composedHeadings = (tier: 'financial' | 'strategic') => new Set(
+    sectionsForTier(tier as never)
+      .filter((s) => s.placement.producer?.kind === 'composed')
+      .map((s) => s.label),
+  );
+
+  it.each([
+    ['FIN', 'fin', FIN_SECTION_ORDER, 'financial'],
+    ['PLDD', 'pldd', PLDD_SECTION_ORDER, 'strategic'],
+  ] as const)('%s: every declared section is routed from a v4.0 Compass or composed', (name, variant, order, tier) => {
+    const routed = routedOrdinals(variant);
+    const composed = composedHeadings(tier);
+    // Sanity: an empty routed set would make this pass vacuously.
+    expect(routed.size).toBeGreaterThan(3);
+    const unfillable = order
+      .filter((e) => !routed.has(e.ordinal) && !composed.has(e.heading))
+      .map((e) => `#${e.ordinal} ${e.heading}`);
+    expect(unfillable, `${name} declares sections nothing can fill`).toEqual([]);
+  });
+
+  it('the strategic tier sorts the same way the document does', () => {
+    /*
+     * Two statements of one order again: `sectionsForTier('strategic')` is
+     * sorted by the tier's own `order`, and the document is rendered by the
+     * PLDD ordinal. They had drifted — the risk dashboard sorted before the
+     * environmental section in the registry and after it in the document.
+     */
+    const routedSections = sectionsForTier('strategic' as never)
+      .filter((s) => s.placement.producer?.kind === 'routed');
+    const ordinals = routedSections.map((s) => Number(s.placement.producer!.ref.split('#')[1]));
+    expect(ordinals.length).toBeGreaterThan(8);
+    expect([...ordinals].sort((a, b) => a - b)).toEqual(ordinals);
+  });
+});
+
+describe('the seven slots nothing could fill', () => {
+  const MERGED_AWAY: Array<[string, string]> = [
+    ['suburbCharacter', 'propertyFit'],
+    ['socioeconomic', 'population'],
+    ['employment', 'population'],
+    ['tenantDemand', 'population'],
+    ['infrastructure', 'locationCase'],
+    ['supplyPipeline', 'marketPosition'],
+    ['dwelling', 'propertyFit'],
+  ];
+
+  it('merges each one exactly where the Compass merges it', () => {
+    /*
+     * The Due Diligence document is MADE of the Compass, so it cannot carry a
+     * section the Compass no longer writes. Each of these is asserted against
+     * the compass tier rather than against a literal, so a future Compass
+     * merge that this document does not follow fails here rather than
+     * shipping an empty heading.
+     */
+    const compassMerges = new Map(
+      mergesForTier('compass' as never).map((m) => [m.id, m.into]),
+    );
+    const strategicMerges = new Map(
+      mergesForTier('strategic' as never).map((m) => [m.id, m.into]),
+    );
+    for (const [id, into] of MERGED_AWAY) {
+      expect(compassMerges.get(id), `${id} is no longer merged on the Compass`).toBe(into);
+      expect(strategicMerges.get(id), `${id} must merge where the Compass merges it`).toBe(into);
+    }
+  });
+
+  it('draws no heading for them, and the carrier is there instead', () => {
+    const labels = sectionsForTier('strategic' as never).map((s) => s.label);
+    for (const gone of [
+      'Suburb Character, Lifestyle & Occupier Appeal',
+      'Socioeconomic Profile & SEIFA Interpretation',
+      'Employment, Income & Affordability Profile',
+      'Tenant Demand and Occupier Personas',
+      'Infrastructure and Growth Context',
+      'Competitive Landscape and Supply Pipeline',
+      'Future Buyer and Resale Appeal',
+    ]) {
+      expect(labels, `"${gone}" is a slot no parent can fill`).not.toContain(gone);
+    }
+    for (const carrier of [
+      'Dwelling, Suburb Character & Occupier Appeal',
+      'Position Within the Locality & Infrastructure Context',
+      'Population, Socioeconomics, Employment & Tenant Demand',
+      'Market Position, Competitive Landscape & Supply Pipeline',
+    ]) {
+      expect(labels).toContain(carrier);
+    }
+  });
+
+  it('loses nothing from a LEGACY composite, which still writes them', async () => {
+    /*
+     * 1,199 stored reports predate the v3.0 merge and write the old headings.
+     * The routes are re-pointed at the carrier rather than deleted, and
+     * `assembleForVariant` joins two routes that name one slot — so a legacy
+     * parent's suburb-character prose lands in the carrier instead of being
+     * dropped for want of a heading.
+     */
+    const legacy: Array<[string, string]> = [
+      ['Executive Summary', 'VERDICT-MARK'],
+      ['Property Snapshot', 'SNAPSHOT-MARK'],
+      ['Dwelling Layout & Functional Fit', 'DWELLING-MARK'],
+      ['Location Overview', 'LOCATION-MARK'],
+      ['Suburb Character & Community Identity', 'SUBURB-MARK'],
+      ['Education & Family Amenity', 'AMENITY-MARK'],
+      ['Connectivity & Transport', 'TRANSPORT-MARK'],
+      ['SEIFA & Socioeconomic Profile', 'SEIFA-MARK'],
+      ['Population & Housing Demand', 'POPULATION-MARK'],
+      ['Employment & Economic Linkages', 'EMPLOYMENT-MARK'],
+      ['Primary and Secondary Tenant Personas', 'TENANT-MARK'],
+      ['Future Buyer & Resale Appeal', 'BUYER-MARK'],
+      ['Planning, Zoning & Overlays', 'PLANNING-MARK'],
+      ['Future Infrastructure', 'INFRA-MARK'],
+      ['Climate & Environmental Risk', 'CLIMATE-MARK'],
+      ['Supply & Development Pipeline', 'SUPPLY-MARK'],
+      ['Current Market Performance', 'MARKET-MARK'],
+      ['Risk Dashboard', 'RISK-MARK'],
+      ['Due Diligence Checklist', 'CHECKLIST-MARK'],
+      ['Final Recommendation', 'RECO-MARK'],
+      ['Professional Disclaimer', 'APPENDIX-MARK'],
+    ];
+    const docs = await compose({
+      parentContent: legacy.map(([h, m]) => `## ${h}\n\n${m} — prose for ${h}.\n`).join('\n'),
+      strategy: strategyRecord(),
+    });
+    const both = `${docs.financial.markdown}\n${docs.dueDiligence.markdown}`;
+    const lost = legacy.filter(([, mark]) => !both.includes(mark)).map(([h]) => h);
+    expect(lost, 'a legacy parent lost these bodies entirely').toEqual([]);
   });
 });
 
