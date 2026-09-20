@@ -1,6 +1,6 @@
 # Scoring V2 — the methodology, in one place
 
-**Methodology version `2.1.0` · the production grade engine since `2026-09-15`
+**Methodology version `2.2.0` · the production grade engine since `2026-09-15`
 (activation ME-8, recorded in `scoringV2Production.pure.ts`).** A spec test
 (`src/lib/reports/__tests__/scoringMethodology.spec.ts`) pins every
 load-bearing number in this document to the modules that enforce it, and
@@ -169,7 +169,7 @@ One composition function: `scoreInvestmentV2Shadow`
 | Growth | **0.40** | `growthScoring.pure.ts` | `3.1.0` |
 | Location | **0.25** | `locationScoring.pure.ts` | `1.0.0` |
 | Yield | **0.15** | `yieldScoring.pure.ts` | `3.0.0` |
-| Demand | **0.15** | `demandScoring.pure.ts` | `3.0.0` |
+| Demand | **0.15** | `demandScoring.pure.ts` | `4.1.0` |
 | Risk | **0.05** | `riskModelD.pure.ts` (Model D, variant D2) | `1.0.0` |
 
 Weights are the live composite's, unchanged on purpose: this release fixes
@@ -318,7 +318,7 @@ is disclosed with the result, never deducted from it.
 
 ## 3a. Publication — when a score and grade reach a client
 
-`scorePublicationPolicy.pure.ts`, version `1.0.0`
+`scorePublicationPolicy.pure.ts`, version `1.1.0`
 (`SCORE_PUBLICATION_GATE`, S5/S6 §4, §7 and §8, 18 September 2026).
 
 | valid dimensions | outcome |
@@ -485,9 +485,71 @@ a methodology decision that belongs to calibration against real evidence, and
 the field says where it will be defined instead of carrying a number nobody
 has justified.
 
+## 8b. `2.2.0` — a dimension carries the weight its evidence covers
+
+Renormalising over the dimensions that answered was only half of
+"proportional", and the other half was measurable on an issued document.
+
+The Investment Compass issued for **97 Poole Road, Kellyville NSW 2155 on
+20 September 2026** scored Demand on two of its five components —
+`transactionVolume` (162 sales against a 3-period average of 228) and the
+population driver (−0.4% a year) — which is **0.30 of that dimension's own
+methodology**. Demand then carried the full 15% of the matrix, renormalised
+up to 16% because Property Risk was unavailable. Two amplifications of one
+thin reading, stacked.
+
+The same run's own disclosure page told the reader the opposite:
+
+> Evidence coverage 85%. This is finer than the figure above: it discounts
+> each scored dimension by how much of its own method actually ran, so a
+> dimension scored on part of its inputs counts as part of a dimension rather
+> than a whole one.
+
+The engine computed that 85%, published it, and did not weight by it. `2.2.0`
+closes the gap between the disclosure and the arithmetic: a dimension's weight
+is its **original weight discounted by its own coverage**, and the measured
+dimensions renormalise over those.
+
+Four properties, each pinned by test rather than promised:
+
+* **It is symmetric.** A thinly evidenced favourable reading loses exactly the
+  influence a thinly evidenced adverse one loses. Nothing in the rule reads a
+  score.
+* **It can only lower a weight toward the evidence, never raise one.** A
+  dimension measured in full keeps its whole nominal weight, so a fully
+  evidenced record is untouched — the strong and weak control fixtures score
+  82 and 20 before and after.
+* **A measured zero is still a measurement.** Coverage is about how much of a
+  methodology ran, never about what it found.
+* **Absent coverage is 1.** A caller that does not know how much of a
+  dimension ran states nothing about it, so every existing caller is
+  byte-identical.
+
+The control that shows what it cost: a constructed record evidenced on 42% of
+the matrix scored **62 (B)** while 97 Poole Road, evidenced on 85%, scored
+**49 (C)**. After `2.2.0` they are 58 and 53.
+
+### Demand `4.1.0` — the driver carries its own weight
+
+`4.0.0` stopped a non-primary driver being the WHOLE of a Demand score
+(`DEMAND_PRIMARY`). It did not stop it being most of one: renormalising over
+the measured mass gave `populationDriver`'s 0.15 a share of **0.50** on a
+record carrying one primary — three and a third times the weight this module
+states it holds, and exactly the case 97 Poole Road presented.
+
+`4.1.0` states it in arithmetic: the primaries renormalise among themselves
+over the primary mass, and a non-primary component is added at its nominal
+weight and never renormalised up. It is a no-op where every component is
+present and where no driver is present, and it still cannot invent a score —
+with no primary the dimension is `null`, unchanged.
+
+Measured on the same frozen inputs: Demand 21 → 27 on 97 Poole Road, where
+the driver read below the primary, and 75 → 74 on a control where it read
+above. The same rule, in both directions.
+
 ## 9. Change control
 
-Every module carries its own version; the composition version (`2.1.0`)
+Every module carries its own version; the composition version (`2.2.0`)
 bumps whenever composition, weights or component versions change, and is
 persisted with every score so a stored result can be reproduced exactly. No
 silent changes: a calibration requires the demonstrated defect, the

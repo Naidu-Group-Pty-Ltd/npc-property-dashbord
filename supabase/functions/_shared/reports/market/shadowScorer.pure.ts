@@ -56,7 +56,7 @@
 import type { MarketEvidence } from './marketEvidence.pure.ts';
 import { type GrowthResult, scoreGrowth, GROWTH_METHODOLOGY_VERSION } from './growthScoring.pure.ts';
 import { type DemandResult, scoreDemand, DEMAND_METHODOLOGY_VERSION } from './demandScoring.pure.ts';
-import { isValidDimensionScore, proportionalScore } from './proportionalWeighting.pure.ts';
+import { evidenceWeightOf, isValidDimensionScore, proportionalScore } from './proportionalWeighting.pure.ts';
 import {
   type YieldInputs, type YieldResult, scoreYield, holdingCashFlowSignal,
   YIELD_METHODOLOGY_VERSION,
@@ -85,7 +85,7 @@ import {
  * ever carried the suffixed string because the engine was never wired while
  * it had it.
  */
-export const SHADOW_METHODOLOGY_VERSION = '2.1.0';
+export const SHADOW_METHODOLOGY_VERSION = '2.2.0';
 /** The same version under the name the production path uses. */
 export const SCORING_V2_METHODOLOGY_VERSION = SHADOW_METHODOLOGY_VERSION;
 
@@ -257,13 +257,38 @@ export function scoreInvestmentV2Shadow(input: ShadowScoreInput): ShadowScoreRes
   const measured = raw.filter((d) => isValidDimensionScore(d.score));
   const measuredWeight = measured.reduce((s, d) => s + COMPOSITE_WEIGHTS[d.key], 0);
 
+  /*
+   * 2.2.0 — the weight a dimension carries is its nominal weight discounted
+   * by how much of its own methodology ran.
+   *
+   * Renormalising over the dimensions that answered was only half of
+   * "proportional": a dimension scored on a third of its components was
+   * carrying a whole dimension's authority, and the composite then
+   * renormalised that up again. Two amplifications of one thin reading. See
+   * `WeightedScore.coverage` for the measurement that closed it, and note
+   * that this can only ever lower a weight toward its evidence — a dimension
+   * measured in full keeps its nominal weight exactly.
+   *
+   * One implementation: `evidenceWeightOf` is the same function
+   * `proportionalScore` divides by below and `scorePublicationPolicy` states
+   * the published figure with, so the engine and the policy cannot drift.
+   */
+  const entryOf = (d: typeof raw[number]) => ({
+    score: (d.score ?? 0) as number,
+    weight: COMPOSITE_WEIGHTS[d.key],
+    coverage: d.coverage,
+  });
+  const evidenceWeight = measured.reduce((s, d) => s + evidenceWeightOf(entryOf(d)), 0);
+
   const dimensions: DimensionReading[] = raw.map((d) => ({
     key: d.key,
     score: d.score,
     nominalWeight: COMPOSITE_WEIGHTS[d.key],
     effectiveWeight: !isValidDimensionScore(d.score) || measuredWeight === 0
       ? 0
-      : Number((COMPOSITE_WEIGHTS[d.key] / measuredWeight).toFixed(4)),
+      : Number(((evidenceWeight > 0
+        ? evidenceWeightOf(entryOf(d)) / evidenceWeight
+        : COMPOSITE_WEIGHTS[d.key] / measuredWeight)).toFixed(4)),
     coverage: d.coverage,
     confidence: d.confidence,
   }));
@@ -346,7 +371,11 @@ export function scoreInvestmentV2Shadow(input: ShadowScoreInput): ShadowScoreRes
   // §7, from the one implementation the publication policy also states the
   // published figure with. Full precision from the leaf, rounded ONCE here.
   const compositeScore = Math.round(
-    proportionalScore(measured.map((d) => ({ score: d.score as number, weight: COMPOSITE_WEIGHTS[d.key] }))) as number,
+    proportionalScore(measured.map((d) => ({
+      score: d.score as number,
+      weight: COMPOSITE_WEIGHTS[d.key],
+      coverage: d.coverage,
+    }))) as number,
   );
 
   const eligibility = applyEligibility({ compositeScore, growth, evidenceQualityCoverage });

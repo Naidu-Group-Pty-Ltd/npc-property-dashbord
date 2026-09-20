@@ -120,9 +120,9 @@ describe('the activation record', () => {
   });
 
   it('the composition version dropped its shadow suffix and is the one the record names', () => {
-    expect(SHADOW_METHODOLOGY_VERSION).toBe('2.1.0');
+    expect(SHADOW_METHODOLOGY_VERSION).toBe('2.2.0');
     expect(SCORING_V2_METHODOLOGY_VERSION).toBe(SHADOW_METHODOLOGY_VERSION);
-    expect(SCORING_V2_ACTIVATION.methodologyVersion).toBe('2.1.0');
+    expect(SCORING_V2_ACTIVATION.methodologyVersion).toBe('2.2.0');
   });
 });
 
@@ -153,7 +153,7 @@ describe('a property measured on three of five — a qualified score and grade i
     expect(record.policy.authority).toBe('v2');
     expect(record.policy.gradeIssued).toBe(true);
     expect(record.policy.dimensionScoresAuthoritative).toBe(true);
-    expect(record.policy.methodologyVersion).toBe('2.1.0');
+    expect(record.policy.methodologyVersion).toBe('2.2.0');
     expect(record.policy.activation).toEqual({ reference: 'ME-8', approvedOn: '2026-09-15', productionVersion: SCORING_V2_PRODUCTION_VERSION });
     expect(record.policy.measuredDimensions.sort()).toEqual(['demand', 'growth', 'yield']);
     expect(authorityOf(record)).toBe('v2');
@@ -174,8 +174,26 @@ describe('a property measured on three of five — a qualified score and grade i
     // Effective weights renormalise to 1 across the three.
     const effSum = pub.assessed.reduce((s, d) => s + (d.effectiveWeight ?? 0), 0);
     expect(effSum).toBeCloseTo(1, 4);
-    expect(pub.assessed.find((d) => d.dimension === 'growth')!.effectiveWeight)
-      .toBeCloseTo(0.40 / 0.70, 4);
+    /*
+     * RENEGOTIATED 20 September 2026 (methodology 2.2.0). The intent — the
+     * three assessed dimensions renormalise to 1 and an unassessed one
+     * carries none of it — is unchanged and asserted above and below. What
+     * moved is the quantity renormalised: each dimension's ORIGINAL weight
+     * discounted by how much of its own methodology ran, so a dimension
+     * scored on part of its components carries part of a dimension's weight.
+     * Written out rather than imported, so this still checks the policy.
+     */
+    const evWeight = (d: { weight: number; coverage?: number }) =>
+      d.weight * (typeof d.coverage === 'number' ? d.coverage : 1);
+    const evSum = pub.assessed.reduce((s, d) => s + evWeight(d), 0);
+    const growthDim = pub.assessed.find((d) => d.dimension === 'growth')!;
+    expect(growthDim.effectiveWeight).toBeCloseTo(evWeight(growthDim) / evSum, 4);
+    // Growth still carries the most of the three, as its original weight says.
+    for (const d of pub.assessed) {
+      if (d.dimension === 'growth') continue;
+      expect(growthDim.effectiveWeight!, `growth vs ${d.dimension}`)
+        .toBeGreaterThan(d.effectiveWeight!);
+    }
     // An unassessed dimension carries NO effective weight and no substitute score.
     for (const d of pub.unassessed) {
       expect(d.effectiveWeight, d.dimension).toBeNull();
@@ -210,8 +228,12 @@ describe('a property measured on three of five — a qualified score and grade i
     // the same leaf, so the two must agree exactly — if they ever diverge a
     // report and its assessment page would print different numbers.
     const pub = record.publication;
-    const manual = pub.assessed.reduce((s, d) => s + (d.score as number) * d.weight, 0)
-      / pub.assessed.reduce((s, d) => s + d.weight, 0);
+    // 2.2.0: the original weight, discounted by how much of the dimension's
+    // own methodology ran. Same leaf on both sides, so the two must agree.
+    const w = (d: { weight: number; coverage?: number }) =>
+      d.weight * (typeof d.coverage === 'number' ? d.coverage : 1);
+    const manual = pub.assessed.reduce((s, d) => s + (d.score as number) * w(d), 0)
+      / pub.assessed.reduce((s, d) => s + w(d), 0);
     expect(pub.overallScoreExact).toBeCloseTo(manual, 9);
     expect(pub.overallScore).toBe(Math.round(manual));
     expect(record.totalScore).toBe(pub.overallScore);

@@ -795,6 +795,10 @@ export function scoreForProduction(input: ProductionScoringInput): ProductionSco
         scored: dim?.available === true,
         score: dim?.performance,
         reason: dim?.available ? null : (dim?.reason ?? null),
+        // How much of the dimension's own methodology ran. The policy divides
+        // by the same evidence weight the engine does, so the two arithmetics
+        // are one arithmetic (`proportionalWeighting.pure.ts`).
+        coverage: dim?.coverage,
       }];
     }),
   ));
