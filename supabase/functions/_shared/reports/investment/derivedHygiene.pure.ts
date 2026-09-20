@@ -25,6 +25,7 @@ import { tabulateMixedUnitCharts } from './chartUnits.pure.ts';
 import { dedupeChartDirectives } from './blockHygiene.pure.ts';
 import { limitEmphasis } from './emphasisDensity.pure.ts';
 import { stripFootnoteDebris } from './footnoteDebris.pure.ts';
+import { withholdRatedAbsenceCharts } from './ratedAbsence.pure.ts';
 import {
   PLANNING_REGISTER_SECTION,
   dedupeRegisterTables,
@@ -701,6 +702,25 @@ export function presentStoredMarkdown(
   const deduped = dedupeChartDirectives(onceEach);
   const single = deduped.removed ? deduped.markdown : onceEach;
   /*
+   * An absence may not be rated.
+   *
+   * Page 23 of the 9 Hollow Street Compass drew `Risk exposure index (1=Low,
+   * 5=High, Not assessed shown as 5)` over a crime risk the register three
+   * lines below correctly reports as **Not assessed** — an unmeasured risk
+   * plotted at the top of the scale it shares with the measured ones.
+   * `PLANNING_CONTROLS_IN_THE_REPORT.md` §9 closed that as a STATEMENT; this
+   * closes it as a DRAWING, where the same conclusion is reached with no
+   * sentence to catch it.
+   *
+   * Before `tabulateMixedUnitCharts` below, which would otherwise set the
+   * same rating as a table and carry it to the page in a different shape.
+   * See `withholdRatedAbsenceCharts` for why the whole series goes rather
+   * than the cells at the rated value, and why nothing is worded in its
+   * place.
+   */
+  const rated = withholdRatedAbsenceCharts(single);
+  const unrated = rated.withheld.length ? rated.markdown : single;
+  /*
    * A shared axis is a claim that the quantities on it are comparable.
    *
    * Page 13 of the 97 Poole Road Compass plotted `99.1%`, `100%` and
@@ -714,8 +734,8 @@ export function presentStoredMarkdown(
    * dropped: every label, value and their order survive as the table the
    * data already was.
    */
-  const mixed = tabulateMixedUnitCharts(single);
-  const commensurable = mixed.tabulated.length ? mixed.markdown : single;
+  const mixed = tabulateMixedUnitCharts(unrated);
+  const commensurable = mixed.tabulated.length ? mixed.markdown : unrated;
   // One scale per quantity across the whole document. Unconditional, because
   // it needs no record to know that two charts of kilometres must agree, and
   // it is a no-op on a document with one chart per unit.

@@ -28,7 +28,7 @@
  * `infrastructureGuide` already use for a control and a project, so a reader
  * meets one pattern across the document rather than three.
  *
- * ## Three rules
+ * ## Four rules
  *
  * **Exposure and evidence are different questions and never one column.** A
  * level (`Low` / `Moderate` / `High` / `Not assessed`) describes the EXPOSURE;
@@ -42,6 +42,11 @@
  * cap is measured against the page band rather than chosen: at the register's
  * column width a cell of about twelve words sets on one line, and the rows a
  * reader could not scan were the ones that did not.
+ *
+ * **An absence is a level, never a position.** `Not assessed` is one of the
+ * four exposures and belongs in the register; it may not be drawn, because a
+ * chart has only positions to draw with. The one that reached a client put it
+ * at the top of the measured risks' own scale under a legend that said so.
  *
  * **A detail block is offered for a material risk, never for every row.** A
  * register of eight risks with eight blocks under it is the paragraph-heavy
@@ -63,6 +68,17 @@ export const RISK_DETAIL_PARTS = ['Finding', 'Evidence', 'Implication', 'Next ch
  * §9 of `PLANNING_CONTROLS_IN_THE_REPORT.md` pays for that in full.
  */
 export const RISK_EXPOSURE_LEVELS = ['Low', 'Moderate', 'High', 'Not assessed'] as const;
+
+/**
+ * The level that is not a position.
+ *
+ * `Low`, `Moderate` and `High` are readings on one scale and can be drawn as
+ * one; this one is the statement that the scale was never applied. Page 23 of
+ * the 9 Hollow Street Compass plotted it at 5 of 5 under the legend *Not
+ * assessed shown as 5*, which is the measured risks' own top reading — see
+ * `ratedAbsence.pure.ts` for the guarantee behind the sentence below.
+ */
+export const NOT_ASSESSED = RISK_EXPOSURE_LEVELS[3];
 
 /** Evidence vocabulary. Shares no value with the exposure levels, by test. */
 export const RISK_EVIDENCE_READINGS = ['Verified', 'Unverified', 'Conflicting', 'Not searched'] as const;
@@ -164,5 +180,9 @@ export function riskRegisterInstruction(): string {
     `EVIDENCE (${RISK_EVIDENCE_READINGS.join(' / ')}) describes the RETRIEVAL behind the row and`,
     'never the conclusion drawn from it, so it may vouch for a layer reading and may not vouch for',
     'the rating beside it. They are two columns and must never be collapsed into one.',
+    `An exposure of ${NOT_ASSESSED} belongs in the register and NEVER on a chart: a risk nobody`,
+    'measured gets no position on a scale — not the top of it, not the bottom of it, and never a',
+    'legend standing in for one, because a number on a scale is read as a measurement however it',
+    'got there. Leave an unmeasured risk out of any drawing and say so once in the register.',
   ].join(' ');
 }

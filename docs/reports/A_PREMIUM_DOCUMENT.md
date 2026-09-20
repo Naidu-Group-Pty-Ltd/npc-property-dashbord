@@ -614,3 +614,94 @@ test's own subject is kept whole (the list names the report's sections rather
 than the archetypes carrying them, a section row links to its own heading, a
 `tocContinues` sheet folds, a document with no narrative still lists its pages)
 and each now also asserts the front matter is absent.
+
+## 13. An absence may not be rated — on a chart either
+
+Measured 20 Sep 2026 on three regenerated Compass reports read as delivered
+PDFs (9 Hollow Street Golden Square, 1 Crestview Avenue Kellyville, 97 Poole
+Road Kellyville). Page 23 of the Hollow document, under *Summary Risk
+Register*:
+
+```
+Risk exposure index (1=Low, 5=High, Not assessed shown as 5)
+
+                   Exposure level
+Crime                  3   3   3   4   4   4   5
+
+Risk | Exposure level | Evidence chip | Due-diligence focus
+Crime | Not assessed | Unverified | State crime register and local police data
+```
+
+The register three lines below the drawing is correct: crime exposure was
+**not assessed**. The drawing above it puts that same risk on the measured
+risks' own 1–5 scale, and the title states the convention that let it happen.
+
+`PLANNING_CONTROLS_IN_THE_REPORT.md` §9 already paid for this rule in full,
+and paid for it as a **statement**: `Infrastructure timing and pipeline |
+**Low** | The absence of a named infrastructure pipeline in the registers
+searched …`. The word was closed and the picture was not. A number on a scale
+is read as a measurement however it got there — so an absence drawn at 5 of 5
+tells a reader this is the property's highest risk, with no sentence anywhere
+for a rule about sentences to catch.
+
+### The chart was wrong twice, and each fault explains the page on its own
+
+**It declared the convention.** The title says *Not assessed shown as 5*.
+
+**Its labels covered one cell of seven.** Seven values, one row label, one
+column label, and a register beneath it carrying a single row. The model wrote
+seven risks separated by commas where `{{heatmap: …}}` separates rows with `/`,
+so the grid transposed: seven risks × one exposure became one risk × seven
+exposures, and six of the seven figures described something no reader could
+name. `renderHeatmap` already refused the converse — *a label beyond the grid
+is a promise with no figure under it* — and had nothing to say about a figure
+with no label over it, which is the worse of the two, because a chart carrying
+one label reads as complete.
+
+### The whole series goes, not the cells at the rated value
+
+Once 5 means both *high* and *we did not look*, every cell at 5 is ambiguous —
+including the genuine highs. Removing only the 5s leaves a risk chart that
+reads as a property with no high risks, which is the more dangerous of the two
+documents. There is no repair available, because the convention destroyed the
+distinction any repair would need. `withholdRatedAbsenceCharts` therefore
+withholds the drawing whole.
+
+Nothing is lost on the document that found it: the summary register three lines
+below carries every risk with its exposure and its evidence reading, which is
+the statement the chart was a decoration of.
+
+### Three bounds
+
+* **It fires on a CONFESSION, never on a guess.** The directive's own text has
+  to state the mapping — an absence word, a connective meaning *is drawn as*,
+  and a number. A chart that rates an absence silently is invisible to this and
+  belongs to the generator's instruction, which now says so; an instruction is
+  a request and this is the guarantee, so the two are not alternatives.
+* **A count of absences is not a convention.** `Risks not assessed: 3` is a
+  fact about the register, so a bare number after the phrase is not enough.
+* **Nothing is worded in its place.** §8 of `RUNTIME_CONSOLIDATION.md` — an
+  absence is omitted rather than explained — so a withheld chart leaves no
+  note, no caption and no placeholder.
+
+### Where each half lives, and why they are not in the same place
+
+The convention is a property of the **document**, so it is scrubbed on the READ
+path in `presentStoredMarkdown`, beside `dedupeChartDirectives` and
+`limitEmphasis` and for their reason: every Compass already stored was written
+under the old habit, and a write-path rule reaches none of them. It runs before
+`tabulateMixedUnitCharts`, which would otherwise set the same rating as a table
+and carry it to the page in a different shape.
+
+The partial label set is a property of the **drawing**, so it is refused in
+`renderHeatmap`, which is where the existing rule about labels already lives.
+It is asked of a partial set alone: a grid that names nothing on an axis is one
+whose caption carries it, and both shapes are in production — the Hollow
+planning check names all four of its columns, the Crestview growth grid names
+none of its rows.
+
+### Measured
+
+**1 directive withheld and 1 drawing refused, across all three documents**, both
+on the one page that carried them; every other chart in all three byte-identical.
+Each fix was proved by reverting it and watching the test fail.
