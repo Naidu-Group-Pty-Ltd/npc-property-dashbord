@@ -196,15 +196,58 @@ function toRecords(rows: ReadonlyArray<SalesMedianRow>, source: string, sourceUr
 const chunk = <T,>(arr: T[], n: number): T[][] =>
   Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, (i + 1) * n));
 
+/**
+ * A load never ERASES a sales count it cannot restate.
+ *
+ * Victoria's and South Australia's sheets print ONE `No. of Sales` column —
+ * the latest quarter's — so their parsers emit `salesCount: null` on every
+ * other row of the series. New South Wales' and Queensland's carry a count on
+ * every row. The upsert sent `sales_count` for every record and PostgREST
+ * writes `ON CONFLICT DO UPDATE SET` for each column in the payload, so each
+ * daily run rewrote every historical Victorian and South Australian row's
+ * count back to null.
+ *
+ * `scoreTransactionVolume` needs `VOLUME_BASELINE_PERIODS + 1` — four periods
+ * carrying a count — to measure a quarter against this market's own trailing
+ * rate. Victoria and South Australia could therefore hold at most ONE at any
+ * moment, so transaction volume was structurally unmeasurable for every
+ * property in those two states: the 9 Hollow Street Compass of 20 Sep 2026
+ * scored Demand on nothing at all while 1 Crestview Avenue and 97 Poole Road,
+ * both New South Wales, scored it 27 from `162 sales … 29% below the
+ * 3-period average of 228`. That is a defect of this loader, not a fact about
+ * Bendigo.
+ *
+ * So a record carrying no count is written WITHOUT the column, which leaves
+ * whatever is stored standing. The two shapes cannot share a batch —
+ * PostgREST builds one statement per request and sets every column the
+ * payload names — so they are partitioned and sent separately.
+ *
+ * The conservative side is deliberate. A publisher that genuinely withdraws a
+ * figure is rare and a later load carrying a real value corrects it; a loader
+ * that erases a measurement it never had anything to say about is the fault
+ * `listings_cache` already paid for, where mirroring a prune put the whole
+ * marketplace on a thirty-day fuse.
+ */
 // deno-lint-ignore no-explicit-any
 async function upsertRecords(supabase: any, records: RegisterRecord[]): Promise<number> {
+  const CONFLICT = 'state,area_kind,area,dwelling_type,period,period_span';
   let written = 0;
-  for (const batch of chunk(records, 500)) {
-    const { error } = await supabase
-      .from('market_sales_medians')
-      .upsert(batch, { onConflict: 'state,area_kind,area,dwelling_type,period,period_span' });
-    if (error) throw new Error(`market_sales_medians upsert failed: ${error.message}`);
-    written += batch.length;
+  const withCount = records.filter((r) => r.sales_count !== null);
+  const withoutCount = records
+    .filter((r) => r.sales_count === null)
+    // The column is DROPPED from the payload, which is what leaves the
+    // stored value standing — PostgREST sets only the columns it is given.
+    .map(({ sales_count: _dropped, ...rest }) => rest);
+
+  for (const [rows, label] of [[withCount, 'with count'], [withoutCount, 'no count']] as const) {
+    for (const batch of chunk(rows as Record<string, unknown>[], 500)) {
+      if (!batch.length) continue;
+      const { error } = await supabase
+        .from('market_sales_medians')
+        .upsert(batch, { onConflict: CONFLICT });
+      if (error) throw new Error(`market_sales_medians upsert failed (${label}): ${error.message}`);
+      written += batch.length;
+    }
   }
   return written;
 }
