@@ -519,32 +519,75 @@ export function composeForkDocuments(input: {
   );
 
   /*
-   * The Due Diligence document's own composed section.
+   * The Due Diligence document's own composed sections — from a record with
+   * NO finance on it.
    *
-   * `sectionRegistry`'s `monitoring` placement has declared the strategic
-   * tier's Monitoring & Review Plan as
-   * `composedFrom('strategyPositions.pure.ts', 'composeMonitoringPlan')`
-   * since the tier existed, the composer has always been there, and nothing
-   * ever called it for this document — the fork composed for the Financial
-   * report alone, so the Due Diligence report composed nothing at all. A
-   * verification document that says what to check and never says when to
-   * look again is half a plan.
+   * `StrategyRecord.finance` is documented as "null where this tier does not
+   * carry the analysis of a purchase", and `readStrategyRecord` nulls it for
+   * `carriesModelling: false` — which is what `generate-investment-report`
+   * passes for the Compass. The fork builds ONE record and passes
+   * `carriesModelling: true`, because it is building it for the Financial
+   * report; composing the Due Diligence document's sections from that same
+   * record put the interest rate, the weekly rent and "each percentage point
+   * is $15,800 a year on the recorded balance" into a document whose tier
+   * declares `financialModelling: false` and whose own cover says the
+   * financial position is in the Financial Analysis Report. Measured on a
+   * real fork before this line existed.
    *
-   * Gated on the strategy RECORD rather than on `composeFinancial`: it is
-   * this document's section, and tying it to the other document's switch is
-   * how the Financial report's chapters came to decide what a Due Diligence
-   * reader sees. With no record there is nothing to compose and the document
-   * is byte-identical to before.
+   * So the record is narrowed here rather than re-read: one fork, two
+   * documents, and the tier decides what each may carry. The composers
+   * already answer to it — `buildMonitorRows` simply omits the rate and rent
+   * rows, and `composeExitOutlook` prints its market half and says the equity
+   * path "belongs to the Financial Analysis Report. It is not restated here."
+   * That branch has existed since the module was written and no fork had ever
+   * reached it.
    */
-  const monitoringEntry = plddEntry(input.registry, 'Monitoring & Review Plan');
-  const dueDiligenceComposed: ComposedChapter[] = input.strategy && monitoringEntry
-    ? composeStrategySections(input.strategy, [
-      { id: 'monitoring', heading: monitoringEntry.heading },
-    ]).map((section: StrategySection) => ({
-      ordinal: monitoringEntry.ordinal,
-      heading: section.heading,
-      markdown: section.markdown,
-    }))
+  const dueDiligenceRecord: StrategyRecord | null = input.strategy
+    ? { ...input.strategy, finance: null }
+    : null;
+
+  /*
+   * Two sections, both declared by `sectionRegistry`'s strategic tier and
+   * neither ever produced.
+   *
+   * **Monitoring & Review Plan** has been declared
+   * `composedFrom('strategyPositions.pure.ts', 'composeMonitoringPlan')`
+   * since the tier existed, the composer has always been there, and the fork
+   * composed for the Financial report alone — so the Due Diligence document
+   * composed nothing at all. A verification document that says what to check
+   * and never says when to look again is half a plan.
+   *
+   * **Resale Liquidity & Exit Outlook** was the last Compass section routed
+   * nowhere. The Financial report composes its own copy WITH the modelled
+   * equity path; this document gets the same composer with no finance, so it
+   * carries what the sales register actually recorded — the settled count,
+   * the median, the length of the series, each cited — and states plainly
+   * that days on market, time to sell and buyer depth are not held for this
+   * market and nothing here estimates them. That is a due-diligence fact,
+   * not modelling.
+   *
+   * Gated on the strategy RECORD rather than on `composeFinancial`: these are
+   * this document's sections, and tying them to the other document's switch
+   * is how the Financial report's chapters came to decide what a Due
+   * Diligence reader sees. With no record there is nothing to compose and the
+   * document is byte-identical to before.
+   */
+  const dueDiligenceComposed: ComposedChapter[] = dueDiligenceRecord
+    ? ([
+      ['monitoring', 'Monitoring & Review Plan'],
+      ['exitStrategy', 'Resale Liquidity'],
+    ] as const).flatMap(([id, prefix]) => {
+      // By prefix, so an operator's reworded heading in `report_engine_config`
+      // still resolves — the reason `finHeading` reads the order that way.
+      const entry = plddEntry(input.registry, prefix);
+      if (!entry) return [];
+      return composeStrategySections(dueDiligenceRecord, [{ id, heading: entry.heading }])
+        .map((section: StrategySection) => ({
+          ordinal: entry.ordinal,
+          heading: section.heading,
+          markdown: section.markdown,
+        }));
+    })
     : [];
 
   const mergedDueDiligence = mergeComposedChapters(dueDiligenceSections, dueDiligenceComposed);

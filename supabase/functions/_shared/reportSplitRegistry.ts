@@ -90,15 +90,15 @@ export const FIN_SECTION_ORDER: { ordinal: number; heading: string }[] = [
   { ordinal: 17, heading: 'Assumptions, Verification Items & Adviser Disclaimer' },
 ];
 
-// ─── PLDD report structure (Report 2 — 14 sections) ─────────────────────────
+// ─── PLDD report structure (Report 2 — 15 sections) ─────────────────────────
 export const PLDD_REPORT_TITLE = 'Property & Location Due Diligence Report';
 export const PLDD_REPORT_SUBTITLE =
   'Property fundamentals, suburb profile, tenant demand, planning context and local risk assessment.';
 
 export const PLDD_SECTION_ORDER: { ordinal: number; heading: string }[] = [
   /*
-   * Thirteen sections, not seventeen — and the four ordinals that are missing
-   * are missing on purpose.
+   * Fifteen sections, and the six ordinals that are missing are missing on
+   * purpose.
    *
    * This list described the PRE-v3.0 composite, which wrote a separate
    * heading for suburb character, SEIFA, employment, tenant demand,
@@ -130,7 +130,27 @@ export const PLDD_SECTION_ORDER: { ordinal: number; heading: string }[] = [
   { ordinal: 13, heading: 'Planning, Zoning and Title Due Diligence' },
   { ordinal: 15, heading: 'Climate, Environmental, Insurance, Crime and Safety Risk' },
   { ordinal: 16, heading: 'Market Position, Competitive Landscape & Supply Pipeline' },
-  { ordinal: 17, heading: 'Property & Location Risk Dashboard' },
+  /*
+   * 17 is new, and it is the last Compass section that was routed nowhere.
+   *
+   * The Financial report composes its own exit section WITH the modelled
+   * equity path. This document gets the same composer with no finance on the
+   * record, so it carries what the sales register recorded — the settled
+   * count, the median, the length of the series, each cited — and says
+   * plainly that days on market, time to sell and buyer depth are not held.
+   * That is a due-diligence fact rather than modelling, which is why it may
+   * sit in a tier declaring `financialModelling: false`.
+   *
+   * It goes here, straight after the market section it reads from and before
+   * the risk register, so the four ordinals below it each moved by one. That
+   * is a renumber `FIN_SECTION_ORDER`'s own 15 warns against — but the
+   * warning is about the `routed(…, N)` refs in `sectionRegistry.pure.ts`,
+   * there are three of them here, and a spec now fails when a route's ordinal
+   * and this list's disagree. Appending it after the recommendation would
+   * have put the resale case after the document's own conclusion.
+   */
+  { ordinal: 17, heading: 'Resale Liquidity & Exit Outlook' },
+  { ordinal: 18, heading: 'Property & Location Risk Dashboard' },
   /*
    * 18-20 are new, and they are the document's own purpose.
    *
@@ -146,9 +166,9 @@ export const PLDD_SECTION_ORDER: { ordinal: number; heading: string }[] = [
    * so the two statements of this document's shape cannot disagree — which is
    * what the drift at FIN 15 cost.
    */
-  { ordinal: 18, heading: 'Due Diligence Checklist' },
-  { ordinal: 19, heading: 'Monitoring & Review Plan' },
-  { ordinal: 20, heading: 'Final Recommendation' },
+  { ordinal: 19, heading: 'Due Diligence Checklist' },
+  { ordinal: 20, heading: 'Monitoring & Review Plan' },
+  { ordinal: 21, heading: 'Final Recommendation' },
 ];
 
 // ─── Lens framing strings ───────────────────────────────────────────────────
@@ -363,7 +383,7 @@ export const SPLIT_ROUTES: SplitRoute[] = [
     newHeadingFinancial: 'Financial Risk Dashboard',
     newHeadingDueDiligence: 'Property & Location Risk Dashboard',
     ordinalFinancial: 11,
-    ordinalDueDiligence: 17,
+    ordinalDueDiligence: 18,
     rule: 'verbatim',
     notes: 'Same source dashboard, two views — FIN keeps financial rows, PLDD keeps property/location rows.',
   },
@@ -459,7 +479,7 @@ export const SPLIT_ROUTES: SplitRoute[] = [
     newHeadingFinancial: 'Financial Recommendation & Portfolio Fit',
     newHeadingDueDiligence: 'Final Recommendation',
     ordinalFinancial: 16,
-    ordinalDueDiligence: 20,
+    ordinalDueDiligence: 21,
     rule: 'verbatim',
   },
 
@@ -482,7 +502,7 @@ export const SPLIT_ROUTES: SplitRoute[] = [
     newHeadingFinancial: 'Assumptions, Verification Items & Adviser Disclaimer',
     newHeadingDueDiligence: 'Due Diligence Checklist',
     ordinalFinancial: 17,
-    ordinalDueDiligence: 18,
+    ordinalDueDiligence: 19,
     rule: 'verbatim',
   },
 

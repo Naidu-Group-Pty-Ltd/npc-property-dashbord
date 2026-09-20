@@ -36,15 +36,15 @@ Sections: 40. Formats: Compass, Financial Analysis, Strategic / Due Diligence, E
 | Property Fit Within the Suburb | authored | Strategic / Due Diligence | Compass; Executive Briefing | authored · generator.compass; routed · split.dueDiligence#3; authored · condense.briefing | required | — | required | required | — |
 | Dwelling Layout & Functional Fit | recorded | not carried in full by any format | Compass; Strategic / Due Diligence; Executive Briefing | nothing yet | summary (in propertyFit) | — | summary (in propertyFit) | summary (in propertyFit) | — |
 | Planning, Zoning and Title Due Diligence | measured | Strategic / Due Diligence | Compass; Executive Briefing | authored · generator.compass | required | — | required | summary (in riskDashboard) | — |
-| Risk Dashboard | measured | Strategic / Due Diligence | Compass; Financial Analysis; Executive Briefing | authored · generator.compass; routed · split.financial#11; routed · split.dueDiligence#17; authored · condense.briefing | required | required | required | required | — |
+| Risk Dashboard | measured | Strategic / Due Diligence | Compass; Financial Analysis; Executive Briefing | authored · generator.compass; routed · split.financial#11; routed · split.dueDiligence#18; authored · condense.briefing | required | required | required | required | — |
 | Climate, Environmental, Insurance, Crime and Safety Risk | measured | Strategic / Due Diligence | Compass; Executive Briefing | authored · generator.compass; routed · split.dueDiligence#15 | required | — | required | summary (in riskDashboard) | — |
-| Due Diligence Checklist | recorded | Strategic / Due Diligence | Compass | authored · generator.compass; routed · split.dueDiligence#18 | required | — | required | — | — |
+| Due Diligence Checklist | recorded | Strategic / Due Diligence | Compass | authored · generator.compass; routed · split.dueDiligence#19 | required | — | required | — | — |
 | Purchase Costs & Annual Holding Cost Breakdown | computed | Financial Analysis | — | composed · financialChapters.pure.ts#4 | — | required | — | — | — |
 | Rental Assessment, Gross Yield & Net Yield | computed | Financial Analysis | — | composed · financialChapters.pure.ts#5 | — | required | — | — | — |
 | Loan Structure, Repayments & Cashflow Impact | computed | Financial Analysis | — | composed · financialChapters.pure.ts#6 | — | required | — | — | — |
 | Sensitivity & Scenario Testing | computed | Financial Analysis | — | composed · financialChapters.pure.ts#8 | — | required | — | — | — |
 | 10-Year Cashflow, Equity & Growth Projection | computed | Financial Analysis | — | composed · financialChapters.pure.ts#9 | — | required | — | — | — |
-| Resale Liquidity & Exit Outlook | computed | Financial Analysis | Compass | composed · strategyPositions.pure.ts#composeExitOutlook | required | required | — | — | — |
+| Resale Liquidity & Exit Outlook | computed | Strategic / Due Diligence | Compass; Financial Analysis | composed · strategyPositions.pure.ts#composeExitOutlook | required | required | required | — | — |
 | Investment Score Breakdown | computed | Financial Analysis | Executive Briefing; Snapshot | projection · recommendation.gradedDetailLine; composed · financialChapters.pure.ts#12; composed · scoreSections.pure.ts#composeScoreBreakdownSection; composed · scoreSections.pure.ts#composeScoreDimensionsSection | optional | required | — | required | required |
 | SWOT Analysis | computed | Financial Analysis | Compass; Executive Briefing | composed · strategyPositions.pure.ts#composeSwot; composed · financialChapters.pure.ts#14; composed · scoreSections.pure.ts#composeSwotSection | required | required | — | required | — |
 | Investor Suitability Profile | computed | Financial Analysis | — | composed · strategyPositions.pure.ts#composeSuitability | — | required | — | — | — |
@@ -52,7 +52,7 @@ Sections: 40. Formats: Compass, Financial Analysis, Strategic / Due Diligence, E
 | Monitoring & Review Plan | computed | Strategic / Due Diligence | Compass | composed · strategyPositions.pure.ts#composeMonitoringPlan | required | — | required | — | — |
 | Top 3 Opportunities | authored | Executive Briefing | Snapshot | authored · condense.briefing; authored · condense.snapshot | — | — | — | required | required |
 | Top 3 Risks | authored | Executive Briefing | Snapshot | authored · condense.briefing; authored · condense.snapshot | — | — | — | required | required |
-| Final Recommendation | authored | Strategic / Due Diligence | Compass; Financial Analysis; Executive Briefing; Snapshot | authored · generator.compass; routed · split.financial#16; routed · split.dueDiligence#20; authored · condense.briefing; authored · condense.snapshot | required | required | required | required | required |
+| Final Recommendation | authored | Strategic / Due Diligence | Compass; Financial Analysis; Executive Briefing; Snapshot | authored · generator.compass; routed · split.financial#16; routed · split.dueDiligence#21; authored · condense.briefing; authored · condense.snapshot | required | required | required | required | required |
 | Key Market Stats | measured | Snapshot | — | authored · condense.snapshot | — | — | — | — | required |
 | Financial Snapshot | computed | Snapshot | — | composed · financialChapters.pure.ts#composeFinancialSnapshotSection | — | — | — | — | required |
 

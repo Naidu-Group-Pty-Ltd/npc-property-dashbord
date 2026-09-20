@@ -368,6 +368,82 @@ describe('the Due Diligence report carries what it is named for', () => {
   });
 });
 
+describe('the Due Diligence document carries no modelling', () => {
+  /*
+   * `tierContent.strategic` declares `financialModelling: false` and the
+   * document's own cover says the financial position is in the Financial
+   * Analysis Report. Nothing enforced it on the composed path, and the first
+   * cut of the Due Diligence composition took the fork's ONE strategy
+   * record — which `fork-investment-report` builds with
+   * `carriesModelling: true`, because it is building it for the other
+   * document. Measured on a real fork, that put the interest rate, the
+   * weekly rent and "each percentage point is $15,800 a year on the recorded
+   * balance" into this document.
+   *
+   * `StrategyRecord.finance` is null for a tier that does not carry the
+   * analysis of a purchase, which is what `carriesModelling: false` produces
+   * and what the Compass has always passed. The fork narrows the record here
+   * rather than re-reading it.
+   */
+  const MODELLING_FIGURES: Array<[string, RegExp]> = [
+    ['the loan balance', /1,580,000/],
+    ['the interest rate', /6\.10%/],
+    ['the weekly rent', /\$850\b/],
+    ['a cost per rate point', /\$15,800/],
+    ['the upfront total', /480,000/],
+  ];
+
+  it('prints none of the figures that belong to the Financial report', async () => {
+    const docs = await compose({ strategy: strategyRecord() });
+    for (const [what, pattern] of MODELLING_FIGURES) {
+      expect(pattern.test(docs.dueDiligence.markdown), `${what} reached the Due Diligence document`)
+        .toBe(false);
+    }
+  });
+
+  it('and the Financial report still prints them, so this is a narrowing and not a loss', async () => {
+    const docs = await compose({ strategy: strategyRecord() });
+    // Sanity: if the record carried nothing, the assertion above would pass
+    // for the wrong reason on every future change.
+    const present = MODELLING_FIGURES.filter(([, p]) => p.test(docs.financial.markdown));
+    expect(present.length).toBeGreaterThan(0);
+  });
+});
+
+describe('the resale section, which was routed nowhere', () => {
+  it('reaches the Due Diligence document', async () => {
+    const docs = await compose({ strategy: strategyRecord() });
+    const pldd = headings(docs.dueDiligence.markdown);
+    expect(pldd).toContain('Resale Liquidity & Exit Outlook');
+    // After the market section it reads from, before the risk register.
+    expect(pldd.indexOf('Market Position, Competitive Landscape & Supply Pipeline'))
+      .toBeLessThan(pldd.indexOf('Resale Liquidity & Exit Outlook'));
+    expect(pldd.indexOf('Resale Liquidity & Exit Outlook'))
+      .toBeLessThan(pldd.indexOf('Property & Location Risk Dashboard'));
+  });
+
+  it('gives each document the half its tier may carry, from one composer', async () => {
+    const docs = await compose({ strategy: strategyRecord() });
+    const pldd = docs.dueDiligence.markdown;
+    /*
+     * The same function writes both. The Due Diligence copy states that the
+     * equity path belongs elsewhere rather than printing it, which is the
+     * branch `carriesModelling: false` has always taken on the Compass and
+     * which no fork had ever reached.
+     */
+    expect(pldd).toContain('belongs to the Financial Analysis Report');
+    expect(pldd).toContain('Days on market, time to sell and buyer depth are not measured');
+    // The Financial report carries the projection itself.
+    expect(docs.financial.markdown).toContain('Resale Liquidity & Exit Strategy');
+    expect(docs.financial.markdown).toMatch(/Modelled value|accepted CGR assumption/);
+  });
+
+  it('is composed only where there is a record, and never invents a market', async () => {
+    const without = await compose({ strategy: null });
+    expect(headings(without.dueDiligence.markdown)).not.toContain('Resale Liquidity & Exit Outlook');
+  });
+});
+
 describe('the Financial report keeps its recommendation', () => {
   it('prints the call whether or not the strategy chapters are composed', async () => {
     for (const strategy of [null, strategyRecord()]) {

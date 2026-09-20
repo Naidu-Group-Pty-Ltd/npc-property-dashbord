@@ -813,7 +813,7 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
       compass: { depth: 'required', order: 16, label: 'Risk Dashboard', producer: authored('generator.compass') },
       briefing: { depth: 'required', order: 9, label: 'Risk Overview', producer: authored('condense.briefing') },
       financial: { depth: 'required', order: 14, label: 'Financial Risk Dashboard', producer: routed('financial', 11) },
-      strategic: { depth: 'required', order: 19, label: 'Property & Location Risk Dashboard', producer: routed('dueDiligence', 17) },
+      strategic: { depth: 'required', order: 20, label: 'Property & Location Risk Dashboard', producer: routed('dueDiligence', 18) },
     },
   },
   {
@@ -862,7 +862,7 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
        * defect", and nothing asked. The route now gives it its own heading
        * and PLDD ordinal 18 instead of the risk dashboard's name.
        */
-      strategic: { depth: 'required', order: 20, label: 'Due Diligence Checklist', producer: routed('dueDiligence', 18) },
+      strategic: { depth: 'required', order: 21, label: 'Due Diligence Checklist', producer: routed('dueDiligence', 19) },
     },
   },
 
@@ -1003,6 +1003,26 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     tiers: {
       compass: { depth: 'required', order: 13, label: 'Resale Liquidity & Exit Outlook', producer: composedFrom('strategyPositions.pure.ts', 'composeExitOutlook') },
       financial: { depth: 'required', order: 13, label: 'Resale Liquidity & Exit Strategy', producer: composedFrom('strategyPositions.pure.ts', 'composeExitOutlook') },
+      /*
+       * The Due Diligence document carries it too, from 20 Sep 2026 — and
+       * carries a DIFFERENT half of it.
+       *
+       * This was the last Compass section routed nowhere: the Financial
+       * report composes its own copy and the split registry matched no
+       * pattern for 'resale liquidity' or 'exit outlook', so the strategic
+       * tier had no placement at all and the document said nothing about
+       * exit. `composeExitOutlook` is built in two halves and already knows
+       * the difference — "what the market recorded" is cited register
+       * evidence, and the equity path at year five and ten is a projection.
+       * The fork composes this one from a record with `finance: null`, so
+       * the modelled half prints its own sentence saying it belongs to the
+       * Financial Analysis Report, which is the branch
+       * `carriesModelling: false` has always taken on the Compass.
+       *
+       * Same composer, one implementation, and the tier decides what it may
+       * say — rather than a second exit section written for this document.
+       */
+      strategic: { depth: 'required', order: 19, label: 'Resale Liquidity & Exit Outlook', producer: composedFrom('strategyPositions.pure.ts', 'composeExitOutlook') },
     },
   },
   {
@@ -1079,7 +1099,7 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
       + 'twice. It never promises that this platform watches anything.',
     tiers: {
       compass: { depth: 'required', order: 18, label: 'Monitoring & Review Plan', producer: composedFrom('strategyPositions.pure.ts', 'composeMonitoringPlan') },
-      strategic: { depth: 'required', order: 21, label: 'Monitoring & Review Plan', producer: composedFrom('strategyPositions.pure.ts', 'composeMonitoringPlan') },
+      strategic: { depth: 'required', order: 22, label: 'Monitoring & Review Plan', producer: composedFrom('strategyPositions.pure.ts', 'composeMonitoringPlan') },
     },
   },
 
@@ -1125,7 +1145,7 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
       // Every other tier carried one; this tier's `optional`/null was the
       // routing table's omission written down, not a decision about the
       // document.
-      strategic: { depth: 'required', order: 22, label: 'Final Recommendation', producer: routed('dueDiligence', 20) },
+      strategic: { depth: 'required', order: 23, label: 'Final Recommendation', producer: routed('dueDiligence', 21) },
     },
   },
 
