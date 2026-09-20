@@ -1423,3 +1423,49 @@ cadence of its publisher, and the ASGS release is a constant in code that the
 ABS reissues about every five years — so polling buys nothing a code change did
 not already require. What a schedule buys is the thing a migration cannot:
 **clone self-healing**, because the rows a migration INSERTs do not travel.
+
+### Measured on the property, end to end
+
+The register being loaded changes nothing on its own, and the first attempt to
+verify it found out why. **`assessEnrichmentReuse` has no time-based shelf
+life** — deliberately — so report 5f7fb137's stored enrichment (acquired
+11:01:46 on 20 Sep) passed every gate it has: subject-matched, `places:
+complete`, `commute: measured`, every reading present. A regeneration would
+have reused it, kept the 114-minute drive to Melbourne, and printed 49 again
+with the fix deployed and the register full.
+
+The gap is that **a stamp vouches for what was MEASURED and not for what the
+measurement MEANT**. Until the register existed every commute went to the
+capital and nothing recorded that, because there was nothing to choose; an
+absent destination now reads as `unknown`, which `scoreLocation` RATES.
+`commute_destination_unrecorded` refuses such a packet — `readings_missing`'s
+rule one step on, refusing rather than repairing, taking effect on the next
+generation with no stored byte rewritten.
+
+With that in place the regeneration of 20 Sep 16:01 measured it:
+
+| | before | after |
+| --- | --- | --- |
+| Destination | Melbourne | **Bendigo** |
+| Commute | 114 min · 148.5 km | **8 min · 4.9 km** |
+| `ownCentre` | not recorded | **`yes`** |
+| Location dimension | 49 | — |
+| **Composite** | **B+ · 65** | **A · 78** |
+
+`📍 Location verification: [walkScore, commuteTimeCBD, schoolsNearby]` — all
+three inputs verified from the run's own acquisition stamp. Growth, Location
+and Yield measured; Demand and Risk still gapped for the reasons §19 records,
+neither of which this touches.
+
+Two things the run exposed that are not this work's. **The cron watchdog is
+being refused**: `resume-investment-reports`, `dispatcher` and
+`conversation-sync-cron` all answer `internal_timestamp_skew`, so a report
+that hands off on its wall-clock budget — which every Compass does, four
+times — is resumed by nothing but a browser. It is the shape of the fault
+`SCREENING_EXECUTION.md` records, where 17,174 scheduled invocations were
+refused and no worker ran at all. And **the reader put back an overstatement
+the register had removed**: the first live reading recorded
+`destinationPointBasis: "sua_centroid"` from a row saying
+`sua_boundary_centroid`, because the read coerced anything that was not the
+capital into it. `readPointBasis` carries the register's own word now and
+drops a row whose basis this build does not recognise.
