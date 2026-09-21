@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "migration_files": 1013,
+  "migration_files": 1012,
   "created": [
     "function:aml.aml_touch_updated_at",
     "function:aml.apply_partner_material_change",
@@ -465,7 +465,6 @@
     "index:client_fact_find_liabilities_fact_idx",
     "index:client_fact_finds_client_idx",
     "index:client_portal_reports_unique_portfolio_source",
-    "index:client_portal_reports_unique_source_tier",
     "index:client_portal_sessions_token_hash_key",
     "index:client_portal_sessions_user_active_idx",
     "index:client_qa_memory_client_idx",
@@ -2937,7 +2936,8 @@
     "index:aml.uq_aml_verification_attempt",
     "index:aml.uq_aml_verification_capture",
     "index:aml.uq_aml_verification_draft_capture",
-    "index:public.client_portal_reports_unique_source_tier",
+    "index:public.idx_fpd_finance_share_correlation",
+    "index:public.idx_fpd_finance_share_recipient",
     "index:public.idx_integration_outbox_aml_pending",
     "index:public.market_ingestion_runs_status_idx",
     "index:public.market_source_fetch_runs_source_idx",
