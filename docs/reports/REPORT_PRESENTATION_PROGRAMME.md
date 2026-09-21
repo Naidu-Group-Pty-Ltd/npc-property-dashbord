@@ -1113,10 +1113,29 @@ That class has reached a client: the verdict heading printing through the KPI
 band over `$1,975,000` and `$850`. The gate that catches it runs when somebody
 remembers.
 
-Wiring it is not free — it is ~15 minutes of Chromium on every PR, against
-`render-container`'s two — so it is a decision about CI economics rather than
-a defect to fix quietly, and it is recorded here for the owner rather than
-taken unilaterally.
+**All four are wired now**, on the owner's instruction.
+
+`templates:compass:qa` is its OWN job (`template-geometry`), not a step in
+`verify`: it is ~15 minutes of browser against that job's few, and jobs run in
+parallel, so as a step it would put every other check behind it. It runs
+**unconditionally** rather than behind a path filter — the surface it depends
+on is the masters, the block builders, the resolvers, the HTML renderer, the
+design tokens, the binding projection and the section registry, and this
+repository has already paid for a guess at that kind of list once: the deploy
+workflow built its changed-function set from `supabase/functions/**` alone, so
+a config-only edit deployed nothing and a `verify_jwt` declaration and
+production came to disagree. It uploads its renders on failure, because a
+reviewer should be able to look at the page rather than read a coordinate.
+
+**`mobile:api:check`'s failure turned out to be benign and fully verifiable**,
+which resolves the caution recorded above. Regenerated: **five functions
+added, zero removed** — `amenity-register-ingest`, `estimate-capital-growth`,
+`market-sales-ingest`, `mission-control-announcements`,
+`urban-centre-register-ingest` — every one a feature this repository added
+recently, every entry DERIVED from the security registry rather than authored,
+and no existing function's `exposure_class`, `mobileScope` or `verify_jwt`
+changed. The only other lines that moved were the three counts. The artefact
+was simply stale by five functions, with nothing to say so.
 
 `mobile/api-surface.json` reports itself *"out of date with the security
 registry"*, and it fails on the PR BASE as well as on this branch — so it

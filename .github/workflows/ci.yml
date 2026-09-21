@@ -158,6 +158,28 @@ jobs:
       - name: Report asset drift check
         run: npm run reportkit:assets:check
 
+      # Three more generated artefacts that had a `:check` mode and no runner.
+      #
+      # Found 21 Sep 2026 while looking for what seed v19 might have left
+      # stale: `migrations:index:check` caught that one in CI, and a sweep of
+      # every `*:check` script against every workflow found three more that
+      # nothing invoked. `mobile:api:check` was FAILING at the time, on the PR
+      # base as well as the branch, so `mobile/api-surface.json` had drifted
+      # from the security registry with nothing to say so -- for however long.
+      #
+      # `CLAUDE.md` says both mobile artefacts "must never be hand-edited" and
+      # that "both have `:check` drift modes", so being checked is the stated
+      # intent. This is the same defect as a component nothing renders and a
+      # test nothing invokes, one level up: a gate nothing runs.
+      - name: Brand icon drift check
+        run: npm run brand:icons:check
+
+      - name: Mobile design-token drift check
+        run: npm run mobile:tokens:check
+
+      - name: Mobile API-surface drift check
+        run: npm run mobile:api:check
+
       # Enforces the single-source contract (bridges are re-exports only) and
       # the print contrast floors for every preset x tenant-brand combination.
       - name: Unit tests (report design system)
@@ -980,6 +1002,75 @@ jobs:
           pdfinfo /tmp/cc.pdf | grep -E '^Pages: +17$' || {
             echo "unexpected page count:"; pdfinfo /tmp/cc.pdf | grep Pages; exit 1;
           }
+  # The geometry gate, which nothing ran.
+  #
+  # `templates:compass:qa` renders all 500 masters as real documents in a real
+  # Chromium and measures every block against the page that contains it, and
+  # every text node against every other. `CLAUDE.md` names it for the class it
+  # catches: "a declared block height is a promise the renderer keeps only if
+  # the text is as short as the author assumed, and a block that sets taller
+  # does not overflow the page, it prints over the next one ... `npm run
+  # templates:compass:qa` fails on the class."
+  #
+  # That class has reached a client. The verdict heading printed THROUGH the
+  # KPI band, over `$1,975,000` and `$850`, on a delivered Compass. Until this
+  # job existed the gate that catches it ran when somebody remembered to run
+  # it -- no workflow invoked any `templates:*` script at all, checked across
+  # every file in this directory. The catalogue SCHEMA was covered by vitest in
+  # `verify`; the rendered GEOMETRY was covered by nothing.
+  #
+  # It is its own job rather than a step in `verify` because it is ~15 minutes
+  # of browser against that job's few, and jobs run in parallel: as a step it
+  # would put every other check behind it.
+  #
+  # It runs unconditionally rather than behind a path filter. The surface it
+  # depends on is wide -- the masters, the block builders, the resolvers, the
+  # HTML renderer, the design tokens, the binding projection, the section
+  # registry -- and this repository has already paid for a guess at that kind
+  # of list once: the deploy workflow built its changed-function set from
+  # `supabase/functions/**` alone, so a config-only edit deployed nothing and
+  # a `verify_jwt` declaration and production came to disagree.
+  template-geometry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      # Fails on three things: a block whose bottom is past its page box, a
+      # text node that overlaps another, and -- since 21 Sep 2026 -- debris in
+      # the rendered TEXT: an unresolved binding, a label clipped to an
+      # ellipsis, a placeholder word, or a database identifier. The first two
+      # ask where ink SITS; the third asks what it SAYS, and three of its four
+      # classes have reached a client document.
+      - name: Every master renders as a document (geometry and content)
+        run: npm run templates:compass:qa
+
+      # The renders themselves, when it fails: a reviewer should be able to
+      # look at the page rather than read a coordinate.
+      - name: Upload the renders
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: template-geometry-renders
+          path: audit-output/investment-compass/
+          retention-days: 7
+          if-no-files-found: ignore
+
+
 
   # Security Remediation Phase 11 (SUPPLY-001): supply-chain visibility.
   # Fails on unaccepted high/critical dependency vulnerabilities and publishes a
