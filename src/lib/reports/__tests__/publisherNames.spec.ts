@@ -71,3 +71,76 @@ describe('the fallback names the absence rather than the key', () => {
     expect(providerName('Bendigo Council' as never)).toBe('Bendigo Council');
   });
 });
+
+/*
+ * The same defect, one module over.
+ *
+ * Page 35 of the same document printed, under "What each dimension rested on":
+ *
+ *   Demand. transactionVolume: 76 sales in Golden Square, VIC, 37% above the
+ *           3-period average of 56. Population growth: 0.4% annual …
+ *
+ * Every other bullet names its measure in words. Demand alone printed a
+ * camelCase key, because `COMPONENT_LABELS[key] ?? key` fell back to the
+ * identifier and `transactionVolume` — the PRIMARY demand measure — was never
+ * added, so every report that scores Demand has printed it.
+ */
+describe('a scored component is named in words, or not named at all', () => {
+  const SCORERS = [
+    'supabase/functions/_shared/reports/market/growthScoring.pure.ts',
+    'supabase/functions/_shared/reports/market/demandScoring.pure.ts',
+  ];
+
+  /** Every `key: '…'` a scorer can emit on a component, read from its source. */
+  const componentKeys = (): string[] => {
+    const keys = new Set<string>();
+    for (const f of SCORERS) {
+      for (const m of readFileSync(f, 'utf8').matchAll(/\bkey:\s*'([A-Za-z][A-Za-z0-9]*)'/g)) keys.add(m[1]);
+    }
+    return [...keys];
+  };
+
+  const IS_AN_IDENTIFIER = /^[a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)+$/;
+
+  it('finds the keys it is meant to judge', () => {
+    const keys = componentKeys();
+    expect(keys).toContain('transactionVolume');
+    expect(keys).toContain('populationDriver');
+    expect(keys).toContain('longTerm');
+  });
+
+  /*
+   * The scan is deliberately broader than the components this renderer reads —
+   * it also picks up the confidence factors (`geography`, `sample`, `history`,
+   * `freshness`), which are single English words and perfectly good labels.
+   * The property being asserted is the one that matters and the one that
+   * failed: a camelCase FIELD NAME is either given a name or dropped, never
+   * printed.
+   */
+  it.each(componentKeys())('%s never renders as a camelCase field name', async (key) => {
+    const { labelOfComponent } = await import(
+      '../../../../supabase/functions/_shared/reports/market/scoringV2Production.pure'
+    );
+    const label = labelOfComponent(key);
+    expect(label === null || !IS_AN_IDENTIFIER.test(label)).toBe(true);
+    if (IS_AN_IDENTIFIER.test(key)) expect(label).not.toBe(key);
+  });
+
+  it('names the primary demand measure rather than dropping it', async () => {
+    const { labelOfComponent } = await import(
+      '../../../../supabase/functions/_shared/reports/market/scoringV2Production.pure'
+    );
+    // `DEMAND_PRIMARY`'s transaction volume is the one measure this deployment
+    // is entitled to score Demand on, so it is named rather than left unlabelled.
+    expect(labelOfComponent('transactionVolume')).toBe('Sales volume');
+  });
+
+  it('drops the label for a component this build has no name for', async () => {
+    const { labelOfComponent } = await import(
+      '../../../../supabase/functions/_shared/reports/market/scoringV2Production.pure'
+    );
+    expect(labelOfComponent('someNewSignal')).toBeNull();
+    // …and passes through something that is already a phrase.
+    expect(labelOfComponent('Auction clearance')).toBe('Auction clearance');
+  });
+});

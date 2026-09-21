@@ -705,9 +705,9 @@ function dimensionDetails(key: DimensionKey, r: ShadowScoreResult, out: ScoreOut
   if (!reading.available) return reading.reason;
   switch (key) {
     case 'growth':
-      return r.growth.components.map((c) => `${labelOfComponent(c.key)}: ${c.detail}`).join('. ') || reading.reason;
+      return r.growth.components.map(componentLine).join('. ') || reading.reason;
     case 'demand':
-      return r.demand.components.map((c) => `${labelOfComponent(c.key)}: ${c.detail}`).join('. ') || reading.reason;
+      return r.demand.components.map(componentLine).join('. ') || reading.reason;
     case 'yield':
       return `${r.yieldResult.label}: ${r.yieldResult.detail}`;
     case 'location':
@@ -717,6 +717,34 @@ function dimensionDetails(key: DimensionKey, r: ShadowScoreResult, out: ScoreOut
   }
 }
 
+/**
+ * What a reader calls each scored component.
+ *
+ * Page 35 of the Investment Compass delivered for 9 Hollow Street on
+ * 21 Sep 2026 printed, under *What each dimension rested on*:
+ *
+ * ```
+ *   Demand. transactionVolume: 76 sales in Golden Square, VIC, 37% above the
+ *           3-period average of 56. Population growth: 0.4% annual …
+ * ```
+ *
+ * Every other bullet on that page names its measure in words — *Five-year
+ * capital growth*, *Gross yield (on purchase price)*, *Population growth* —
+ * and Demand alone printed a camelCase key, because `COMPONENT_LABELS[key] ??
+ * key` falls back to the identifier and `transactionVolume` was never added.
+ * It is the PRIMARY demand measure (`demandScoring.pure.ts`'s own
+ * `DEMAND_PRIMARY`), so every report that scores Demand at all has printed it.
+ *
+ * Same defect, same week, as `PROVIDER_LABEL`'s `?? p` printing
+ * `vic_vpsr_suburb` where a publisher belongs. The rule is the one the AML
+ * roster already holds: **database vocabulary never reaches the reader.**
+ *
+ * The fallback therefore **drops the label rather than printing the key**. The
+ * detail is a complete sentence on its own — `76 sales in Golden Square, VIC,
+ * 37% above the 3-period average of 56` — and Location has always been
+ * rendered exactly that way, with no label at all, so an unnamed component
+ * reads like a Location one instead of like a leaked field name.
+ */
 const COMPONENT_LABELS: Readonly<Record<string, string>> = {
   longTerm: 'Five-year capital growth',
   trajectory: 'Three-year against five-year trajectory',
@@ -725,10 +753,27 @@ const COMPONENT_LABELS: Readonly<Record<string, string>> = {
   relative: 'Performance against the wider market',
   rentalTightness: 'Rental vacancy',
   saleUrgency: 'Competition for stock',
+  transactionVolume: 'Sales volume',
   absorption: 'Sales against stock advertised',
   populationDriver: 'Population growth',
 };
-const labelOfComponent = (key: string): string => COMPONENT_LABELS[key] ?? key;
+
+/** `transactionVolume`, `populationDriver` — a field name, not a phrase. */
+const IS_AN_IDENTIFIER = /^[a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)+$/;
+
+/** The reader's name for a component, or null where this build has none. */
+export function labelOfComponent(key: string): string | null {
+  const named = COMPONENT_LABELS[key];
+  if (named) return named;
+  const raw = String(key ?? '').trim();
+  return raw && !IS_AN_IDENTIFIER.test(raw) ? raw : null;
+}
+
+/** `Label: detail`, or the detail alone where the component has no name. */
+const componentLine = (c: { key: string; detail: string }): string => {
+  const label = labelOfComponent(c.key);
+  return label ? `${label}: ${c.detail}` : c.detail;
+};
 
 function dataPointsFor(key: DimensionKey, r: ShadowScoreResult, input: ProductionScoringInput): string[] {
   switch (key) {
