@@ -678,6 +678,32 @@ async function main(): Promise<void> {
       const { html } = renderTemplateToHtml(template.schema, {
         data: variant.data,
         tokenOverrides: colourwayTokenOverride(dflt),
+        /*
+         * `container`, because that is what the PRINT renderer uses.
+         *
+         * `render-template-pdf` asserts the HTML can make no network request
+         * and `compileTemplateHtmlForPdf` forces `fontSource: 'container'`,
+         * so a production document is set in the faces the image has
+         * installed and never in a Google-hosted file. This harness was
+         * asking for `remote`, and that made it measure a third thing:
+         *
+         *   * on a machine with no reachable Google Fonts the `@import` fails
+         *     and Chromium falls to whatever fontconfig has;
+         *   * on CI the `@import` SUCCEEDS, so Chromium uses Google's current
+         *     webfont files, whose metrics differ from the Debian packages of
+         *     the same families that the render container installs;
+         *   * production uses neither, because it never fetches at all.
+         *
+         * Measured 21 Sep 2026: the same four cash-flow masters passed here
+         * with the Debian faces and failed on CI by 2pt with the webfonts,
+         * from the same commit. A gate whose answer depends on whether the
+         * machine can reach `fonts.googleapis.com` is measuring the network.
+         *
+         * With `container` both machines resolve the same installed families,
+         * `assertDeclaredFacesResolve` refuses the run if they are missing,
+         * and what is measured is what WeasyPrint will set.
+         */
+        fontSource: 'container',
       });
       const page = await open(browser, html);
       report.rendered += 1;
@@ -789,6 +815,10 @@ async function main(): Promise<void> {
     const { html } = renderTemplateToHtml(template.schema, {
       data: documentVariants(template.designMeta.reportFormat)[0].data,
       tokenOverrides: colourwayTokenOverride(dark),
+      // The print renderer's font source, for the reason given at the other
+      // call site: a remote stylesheet makes the verdict depend on whether
+      // the machine can reach Google.
+      fontSource: 'container',
     });
     const page = await open(browser, html);
     report.rendered += 1;
