@@ -24,6 +24,7 @@ import { describe, it, expect } from 'vitest';
 import { renderTemplateToHtml } from '@/lib/reportTemplate/htmlRenderer';
 import { applyInvestmentProjection } from '../../../../supabase/functions/_shared/reportBindingProjection.pure';
 import { INVESTMENT_COMPASS_TEMPLATES } from '../../../../scripts/template-library/investmentCompass/templates';
+import { LONGEST_ADDRESS } from '../../../../scripts/template-library/investmentCompass/blocks';
 
 /**
  * The stored row, verbatim from production, trimmed to the columns this page
@@ -213,7 +214,7 @@ describe('the ten-year equity chart', () => {
  * rather than on a client's cover.
  */
 describe('the cover title against the longest address in production', () => {
-  const LONGEST_ADDRESS = 84;
+  // Imported, not restated: one measurement, one home.
 
   /** Points of height `chars` need at `size` across `width`. */
   const heightFor = (chars: number, size: number, width: number) => {

@@ -615,9 +615,48 @@ absence is rated.
 
 ### W4 · Typography, brand and copy hygiene
 
-**W4.1 · Running head fitting.** A marker that does not fit gets a short form
-that is a **prefix of the full label** (the existing `shortLabel` rule). Tested
-against the longest chapter label across **all ten formats**, not the Compass's.
+**W4.1 · Running head fitting — NOT A DEFECT, and the gate is honest now.**
+
+Measured rather than assumed, which is the only reason I can say it. The
+running head is two text blocks — `documentLabel` in 66% of the measure and
+the part marker in the other 34% — with the rule struck beneath at a
+**two-line** reserve. Neither is fitted or truncated, so a third line would
+print through the rule.
+
+The longest things that can land there, collected across all ten formats:
+
+| slot | longest |
+| --- | --- |
+| part marker | **31** characters (`How each property is performing`) |
+| document label, nine formats | **32** characters (`Commercial & Industrial Capacity`) |
+| document label, the Compass | a BINDING — `{{report.documentTitle}} · {{property.address}}` |
+
+That binding is the one that matters: `documentTitle` runs to 20 characters
+(`Due Diligence Report`) and `property_address` to **84** across the 1,187
+stored rows, so a client's running head can reach **~107 characters**.
+
+**The fixture was measuring 63.** `SAMPLE_REPORT_DATA`'s address is 42
+characters, so the geometric gate had never laid out a head longer than
+`Investment Compass · 14 Marlborough Street, Leichhardt NSW 2040`. That is
+`WHAT_THE_PAGE_ACTUALLY_DRAWS.md` §2 again: *a fixture shorter than the
+product turns a real measurement into a statement about the fixture.*
+
+Re-run with the worst case substituted — **all 710 renders clean**. So the
+running head fits, on every family, at the longest address in the corpus. This
+is a **closed blind spot rather than a repaired document**, and the honest
+fixture stays, so the next change to the head, the type scale or the measure
+is judged against the real thing.
+
+Two rules follow. The substitution lives in the HARNESS, not in
+`SAMPLE_REPORT_DATA` — that is the BINDING fixture the catalogue specs assert
+rendered output against, and its job is to resolve every bound path, while the
+geometric measure needs the worst case and composes one (the same split the
+body-size composition above already makes). And `LONGEST_ADDRESS` is named
+**once**: it was a bare `const … = 84` inside `cover()` AND again in
+`investmentPropertyRows.spec.ts` — two copies of one measurement, which is how
+the two disagree the next time the corpus is re-measured. The harness asserts
+its sample address is exactly that long, which is what caught the first draft
+of that string at 82.
 
 **W4.2 · Contrast audit under REPORT_RULES §2.** Eyebrows, running heads and
 page numbers render at 6–6.5pt in this document, where the floor is 7:1 and no
@@ -932,6 +971,41 @@ W2.3, W2.4 and W4 are independent and can run alongside.
   rule 6.
 - **The migration-drift gate** — made to run, made to fire, and made to stop
   reporting phantoms (14 findings → 8, every removal verified as a phantom).
+
+## 5b · Found on the way, and deliberately NOT fixed here
+
+**Three drift checks exist and nothing runs them, and one of them is
+currently failing.** Found while looking for other generated artefacts that
+seed v19 might have left stale — the migration object index was one, and
+`security` caught it in 50 seconds.
+
+| check | wired into CI | state today |
+| --- | --- | --- |
+| `reportkit:tokens:check` | yes | pass |
+| `reportkit:assets:check` | yes | pass |
+| `market:registry:check` | yes | pass |
+| `integrations:secrets:check` | yes | pass |
+| `migrations:index:check` | yes | pass (after this branch regenerated it) |
+| `brand:icons:check` | **no** | pass |
+| `mobile:tokens:check` | **no** | pass |
+| `mobile:api:check` | **no** | **FAIL** |
+
+`mobile/api-surface.json` reports itself *"out of date with the security
+registry"*, and it fails on the PR BASE as well as on this branch — so it
+predates this work and is nobody's regression from it. `CLAUDE.md` says both
+mobile artefacts "must never be hand-edited" and that "both have `:check`
+drift modes", so the intent is plainly that they be checked; nothing checks
+them.
+
+That is the unmounted-component class applied to a CI gate: a check that
+exists, works, and is wired to nothing — the same shape as `DimensionRail`,
+`bd-chip` and `verdict.pricingUrl`.
+
+**It is recorded rather than fixed, for one reason that decides it: the change
+could not be verified.** Regenerating the artefact is one command, but it
+feeds the Flutter workspace, no gate covers it, and this session has not read
+that subsystem. An unverifiable change to a subsystem outside this programme
+is the thing this programme exists to stop, so it goes in the list instead.
 
 ## 6 · Decisions this plan does not take
 

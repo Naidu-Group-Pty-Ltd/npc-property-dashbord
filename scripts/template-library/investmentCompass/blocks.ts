@@ -528,6 +528,19 @@ function runningHeadBottom(): number {
  * three for a strata address with a building name, and a rule struck through
  * the running head is the kind of defect that only shows on a real address.
  */
+/**
+ * The longest `property_address` in the corpus, measured 2026-08-16 over all
+ * 1,187 stored rows: median 19, p90 44, p99 61, **max 84**.
+ *
+ * Exported, and named ONCE. It was declared here inside `cover()` and again as
+ * a bare `const LONGEST_ADDRESS = 84` in
+ * `investmentPropertyRows.spec.ts` — two copies of one measurement, which is
+ * how the two come to disagree the next time the corpus is re-measured. Both
+ * read this now, and so does the geometry harness, which needs an address of
+ * this length rather than the binding fixture's 42-character one.
+ */
+export const LONGEST_ADDRESS = 84;
+
 export function runningHead(documentLabel: string, part: string): BlockDef[] {
   const c = ctx();
   const labelWidth = Math.floor(c.contentWidth * 0.66);
@@ -950,12 +963,8 @@ export function cover(opts: CoverOptions): PageDef {
     const lines = Math.max(1, Math.floor(titleRoom / (size * 1.12)));
     return perLine * lines;
   };
-  /**
-   * The longest `property_address` in the corpus, measured 2026-08-16 over all
-   * 1,187 rows: median 19, p90 44, p99 61, max 84. The step-down size is the
-   * first one that fits 84 characters, so no stored address can overrun it.
-   */
-  const LONGEST_ADDRESS = 84;
+  // The step-down size is the first that fits `LONGEST_ADDRESS`, so no stored
+  // address can overrun it. See that constant for the measurement.
   const fullChars = titleCharsAt(c.scale.coverTitle);
   let smallSize = c.scale.coverTitle;
   while (smallSize > 12 && titleCharsAt(smallSize) < LONGEST_ADDRESS) smallSize = Math.round((smallSize - 1) * 10) / 10;

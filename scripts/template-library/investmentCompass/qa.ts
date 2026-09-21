@@ -44,6 +44,7 @@ import { PORTFOLIO_TEMPLATES } from './portfolio';
 import { COMPARISON_TEMPLATES } from './comparison';
 import { CASH_FLOW_COMPASS_TEMPLATES } from './cashFlow';
 import { CLIENT_DETAILS_TEMPLATES } from './clientDetails';
+import { LONGEST_ADDRESS } from './blocks';
 import { CASH_FLOW_COMPARISON_TEMPLATES } from './cashFlowComparison';
 import { REPORT_QA_TEMPLATES } from './reportQa';
 import { COMMERCIAL_CAPACITY_TEMPLATES } from './commercialCapacity';
@@ -319,11 +320,65 @@ interface Variant {
   data: Record<string, unknown>;
 }
 
+/**
+ * An address of the longest length production carries, for the geometry only.
+ *
+ * `SAMPLE_REPORT_DATA` carries a 42-character address and `property_address`
+ * runs to **84** across the 1,187 stored rows. The running head binds
+ * `{{report.documentTitle}} · {{property.address}}` into two reserved lines
+ * with a rule struck beneath them, so at the fixture's length this gate was
+ * measuring a 63-character head where a client's can reach 103 — which is
+ * `WHAT_THE_PAGE_ACTUALLY_DRAWS.md` §2 exactly: *a fixture shorter than the
+ * product turns a real measurement into a statement about the fixture.*
+ *
+ * Substituted HERE rather than in `SAMPLE_REPORT_DATA`, for the reason the
+ * body composition above gives: that fixture is the BINDING fixture the
+ * catalogue specs assert rendered output against, and its job is to resolve
+ * every bound path. The geometric measure needs the worst case, and composes
+ * one.
+ *
+ * It reaches all ten formats, not just the Compass: every one of them draws a
+ * running head, and nine bind a literal document label beside this address.
+ *
+ * Measured with it in place, 21 Sep 2026: all 710 renders still clean. So the
+ * running head FITS at the worst case — this is a closed blind spot rather
+ * than a repaired document, and it stays so that the next change to the head,
+ * the type scale or the measure is judged against the real thing.
+ */
+const LONGEST_SAMPLE_ADDRESS =
+  "Apartment 1204A, 'Waterline Residences', 145-149 Marine Parade, Kingscliff, NSW 2487";
+
+/*
+ * Exactly `LONGEST_ADDRESS`, checked rather than counted by hand.
+ *
+ * The first draft of this string was 82 characters — two short of the measured
+ * maximum, which is the same defect one order of magnitude smaller than the
+ * one it exists to close. The assertion is why that was caught.
+ */
+if (LONGEST_SAMPLE_ADDRESS.length !== LONGEST_ADDRESS) {
+  throw new Error(
+    `the geometry fixture's address is ${LONGEST_SAMPLE_ADDRESS.length} characters; `
+    + `the measured corpus maximum is ${LONGEST_ADDRESS}`,
+  );
+}
+
+/** The worst-case address, in both shapes the masters bind. */
+function withLongestAddress(data: Record<string, unknown>): Record<string, unknown> {
+  const property = data.property && typeof data.property === 'object'
+    ? { ...(data.property as Record<string, unknown>), address: LONGEST_SAMPLE_ADDRESS }
+    : data.property;
+  return { ...data, property, property_address: LONGEST_SAMPLE_ADDRESS };
+}
+
 function documentVariants(reportFormat: string): Variant[] {
   if (reportFormat !== 'investment-compass') {
-    return [{ label: '', data: SAMPLE_REPORT_DATA as unknown as Record<string, unknown> }];
+    return [{
+      label: '',
+      data: withLongestAddress(SAMPLE_REPORT_DATA as unknown as Record<string, unknown>),
+    }];
   }
-  return investmentGeometryDocuments().map((d) => ({ label: d.tier, data: d.data }));
+  return investmentGeometryDocuments()
+    .map((d) => ({ label: d.tier, data: withLongestAddress(d.data) }));
 }
 
 /**
