@@ -631,7 +631,33 @@ not index 0.
 
 **W4.5 · Cover** — the verdict block at 11pt against a 41pt address.
 
-**W4.6 · Debris** — four empty bullets and a stray "1" on page 16.
+**W4.6 · Debris** — the four empty bullets are **done**; the stray "1" is
+**unattributed and deliberately not fixed**.
+
+A list marker is drawn from the list STYLE rather than from the item's
+content, so an item holding nothing still prints its dot and still takes its
+line — which reads as a list whose entries failed to load. Driven through the
+real read path, every one survived to the end: `stripPlaceholderRows` judges
+table rows, `stripEmptyStatCards` judges stat cards, `dropEmptySections` judges
+headings, and an item inside a list is none of those. `stripEmptyListItems`
+sits directly above `dropEmptySections`, so a section it empties is collected
+by the rule that already exists for that.
+
+It is not the prose scrub §8 forbids for a stronger reason than the footnote
+rule could give: **there is no prose** — no word, no figure, no claim, no
+source — so there is nothing for it to change. Three bounds: an empty parent
+with indented children is KEPT (removing it would strand them), a task list has
+content after its marker, and code is a quotation — the partition is
+`printableGlyphs.pure.ts`'s, imported rather than re-implemented.
+
+**The stray "1" I could not attribute.** The obvious candidate was residue from
+a withheld chart, since page 16's `{{bars: General Residential Zone (GRZ) 1
+…}}` is one of the flag charts W1.3 withholds. Executed against the real read
+path, it is not: both flag bars are withheld whole with no residue at all, and
+the `{{margin:}}` beside them loses its `spark=` and keeps its note. So the
+digit comes from somewhere in the model's prose that I cannot name, and a rule
+for a lone digit would be invented rather than derived — which is what the
+footnote work took two attempts to learn. Recorded, not guessed at.
 
 **W4.7 · No database vocabulary in a client document.** `osm_amenity_register`
 is printed in prose on page 34. The AML module already forbids underscore-cased

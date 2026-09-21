@@ -22,7 +22,7 @@
 import { enforceChartEvidence, type EvidenceInventory } from './chartEvidence.pure.ts';
 import { alignChartScales } from './chartScale.pure.ts';
 import { tabulateMixedUnitCharts } from './chartUnits.pure.ts';
-import { dedupeChartDirectives } from './blockHygiene.pure.ts';
+import { dedupeChartDirectives, stripEmptyListItems } from './blockHygiene.pure.ts';
 import { enforceChartQuantity } from './chartQuantity.pure.ts';
 import { substituteUndrawableGlyphs } from './printableGlyphs.pure.ts';
 import { scrubUnresolvedBraces } from './braceHygiene.pure.ts';
@@ -801,8 +801,21 @@ export function presentStoredMarkdown(
   const unrepeated = constants.folded.length ? constants.markdown : narrowed;
   const cited = stripEmptyCitations(unrepeated);
   const tidied = cited.removed ? cited.markdown : unrepeated;
-  const sections = dropEmptySections(tidied);
-  const clean = sections.dropped.length === 0 ? tidied : sections.markdown;
+  /*
+   * A list marker with nothing after it — four of them on page 16.
+   *
+   * Here rather than later because a marker is drawn from the LIST STYLE, so
+   * an item with no content still prints its dot and still takes its line, and
+   * because `dropEmptySections` sits directly below: a section this empties
+   * should be collected by the rule that already exists for that rather than
+   * left as a heading over nothing. See `stripEmptyListItems` for the three
+   * bounds — a parent with indented children is kept, a task list has content
+   * after its marker, and code is a quotation.
+   */
+  const listed = stripEmptyListItems(tidied);
+  const bulleted = listed.removed.length ? listed.markdown : tidied;
+  const sections = dropEmptySections(bulleted);
+  const clean = sections.dropped.length === 0 ? bulleted : sections.markdown;
   // A bracketed pointer into the prompt's own scaffolding, rewritten into the
   // report's own section. See `rewriteScaffoldingPointers`.
   const pointed = rewriteScaffoldingPointers(clean);
