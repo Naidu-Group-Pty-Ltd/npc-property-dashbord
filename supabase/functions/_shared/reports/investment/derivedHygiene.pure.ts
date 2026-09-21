@@ -23,6 +23,7 @@ import { enforceChartEvidence, type EvidenceInventory } from './chartEvidence.pu
 import { alignChartScales } from './chartScale.pure.ts';
 import { tabulateMixedUnitCharts } from './chartUnits.pure.ts';
 import { dedupeChartDirectives } from './blockHygiene.pure.ts';
+import { scrubUnresolvedBraces } from './braceHygiene.pure.ts';
 import { limitEmphasis } from './emphasisDensity.pure.ts';
 import { stripFootnoteDebris } from './footnoteDebris.pure.ts';
 import { promotePipedPseudoTables } from './pseudoTables.pure.ts';
@@ -614,6 +615,22 @@ export function presentStoredMarkdown(
 ): string {
   if (!markdown) return '';
   /*
+   * Markup the model wrote with the wrong delimiter, repaired before anything
+   * below here reads markup.
+   *
+   * FIRST, and for the same reason `promotePipedPseudoTables` is first below
+   * it: a pass is worth running only if every pass under it then sees what it
+   * produced. Measured on the 21 Sep 2026 Compass for 9 Hollow Street, three
+   * pages printed `{{stat label="…"` to the client — a FENCE kind opened with
+   * the DIRECTIVE delimiter, which matches neither parser and so reached paper
+   * as body copy. The openers are rewritten to `::: stat …`, which recovers
+   * three figures including the `$567,500` suburb median rather than deleting
+   * them; anything that cannot be repaired is removed rather than printed.
+   * See `braceHygiene.pure.ts`.
+   */
+  const braces = scrubUnresolvedBraces(markdown);
+  const resolved = braces.repaired.length || braces.stripped.length ? braces.markdown : markdown;
+  /*
    * A row of pipes is a table the model did not mark up.
    *
    * Page 23 of the 9 Hollow Street Compass set the Risk Dashboard's summary
@@ -624,8 +641,8 @@ export function presentStoredMarkdown(
    * them do. See `promotePipedPseudoTables` for the bounds that keep it off
    * a sentence that happens to carry a pipe.
    */
-  const gridded = promotePipedPseudoTables(markdown);
-  const source = gridded.promoted.length ? gridded.markdown : markdown;
+  const gridded = promotePipedPseudoTables(resolved);
+  const source = gridded.promoted.length ? gridded.markdown : resolved;
   const r = stripPlaceholderRows(source);
   const scrubbed = r.removedRows + r.removedTables + r.removedLines + r.blankedCells === 0 ? source : r.markdown;
   // A gap cell inside an at-a-glance strip is the same defect one layer down,
