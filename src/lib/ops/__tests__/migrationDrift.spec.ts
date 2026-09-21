@@ -264,3 +264,45 @@ describe('a name that is not in the file verifies nothing', () => {
     expect(Date.now() - started).toBeLessThan(1000);
   });
 });
+
+/*
+ * The third class of the same fault, this time in the collector's own SQL.
+ *
+ * Seven unqualified `CREATE TYPE`s across two migrations were reported absent
+ * because the catalogue published only the qualified spelling. Both files had
+ * run. The collector's comment already stated the rule for indexes and
+ * triggers; it was true of every class.
+ */
+describe('a bare source name needs a bare catalogue entry', () => {
+  it('publishes both spellings for every class the extractor can emit bare', async () => {
+    const { readFileSync } = await import('node:fs');
+    const sql = readFileSync('.github/scripts/migration-drift-facts.mjs', 'utf8');
+    // `CREATE TYPE foo AS ENUM (…)` and `CREATE TABLE foo (…)` name no schema.
+    for (const cls of ['table', 'view', 'materialized_view', 'sequence', 'index', 'function', 'type']) {
+      expect(sql, `${cls} has no bare spelling`).toMatch(
+        new RegExp(`'${cls}:'\\\\|\\\\|(c\\\\.relname|p\\\\.proname|t\\\\.typname)`),
+      );
+    }
+  });
+
+  it('still matches a QUALIFIED source name only on the qualified entry', async () => {
+    const { assessMigrationDrift } = await import('../../../../scripts/ops/migrationDrift.pure.mjs');
+    const result = assessMigrationDrift({
+      migrations: [{ version: '1', file: 'a.sql', objects: ['table:public.foo'], probe: null }],
+      appliedVersions: [],
+      // Only a bare entry, and a different schema's table could be its source.
+      existingObjects: ['table:foo', 'table:other.foo'],
+    });
+    expect(result.notApplied).toHaveLength(1);
+  });
+
+  it('matches a bare source name on the bare entry', async () => {
+    const { assessMigrationDrift } = await import('../../../../scripts/ops/migrationDrift.pure.mjs');
+    const result = assessMigrationDrift({
+      migrations: [{ version: '1', file: 'a.sql', objects: ['type:report_tier_enum'], probe: null }],
+      appliedVersions: [],
+      existingObjects: ['type:public.report_tier_enum', 'type:report_tier_enum'],
+    });
+    expect(result.notApplied).toHaveLength(0);
+  });
+});

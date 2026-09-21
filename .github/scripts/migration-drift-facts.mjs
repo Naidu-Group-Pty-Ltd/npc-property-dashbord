@@ -79,22 +79,38 @@ const appliedVersions = await q(
 
 /*
  * The object catalogue, in the same `"<class>:<qualified name>"` spelling the
- * migration object index uses. Indexes and triggers are emitted BOTH qualified
- * and bare, because `CREATE INDEX foo ON t` names no schema and the extractor
- * therefore records a bare name — matching only the qualified form would read
- * every such migration as unapplied.
+ * migration object index uses. Every class is emitted BOTH qualified and bare,
+ * because `CREATE INDEX foo ON t` and `CREATE TYPE report_tier_enum AS ENUM
+ * (…)` name no schema and the extractor therefore records a bare name —
+ * matching only the qualified form reads every such migration as unapplied.
+ *
+ * That was stated here for indexes and triggers alone and was true of the rest
+ * too. Measured 21 Sep 2026: seven unqualified `CREATE TYPE`s across two
+ * migrations — `template_type`, `report_tier_enum`, `report_category_enum` and
+ * four `depreciation_*` — were reported absent because the catalogue published
+ * only `type:public.template_type`. Both files had run.
+ *
+ * A bare catalogue entry can only ever satisfy a bare SOURCE name: a migration
+ * that writes `public.foo` is still matched on `table:public.foo`. So this
+ * loosens exactly the case where the schema is unknowable from the file, which
+ * is the case the index's own header already resolves toward "ours".
  */
 const existingObjects = await q(`
   select 'table:'||n.nspname||'.'||c.relname from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind in ('r','p')
+  union all select 'table:'||c.relname            from pg_class c where c.relkind in ('r','p')
   union all select 'view:'||n.nspname||'.'||c.relname from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind='v'
+  union all select 'view:'||c.relname             from pg_class c where c.relkind='v'
   union all select 'materialized_view:'||n.nspname||'.'||c.relname from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind='m'
+  union all select 'materialized_view:'||c.relname from pg_class c where c.relkind='m'
   union all select 'sequence:'||n.nspname||'.'||c.relname from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind='S'
+  union all select 'sequence:'||c.relname         from pg_class c where c.relkind='S'
   union all select 'index:'||n.nspname||'.'||c.relname from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind='i'
   union all select 'index:'||c.relname            from pg_class c where c.relkind='i'
   union all select 'function:'||n.nspname||'.'||p.proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace
   union all select 'function:'||p.proname         from pg_proc p
   union all select 'trigger:'||t.tgname           from pg_trigger t where not t.tgisinternal
   union all select 'type:'||n.nspname||'.'||t.typname from pg_type t join pg_namespace n on n.oid=t.typnamespace where t.typtype in ('e','c','d')
+  union all select 'type:'||t.typname             from pg_type t where t.typtype in ('e','c','d')
   union all select 'schema:'||nspname             from pg_namespace
 `);
 
