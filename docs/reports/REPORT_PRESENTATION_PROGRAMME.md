@@ -1231,6 +1231,98 @@ the document.
 - **The migration-drift gate** — made to run, made to fire, and made to stop
   reporting phantoms (14 findings → 8, every removal verified as a phantom).
 
+## 5b · W4.7 again, and this time it was repository paths
+
+Found by asking a question about my own work and then asking it of everybody
+else's: the absence sentence shipped an hour earlier read *"has not been loaded
+on this deployment"*, which a model told to state the absence would have
+restated to a client. Grepping the same vocabulary across every prompt-composing
+module found the real one.
+
+**`GradeGap` has two audiences and one field had none declared.** `reason` was
+documented *"the client sentence, no codebase vocabulary"* and `detail` *"the
+operator detail"* from the day it was written. `remedy` said only *"what would
+close the gap"* — and the Compass's **What each dimension rested on** bullets
+draw it, through `readScoreAssessment`'s `exclusionRemedy`.
+
+Executed against a stored score on 21 Sep 2026, that renders to a client:
+
+| dimension | what the bullet printed |
+| --- | --- |
+| Location | *"Regenerate the report: the location service re-acquires the enrichment with its acquisition stamp (RF-7.2B) … locationInputVerification.pure.ts"* |
+| Demand | *"… the open sales register's own transaction counts for this market (market-sales-ingest; NSW and QLD carry one on every row, VIC and SA one per load)"* |
+| Property risk | *"Evidence this deployment does not hold: condition and maintenance. … what is outstanding for them is a query against the parcel rather than the address point."* |
+| Capital growth | `docs/reports/OPEN_DATA_GROWTH_EVIDENCE.md` and `docs/integrations/DOMAIN_ACTIVATION_REQUEST.md` |
+
+Repository paths, an internal release code, an edge-function name, a source
+filename and a description of our own loaders, in a customer's investment
+report. It is W4.7's rule at a far larger scale than the `osm_amenity_register`
+that opened it.
+
+**It survived because `remedy` is CORRECT for the audience it was written
+for.** An operator reading the grade-gap card needs the function name, the doc
+and the release code — that is the whole reason `riskRemedyFor` derives from
+the schema, so a remedy cannot name as missing something the platform already
+reads. Nothing was wrong with the string. What was wrong is that a second
+reader was added to it silently, and the field had no stated audience to
+contradict.
+
+`publisherNames.spec.ts` could not have caught it either: it refuses an
+underscore-cased IDENTIFIER in a rendered field, and *"Regenerate the report:
+the location service re-acquires the enrichment"* is a well-formed English
+sentence.
+
+Three rules. **`READER_REMEDY` says what is missing, never how we would obtain
+it** — a customer cannot act on "load market-sales-ingest", and a report that
+asks them to is describing its own maintenance. **Each is a whole sentence that
+repeats nothing its reason already said**, because it renders immediately after
+`reason` in one bullet: a noun phrase lands as a fragment (*"Not recorded. A
+recorded weekly rent and purchase price for this property."*) and a restated
+qualification lands as a stammer — location's first draft closed "not a finding
+about the area" three words after its reason closed "It is not a reading about
+the area". And **the read fails CLOSED**: a legacy row, which is every row
+written before this field existed, renders its reason alone rather than falling
+back to `remedy`, because falling back to `remedy` is the defect.
+
+`gradeGapAudience.spec.ts` scans every reader sentence for seven classes of
+repository vocabulary, and one assertion in `scoreAssessmentReading.spec.ts`
+was **renegotiated because it was pinning the defect** — it asserted
+`exclusionRemedy` contained `'acquisition stamp'`.
+
+**And one more, in a module nothing mounts yet.** `locationEvidenceV2.pure.ts`
+declares `statement` as *"what a reader must know"*, and two of them read
+*"this deployment holds no source for it"* and *"No public transport feed
+loaded by this deployment covers this location"*. It is ME-5's replacement for
+the quarantined Location object and has **zero production call sites**, which
+is precisely why it was worth correcting now rather than later: the wording
+reaches a client on the day it mounts, and a module written before the rule
+existed is the likeliest place for the rule to be broken again. Both now
+describe the retrieval — *"no source for it was searched for this report"* —
+and the spec gates every statement and caveat the contract publishes.
+
+**Two more carry the same words and were deliberately left.**
+`transportCoverageMatrix.pure.ts` has no production consumer either and its
+sentence cites *"the 164 Perth and 145 Melbourne properties in the corpus"* —
+corpus-analysis vocabulary, which is a bigger rewrite than a wording fix and
+belongs with whatever mounts it. And `public-transport-service`'s
+`no_data_for_location` message is a SERVICE DIAGNOSTIC returned to the
+generator, which lists the loaded networks precisely so an operator can see
+them; nothing composes report prose from it — `amenityFactBlocks` builds the
+transport block from the stored enrichment. Naming them here rather than
+changing them is the point: the rule is about what a reader is SHOWN, and
+applying it to every string that mentions a feed would be a regex over
+sentences, which is what §8 of `RUNTIME_CONSOLIDATION.md` forbids.
+
+**Two assertions were renegotiated, both pinning the defect.**
+`scoreAssessmentReading.spec.ts` asserted `exclusionRemedy` contained
+`'acquisition stamp'`; `s5Corrections.spec.ts` asserted the client table
+contained *"Answered property-risk questions from the per-class schema"* — and
+that literal is the one `riskRemedyFor`'s own header records as WRONG, naming
+hazard and planning as outstanding where the planning programme retrieves both
+and strata on a house that is never asked about one. The test was vouching for
+a superseded operator string reaching a client. Its fixture is a genuine
+legacy row, which makes it the exact case the fail-closed read exists for.
+
 ## 5a · Two defects in THIS programme's own new code, found by re-reading it
 
 Both were found by reading the modules shipped earlier today the way this
