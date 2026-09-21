@@ -52,8 +52,6 @@ import {
 const UA = 'npc-property-dashboard/1.0 (+https://github.com/Naidu-Group-Pty-Ltd)';
 /** Three years: past the parser's 24-month floor with room to spare. */
 const START_PERIOD = process.env.ABS_START_PERIOD ?? '2023-01';
-/** One year: the narrowest window `approvalsFactBlocks` actually reports on. */
-const TWELVE_MONTHS = process.env.ABS_SHORT_PERIOD ?? '2025-01';
 
 /*
  * Everything prints on ONE stream. The first failing run rendered
@@ -150,22 +148,21 @@ async function main(): Promise<void> {
   kv('catalogued flows', choice.cataloguedFlows.toLocaleString('en-AU'));
   kv('candidates', choice.candidates.length);
 
-  h('4 · How much data, and how fast');
+  h('4 · What this build actually measures');
   /*
-   * The first version of this fetched `/all` with a 240s budget and, when the
-   * body did not finish, printed "THE ABS DID NOT ANSWER" and exited 0.
+   * The `/all` baselines that used to run here are GONE, and their numbers
+   * are in `SUPPLY_EVIDENCE.md` §3 and §7a where a settled measurement
+   * belongs.
    *
-   * The ABS had answered. **HTTP 200 in 6.4 seconds**, and then four minutes
-   * of body. That is a size problem on our side reported as an availability
-   * problem on theirs, which is the same shape as every other defect this
-   * programme has found: a green result standing in for a thing that does not
-   * work. An edge function has a ~150s wall clock, so a download nobody can
-   * carry is the loader failing, and it has to FAIL here.
+   * They cost five minutes and three and three-quarter gigabytes of somebody
+   * else's bandwidth on every build, to re-derive a figure nobody disputes —
+   * and worse, they sat in FRONT of the question this check now exists to
+   * answer, so three consecutive runs were cancelled before reaching it. A
+   * check that cannot get to its own verdict is not slow, it is broken.
    *
-   * So this measures rather than asks. It streams each candidate window under
-   * its own budget and reports bytes and elapsed even when it does not finish,
-   * because the number that decides the design is THROUGHPUT: how much of the
-   * register can be carried in the time an invocation actually has.
+   * What runs now is the live path: the structure, the key composed from it,
+   * the narrowed download, and the parse. `/all` is measured only where the
+   * key composed to `all`, because then `/all` IS the live path.
    */
   const EDGE_BUDGET_MS = 150_000;
   const PROBE_MS = 60_000;
@@ -272,121 +269,12 @@ async function main(): Promise<void> {
     return currentEdition(entries).chosen;
   };
 
-  /*
-   * Every URL here is built by `absBuildingApprovalsUrl`, never by hand. A
-   * measurement taken against a URL this script composed itself measures this
-   * script, and two spellings of one query is how the two come to disagree —
-   * the defect this repository has paid for under half a dozen names.
-   */
   interface Window { label: string; flow: DataflowEntry; grain: ApprovalsAreaKind; start: string }
-  const windows: Window[] = [];
-  const fine = choice.areaKind;
-  windows.push({ label: `${fine.toUpperCase()}, 12 months`, flow: choice.flow, grain: fine, start: TWELVE_MONTHS });
-  windows.push({ label: `${fine.toUpperCase()}, 36 months`, flow: choice.flow, grain: fine, start: START_PERIOD });
-  const lga = currentAt('lga');
-  if (lga && dataflowRef(lga) !== dataflowRef(choice.flow)) {
-    windows.push({ label: 'LGA, 12 months', flow: lga, grain: 'lga', start: TWELVE_MONTHS });
-    windows.push({ label: 'LGA, 36 months', flow: lga, grain: 'lga', start: START_PERIOD });
-  }
-
-  /*
-   * The grain travels WITH the window. A coarser window is the one that
-   * completes where the finest does not, and `ABS_BA_PLAUSIBILITY` floors the
-   * area count per grain — 800 at SA2 against 200 at LGA — so parsing an LGA
-   * download as SA2 refuses a healthy register for having too few areas, and
-   * reports a design measurement as a publisher defect. Same rule as the rest
-   * of this script: name what was actually read.
-   */
   let carried: Window & { url: string; bytes: number } | null = null;
-  const seen: Array<{ label: string; flow: string; start: string; bytes: number; finished: boolean }> = [];
-  for (const w of windows) {
-    const url = absBuildingApprovalsUrl(w.flow, w.start);
-    const m = await measure(url);
-    seen.push({ label: w.label, flow: dataflowRef(w.flow), start: w.start, bytes: m.bytes, finished: m.finished });
-    const rate = m.ms > 0 ? m.bytes / (m.ms / 1000) : 0;
-    console.log(
-      `  ${w.label.padEnd(16)} ${String(m.status ?? 'ERR').padStart(3)}  `
-      + `${(m.bytes / 1_048_576).toFixed(1).padStart(7)} MB  `
-      + `${(m.ms / 1000).toFixed(1).padStart(6)} s  `
-      + `${(rate / 1024).toFixed(0).padStart(6)} KB/s  `
-      + `${verdictOf(m)}${m.error ? ` (${m.error})` : ''}`,
-    );
-    if (workable(m) && !carried) carried = { ...w, url, bytes: m.bytes };
-  }
+
 
   /*
-   * Does narrowing the window narrow the download?
-   *
-   * Measured 21 Sep 2026: the two LGA windows came back **byte-identical**
-   * (61.8 MB from 2025-01 and from 2023-01), which means one of two things
-   * and they lead to different designs — either the ABS is ignoring
-   * `startPeriod` for this flow, in which case the only lever left is the
-   * KEY, or the edition simply holds no month before the later start, in
-   * which case it may not reach `minPeriods` at all. Stating the observation
-   * is not the same as settling it, so this names the reading and step 6's
-   * period range settles which.
-   */
-  h('4a · Does the window narrow the download?');
-  const byFlow = new Map<string, typeof seen>();
-  for (const r of seen) byFlow.set(r.flow, [...(byFlow.get(r.flow) ?? []), r]);
-  for (const [flow, rs] of byFlow) {
-    if (rs.length < 2 || !rs.every((r) => r.finished)) {
-      kv(flow, 'not comparable — a window did not finish');
-      continue;
-    }
-    const identical = rs.every((r) => r.bytes === rs[0].bytes);
-    kv(flow, identical
-      ? `IDENTICAL bytes from ${rs.map((r) => r.start).join(' and ')} — startPeriod narrowed nothing`
-      : `${rs.map((r) => `${r.start}: ${(r.bytes / 1_048_576).toFixed(1)} MB`).join(', ')}`);
-  }
-
-  /*
-   * 4b · Where the HISTORY is.
-   *
-   * Settled 21 Sep 2026: `BA_LGA2026` holds **one month**, so the identical
-   * byte counts above were not the ABS disregarding `startPeriod` — they were
-   * an edition with nothing earlier to withhold. That is `currentEdition`'s
-   * rule biting from the far side: it picks the newest BOUNDARY vintage,
-   * which is exactly the edition with the least series behind it, and the
-   * product needs 24 months before it may state a year-on-year change.
-   *
-   * So the question is no longer "which edition is current" but "where does
-   * the series live", and the two may not be the same flow. One vintage back
-   * answers it, and the same pair of windows against a flow that HAS a
-   * history is also the only honest test of whether `startPeriod` narrows a
-   * download at all — which decides whether the window is a lever or the key
-   * is the only one.
-   */
-  h('4b · Where the history is');
-  const priorEditionOf = (kind: ApprovalsAreaKind): DataflowEntry | null => {
-    const current = currentAt(kind);
-    const refs = surveyConstructionFlows(catalogue)
-      .filter((f) => f.areaKind === kind && ABS_BA_NAME_PATTERN.test(f.name))
-      .map((f) => f.ref);
-    const pool = parseDataflowCatalogue(catalogue)
-      .filter((f) => refs.includes(dataflowRef(f)))
-      .filter((f) => !current || dataflowRef(f) !== dataflowRef(current));
-    return currentEdition(pool).chosen ?? pool[pool.length - 1] ?? null;
-  };
-  const prior = priorEditionOf('lga');
-  if (!prior) {
-    kv('prior LGA edition', 'none published — nothing to compare');
-  } else {
-    kv('prior LGA edition', `${dataflowRef(prior)} — ${prior.name}`);
-    const short = await measure(absBuildingApprovalsUrl(prior, TWELVE_MONTHS));
-    const long = await measure(absBuildingApprovalsUrl(prior, START_PERIOD));
-    const mb = (b: number) => `${(b / 1_048_576).toFixed(1)} MB`;
-    kv(`from ${TWELVE_MONTHS}`, `${mb(short.bytes)} in ${(short.ms / 1000).toFixed(1)}s ${short.finished ? '' : '(DID NOT FINISH)'}`);
-    kv(`from ${START_PERIOD}`, `${mb(long.bytes)} in ${(long.ms / 1000).toFixed(1)}s ${long.finished ? '' : '(DID NOT FINISH)'}`);
-    if (short.finished && long.finished) {
-      kv('the window', short.bytes === long.bytes
-        ? 'narrows NOTHING — this edition holds no month before either start, or startPeriod is ignored'
-        : `narrows the download: ${mb(long.bytes - short.bytes)} of the ${mb(long.bytes)} is the extra two years`);
-    }
-  }
-
-  /*
-   * 4c · Narrowing the query, which is the lever the window is not.
+   * 4a · Narrowing the query, which is the lever the window is not.
    *
    * The parse keeps Original estimates of three residential building types on
    * two measures and discards the rest of the cube — and we are downloading
@@ -399,7 +287,7 @@ async function main(): Promise<void> {
    * the narrowed download against the same window that could not be carried.
    * That comparison is the whole design question.
    */
-  h('4c · The query, narrowed at the source');
+  h('4a · The query, narrowed at the source');
   let narrowedKey = 'all';
   try {
     const dsdUrl = absDataStructureUrl(choice.flow);
@@ -433,9 +321,35 @@ async function main(): Promise<void> {
     kv('the narrowing', 'none — falling back to /all, exactly as the loader does');
   }
 
-  h('4d · What the narrowed query costs');
+  h('4b · What the query costs');
   if (narrowedKey === 'all') {
-    kv('skipped', 'nothing to compare — the key composed to `all`');
+    /*
+     * Nothing narrowed, so `/all` IS the live path and has to be measured —
+     * the fallback is the thing that would run. It is measured HERE and
+     * nowhere else: re-downloading 3.7 GB on every build to re-derive a
+     * settled number is somebody else's bandwidth spent on a figure that is
+     * already written down (`SUPPLY_EVIDENCE.md` §3).
+     */
+    kv('the key', '`all` — nothing narrowed, so the fallback is what would run');
+    for (const [label, flow] of [[choice.areaKind.toUpperCase(), choice.flow], ['LGA', currentAt('lga')]] as const) {
+      if (!flow) continue;
+      const m = await measure(absBuildingApprovalsUrl(flow, START_PERIOD));
+      console.log(
+        `  ${`${label}, ${START_PERIOD}→, /all`.padEnd(28)} ${String(m.status ?? 'ERR').padStart(3)}  `
+        + `${(m.bytes / 1_048_576).toFixed(1).padStart(7)} MB  `
+        + `${(m.ms / 1000).toFixed(1).padStart(6)} s  ${verdictOf(m)}`,
+      );
+      if (workable(m) && !carried) {
+        carried = {
+          label: `${label}, /all, from ${START_PERIOD}`,
+          flow,
+          grain: flow === choice.flow ? choice.areaKind : 'lga',
+          start: START_PERIOD,
+          url: absBuildingApprovalsUrl(flow, START_PERIOD),
+          bytes: m.bytes,
+        };
+      }
+    }
   } else {
     for (const [label, flow] of [['SA2', choice.flow], ['LGA', currentAt('lga')]] as const) {
       if (!flow) continue;
