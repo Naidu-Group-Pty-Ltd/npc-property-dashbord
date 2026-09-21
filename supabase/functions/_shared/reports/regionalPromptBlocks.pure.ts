@@ -16,6 +16,7 @@
  *  - with nothing measured, one honest line plus the no-invention
  *    instruction.
  */
+import { REGIONAL_WEB_SEARCH_RULE } from './registerAuthority.pure.ts';
 
 interface Numericish { [key: string]: unknown }
 
@@ -70,12 +71,14 @@ export function regionalTrendBlocks(input: RegionalPromptInput): string {
   const block = populationTrendBlock(input);
   if (block === '') {
     return 'No measured population trend is available for this property’s area. State that plainly in one sentence; ' +
-      'do NOT assert a population figure, growth rate or unemployment rate for the area from memory.';
+      'do NOT assert a population figure, growth rate or unemployment rate for the area from memory. ' +
+      REGIONAL_WEB_SEARCH_RULE;
   }
   return [
     block,
     'Discuss only the measured figures above, naming the SA2 and the windows. The SA2 may cover more than the suburb — ' +
     'say "the surrounding area" where they differ. Do NOT state an unemployment rate, a population projection, or any ' +
     'growth figure not in the table, and do NOT extrapolate the trend beyond the measured windows.',
+    REGIONAL_WEB_SEARCH_RULE,
   ].join('\n\n');
 }

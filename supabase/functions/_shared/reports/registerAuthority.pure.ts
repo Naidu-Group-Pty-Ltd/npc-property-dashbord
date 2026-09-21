@@ -72,6 +72,22 @@ export function webSearchIsNotARetrieval(subject: string, register: string): str
     + `naming none is the correct answer.`;
 }
 
-/** The two callers, so a third cannot invent its own wording. */
+/**
+ * Every caller, so a new one cannot invent its own wording.
+ *
+ * `marketFactBlocks` is deliberately not here: it already carries the clause,
+ * in both its branches and in its own voice — "not from a live web search, a
+ * listing portal, a news article or your own knowledge" — and rewriting a rule
+ * that works, to make it look like its neighbours, is a change with no reader
+ * behind it. `planningFactBlocks` likewise states its own, as part of the
+ * sentence that gives its rules precedence over the rest of the prompt.
+ *
+ * The five below are the blocks that had NONE. Two of them said "from memory",
+ * which is the tell: the author was thinking about the model's own knowledge
+ * and not about a model that searches.
+ */
 export const CRIME_WEB_SEARCH_RULE = webSearchIsNotARetrieval('crime', 'the recorded-crime register');
 export const CLIMATE_WEB_SEARCH_RULE = webSearchIsNotARetrieval('climate', 'a measured reading at this property');
+export const CENSUS_WEB_SEARCH_RULE = webSearchIsNotARetrieval('demographic', 'the Census tables above');
+export const REGIONAL_WEB_SEARCH_RULE = webSearchIsNotARetrieval('population', 'the measured trend for this area');
+export const MACRO_WEB_SEARCH_RULE = webSearchIsNotARetrieval('economic', 'the measured indicator table above');

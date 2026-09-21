@@ -18,8 +18,11 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
+  CENSUS_WEB_SEARCH_RULE,
   CLIMATE_WEB_SEARCH_RULE,
   CRIME_WEB_SEARCH_RULE,
+  MACRO_WEB_SEARCH_RULE,
+  REGIONAL_WEB_SEARCH_RULE,
   webSearchIsNotARetrieval,
 } from '../../../../supabase/functions/_shared/reports/registerAuthority.pure';
 import { crimeStatBlocks } from '../../../../supabase/functions/_shared/reports/crimePromptBlocks.pure';
@@ -111,5 +114,61 @@ describe('the prohibitions it sits beside are untouched', () => {
   it('keeps the climate block’s own refusals', () => {
     const absent = climateStatBlocks({});
     expect(absent).toContain('do NOT print a climate table, name a climate zone, or rate any hazard');
+  });
+});
+
+/**
+ * Every register block that had NO clause now carries the same one.
+ *
+ * Two of the three said "from memory", which is the tell — the author was
+ * thinking about the model's own knowledge and not about a model that
+ * searches. `marketFactBlocks` and `planningFactBlocks` are deliberately not
+ * changed: each already states the rule in its own voice, and rewriting a
+ * rule that works to make it look like its neighbours is a change with no
+ * reader behind it.
+ */
+describe('the clause reaches every block that lacked one', () => {
+  const BLOCKS = [
+    'supabase/functions/_shared/reports/crimePromptBlocks.pure.ts',
+    'supabase/functions/_shared/reports/climatePromptBlocks.pure.ts',
+    'supabase/functions/_shared/reports/censusPromptBlocks.pure.ts',
+    'supabase/functions/_shared/reports/regionalPromptBlocks.pure.ts',
+    'supabase/functions/_shared/reports/macroPromptBlocks.pure.ts',
+  ];
+
+  it.each(BLOCKS)('%s imports the shared rule and writes none of its own', (file) => {
+    const src = readFileSync(file, 'utf8');
+    expect(src).toMatch(/import \{ [A-Z_]+_WEB_SEARCH_RULE \} from '\.\/registerAuthority\.pure\.ts';/);
+    // Two copies of one rule is how the two come to disagree.
+    expect(src).not.toMatch(/is not a retrieval/i);
+  });
+
+  it.each(BLOCKS)('%s carries it on BOTH branches', (file) => {
+    const src = readFileSync(file, 'utf8');
+    const uses = src.match(/[A-Z_]+_WEB_SEARCH_RULE/g) ?? [];
+    // One import plus the absent branch plus the held branch.
+    expect(uses.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('every constant is the one pattern, parameterised', () => {
+    expect(CENSUS_WEB_SEARCH_RULE).toBe(webSearchIsNotARetrieval('demographic', 'the Census tables above'));
+    expect(REGIONAL_WEB_SEARCH_RULE)
+      .toBe(webSearchIsNotARetrieval('population', 'the measured trend for this area'));
+    expect(MACRO_WEB_SEARCH_RULE)
+      .toBe(webSearchIsNotARetrieval('economic', 'the measured indicator table above'));
+  });
+
+  it('leaves the two blocks that already had one alone', () => {
+    // `marketFactBlocks` carries it in both branches in its own words, and
+    // `planningFactBlocks` states it as part of the sentence giving its rules
+    // precedence over the rest of the prompt.
+    for (const [file, phrase] of [
+      ['supabase/functions/_shared/reports/market/marketFactBlocks.pure.ts', 'not from a live web search'],
+      ['supabase/functions/_shared/planning/planningFacts.pure.ts', 'anything a live web search returns'],
+    ] as const) {
+      const src = readFileSync(file, 'utf8');
+      expect(src).toContain(phrase);
+      expect(src).not.toMatch(/_WEB_SEARCH_RULE/);
+    }
   });
 });
