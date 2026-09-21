@@ -610,7 +610,14 @@ Deno.serve(async (req) => {
       return json({ success: true, ...detail });
     }
 
-    return json({ success: false, error: 'stage must be "qld", "nsw", "abs", "vic", "sa" or "probe"' }, 400);
+    // The list is the branches above, and it is written out because this is
+    // what a caller sees when it names a stage that does not exist. It went
+    // stale the moment `vic_volume` was added and answered a 400 that read as
+    // a rejected argument rather than as a deployment that had not landed yet.
+    return json({
+      success: false,
+      error: 'stage must be "qld", "nsw", "abs", "vic", "vic_volume", "sa" or "probe"',
+    }, 400);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[market-sales-ingest] ${stage} refused/failed:`, message);
