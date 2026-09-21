@@ -525,7 +525,31 @@ describe('the refusals', () => {
     // The refusal names the range it DID hold, because "9 months" and
     // "9 months, all of them 2024" send an operator to different questions.
     expect(() => parseAbsBuildingApprovals(download({ months: 9 }), 'lga'))
-      .toThrow(/holds 9 months \(2024-01 to 2024-09\), fewer than the 24 a year-on-year reading needs/);
+      .toThrow(/holds 9 months \(2024-01 to 2024-09\), fewer than the 24 this read asked for/);
+  });
+
+  it('judges a PAGE against the window it asked for, not the register’s floor', () => {
+    /*
+     * A full SA2 load is eight requests of six months — 10.4 MB each against
+     * 111.6 MB for the whole span — so judging a six-month page against a
+     * twenty-four-month floor refuses every page of a healthy load. The
+     * floor moves from a property of the DOWNLOAD to a property of the
+     * REGISTER, asked of the table after a load rather than of each page
+     * during one.
+     */
+    expect(() => parseAbsBuildingApprovals(download({ months: 6 }), 'lga', { minPeriods: 6 }))
+      .not.toThrow();
+    // And it is still a floor: a page short of what it asked for refuses.
+    expect(() => parseAbsBuildingApprovals(download({ months: 3 }), 'lga', { minPeriods: 6 }))
+      .toThrow(/holds 3 months.*fewer than the 6 this read asked for/);
+  });
+
+  it('defaults to the register’s floor, so an unpaged caller is unchanged', () => {
+    // Widening what CAN be expressed must never widen what is accepted by
+    // accident: omitting the option is byte-for-byte the previous behaviour.
+    expect(() => parseAbsBuildingApprovals(download({ months: 9 }), 'lga'))
+      .toThrow(/fewer than the 24 this read asked for/);
+    expect(ABS_BA_PLAUSIBILITY.minPeriods).toBe(24);
   });
 
   it('refuses a unit drift rather than writing an implausible count', () => {

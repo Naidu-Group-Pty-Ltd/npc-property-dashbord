@@ -721,9 +721,33 @@ export interface AbsApprovalsParse {
  * partial register as though it were whole, and never writes a figure it
  * could not attribute to an area, a month and a building type.
  */
+export interface ApprovalsParseOptions {
+  /**
+   * The month floor THIS download must clear. Defaults to
+   * `ABS_BA_PLAUSIBILITY.minPeriods`.
+   *
+   * ## Why it is a parameter now
+   *
+   * The floor exists to catch a truncated body, and it was written when one
+   * request carried the whole series. Measured 21 Sep 2026, it cannot: SA2
+   * narrowed is 111.6 MB over 33 months and 10.4 MB over 6, so a full load
+   * is eight requests of six months. Judging a six-month PAGE against a
+   * twenty-four-month floor refuses every page of a healthy load.
+   *
+   * So the floor moves from a property of the DOWNLOAD to a property of the
+   * REGISTER: a page declares the window it asked for, and whether the
+   * register as a whole holds twenty-four months is a question about the
+   * table, asked after a load rather than during one. The default is
+   * unchanged, so an unpaged caller behaves exactly as before — this widens
+   * what can be expressed, never what is accepted by accident.
+   */
+  minPeriods?: number;
+}
+
 export function parseAbsBuildingApprovals(
   text: string,
   areaKind: ApprovalsAreaKind,
+  options: ApprovalsParseOptions = {},
 ): AbsApprovalsParse {
   const records = parseSdmxCsv(text);
   if (records.length === 0) throw new Error('the ABS building-approvals download is empty — refused');
@@ -850,11 +874,12 @@ export function parseAbsBuildingApprovals(
     );
   }
   const sorted = [...periods].sort();
-  if (sorted.length < ABS_BA_PLAUSIBILITY.minPeriods) {
+  const minPeriods = options.minPeriods ?? ABS_BA_PLAUSIBILITY.minPeriods;
+  if (minPeriods > 0 && sorted.length < minPeriods) {
     throw new Error(
       `the ABS building-approvals download holds ${sorted.length} month${sorted.length === 1 ? '' : 's'} `
       + `(${sorted[0]}${sorted.length > 1 ? ` to ${sorted[sorted.length - 1]}` : ''}), `
-      + `fewer than the ${ABS_BA_PLAUSIBILITY.minPeriods} a year-on-year reading needs — refused`,
+      + `fewer than the ${minPeriods} this read asked for — refused`,
     );
   }
   return {

@@ -35,6 +35,7 @@ import {
   absBuildingApprovalsUrl,
   currentEdition,
   dataflowRef,
+  ABS_BA_PLAUSIBILITY,
   parseAbsBuildingApprovals,
   parseDataflowCatalogue,
   resolveBuildingApprovalsFlow,
@@ -288,7 +289,7 @@ async function main(): Promise<void> {
   };
 
   interface Window { label: string; flow: DataflowEntry; grain: ApprovalsAreaKind; start: string }
-  let carried: Window & { url: string; bytes: number } | null = null;
+  let carried: Window & { url: string; bytes: number; months?: number } | null = null;
 
 
   /*
@@ -446,6 +447,24 @@ async function main(): Promise<void> {
         if (fits) {
           const spanMonths = monthsBetween(START_PERIOD, LATEST_MONTH);
           kv('  a full load would take', `${Math.ceil(spanMonths / months)} requests of ${months} months`);
+          /*
+           * A paged window at the FINEST grain beats an unpaged one at a
+           * coarser grain, because it is what the loader will actually do.
+           * Carrying the coarse download instead would parse a body
+           * production never reads — the check measuring a path nobody
+           * takes, which is this instrument's own recurring failure.
+           */
+          if (g.flow === choice.flow) {
+            carried = {
+              label: `${g.label}, ${months}-month page (${from}→${LATEST_MONTH})`,
+              flow: g.flow,
+              grain: g.grain,
+              start: from,
+              url: narrowedApprovalsUrl(g.flow, from, g.key, LATEST_MONTH),
+              bytes: m.bytes,
+              months,
+            };
+          }
           break;
         }
       }
@@ -493,7 +512,17 @@ async function main(): Promise<void> {
     theirs('data', error instanceof Error ? error.message : String(error));
   }
   try {
-    const parsed = parseAbsBuildingApprovals(body, carried.grain);
+    /*
+     * A page is judged against the window it asked for. The register's own
+     * twenty-four-month floor is a question about the TABLE after a full
+     * load, not about one request of six months — see
+     * `ApprovalsParseOptions.minPeriods`.
+     */
+    const parsed = parseAbsBuildingApprovals(body, carried.grain,
+      carried.months ? { minPeriods: Math.min(carried.months, 3) } : {});
+    if (carried.months) {
+      kv('judged as', `a ${carried.months}-month page, not the register's ${ABS_BA_PLAUSIBILITY.minPeriods}-month floor`);
+    }
     kv('areas', parsed.areas.toLocaleString('en-AU'));
     kv('months', parsed.periods.length);
     kv('first period', parsed.periods[0]);
