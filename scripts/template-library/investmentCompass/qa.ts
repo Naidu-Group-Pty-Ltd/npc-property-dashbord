@@ -101,6 +101,15 @@ interface Collision {
   overlap: number;
 }
 
+/** A class of text that must never reach a rendered page. */
+interface Debris {
+  template: string;
+  page: number;
+  pageName: string;
+  kind: string;
+  text: string;
+}
+
 interface Report {
   templates: number;
   colourways: number;
@@ -108,6 +117,7 @@ interface Report {
   rendered: number;
   overflows: Overflow[];
   collisions: Collision[];
+  debris: Debris[];
   pdf: Array<{ template: string; pages: number; bytes: number }>;
   screenshots: string[];
 }
@@ -158,6 +168,79 @@ async function measureOverflows(
     overBy: Math.round((r.overBy * 72) / 96),
     block: r.block,
   }));
+}
+
+/**
+ * Read the page as a READER does, and refuse four classes of debris.
+ *
+ * The overflow and collision measures are geometric: they ask where ink sits,
+ * never what it says. So a master could emit an unresolved `{{directive}}`, a
+ * label clipped to an ellipsis, a placeholder word or a database identifier
+ * and pass this gate cleanly — and three of those four have reached a client
+ * document in this product's history. `{{stat label="Crime data coverage" …`
+ * printed verbatim on page 25 of the Compass delivered 21 Sep 2026;
+ * `osm_amenity_register` printed mid-paragraph on page 34; `renderWaterfall`
+ * set "Stamp duty and…" where the label fits whole.
+ *
+ * Measured over the rendered TEXT rather than the schema, because that is the
+ * thing a reader holds, and in the browser the harness already has rather than
+ * through a PDF text layer, which would add a system dependency this gate does
+ * not otherwise need.
+ *
+ * Each class is narrow enough to carry no false positive over the catalogue:
+ *
+ *  - `{{`      — a directive or binding the renderer did not consume. A
+ *                 master cannot trigger this one: the binder consumes `{{…}}`
+ *                 in a master's own text and an unresolved binding renders as
+ *                 the empty string. Its target is a directive in MODEL PROSE,
+ *                 which is where `{{stat label=…` came from.
+ *  - `word…`   — an ellipsis welded to a letter, which is what a hard
+ *                 character cut produces; a real ellipsis follows a space or
+ *                 ends a sentence.
+ *  - `N/A`, `TBC`, `XX`, `[Placeholder]` — the owner's rule is "N/A or
+ *                 unavailable, never".
+ *  - `snake_case` — database vocabulary. `plan_zone` and `plan_overlay` are
+ *                 the known-good exception: they are Vicmap Planning's own
+ *                 published layer names, and a citation is a name rather than
+ *                 debris.
+ *
+ * Measured 21 Sep 2026 over all 100 rendered documents and all ten formats:
+ * **zero of every class**, so this gate starts green and any hit is new.
+ */
+const DEBRIS_PATTERNS: ReadonlyArray<{ kind: string; re: RegExp }> = [
+  { kind: 'unresolved directive or binding', re: /\{\{[^}\n]{0,80}/g },
+  { kind: 'label clipped to an ellipsis', re: /\S{2,}\u2026/g },
+  { kind: 'placeholder word', re: /\bN\/A\b|\bTBC\b|\bXX\b|\[Placeholder\]/gi },
+  // Case-INSENSITIVE, and that is not tidiness. `innerText` returns the text
+  // as CSS transformed it, and this design system sets every eyebrow, column
+  // head and register label in uppercase -- which is exactly where a database
+  // identifier would land. Proved by injection: `plan_thing` in a register
+  // title arrived as `PLAN_THING` and a lowercase pattern walked past it.
+  { kind: 'database identifier', re: /\b[a-z]{3,}_[a-z_]{3,}\b/gi },
+];
+
+/** Identifiers a publisher uses, which are names rather than debris. */
+const PUBLISHED_IDENTIFIERS = new Set(['plan_zone', 'plan_overlay']);
+
+async function measureDebris(
+  page: Page,
+  template: string,
+  pageNames: string[],
+): Promise<Debris[]> {
+  const texts = await page.evaluate(() => Array.from(document.querySelectorAll('.tpl-page'))
+    .map((el) => (el as HTMLElement).innerText ?? ''));
+  const out: Debris[] = [];
+  texts.forEach((text, i) => {
+    for (const { kind, re } of DEBRIS_PATTERNS) {
+      for (const hit of new Set(text.match(re) ?? [])) {
+        // Lowercased before the allow-list is consulted, for the same reason
+        // the pattern is case-insensitive: `PLAN_ZONE` is the same citation.
+        if (kind === 'database identifier' && PUBLISHED_IDENTIFIERS.has(hit.toLowerCase())) continue;
+        out.push({ template, page: i + 1, pageName: pageNames[i] ?? `Page ${i + 1}`, kind, text: hit });
+      }
+    }
+  });
+  return out;
 }
 
 /**
@@ -433,6 +516,7 @@ async function main(): Promise<void> {
     rendered: 0,
     overflows: [],
     collisions: [],
+    debris: [],
     pdf: [],
     screenshots: [],
   };
@@ -494,6 +578,7 @@ async function main(): Promise<void> {
         ...await measureOverflows(page, name, dflt.name, pageNames),
       );
       report.collisions.push(...await measureCollisions(page, name, pageNames));
+      report.debris.push(...await measureDebris(page, name, pageNames));
 
       /*
        * Artefacts are drawn for the master's own document only — the tier
@@ -620,9 +705,20 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   if (report.collisions.length > 0) process.exit(1);
+
+  if (report.debris.length > 0) {
+    console.error(`\n✗ ${report.debris.length} piece(s) of debris reached a rendered page:`);
+    for (const d of report.debris.slice(0, 40)) {
+      console.error(`  ${d.template} / p${d.page} "${d.pageName}": ${d.kind} — ${JSON.stringify(d.text)}`);
+    }
+    if (report.debris.length > 40) console.error(`  … and ${report.debris.length - 40} more`);
+    process.exit(1);
+  }
+
   console.log(
-    `\n✓ no block overflows its page, and none prints over another, `
-    + `in any of the ${report.rendered} renders`,
+    `\n✓ no block overflows its page, none prints over another, and no `
+    + `unresolved binding, clipped label, placeholder or database identifier `
+    + `reached one, in any of the ${report.rendered} renders`,
   );
 }
 

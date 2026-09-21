@@ -1061,6 +1061,25 @@ seed v19 might have left stale — the migration object index was one, and
 | `brand:icons:check` | **no** | pass |
 | `mobile:tokens:check` | **no** | pass |
 | `mobile:api:check` | **no** | **FAIL** |
+| `templates:compass:qa` | **no** | pass |
+
+**And the fourth is the most consequential.** No workflow runs ANY
+`templates:*` script — checked across every file in `.github/workflows/`. The
+catalogue SCHEMA is covered in CI by vitest (`seedCatalogue.spec.ts`,
+`investmentCompassSource.spec.ts` and friends), but the rendered GEOMETRY is
+not: `templates:compass:qa` is the Chromium measurement, and `CLAUDE.md` cites
+it by name for the class it catches — *"a block that sets taller does not
+overflow the page, it prints over the next one … `npm run templates:compass:qa`
+fails on the class."*
+
+That class has reached a client: the verdict heading printing through the KPI
+band over `$1,975,000` and `$850`. The gate that catches it runs when somebody
+remembers.
+
+Wiring it is not free — it is ~15 minutes of Chromium on every PR, against
+`render-container`'s two — so it is a decision about CI economics rather than
+a defect to fix quietly, and it is recorded here for the owner rather than
+taken unilaterally.
 
 `mobile/api-surface.json` reports itself *"out of date with the security
 registry"*, and it fails on the PR BASE as well as on this branch — so it
