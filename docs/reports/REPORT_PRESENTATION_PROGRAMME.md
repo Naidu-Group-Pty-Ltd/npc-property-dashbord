@@ -222,12 +222,27 @@ intention.
 
 ### W1 · The visual layer — cascades to all ten formats
 
-**W1.1 · Close the directive vocabulary.**
-No unrecognised directive may reach paper. `{{stat …}}` must either parse or be
-stripped.
-*Accept:* a spec renders every directive kind the generator's prompt can emit,
-through the real read path, and asserts no `{{` survives in the output; plus a
-scan of the delivered corpus for `{{`.
+**W1.1 · Close the directive vocabulary.** ✅ **DONE** — and the repair was
+worth more than the strip.
+
+`braceHygiene.pure.ts`, on the read path in `presentStoredMarkdown`. The three
+lines that reached page 25, 26 and 30 of the 9 Hollow Street document were the
+FENCE kind `stat` written with the DIRECTIVE delimiter `{{`, then closed
+correctly with `:::` — so `VIZ_DIRECTIVE_RE` (which needs a colon) matched
+nothing, `VIZ_DIRECTIVE_EMPTY_RE` (letters and spaces only) matched nothing,
+nothing claimed the line and it fell through as body copy. The stored source
+counts 26 `{{` against 23 `}}`, and the difference is exactly those three.
+
+Only the delimiter was wrong, so the scrub REWRITES `{{stat …` to
+`::: stat …` and hands a well-formed fence to the renderer that already draws
+it — which keeps three figures the model composed, one of them the
+`$567,500` Golden Square house median. What cannot be repaired is stripped and
+never printed. A legitimate multi-line `{{bars: …}}` is left alone.
+
+*Accept:* met for the spec half — `unresolvedBraces` is asserted over every
+directive kind and every fence kind through the real read path. **The corpus
+scan is NOT done**: it needs a read of `investment_reports.report_content`
+across 1,199 stored rows, and direct SQL is out of scope for this programme.
 
 **W1.2 · ~~Make the template path draw figures.~~ WITHDRAWN — the premise was
 wrong.** The figures already draw. Measured by fill colour rather than by image
@@ -1050,9 +1065,24 @@ digit comes from somewhere in the model's prose that I cannot name, and a rule
 for a lone digit would be invented rather than derived — which is what the
 footnote work took two attempts to learn. Recorded, not guessed at.
 
-**W4.7 · No database vocabulary in a client document.** `osm_amenity_register`
-is printed in prose on page 34. The AML module already forbids underscore-cased
-identifiers in rendered fields and has a test for it; port the rule.
+**W4.7 · No database vocabulary in a client document.** ✅ **DONE**, and the
+distinction it turns on is the whole rule.
+
+Three instances of one defect on that document: `osm_amenity_register` set in
+code backticks mid-paragraph on page 34, `vic_vpsr_suburb` in the column headed
+*Where it is published* on page 36, and `transactionVolume` where a measure's
+name belongs. `transportSourceName` and `providerName` name each in the
+reader's words, and anything shaped like an identifier that this build has no
+name for is replaced rather than printed — `publisherNames.spec.ts` reads the
+`EvidenceProvider` union out of the type itself rather than keeping a second
+copy.
+
+**`plan_zone` and `plan_overlay` are deliberately untouched.** They are Vicmap
+Planning's own published layer names, and the register table cites them
+correctly as "Vicmap Planning — plan_zone (opendata.maps.vic.gov.au WFS)". An
+identifier the PUBLISHER uses is a name; an identifier WE invented is debris.
+That is why this could not be a blanket regex over underscore-cased tokens, and
+why the geometry gate's own debris scan carries the same allow-list.
 
 **W4.8 · Glyph coverage.** ✅ **DONE** — and the premise is measured rather
 than inferred from the PDF. `fontTools` over all nine faces
@@ -1168,6 +1198,25 @@ section honest for all eight jurisdictions on day one; the per-jurisdiction
 refinements then raise precision without changing the document's shape.
 
 W2.3, W2.4 and W4 are independent and can run alongside.
+
+### Where the order actually landed, 21 Sep 2026
+
+W1.1 and W1.3 went first as written, and every W4 item ran alongside. **W2.2
+did not**, and the ordering above is why it could not: it says a national
+register with nowhere to be explained belongs inside Location rather than in a
+section of its own, and `sectionRegistry`'s own declared rule is that *a
+section with nothing behind it should be merged*. W3.1's reader is built and
+its register is not loaded, so un-merging `infrastructure` now would create
+exactly the empty section both rules forbid. It waits on the first ingest, not
+on more code.
+
+**Everything left in this programme that needs no new infrastructure is
+closed.** W3.1's prohibition and W3.2's coverage statement shipped without
+their registers because the guarantee is worth having before the evidence
+exists; W3.1's register, W3.2's, W3.3's, W3.4's and W3.5's all need a table, a
+schedule and a first ingest, and a production egress that can reach the
+publisher. Those are one approval and one probe away, not one more pass over
+the document.
 
 ---
 
