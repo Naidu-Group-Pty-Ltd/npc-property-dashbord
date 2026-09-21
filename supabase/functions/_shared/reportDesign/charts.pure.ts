@@ -1532,6 +1532,39 @@ export function renderSeriesFan(
 export interface TileItem { label: string; value: string; sub?: string; intensity?: number }
 
 /** Tiles — small multiples that read like a faux-choropleth. */
+/**
+ * A tile promises a figure, so a tile with no figure is not drawn — unless its
+ * own label is carrying one.
+ *
+ * Page 8 of the Investment Compass delivered for 9 Hollow Street on
+ * 21 Sep 2026 drew four amenity tiles. Three read `SHOPPING CENTRES` over
+ * `10`, `PARKS & RECREATION` over `9`, `RESTAURANTS & CAFÉS` over `10`. The
+ * first read `HEALTHCARE 10 FACILITIES` over **nothing at all** — an empty
+ * `<text>` between a label and a sub-caption — because the model wrote
+ * `Healthcare 10 facilities` where the grammar wants `Label Value`, so the
+ * parser found no value and the figure stayed in the label.
+ *
+ * Two rules, and the order matters. **Where the label carries the figure it is
+ * moved into the value slot**, split at its first number — the same repair
+ * `chartQuantity.cutSentenceRow` makes for a bar whose value the parser took
+ * out of a sentence, and it loses nothing: `Healthcare 10 facilities` becomes
+ * `HEALTHCARE` over `10 facilities`, which is what its three siblings look
+ * like. **Only then is a tile with nothing to show dropped**, which is
+ * `renderKpiGridHtml`'s rule — a tile whose bound value resolved to nothing is
+ * not drawn — and `stripPlaceholderRows`' one line up: a labelled slot is a
+ * promise that a figure follows it.
+ */
+export function tileWithItsFigure(tile: TileItem): TileItem | null {
+  const value = String(tile?.value ?? '').trim();
+  if (value) return tile;
+  const label = String(tile?.label ?? '').trim();
+  const at = label.search(/\d/u);
+  if (at <= 0) return null;
+  const head = label.slice(0, at).replace(/[\s:·•,-]+$/u, '').trim();
+  const tail = label.slice(at).trim();
+  return head && tail ? { ...tile, label: head, value: tail } : null;
+}
+
 export function renderTiles(
   ctx: ChartContext,
   tiles: TileItem[],
@@ -1539,11 +1572,11 @@ export function renderTiles(
 ): string {
   if (!tiles.length) return '';
   const cols = Math.min(opts.cols ?? Math.min(tiles.length, 4), 6);
-  const rows = Math.ceil(tiles.length / cols);
   const cellW = 130, gap = 8;
   const padL = 12, padT = opts.title ? 38 : 12, padB = 12;
   const w = padL * 2 + cols * cellW + (cols - 1) * gap;
   const inner = cellW - 24;
+  const rows = Math.ceil(Math.max(1, tiles.filter((t) => tileWithItsFigure(t)).length) / cols);
 
   // Every line of text is fitted to the cell — a label, a value or a sub-line
   // that ran past its tile ran into the next tile's ("Regional service hub"
@@ -1552,7 +1585,9 @@ export function renderTiles(
   // on up to two lines; the cell height is what the tallest tile needs.
   const labelChar = unitsPerChar(ctx, w, 'micro', true) + ptToUnits(0.9, w, ctx.widthMm);
   const microChar = unitsPerChar(ctx, w, 'micro');
-  const fitted = tiles.map((t) => {
+  const drawn = tiles.map(tileWithItsFigure).filter((t): t is TileItem => t !== null);
+  if (!drawn.length) return '';
+  const fitted = drawn.map((t) => {
     const label = fitLines((t.label ?? '').toUpperCase(), inner, labelChar, 2);
     const valueText = String(t.value ?? '');
     const asFigure = valueText.length <= Math.floor(inner / unitsPerChar(ctx, w, 'value'));
@@ -1565,7 +1600,7 @@ export function renderTiles(
     20 + (f.label.length - 1) * labelStep + 14 + (f.asFigure ? 22 : f.value.length * valueStep) + 8 + f.sub.length * subStep + 12));
   const h = padT + rows * cellH + (rows - 1) * gap + padB;
 
-  const cells = tiles.map((t, i) => {
+  const cells = drawn.map((t, i) => {
     const r = Math.floor(i / cols), c = i % cols;
     const x = padL + c * (cellW + gap), y = padT + r * (cellH + gap);
     const f = fitted[i];

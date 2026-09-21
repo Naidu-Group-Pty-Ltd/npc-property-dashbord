@@ -47,6 +47,7 @@ import {
   renderQuadrant,
   renderScoreBars,
   renderTiles,
+  tileWithItsFigure,
   renderTimelineRibbon,
   renderWaterfall,
   fitLines,
@@ -672,5 +673,71 @@ describe('a heatmap title is fitted, never clipped', () => {
   it('says a title was cut rather than dropping its tail', () => {
     const svg = renderHeatmap(ctx, GRID, { ...LABELS, title: 'x '.repeat(400).trim() });
     expect(textNodes(svg).some((t) => t.endsWith('…'))).toBe(true);
+  });
+});
+
+/**
+ * A tile promises a figure.
+ *
+ * Page 8 of the Investment Compass delivered for 9 Hollow Street, Golden
+ * Square on 21 Sep 2026 drew four amenity tiles. Three read a category over a
+ * count. The first read `HEALTHCARE 10 FACILITIES` over **nothing at all** —
+ * an empty `<text>` between a label and a sub-caption — because the model
+ * wrote `Healthcare 10 facilities` where the grammar wants `Label Value`.
+ */
+describe('a tile carries its figure, or it is not drawn', () => {
+  /** The four tiles, as the parser read them off that page. */
+  const PAGE_8 = [
+    { label: 'Healthcare 10 facilities', value: '', sub: 'Within 5 km of the property' },
+    { label: 'Shopping centres', value: '10', sub: 'Within 5 km of the property' },
+    { label: 'Parks & recreation', value: '9', sub: 'Within 5 km of the property' },
+    { label: 'Restaurants & cafés', value: '10', sub: 'Within 5km' },
+  ];
+  const textNodes = (svg: string) => [...svg.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map((m) => m[1]);
+
+  it('moves the figure out of the label into the slot that promised it', () => {
+    expect(tileWithItsFigure(PAGE_8[0])).toEqual({
+      label: 'Healthcare', value: '10 facilities', sub: 'Within 5 km of the property',
+    });
+  });
+
+  it('draws no empty value slot on that page', () => {
+    const drawn = textNodes(renderTiles(ctx, PAGE_8, { title: 'Everyday amenity within 5 km' }));
+    expect(drawn.filter((t) => !t.trim())).toEqual([]);
+    // …and the repaired tile now looks like its three siblings.
+    expect(drawn).toContain('HEALTHCARE');
+    expect(drawn).toContain('10 facilities');
+  });
+
+  it('drops a tile with no figure anywhere', () => {
+    // `renderKpiGridHtml`'s rule: a tile whose bound value resolved to nothing
+    // is not drawn. A label with a sub and no number promises a figure that
+    // does not exist.
+    expect(tileWithItsFigure({ label: 'Crime rate', value: '', sub: 'Not assessed' })).toBeNull();
+    expect(renderTiles(ctx, [{ label: 'Crime rate', value: '', sub: 'Not assessed' }], {})).toBe('');
+  });
+
+  it('leaves no empty row where a dropped tile stood', () => {
+    /*
+     * The row count is what `rows` is for, and it used to be taken from the
+     * tiles handed IN. Five tiles across four columns is two rows; drop the
+     * one with nothing to show and the four that remain are one row, so
+     * counting the input would have drawn a blank row under them.
+     */
+    const five = [...PAGE_8, { label: 'Crime rate', value: '', sub: 'Not assessed' }];
+    const height = (svg: string) => Number(/viewBox="0 0 [\d.]+ ([\d.]+)"/.exec(svg)![1]);
+    expect(height(renderTiles(ctx, five, {}))).toBe(height(renderTiles(ctx, PAGE_8, {})));
+  });
+
+  it('is untouched where every tile already carries its value', () => {
+    const good = [{ label: 'A', value: '1' }, { label: 'B', value: '2' }];
+    expect(textNodes(renderTiles(ctx, good, { title: 'T' }))).toEqual(['T', 'A', '1', 'B', '2']);
+    for (const t of good) expect(tileWithItsFigure(t)).toBe(t);
+  });
+
+  it('does not take a label that merely contains a number', () => {
+    // A label carrying its own figure is one with NOTHING in the value slot.
+    const t = { label: '3-bedroom houses', value: '620000' };
+    expect(tileWithItsFigure(t)).toBe(t);
   });
 });
