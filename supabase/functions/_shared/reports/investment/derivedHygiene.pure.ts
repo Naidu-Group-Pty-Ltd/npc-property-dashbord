@@ -34,7 +34,11 @@ import {
   dedupeRegisterTables,
   stripHeadingScaffolding,
 } from './registerTables.pure.ts';
-import { dropComposedSectionReproductions, foldStraySections } from './sectionFolding.pure.ts';
+import {
+  dropComposedSectionReproductions,
+  foldStraySections,
+  mergeAdjacentDuplicateHeadings,
+} from './sectionFolding.pure.ts';
 
 const PLACEHOLDER_CELL = /^(?:n\/?a|tbd|to be determined|not available|not provided|unknown|—|-|–)\.?$/i;
 
@@ -732,6 +736,19 @@ export function presentStoredMarkdown(
   const composed = dropComposedSectionReproductions(nested);
   const onceEach = composed.dropped.length ? composed.markdown : nested;
   /*
+   * …and a heading the model announced twice around its own content.
+   *
+   * Pages 24-27 of the 9 Hollow Street Compass printed `Planning controls &
+   * zoning` above its summary paragraph and again above the Finding/Evidence
+   * list under it — five lines apart, with no other heading between. Measured
+   * over all 39 pages: five sub-headings written twice, which is every risk in
+   * the register. Directly after the two section folds above, because it
+   * answers the same question one level down and they have already settled
+   * what the sections are.
+   */
+  const twins = mergeAdjacentDuplicateHeadings(onceEach);
+  const announced = twins.merged.length ? twins.markdown : onceEach;
+  /*
    * The same chart, drawn five times.
    *
    * `dedupeChartDirectives` has existed since Stage 4 and ran on the WRITE
@@ -745,8 +762,8 @@ export function presentStoredMarkdown(
    * no-op on a document that carries each drawing once — which is what makes
    * adopting it on the read path safe for everything already correct.
    */
-  const deduped = dedupeChartDirectives(onceEach);
-  const single = deduped.removed ? deduped.markdown : onceEach;
+  const deduped = dedupeChartDirectives(announced);
+  const single = deduped.removed ? deduped.markdown : announced;
   /*
    * An absence may not be rated.
    *

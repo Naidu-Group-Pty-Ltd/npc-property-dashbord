@@ -288,14 +288,28 @@ function tabulate(
     + rows.map((r) => `| ${cell(r.label)} | ${cell(r.display)} |`).join('\n');
 }
 
-/** The values a directive plots, and the labels it names them with. */
-function seriesOf(d: ReturnType<typeof parseVizDirective>): { values: number[]; labels: string[] } | null {
+/**
+ * The values a directive plots, the labels it names them with, and its title.
+ *
+ * The title is read HERE rather than off the directive at the call site,
+ * because only some of the twelve kinds declare one — a gauge has a `label`
+ * and a margin has a `heading` — and reading `d.title` off the union is a type
+ * error the app's own typecheck cannot see, since `supabase/functions` is
+ * outside its project.
+ */
+function seriesOf(
+  d: ReturnType<typeof parseVizDirective>,
+): { values: number[]; labels: string[]; title?: string } | null {
   if (!d) return null;
   if (d.kind === 'bars') {
-    return { values: d.items.map((i) => i.value), labels: d.items.map((i) => i.label) };
+    return {
+      values: d.items.map((i) => i.value),
+      labels: d.items.map((i) => i.label),
+      title: d.title,
+    };
   }
   if (d.kind === 'heatmap') {
-    return { values: d.grid.flat(), labels: [...d.rowLabels, ...d.colLabels] };
+    return { values: d.grid.flat(), labels: [...d.rowLabels, ...d.colLabels], title: d.title };
   }
   /*
    * A sparkline is the same defect at the smallest size the document draws.
@@ -307,6 +321,7 @@ function seriesOf(d: ReturnType<typeof parseVizDirective>): { values: number[]; 
     return {
       values: d.spark ?? [],
       labels: [d.heading, d.label, d.note].filter((x): x is string => !!x),
+      title: d.heading,
     };
   }
   return null;
@@ -338,7 +353,7 @@ export function enforceChartQuantity(markdown: string): ChartQuantityResult {
           ? 'retrieval_state'
           : null;
       if (reason) {
-        withheld.push({ kind: k, reason, title: d.title, directive: whole.slice(0, 160) });
+        withheld.push({ kind: k, reason, title: series.title, directive: whole.slice(0, 160) });
         return '';
       }
     }
