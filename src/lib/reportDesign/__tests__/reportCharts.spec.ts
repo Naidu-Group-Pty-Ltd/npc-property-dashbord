@@ -129,6 +129,16 @@ describe('every chart draws', () => {
   });
 });
 
+/** Hue in degrees — for asserting a correction moved lightness only. */
+function hueDegrees(hex: string): number {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  if (max === min) return 0;
+  const d = max - min;
+  const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return ((h * 60) + 360) % 360;
+}
+
 describe('charts have no colour of their own', () => {
   it.each(CHARTS)('%s paints only palette roles', (_name, render) => {
     const svg = render();
@@ -147,11 +157,30 @@ describe('charts have no colour of their own', () => {
   });
 
   it('keeps the semantic three fixed whatever the tenant does', () => {
-    // A chart must not be the place "risk" becomes green.
-    const tenant = chartContext(resolveReportPalette({ brandHex: '#00FF00', preset: 'high_contrast' }));
-    const svg = renderWaterfall(tenant, [{ label: 'Loss', value: -100 }, { label: 'Gain', value: 40 }]);
-    expect(svg).toContain(PRINT_SEMANTIC.negative);
-    expect(svg).toContain(PRINT_SEMANTIC.positive);
+    /*
+     * A chart must not be the place "risk" becomes green.
+     *
+     * This asserted the raw `PRINT_SEMANTIC` hexes appear in the SVG, and that
+     * held while the semantics were a no-op through `legibleOnPaper`. With
+     * `CONTRAST_FLOOR.body` corrected from 4.5 to the 7 `REPORT_RULES.md` §2
+     * specifies, they are darkened for the stock they print on — `#D31212`
+     * becomes `#9B0D0D` on this preset — so the bytes move while the guarantee
+     * does not. The guarantee is that the TENANT cannot move them, and that a
+     * red stays red, which is what is asserted now.
+     */
+    const hostile = chartContext(resolveReportPalette({ brandHex: '#00FF00', preset: 'high_contrast' }));
+    const plain = chartContext(resolveReportPalette({ preset: 'high_contrast' }));
+    const draw = (c: typeof hostile) =>
+      renderWaterfall(c, [{ label: 'Loss', value: -100 }, { label: 'Gain', value: 40 }]);
+    // The hostile brand changed nothing about the semantics.
+    expect(draw(hostile)).toBe(draw(plain));
+    // …and they are still the frozen hues, not the tenant's.
+    for (const role of ['negative', 'positive'] as const) {
+      const used = hostile.palette[role === 'negative' ? 'negative' : 'positive'];
+      expect(draw(hostile)).toContain(used);
+      expect(hueDegrees(used)).toBeCloseTo(hueDegrees(PRINT_SEMANTIC[role]), 0);
+    }
+    expect(draw(hostile)).not.toContain('#00FF00');
   });
 
   it('draws its labels in ink that clears the micro floor on its own ground', () => {
