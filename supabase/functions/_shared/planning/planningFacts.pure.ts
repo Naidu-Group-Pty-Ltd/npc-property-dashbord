@@ -1190,5 +1190,39 @@ export function planningFactBlocks(facts: PlanningFacts): string {
     '8. An evidence, confidence or verification note describes the RETRIEVAL and never the conclusion beside it. '
     + '"Verified" may be written of a table reading and may NOT be written of a rating, an outlook or a '
     + 'recommendation drawn from it.',
+    /*
+     * Rule 9 — the one rule here about PLACEMENT rather than content, and the
+     * only one whose failure mode is today's behaviour.
+     *
+     * This block is pinned into every section call, so every section reaches
+     * for planning. Measured on the Investment Compass delivered for 9 Hollow
+     * Street, Golden Square on 21 Sep 2026, over its 29 body pages:
+     *
+     *     45 x  "General Residential Zone" or "GRZ"
+     *     26 x  "Vicmap Planning"
+     *     24 x  "a planning certificate" or "Section 32"
+     *     15 x  "no mapped control / none mapped at this coordinate"
+     *      5 x  the layer's own currency date, 18 February 2014
+     *
+     * A reader's dominant impression of that document is being told the same
+     * four things fifteen times in different words. `dedupeRegisterTables`
+     * already keeps the TABLE to one copy; the prose restatements it cannot
+     * touch, and `RUNTIME_CONSOLIDATION.md` §8 forbids regex-scrubbing prose,
+     * so this is the only place the repetition can be addressed.
+     *
+     * It is scoped to the PROVENANCE APPARATUS and never to the caveat. Rules
+     * 4, 4a and 6 stand untouched: a section may still say the control is
+     * unverified and that a certificate settles it, wherever that matters. What
+     * leaves is the re-citation — the layer's name, its currency date and the
+     * day it was retrieved — which the planning section and the appended
+     * register both carry in full. Saying less about where a fact came from
+     * cannot invent a control, which is why this rule is safe to add where the
+     * others are prohibitions.
+     */
+    '9. State the provenance ONCE. Name the zone or the control wherever a section needs it, but the layer it was '
+    + 'read from, its currency date and the day it was retrieved belong to the planning section and to the '
+    + 'register appended at the end of the report — not to every section that mentions the zone. Say what the '
+    + 'control IS; do not re-cite it. This does not soften a caveat: where a control was not retrieved, say so '
+    + 'as rules 2, 4 and 6 require.',
   ].join('\n');
 }
