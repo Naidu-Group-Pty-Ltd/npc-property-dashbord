@@ -639,6 +639,68 @@ something else is a design question rather than a defect — and §9's rule
 applies: a fill floor invented for a page that is correctly sparse is a rule
 with no reader behind it.
 
+### W4.3 · Two placeholder words, and seed **v19** — **done**
+
+`Noted` appeared in two slots that name things, on the 50 Investment Compass
+masters, and a sweep of every literal `term:`, `rating:`, `confidence:`,
+`value:` and `status:` across all eleven format files found no other — the
+rest are real labels (`Location`, `Yield`, `Risk`, `Suburb`, `Value and
+equity`, `Cash contributed`). These two were the class.
+
+**The risk register's rating.** The record holds a bare risk STRING and no
+severity, and the exposure vocabulary is `Low | Moderate | High | Not
+assessed`. `Noted` was a fifth word in a four-word vocabulary, in the column
+that states the EXPOSURE, and absent from `RATING_PALETTE` too. It reads
+`Not assessed` now. `confidence: 'Indicative'` is deliberately KEPT — it is in
+`CONFIDENCE_PALETTE` and is an honest qualifier for an unverified one-liner.
+
+**The Opportunities list's term.** Every sibling definition list on that page
+carries a real term naming what the row is about; the record gives an
+opportunity as one unlabelled string, so any term there is invented. The
+heading already said "Opportunities", so the 160pt term column carried a word
+that repeated nothing. It is a `callout` now — the container that page already
+uses for one unqualified statement.
+
+**The release is a v19, and that was checked rather than assumed.** The
+generator's own header says to check whether the previous release is applied
+before editing: `20261209000000` and `20261209010000` are both in the applied
+list (1,012 migrations, latest `20261211000000`), so this is a new release
+rather than an edit. Editing an applied v18 in place is precisely the failure
+the `@effect` probe exists to catch.
+
+**Two masters GAIN a block, and the first draft of the header denied it.** I
+wrote "no page gains or loses one", then measured: parsed both seed files,
+compared all 2,172 schemas, and found `"type":"definition-list"` **−32**
+against `"type":"callout"` **+34**. **Analyst Folio** and **Monograph** gain
+one each (333→334, 320→321) while keeping all seven of their definition
+lists. They never carried the Opportunities block — it is OPTIONAL, and
+`ifItFits` keeps one only while `y + height + SLACK <= contentBottom`. The
+definition list declared ~75pt, the callout declares 72, and on those two
+variants three points are the difference. A block they had been dropping
+silently now fits. `SLACK` is untouched at 36.
+
+**What was verified, and how:**
+
+| claim | evidence |
+| --- | --- |
+| only Compass masters move | 34 schemas changed, all Compass; changed lines are exactly 50 distinct family names plus 2 header lines |
+| the other 493 are byte-identical | parsed and compared all 2,172 schemas in both files |
+| `Noted` is gone | `"rating":"Noted"` 50→0, `"rating":"Not assessed"` 0→50, `"term":"Noted"` 32→0 |
+| the geometry holds | `templates:compass:qa` — *"no block overflows its page, and none prints over another, in any of the 710 renders"* |
+| the refresh is the same mechanism | the v19 refresh diffs **identical** to v18's once release identifiers are normalised |
+
+**And a contract test was renegotiated, correctly.**
+`investmentPropertyRows.spec.ts` counted `>Not assessed</td>` over the WHOLE
+document and required zero — a document-wide selector for a scorecard-shaped
+rule. The rule it protects is that a withheld scorecard dimension draws **no
+row**, which its own third assertion already states
+(`not.toMatch(/>Growth<\/td>|>Demand<\/td>/)`); a row that is not drawn has no
+cell to hold a placeholder. The risk register is the opposite case — the row
+cannot be omitted, because the risk is real — so it now asserts that every
+"Not assessed" sits in the exposure column. Verified by probe: both
+occurrences are the risk rating cell, muted `#ADA18E`, with an empty bar cell
+beside them.
+
 ### W4.11 · An absence may not be rated — on a COLOUR either — **done**
 
 The rule `PLANNING_CONTROLS_IN_THE_REPORT.md` §9 closed as a statement, and

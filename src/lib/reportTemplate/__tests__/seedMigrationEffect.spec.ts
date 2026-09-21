@@ -1,8 +1,8 @@
 /**
  * The seed migration's drift guard is EMITTED, not hand-added.
  *
- * `20261209000000_seed_template_library_v18_…sql` opens with an `@effect:`
- * probe — a lone SELECT stating what is true once the migration has run.
+ * The seed migration — whichever release `RELEASE_ID` currently names — opens
+ * with an `@effect:` probe — a lone SELECT stating what is true once the migration has run.
  * `scripts/ops/migration-drift.mjs` needs it because this migration **creates
  * no object**, so there is nothing for drift detection to count and it would
  * be reported as unverifiable. Its own comment records the cost of that:

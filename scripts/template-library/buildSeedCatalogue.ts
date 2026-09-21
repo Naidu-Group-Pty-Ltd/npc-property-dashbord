@@ -365,19 +365,86 @@ const REPO = resolve(__dirname, '../..');
  * The version is `20261209000000`. `20261209010000` re-copies the ACTIVE
  * masters from it, for the reason above.
  *
+ * ## v19 — two placeholder words in slots that name things
+ *
+ * Checked before editing, as the line below asked: `20261209000000` and
+ * `20261209010000` are both in the applied migration list (1,012 of them, the
+ * latest being `20261211000000`), so this change is a **v19**.
+ *
+ * Two literals on the 50 Investment Compass masters, and nothing else in the
+ * catalogue moves.
+ *
+ * **The risk register's rating read `Noted`.** The record holds a bare risk
+ * STRING from `investment_score.risks` and no severity at all, and the
+ * platform's exposure vocabulary is `Low | Moderate | High | Not assessed`
+ * (`riskRegister.pure.ts`). `Noted` was a fifth word in a four-word
+ * vocabulary, in the column that states the EXPOSURE, and it is absent from
+ * `RATING_PALETTE` too — which is why the chip display already drew it
+ * neutral. `severityFromRating` answers null for both, so neither draws a
+ * bar; what changes is that a reader is given the platform's own word for
+ * "nobody assessed this" instead of one it uses nowhere else.
+ * `confidence: 'Indicative'` is deliberately KEPT: it is in
+ * `CONFIDENCE_PALETTE`, and it is an honest qualifier for an unverified
+ * one-liner rather than a claim the record cannot support.
+ *
+ * **The Opportunities list's term read `Noted`.** Every sibling definition
+ * list on that page carries a real term naming what the row is about —
+ * `Location`, `Yield`, `Risk` — and the record gives an opportunity as one
+ * unlabelled string, so any term in that slot is invented. The heading
+ * already said "Opportunities", so the 160pt term column carried a word that
+ * repeated nothing and meant nothing. It is a `callout` now, which is the
+ * container the same page already uses for one unqualified statement ("No
+ * risk recorded"), and it is height-neutral: the definition list declared
+ * 30 + one ~45pt row against the callout's 72.
+ *
+ * A sweep of every literal `term:`, `rating:`, `confidence:`, `value:` and
+ * `status:` across all eleven format files found no other placeholder — the
+ * rest are real labels (`Location`, `Yield`, `Risk`, `Suburb`, `Value and
+ * equity`, `Cash contributed`). These two were the class.
+ *
+ * ## What the diff actually is, measured rather than claimed
+ *
+ * Parsed out of both files and compared schema by schema — 2,172 in each:
+ *
+ *   * **34 schemas changed**, and every one is an Investment Compass master.
+ *     The other ten formats' 493 masters are byte-identical, and the changed
+ *     lines are exactly 50 distinct family names plus the two header lines
+ *     (the `@effect` probe and the baseline's release id).
+ *   * `"rating":"Noted"` **50 → 0**, `"rating":"Not assessed"` **0 → 50**.
+ *   * `"type":"definition-list"` **−32**, `"type":"callout"` **+34**.
+ *
+ * That `+34` against `−32` is the part worth writing down, because the first
+ * draft of this comment claimed "no page gains or loses one" and that is
+ * **false**. Two masters — **Analyst Folio** and **Monograph** — gain a block
+ * (333→334 and 320→321) while keeping all seven of their definition lists.
+ *
+ * They never carried the Opportunities list. It is an OPTIONAL item, and
+ * `ifItFits` keeps one only while `y + height + SLACK <= contentBottom`. The
+ * definition list declared `30 + one ~45pt row` ≈ 75pt; the callout declares
+ * 72. On those two variants those three points are the difference, so a block
+ * they had been dropping silently now fits. That is `ifItFits` doing exactly
+ * its job — and it is a small improvement, not a regression: two more masters
+ * now show an opportunity the record holds instead of discarding it.
+ *
+ * `SLACK` is untouched at 36, so the comfort margin that stops an optional
+ * block printing over the one above it is unchanged.
+ *
+ * The version is `20261212000000`. `20261212010000` re-copies the ACTIVE
+ * masters from it, for the reason above.
+ *
  * Run the same one-query check before editing this file: if
- * `20261209000000` is already recorded, the next change needs a v19.
+ * `20261212000000` is already recorded, the next change needs a v20.
  */
 /**
  * The identifier this release records against a baseline and against a
  * refreshed master. It is the seed migration's own basename, so a row that
  * says it carries this release names the artefact that put it there.
  */
-const RELEASE_ID = '20261209000000_seed_template_library_v18_assessment_share_of_grade';
+const RELEASE_ID = '20261212000000_seed_template_library_v19_placeholder_words';
 
 const MIGRATION = resolve(
   REPO,
-  'supabase/migrations/20261209000000_seed_template_library_v18_assessment_share_of_grade.sql',
+  'supabase/migrations/20261212000000_seed_template_library_v19_placeholder_words.sql',
 );
 
 /** Postgres string literal, dollar-quoted so JSON never has to be escaped. */
