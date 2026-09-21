@@ -366,11 +366,25 @@ producer change.
 attributes a suburb zoning breakdown to **Landchecker** and a "5-minute drive
 from Bendigo CBD" to **Ray White Bendigo and Domain**; page 19 attributes flood
 behaviour to an **SES Local Flood Guide** and "excellent air quality" to
-unnamed "suburb-level environmental profiling". W1.6 closes crime and climate.
-The remaining surfaces — amenity, market positioning, transport — have no
-equivalent clause, and each would need the same one sentence beside its own
-register. This is the next thing to do and it is bounded: the rule exists and
-is imported, so each is a two-line change plus its spec.
+unnamed "suburb-level environmental profiling". W1.6 closes crime and climate,
+and then census, regional and macro — every prompt block that had no clause at
+all.
+
+**A correction to what that first pass claimed.** Market positioning was listed
+as lacking the clause and it does not: `marketFactBlocks` already carries it in
+both branches in its own voice, and `planningFactBlocks` states it as part of
+the sentence giving its rules precedence over the prompt. Both are deliberately
+left alone and a spec asserts it — rewriting a rule that works, to make it look
+like its neighbours, is a change with no reader behind it. What page 21 cites
+Landchecker and Ray White/Domain for is a suburb zoning breakdown and a drive
+time: **locality** claims, not market figures, which is why the market block's
+rule never reached them.
+
+**Amenity and transport are what remain**, and neither has a prompt-block
+module of its own — the amenity counts and the single recorded stop reach the
+prompt through the location enrichment rather than through a composed block
+with rules attached. That is the next thing to do, and it is a larger change
+than the five above: it needs a block, not a clause.
 
 ### W2 · Structure and placement
 
