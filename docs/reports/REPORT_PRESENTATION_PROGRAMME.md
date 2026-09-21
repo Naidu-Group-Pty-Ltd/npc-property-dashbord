@@ -298,11 +298,24 @@ growing rather than the type shrinking.
 
 ### Still open from the page-by-page read
 
-**Page 5 repeats page 3.** The *Risk Register* part divider carries the
-verdict headline and the graded line verbatim from the Executive Verdict two
-pages earlier, and nothing else: 558 characters on a page, stopping 600pt from
-the foot. It is a master page sequence, so closing it is a seed version plus an
-active-master refresh rather than a read-path rule — the same shape as v16–v18.
+**Page 5 — WITHDRAWN, it was already closed.** I read the delivered page as a
+live defect: the *Risk Register* divider carries the verdict headline and the
+graded line verbatim from the Executive Verdict two pages earlier and nothing
+else, 558 characters stopping 600pt from the foot. The master pairs a risk
+register with a `!(risks && risks[0] && risks[0].risk)` callout that renders
+the absence, and `evalConditional` used to REJECT an expression naming an
+unbound name — so on a record carrying no score object the author's positive
+and negated conditionals were both false and the fallback was dead. That was
+found and fixed on `main` on 19 Sep under a comment naming this exact page on
+three delivered reports; the 21 Sep document predates the deploy. Verified by
+executing the pair against `{}`, `{risks: []}`, `{risks: [{}]}` and a real
+risk: the callout draws on all three absences and the register draws on the
+one presence.
+
+This is §5's lesson paid again — **a document is evidence about the build that
+made it, not about the tree you are reading** — and it is why every other
+finding in this programme was traced to the line that produces it before
+anything was changed.
 
 **A growth heatmap printed `0` for Victoria's ten-year CAGR.** Absent is never
 zero, and the grid grammar has no null. The `0` is in the directive the model
