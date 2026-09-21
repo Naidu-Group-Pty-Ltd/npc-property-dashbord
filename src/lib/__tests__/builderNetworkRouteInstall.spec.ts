@@ -19,7 +19,7 @@ const REPO_ROOT = join(__dirname, '..', '..', '..');
 const read = (p: string) => readFileSync(join(REPO_ROOT, p), 'utf8');
 const stripSql = (body: string) => body.replace(/--[^\n]*/g, ' ');
 
-const MIGRATION = 'supabase/migrations/20261209000000_a_builder_route_installs_itself.sql';
+const MIGRATION = 'supabase/migrations/20261211000000_a_builder_route_installs_itself.sql';
 const sql = stripSql(read(MIGRATION));
 
 describe('a second builder installs itself over the first builder’s channel', () => {
