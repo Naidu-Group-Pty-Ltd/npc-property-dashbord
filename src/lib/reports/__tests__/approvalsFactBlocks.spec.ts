@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import {
   ABSENCE_SENTENCE,
   APPROVALS_RATING_PROHIBITION,
+  NO_PLUMBING_IN_THE_PROSE,
   APPROVALS_WEB_SEARCH_RULE,
   approvalsWebSearchRule,
   WINDOW_MONTHS,
@@ -198,14 +199,50 @@ describe('the block on an absence', () => {
 
   it('a register never loaded and an area with no row are different sentences', () => {
     expect(ABSENCE_SENTENCE.not_loaded).not.toBe(ABSENCE_SENTENCE.none_for_area);
-    expect(ABSENCE_SENTENCE.not_loaded).toContain('has not been loaded');
-    expect(ABSENCE_SENTENCE.none_for_area).toContain('was asked for this area');
+    expect(ABSENCE_SENTENCE.not_loaded).toContain('was not searched for this report');
+    expect(ABSENCE_SENTENCE.none_for_area).toContain('publishes no figure for it');
   });
 
   it('no absence sentence rates anything', () => {
     for (const sentence of Object.values(ABSENCE_SENTENCE)) {
       expect(sentence).not.toMatch(/\b(low|limited|minimal|negligible|strong|weak|favourable)\b/i);
     }
+  });
+
+  it('no absence sentence describes this platform to the reader', () => {
+    /*
+     * The first draft said "has not been loaded on this deployment" and
+     * "holds no row for it". A model told to state the absence states the one
+     * it was handed, so both would have reached a client's page as a note
+     * about our data loads and our database.
+     *
+     * This is W4.7's rule in the one place W4.7's test cannot look:
+     * `publisherNames.spec.ts` refuses an underscore-cased IDENTIFIER in a
+     * rendered field and cannot refuse a well-formed English sentence about a
+     * cache. So the sentences are checked here, by the words.
+     */
+    const PLUMBING = /\b(deployment|database|table|row|cache|data load|loaded|ingest|API|endpoint|integration|migration)\b/i;
+    for (const [kind, sentence] of Object.entries(ABSENCE_SENTENCE)) {
+      expect(sentence, `${kind} describes this platform's plumbing`).not.toMatch(PLUMBING);
+    }
+  });
+
+  it('uses the planning register\u2019s own two readings, and no third', () => {
+    // "Searched, nothing found." and "Not searched." are what the reader is
+    // already shown for planning layers; a second vocabulary for the same
+    // distinction is how two pages of one document come to disagree.
+    const leads = Object.values(ABSENCE_SENTENCE).map((x) => x.split('**')[1]);
+    expect([...new Set(leads)].sort()).toEqual(['Not searched.', 'Searched, nothing found.']);
+    // Only the register that WAS asked and answered nothing may say "searched".
+    expect(ABSENCE_SENTENCE.none_for_area).toContain('Searched, nothing found.');
+    for (const kind of ['not_loaded', 'unavailable', 'no_area_resolved'] as const) {
+      expect(ABSENCE_SENTENCE[kind]).toContain('Not searched.');
+    }
+  });
+
+  it('carries the no-plumbing rule on the absence branch, where the risk is', () => {
+    expect(approvalsFactBlocks(null)).toContain(NO_PLUMBING_IN_THE_PROSE);
+    expect(NO_PLUMBING_IN_THE_PROSE).toContain('no apology is offered for');
   });
 
   it('defaults to the not-loaded reading, which is every deployment today', () => {

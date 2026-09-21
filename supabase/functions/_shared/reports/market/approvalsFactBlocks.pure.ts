@@ -248,19 +248,53 @@ export const APPROVALS_RATING_PROHIBITION =
   + 'rent consequence from these counts — an approval count is a count, and a '
   + 'judgement about what it means for this property is not in the record.';
 
+/**
+ * The four absences, in the two sentences the planning register already uses.
+ *
+ * The first draft of these described THIS PLATFORM to the client: *"has not
+ * been loaded on this deployment"*, *"holds no row for it"*. A model told to
+ * state the absence states the one it was handed, so those would have reached
+ * a client's page as a note about our data loads and our database — which is
+ * W4.7's rule (database vocabulary never reaches the reader) committed in the
+ * one place W4.7's test cannot look, because it is prose rather than an
+ * identifier.
+ *
+ * So they are cast as `planningFacts`' own two readings. **Searched, nothing
+ * found** is a statement about this area within that register's coverage;
+ * **Not searched** is a statement about the retrieval, from which nothing
+ * about the area follows. The reader learns what was and was not asked, which
+ * is what they need, and learns nothing about how this product is deployed,
+ * which is none of their business and reads as an apology.
+ */
 export const ABSENCE_SENTENCE: Record<ApprovalsAbsence, string> = {
   not_loaded:
-    'The national building-approvals register has not been loaded on this deployment, '
-    + 'so no approved-supply figure was retrieved for this area.',
+    '**Not searched.** The national building-approvals register was not searched for '
+    + 'this report, so nothing about approved supply in this area follows from it.',
   none_for_area:
-    'The national building-approvals register was asked for this area and holds no row for it.',
+    '**Searched, nothing found.** The national building-approvals register was searched '
+    + 'for this area and publishes no figure for it.',
   unavailable:
-    'The national building-approvals register could not be read for this report. '
-    + 'That is a fact about this retrieval, not about the area.',
+    '**Not searched.** The national building-approvals register could not be reached for '
+    + 'this report. That is a fact about this retrieval, not about the area.',
   no_area_resolved:
-    'No council area or statistical area was resolved for this property, so the '
-    + 'building-approvals register could not be asked.',
+    '**Not searched.** No council area or statistical area was resolved for this property, '
+    + 'so no question could be put to the building-approvals register.',
 };
+
+/**
+ * The rule W4.7 could not reach.
+ *
+ * `publisherNames.spec.ts` refuses an underscore-cased IDENTIFIER in a
+ * rendered field. It cannot refuse a well-formed English sentence about a
+ * deployment, a database, a data load or a cache — and a report that
+ * explains its own plumbing to a customer reads as an apology for a product
+ * rather than as a finding about a property.
+ */
+export const NO_PLUMBING_IN_THE_PROSE =
+  'State this as what was and was not searched. Do NOT describe this platform’s own '
+  + 'systems to the reader — no deployment, database, table, row, cache, data load, '
+  + 'integration or API is ever mentioned in the report, and no apology is offered for '
+  + 'one. The reader is told which register was asked and what it said.';
 
 const n = (value: number | null): string =>
   value === null ? '—' : value.toLocaleString('en-AU');
@@ -295,8 +329,9 @@ export function approvalsFactBlocks(
       'RULES FOR THIS REPORT — approved supply:',
       '1. State the absence if the subject arises. Do not state, imply or estimate '
       + 'a number of approvals, dwellings, lots or projects for this area.',
-      `2. ${APPROVALS_RATING_PROHIBITION}`,
-      `3. ${approvalsWebSearchRule(false)}`,
+      `2. ${NO_PLUMBING_IN_THE_PROSE}`,
+      `3. ${APPROVALS_RATING_PROHIBITION}`,
+      `4. ${approvalsWebSearchRule(false)}`,
     ].join('\n');
   }
 
