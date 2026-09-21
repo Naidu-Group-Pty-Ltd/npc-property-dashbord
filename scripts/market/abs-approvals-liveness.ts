@@ -42,6 +42,12 @@ import {
   type ApprovalsAreaKind,
   type DataflowEntry,
 } from '../../supabase/functions/_shared/reports/market/openData/absBuildingApprovals.pure.ts';
+import {
+  absDataStructureUrl,
+  composeApprovalsKey,
+  narrowedApprovalsUrl,
+  parseDataStructure,
+} from '../../supabase/functions/_shared/reports/market/openData/absDataStructure.pure.ts';
 
 const UA = 'npc-property-dashboard/1.0 (+https://github.com/Naidu-Group-Pty-Ltd)';
 /** Three years: past the parser's 24-month floor with room to spare. */
@@ -340,25 +346,24 @@ async function main(): Promise<void> {
   }
 
   /*
-   * 4c · What the cube actually contains.
+   * 4c · Narrowing the query, which is the lever the window is not.
    *
-   * The parser keeps Original estimates of three residential building types
-   * on two measures and discards everything else — and we are downloading the
-   * whole cube to do it, which is why one month of LGA data is 61.8 MB and
-   * three years of SA2 is past 5 GB. Narrowing at the SOURCE is the lever the
-   * window is not.
+   * The parse keeps Original estimates of three residential building types on
+   * two measures and discards the rest of the cube — and we are downloading
+   * the whole cube to do it, which is why ONE month of LGA data is 61.8 MB
+   * and three years of SA2 is past 5 GB. Shrinking a period cannot shrink a
+   * cube that is wide rather than long.
    *
-   * An SDMX key is POSITIONAL, so composing one needs the publisher's own
-   * dimension order; typing it from memory is the mistyped-Airtable-column
-   * failure with a 200 in front of it. This reads the data structure and
-   * reports the order and the size of each codelist, which is what a narrowed
-   * key has to be built from.
+   * So this composes the key from the publisher's own data structure, using
+   * `composeApprovalsKey` — the production module, not a copy — and measures
+   * the narrowed download against the same window that could not be carried.
+   * That comparison is the whole design question.
    */
-  h('4c · The data structure, and what a narrowed key would need');
-  const dsdUrl = `https://data.api.abs.gov.au/rest/dataflow/ABS/${choice.flow.id}/${choice.flow.version}`
-    + '?references=all&detail=referencepartial';
-  kv('url', dsdUrl);
+  h('4c · The query, narrowed at the source');
+  let narrowedKey = 'all';
   try {
+    const dsdUrl = absDataStructureUrl(choice.flow);
+    kv('url', dsdUrl);
     const res = await fetch(dsdUrl, {
       headers: { 'User-Agent': UA, Accept: 'application/vnd.sdmx.structure+json;version=1.0,application/xml,*/*' },
       signal: AbortSignal.timeout(90_000),
@@ -366,22 +371,66 @@ async function main(): Promise<void> {
     kv('status', res.status);
     const text = await res.text();
     kv('bytes', text.length.toLocaleString('en-AU'));
-    // Reported as evidence, never parsed into a rule here: this script
-    // measures, and the rule belongs in the pure module with its own tests.
-    const dims = [...text.matchAll(/"id"\s*:\s*"([A-Z0-9_]+)"[^}]*?"type"\s*:\s*"Dimension"/g)].map((m) => m[1]);
-    const xmlDims = [...text.matchAll(/<str:Dimension[^>]*id="([A-Z0-9_]+)"[^>]*position="(\d+)"/g)]
-      .sort((a, b) => Number(a[2]) - Number(b[2])).map((m) => `${m[2]}:${m[1]}`);
-    kv('dimensions (JSON order)', dims.length ? dims.join(' · ') : '(none read)');
-    kv('dimensions (XML position)', xmlDims.length ? xmlDims.join(' · ') : '(none read)');
-    for (const want of ['TYPE_BUILD', 'BUILDING_TYPE', 'MEASURE', 'TSEST', 'SERIES_TYPE', 'FREQ', 'REGION']) {
-      const codes = [...text.matchAll(new RegExp(`"${want}[^"]*"[\\s\\S]{0,200}?"codes"`, 'g'))].length;
-      if (text.includes(`"${want}"`) || text.includes(`id="${want}"`)) kv(`  names ${want}`, codes ? `yes (${codes} codelist mentions)` : 'yes');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const structure = parseDataStructure(text);
+    kv('dimensions', structure.dimensions
+      .slice().sort((a, b) => a.position - b.position)
+      .map((d) => `${d.position}:${d.id}${d.isTime ? '(time)' : `[${d.codes.length}]`}`).join(' · '));
+    const composed = composeApprovalsKey(structure);
+    narrowedKey = composed.key;
+    kv('key', composed.key);
+    for (const n of composed.narrowed) {
+      kv(`  narrowed ${n.dimension}`, `${n.kept.length} of ${n.of} — ${n.why}`);
+    }
+    for (const u of composed.unnarrowed) kv(`  OPEN ${u.dimension}`, u.reason);
+    if (composed.key === 'all') {
+      kv('the narrowing', 'nothing narrowed — this is byte-for-byte the request that shipped');
     }
   } catch (error) {
+    // Reported, never failed on: a narrowing is an optimisation and the
+    // fallback is `/all`, which is what shipped.
     kv('the structure', error instanceof Error ? error.message : String(error));
-    console.log('  Reported, not failed on: the key-narrowing design needs this and the');
-    console.log('  rest of the check does not.');
+    kv('the narrowing', 'none — falling back to /all, exactly as the loader does');
   }
+
+  h('4d · What the narrowed query costs');
+  if (narrowedKey === 'all') {
+    kv('skipped', 'nothing to compare — the key composed to `all`');
+  } else {
+    for (const [label, flow] of [['SA2', choice.flow], ['LGA', currentAt('lga')]] as const) {
+      if (!flow) continue;
+      const m = await measure(narrowedApprovalsUrl(flow, START_PERIOD, narrowedKey));
+      const rate = m.ms > 0 ? m.bytes / (m.ms / 1000) : 0;
+      console.log(
+        `  ${`${label}, ${START_PERIOD}→, narrowed`.padEnd(28)} ${String(m.status ?? 'ERR').padStart(3)}  `
+        + `${(m.bytes / 1_048_576).toFixed(1).padStart(7)} MB  `
+        + `${(m.ms / 1000).toFixed(1).padStart(6)} s  `
+        + `${(rate / 1024).toFixed(0).padStart(6)} KB/s  `
+        + `${m.finished ? 'complete' : 'DID NOT FINISH'}${m.error ? ` (${m.error})` : ''}`,
+      );
+      if (m.finished && m.ms < EDGE_BUDGET_MS && flow === choice.flow) {
+        // The finest grain, carried. This is the answer the design needed.
+        carried = {
+          label: `${label}, narrowed, from ${START_PERIOD}`,
+          flow,
+          grain: choice.areaKind,
+          start: START_PERIOD,
+          url: narrowedApprovalsUrl(flow, START_PERIOD, narrowedKey),
+          bytes: m.bytes,
+        };
+      } else if (m.finished && m.ms < EDGE_BUDGET_MS && !carried) {
+        carried = {
+          label: `${label}, narrowed, from ${START_PERIOD}`,
+          flow,
+          grain: 'lga',
+          start: START_PERIOD,
+          url: narrowedApprovalsUrl(flow, START_PERIOD, narrowedKey),
+          bytes: m.bytes,
+        };
+      }
+    }
+  }
+
 
   h('5 · What an invocation can actually carry');
   if (!carried) {

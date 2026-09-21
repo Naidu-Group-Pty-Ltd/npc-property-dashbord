@@ -285,6 +285,45 @@ describe('a region download is a HIERARCHY, and the grain is the row’s own', (
   });
 });
 
+describe('a count of BUILDINGS is not a count of dwellings', () => {
+  /*
+   * The ABS measure dimension publishes three things, not two: `Number of
+   * dwelling units`, `Value of building approved` and `Number of buildings`.
+   * A block of forty flats is one building and forty dwellings.
+   *
+   * The row key is `(area, period, building type)`, so a building count that
+   * the measure rule admitted did not merely leak in — it OVERWROTE the
+   * dwelling count for the same month whenever it was read second. This
+   * fixture publishes the third measure the way the cube does, which is what
+   * the original fixture did not.
+   */
+  const withBuildingCounts = () => {
+    const lines = download().split('\n');
+    const extra: string[] = [];
+    for (const line of lines.slice(1)) {
+      if (!line.includes('Number of dwelling units')) continue;
+      extra.push(line
+        .replace('BA,1,Number of dwelling units', 'BA,3,Number of buildings')
+        .replace(/,(\d+),0$/, ',1,0'));
+    }
+    return [...lines, ...extra].join('\n');
+  };
+
+  it('never writes a building count into dwelling_units', () => {
+    const parsed = parseAbsBuildingApprovals(withBuildingCounts(), 'lga');
+    const albury = parsed.rows.find((r) => r.areaCode === '10050' && r.period === '2024-01' && r.buildingType === 'house');
+    // 10 dwellings, not the 1 building they sit in.
+    expect(albury?.dwellingUnits).toBe(10);
+  });
+
+  it('counts the unrecognised measure as skipped rather than absorbing it', () => {
+    const clean = parseAbsBuildingApprovals(download(), 'lga');
+    const withCounts = parseAbsBuildingApprovals(withBuildingCounts(), 'lga');
+    expect(withCounts.rows.length).toBe(clean.rows.length);
+    expect(withCounts.skipped).toBeGreaterThan(clean.skipped);
+  });
+});
+
 describe('the columns are read off the header, never assumed', () => {
   it('resolves one region pair, the measure, the type and the series', () => {
     const cols = resolveColumns(HEADER.split(','));

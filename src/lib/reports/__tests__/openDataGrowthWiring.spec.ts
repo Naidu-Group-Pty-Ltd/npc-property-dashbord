@@ -151,12 +151,37 @@ describe('the loader and its declarations', () => {
       return i;
     };
     expect(at('resolveBuildingApprovalsFlow(')).toBeGreaterThan(at('ABS_BA_DATAFLOW_CATALOGUE_URL'));
-    expect(at('absBuildingApprovalsUrl(')).toBeGreaterThan(at('resolveBuildingApprovalsFlow('));
-    expect(at('parseAbsBuildingApprovals(')).toBeGreaterThan(at('absBuildingApprovalsUrl('));
+    // The structure is read between the flow and the query, because the key
+    // is composed from it. Both URL builders are present — `all` is the
+    // fallback when the structure cannot be read — so the ordering is
+    // asserted against the COMPOSITION rather than against either builder.
+    expect(at('absDataStructureUrl(')).toBeGreaterThan(at('resolveBuildingApprovalsFlow('));
+    expect(at('composeApprovalsKey(')).toBeGreaterThan(at('absDataStructureUrl('));
+    expect(at('narrowedApprovalsUrl(')).toBeGreaterThan(at('composeApprovalsKey('));
+    expect(at('absBuildingApprovalsUrl(')).toBeGreaterThan(at('composeApprovalsKey('));
+    expect(at('parseAbsBuildingApprovals(')).toBeGreaterThan(at('narrowedApprovalsUrl('));
     expect(at('upsertApprovals(')).toBeGreaterThan(at('parseAbsBuildingApprovals('));
     // No dataflow identifier is spelled in the loader: it comes from the
     // catalogue or from an operator override checked against the catalogue.
     expect(LOADER).not.toMatch(/'ABS,[A-Z0-9_]+,\d/);
+    // Nor is a KEY spelled here. A positional key typed from memory returns a
+    // plausible, wrong slice under an HTTP 200, which is the mistyped-column
+    // failure with a success code in front of it.
+    expect(STAGE).not.toMatch(/['"`][A-Z0-9_+]*\.[A-Z0-9_+]*\.[A-Z0-9_+]*['"`]/);
+  });
+
+  it('a structure it cannot read costs the approvals stage nothing', () => {
+    const from = LOADER.indexOf("if (stage === 'approvals') {");
+    const STAGE = LOADER.slice(from, LOADER.indexOf("if (stage === 'vic') {", from));
+    // The narrowing is an optimisation, never a dependency: the fallback is
+    // the `/all` request that shipped, so this can only improve a load or
+    // leave it alone. A refusal here would take the register down to save
+    // bytes, which is the wrong trade in both directions.
+    expect(STAGE).toMatch(/catch \(error\) \{[\s\S]*?key: 'all'/);
+    expect(STAGE).toContain("keyNarrowing.key === 'all'");
+    // And what could not be narrowed is recorded, because an unnarrowed
+    // dimension is a silently bigger download.
+    expect(STAGE).toContain('key_unnarrowed');
   });
 
   it('the register keeps a suppressed median as null and keys a quarter by its end month', () => {

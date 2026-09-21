@@ -557,15 +557,40 @@ export interface ApprovalRow {
   value: number | null;
 }
 
-const BUILDING_TYPE_PATTERNS: ReadonlyArray<[ApprovalsBuildingType, RegExp]> = [
+/*
+ * The label rules. Exported because `absDataStructure.pure.ts` composes the
+ * QUERY from the same rules the parse reads the ANSWER with — asking for the
+ * codes we keep and keeping the codes we asked for cannot drift when they are
+ * one declaration. Two copies of "which building types are residential" is
+ * how a narrowed download comes back missing a row the parser still expects.
+ */
+export const BUILDING_TYPE_PATTERNS: ReadonlyArray<[ApprovalsBuildingType, RegExp]> = [
   ['total_residential', /^total (residential|dwellings?)\b|^dwellings?,? total\b|^total$/i],
   ['house', /^houses?\b/i],
   ['other_residential', /other residential|non-?house/i],
 ];
 
-const UNITS_MEASURE = /number of dwelling units|dwelling units|^number\b/i;
-const VALUE_MEASURE = /value of (building|work)/i;
-const ORIGINAL_SERIES = /^orig/i;
+/**
+ * Dwelling units approved, and never a count of BUILDINGS.
+ *
+ * This read `^number\b` until 21 Sep 2026, and the ABS building-approvals
+ * cube publishes `Number of dwelling units`, `Value of building approved`
+ * AND `Number of buildings` on one measure dimension. A block of forty flats
+ * is one building and forty dwellings, so the two differ by an order of
+ * magnitude — and because the row key is `(area, period, building type)`,
+ * a building count did not merely leak in, it OVERWROTE the dwelling count
+ * for the same month whenever it was read second.
+ *
+ * Nothing caught it because the fixture published two measures and the cube
+ * publishes three: the defect was invisible until the query had to enumerate
+ * what the publisher actually offers. A bare `Number` still matches, for a
+ * flow whose measure dimension carries only one.
+ */
+export const UNITS_MEASURE = /number of dwelling units|^dwelling units\b|^number$/i;
+export const VALUE_MEASURE = /value of (building|work)/i;
+export const ORIGINAL_SERIES = /^orig/i;
+/** Monthly. The parse discards every other period anyway (`monthPeriod`). */
+export const MONTHLY_FREQ = /^month/i;
 
 /** State from the ABS's own one-digit region code, where the flow carries it. */
 export const ABS_BA_STATE_OF_CODE: Readonly<Record<string, SalesRegisterState>> = {

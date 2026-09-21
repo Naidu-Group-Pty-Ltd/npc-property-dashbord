@@ -44,6 +44,13 @@ import {
   type ApprovalRow,
 } from '../_shared/reports/market/openData/absBuildingApprovals.pure.ts';
 import {
+  absDataStructureUrl,
+  composeApprovalsKey,
+  narrowedApprovalsUrl,
+  parseDataStructure,
+  type ComposedKey,
+} from '../_shared/reports/market/openData/absDataStructure.pure.ts';
+import {
   VIC_QUARTERLY_FILE,
   VIC_TIME_SERIES_FILE,
   VIC_VPSR_ARCHIVE_PATTERN,
@@ -510,7 +517,48 @@ Deno.serve(async (req) => {
         typeof body.dataflow === 'string' ? body.dataflow : null,
       );
       const startPeriod = typeof body.startPeriod === 'string' ? body.startPeriod : '2018-01';
-      const url = absBuildingApprovalsUrl(choice.flow, startPeriod);
+
+      /*
+       * The query is NARROWED at the source, from the publisher's own data
+       * structure. Measured from CI on 21 Sep 2026: `/all` at SA2 grain is
+       * past 5 GB and still running after sixty seconds, and ONE month of LGA
+       * data is 61.8 MB — because the download is the whole cube (every
+       * building type including hotels, factories and offices, every measure,
+       * all three series estimates) of which this loader keeps Original
+       * estimates of three residential types on two measures.
+       *
+       * Shrinking the period cannot shrink a cube that is wide rather than
+       * long, so the lever is the key. It is composed from the structure the
+       * ABS publishes rather than typed, for the reason the dataflow is
+       * discovered rather than named: an SDMX key is POSITIONAL, and one
+       * written against the wrong positions returns a plausible, wrong slice
+       * under an HTTP 200.
+       *
+       * A structure that cannot be read costs nothing — the fallback is
+       * `/all`, which is what shipped, so this can only improve a load or
+       * leave it alone.
+       */
+      let keyNarrowing: ComposedKey = { key: 'all', narrowed: [], unnarrowed: [] };
+      try {
+        const dsdRes = await fetch(absDataStructureUrl(choice.flow), {
+          headers: { 'User-Agent': UA, Accept: 'application/vnd.sdmx.structure+json;version=1.0,application/xml,*/*' },
+        });
+        if (!dsdRes.ok) throw new Error(`answered ${dsdRes.status}`);
+        keyNarrowing = composeApprovalsKey(parseDataStructure(await dsdRes.text()));
+      } catch (error) {
+        keyNarrowing = {
+          key: 'all',
+          narrowed: [],
+          unnarrowed: [{
+            dimension: '(the whole structure)',
+            reason: error instanceof Error ? error.message : String(error),
+          }],
+        };
+      }
+      const url = keyNarrowing.key === 'all'
+        ? absBuildingApprovalsUrl(choice.flow, startPeriod)
+        : narrowedApprovalsUrl(choice.flow, startPeriod, keyNarrowing.key);
+      console.log(`[market-sales-ingest] approvals: ${dataflowRef(choice.flow)} key=${keyNarrowing.key}`);
 
       const res = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'text/csv,*/*' } });
       if (!res.ok) throw new Error(`${url} answered ${res.status}`);
@@ -535,6 +583,12 @@ Deno.serve(async (req) => {
         candidates: choice.candidates,
         area_kind: choice.areaKind,
         geography_score: choice.geographyScore,
+        // How much of the cube was asked for, and what could not be narrowed.
+        // An unnarrowed dimension is a silently BIGGER download, so it is
+        // reported rather than left to be inferred from the byte count.
+        key: keyNarrowing.key,
+        key_narrowed: keyNarrowing.narrowed,
+        key_unnarrowed: keyNarrowing.unnarrowed,
         // What the download itself turned out to be.
         columns: parsed.columns,
         series_type_unfiltered: parsed.seriesTypeUnfiltered,
