@@ -286,7 +286,7 @@ async function main(): Promise<void> {
    * is not the same as settling it, so this names the reading and step 6's
    * period range settles which.
    */
-  h('5a · Does the window narrow the download?');
+  h('4a · Does the window narrow the download?');
   const byFlow = new Map<string, typeof seen>();
   for (const r of seen) byFlow.set(r.flow, [...(byFlow.get(r.flow) ?? []), r]);
   for (const [flow, rs] of byFlow) {
@@ -317,7 +317,7 @@ async function main(): Promise<void> {
    * download at all — which decides whether the window is a lever or the key
    * is the only one.
    */
-  h('4b · Where the history is, and whether a window narrows it');
+  h('4b · Where the history is');
   const priorEditionOf = (kind: ApprovalsAreaKind): DataflowEntry | null => {
     const current = currentAt(kind);
     const refs = surveyConstructionFlows(catalogue)

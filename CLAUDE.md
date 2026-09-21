@@ -2100,6 +2100,37 @@ the merge**, so Domain's suburb series outranks the register the day its
 package is attached, with no code change. And **a suppressed median is
 null, never zero** — DCJ prints `-` where thirty or fewer sold.
 
+**Supply had no register, and three prompts asked for it by name.** Read
+[`SUPPLY_EVIDENCE.md`](./docs/reports/SUPPLY_EVIDENCE.md) before touching
+`_shared/reports/market/openData/absBuildingApprovals.pure.ts`,
+`absDataStructure.pure.ts`, `approvalsFactBlocks.pure.ts`,
+`approvalsRegisterRead.ts`, the `approvals` stage in `market-sales-ingest` or
+`scripts/market/abs-approvals-liveness.ts`. The statewide report carried
+`**Supply Pipeline Risk:** [New housing supply vs demand balance]` — a
+bracketed slot with no register behind it, which is the shape that put
+`450 m²` and `8.5 m` into a Queensland document under NSW instrument names.
+ABS Building Approvals is the one free, keyless, national, sub-state, monthly
+measure of approved supply. **Nothing about it is guessed**: the dataflow
+comes from the ABS's own catalogue, the edition from the catalogue's names,
+and the query KEY from the flow's own data structure — an SDMX key is
+POSITIONAL, so one typed against the wrong positions returns a plausible,
+wrong slice under an HTTP 200. Four rules bite. **An approval is not a
+completion.** **A region download is a HIERARCHY, so the grain is the ROW's**
+— *"by SA2 and above"* means what it says, and a ceiling written for a council
+area refused the Bureau's own download over `Australia 2026-07 reads
+$22,314,955,000`; worse than the refusal, stamping every row with the
+REQUESTED grain files the national total as a council area, which the read
+path would then serve as one suburb's supply. **A total summed from part of a
+register is a FLOOR** and a year-on-year change is computed only between two
+COMPLETE windows. And **the four absences are four different sentences** —
+`not_loaded` is about this deployment, `none_for_area` about the area,
+`unavailable` about us, `no_area_resolved` about the subject. The check that
+found all of it (`abs-register-liveness`) runs on every build, writes nothing
+anywhere, and **exits 0 when the ABS is unreachable and 1 when the ABS
+answered and this reader refused** — its first version printed "THE ABS DID
+NOT ANSWER" and exited 0 over an HTTP 200, which is a size problem on our
+side reported as an outage on theirs.
+
 **Every state has a reading now, and two of them come through the
 archive** (§10 of the same doc). Victoria's suburb series and South
 Australia's quarterly suburb workbooks are walled at their publishers and
