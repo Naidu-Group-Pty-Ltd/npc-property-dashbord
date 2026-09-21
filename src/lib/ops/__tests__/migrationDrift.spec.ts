@@ -211,3 +211,56 @@ describe('the gate reports on itself', () => {
     expect(wf).toMatch(/status=\$status/);
   });
 });
+
+/*
+ * The two artefacts that survived comment-stripping, because they are code.
+ * Both verbatim from the migrations the 21 Sep 2026 run named.
+ */
+describe('a name that is not in the file verifies nothing', () => {
+  const load = async () => {
+    const mod = await import('../../../../scripts/ops/migration-drift.mjs');
+    const { objectsCreatedIn } = await import('../../../../scripts/build-migration-object-index.mjs');
+    return (sql: string) => objectsCreatedIn(mod.withoutUnnameableCreates(mod.sqlWithoutComments(sql)));
+  };
+
+  it('reads no object from an UNNAMED index', async () => {
+    const objects = await load().then((f) => f(
+      'CREATE INDEX ON aml.step_up_challenges(user_id, capability, created_at DESC);\n'
+      + 'CREATE UNIQUE INDEX ON aml.step_up_sessions(user_id);\n'
+      + 'CREATE INDEX idx_real ON aml.t(c);',
+    ));
+    // Postgres generates the name; there is no object called `on`.
+    expect(objects).toEqual(['index:idx_real']);
+  });
+
+  it('reads no object from a name built by format()', async () => {
+    const objects = await load().then((f) => f(
+      "EXECUTE format('CREATE TRIGGER trg_touch_%1$s BEFORE UPDATE ON aml.%1$s FOR EACH ROW EXECUTE FUNCTION aml.touch_updated_at();', t);\n"
+      + 'CREATE TRIGGER aml_rd_updated BEFORE UPDATE ON aml.t FOR EACH ROW EXECUTE FUNCTION f();',
+    ));
+    // `trg_touch_` is a fragment; the four real triggers are not in the file.
+    expect(objects).toEqual(['trigger:aml_rd_updated']);
+  });
+
+  it('is a no-op on ordinary SQL, so nothing real is lost', async () => {
+    const f = await load();
+    const ordinary = 'CREATE TABLE public.a (id int);\nCREATE OR REPLACE FUNCTION public.b() RETURNS void AS $$ $$ LANGUAGE sql;\nCREATE MATERIALIZED VIEW public.c AS select 1;';
+    // `view:`, not `materialized_view:` — the shared extractor's optional
+    // `materialized` prefix is consumed before the class is read. Pre-existing
+    // and untouched here; asserted as it IS rather than as it reads.
+    expect(f(ordinary)).toEqual(['function:public.b', 'table:public.a', 'view:public.c']);
+  });
+
+  /*
+   * `(?:[A-Za-z0-9_$]+)*%` backtracks catastrophically on every name that is
+   * NOT interpolated, which is nearly all of them; the first version hung the
+   * reader past two minutes over the real migration set.
+   */
+  it('does not backtrack on a long ordinary identifier', async () => {
+    const f = await load();
+    const sql = `CREATE TABLE public.${'a'.repeat(200)} (id int);`;
+    const started = Date.now();
+    expect(f(sql)).toHaveLength(1);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+});

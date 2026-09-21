@@ -58,6 +58,47 @@ export function sqlWithoutComments(src) {
 }
 
 /**
+ * The SQL with the CREATEs whose object cannot be NAMED from the source.
+ *
+ * Two shapes, both in code rather than prose, so comment-stripping does not
+ * reach them, and both measured on the prime 21 Sep 2026:
+ *
+ *   CREATE INDEX ON aml.step_up_challenges(user_id, capability, created_at DESC);
+ *
+ * is an UNNAMED index — Postgres generates the name, and there is no object
+ * called `on`. The extractor reads the keyword as the name.
+ *
+ *   EXECUTE format('CREATE TRIGGER trg_touch_%1$s BEFORE UPDATE ON aml.%1$s …', t);
+ *
+ * builds the name by interpolation, so the capture stops at the `%` and
+ * yields the fragment `trg_touch_`. The real triggers are
+ * `trg_touch_documents` and three siblings, and the file creates all four.
+ *
+ * In both cases the object is real and its name is not in the file, so it can
+ * verify nothing — and judging a migration by a name that cannot exist reads
+ * a migration that RAN as one that never did. Neither statement is deleted:
+ * only the `create` keyword is broken, so the rest of the file still yields
+ * every object it does name.
+ */
+export function withoutUnnameableCreates(sql) {
+  return String(sql ?? '')
+    // An index with no name of its own.
+    .replace(/\bcreate(\s+unique)?\s+index\s+(?=on\b)/gi, 'created$1_index_')
+    // A name assembled by `format()`: the identifier runs into a placeholder.
+    .replace(
+      /*
+       * The lookahead walks CHARACTERS, never a starred group of `+` runs:
+       * `(?:[A-Za-z0-9_$]+)*%` backtracks catastrophically on every name this
+       * file does not interpolate, which is nearly all of them — it hung the
+       * reader past two minutes on the first run. It is also bounded, because
+       * an identifier is not 200 characters long.
+       */
+      /\bcreate(\s+or\s+replace)?(\s+unique)?(\s+materialized)?\s+(table|view|function|index|trigger|sequence|type|schema)\s+(?=[A-Za-z0-9_$."]{0,200}%)/gi,
+      'created$1$2$3_$4_',
+    );
+}
+
+/**
  * An object this migration creates that could still be absent afterwards.
  *
  * `pg_temp` is the only exclusion and it is not a heuristic: a function in the
@@ -78,7 +119,7 @@ export function readRepoMigrations(dir = MIGRATIONS_DIR) {
       return {
         version: file.slice(0, 14),
         file,
-        objects: objectsCreatedIn(sqlWithoutComments(src)).filter(isDurable),
+        objects: objectsCreatedIn(withoutUnnameableCreates(sqlWithoutComments(src))).filter(isDurable),
         // A probe that is not a lone SELECT is refused here rather than sent to
         // the database, and the file is then judged on its objects alone.
         probe: probe && probeIsReadOnly(probe) ? probe : null,
