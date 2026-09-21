@@ -639,6 +639,37 @@ something else is a design question rather than a defect — and §9's rule
 applies: a fill floor invented for a page that is correctly sparse is a rule
 with no reader behind it.
 
+### W4.11 · An absence may not be rated — on a COLOUR either — **done**
+
+The rule `PLANNING_CONTROLS_IN_THE_REPORT.md` §9 closed as a statement, and
+`withholdRatedAbsenceCharts` closed for a chart, committed a third time in the
+one place neither could look: the colour of a word.
+
+`severityFromRating` returns `null` for a rating it does not recognise —
+deliberately, under its own comment, *"so the bar is omitted rather than drawn
+at a length that states a severity nobody assessed."* The colour derived from
+that severity is used **twice**: for the bar, and for the rating WORD's own
+text colour in the row's third cell. `severityColour(null, …)` returned
+**`caution`**.
+
+So the bar was correctly withheld and the word was printed in the caution
+colour anyway — **`NOT ASSESSED` set in the same amber as `MODERATE`**, and
+`Noted`, which is what the Compass master passes, in the same amber again. One
+function guarded the absence and the next one below it undid the guard.
+
+Two things make it certain rather than arguable. **The chip display already had
+it right** — `ratingChipHtml` falls back to `Neutral` for an unknown rating —
+so the two displays of one register disagreed, which is this programme's
+recurring tell. And the fix needs no new colour: `mutedColor` was already
+resolved eight lines above and simply not passed.
+
+It is a renderer change, so it reaches every stored report on its next render
+and needs no seed. The spec renders the bars display at each of
+`RISK_EXPOSURE_LEVELS` and asserts `Not assessed` is the only level that scores
+nothing, that it prints muted, that it still prints the WORD (an absence is a
+reading), and that every other level keeps its bar. Its colours are the real
+`resolveReportPalette({})` rather than four literals.
+
 ### W4.10 · The field accent was judged at the wrong size — **done**
 
 **And the `#D5A220` residual was wrong in the opposite direction.** It was
