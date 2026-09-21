@@ -406,7 +406,26 @@ Deno.serve(async (req) => {
       const index = await archiveIndex(VIC_VPSR_ARCHIVE_PATTERN, from);
       const files = rankedFiles(index, VIC_QUARTERLY_FILE,
         (m) => (dwellingOfQuarterlyName(m[0]) === wantDwelling ? Number(m[3]) * 4 + Number(m[2]) : null));
-      const choice = chooseNextVicVolumeFile(files, countedPeriods, floor);
+      /*
+       * `skip` steps over a quarter the parser refuses, and `period` names one
+       * outright. Both exist because selection is "newest uncounted" and a
+       * refusal leaves the quarter uncounted — so without them one unparseable
+       * workbook stalls the whole backfill for ever, re-reading the same file
+       * on every call. Measured: q3-2025 refused with "no row of quarter
+       * labels (layout drift)" on the first live load.
+       */
+      const skip = Array.isArray(body.skip) ? (body.skip as unknown[]).map(String) : [];
+      const only = body.period ? String(body.period) : null;
+      const choice = chooseNextVicVolumeFile(
+        files,
+        [...countedPeriods, ...skip, ...(only ? [] : [])],
+        floor,
+      );
+      const targeted = only
+        ? choice.remaining.find((c) => c.period === only)
+          ?? chooseNextVicVolumeFile(files, [], floor).remaining.find((c) => c.period === only)
+          ?? null
+        : choice.next;
       const shortfall = quartersStillNeeded(countedPeriods);
 
       const base = {
@@ -415,29 +434,51 @@ Deno.serve(async (req) => {
         quarters_still_needed_for_demand: shortfall,
         archived_quarters: files.length,
         remaining: choice.remaining.map((c) => c.period),
-        next: choice.next?.period ?? null,
+        next: targeted?.period ?? null,
+        skipped: skip,
       };
 
-      if (!apply || !choice.next) {
+      if (!apply || !targeted) {
         return json({ success: true, ...base, wrote: false });
       }
 
-      const file = files.find((f) => f.original === choice.next!.original);
-      if (!file) throw new Error(`the chosen quarter ${choice.next.period} is not in the archive listing — refused`);
+      const file = files.find((f) => f.original === targeted.original);
+      if (!file) throw new Error(`the chosen quarter ${targeted.period} is not in the archive listing — refused`);
       // Every capture of that file, newest first: the index can list a capture
       // the store answers 404 for, which is why `rankedFiles` keeps them all.
-      let loaded: { capturedAt: string; bytes: number; grid: unknown[][] } | null = null;
+      let loaded: { capturedAt: string; bytes: number; grid: unknown[][]; sheets: string[] } | null = null;
       let lastError = '';
       for (const capture of file.captures.slice(0, 4)) {
         try {
           const { workbook, bytes } = await fetchWorkbook(originalBytesUrl(capture));
-          loaded = { capturedAt: capturedAtIso(capture.timestamp), bytes, grid: firstGrid(workbook) as unknown[][] };
+          loaded = {
+            capturedAt: capturedAtIso(capture.timestamp), bytes,
+            grid: firstGrid(workbook) as unknown[][],
+            sheets: (workbook.SheetNames ?? []) as string[],
+          };
           break;
         } catch (error) {
           lastError = error instanceof Error ? error.message : String(error);
         }
       }
       if (!loaded) throw new Error(`no capture of ${fileNameOf(file.original)} could be read — ${lastError}`);
+
+      /*
+       * `inspect` describes what arrived and parses nothing. The first live
+       * load refused on layout drift, and "which sheet is first, and what is
+       * in its opening rows" is not answerable from here — web.archive.org
+       * answers 403 at this machine's CONNECT tunnel. Asserted by looking,
+       * rather than by guessing at a publisher's spreadsheet.
+       */
+      if (body.inspect === true) {
+        const head = (loaded.grid as unknown[][]).slice(0, 8)
+          .map((row) => (row ?? []).slice(0, 12).map((v) => String(v ?? '').slice(0, 24)));
+        return json({
+          success: true, ...base, wrote: false, inspected: targeted.period,
+          file: file.original, captured_at: loaded.capturedAt, bytes: loaded.bytes,
+          sheets: loaded.sheets, rows: (loaded.grid as unknown[][]).length, head,
+        });
+      }
 
       const parsed = parseVicQuarterly(loaded.grid as never, wantDwelling, loaded.capturedAt);
       // ONLY the counted rows are written. The medians in an archived workbook
@@ -458,7 +499,7 @@ Deno.serve(async (req) => {
         parsed_period: parsed.latestPeriod, localities: parsed.localities,
         counted_rows: counted.length, rows_written: written,
         implausible_cells: parsed.implausible.length,
-        remaining: choice.remaining.slice(1).map((c) => c.period),
+        remaining: choice.remaining.filter((c) => c.period !== targeted.period).map((c) => c.period),
       };
       await supabase.from('market_sales_sync').insert({ detail });
       return json({ success: true, ...detail, wrote: true });
