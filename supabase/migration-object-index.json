@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "migration_files": 1014,
+  "migration_files": 1016,
   "created": [
     "function:aml.aml_touch_updated_at",
     "function:aml.apply_partner_material_change",
@@ -1404,6 +1404,7 @@
     "index:listings_cache_archived_idx",
     "index:listings_cache_table_created_idx",
     "index:listings_cache_verified_idx",
+    "index:market_building_approvals_token_idx",
     "index:market_digests_correlation_idx",
     "index:market_digests_period_key_unique",
     "index:market_digests_status_generated_idx",
@@ -2027,6 +2028,7 @@
     "table:public.listings_cache",
     "table:public.listings_cache_sync",
     "table:public.llm_integration_settings",
+    "table:public.market_building_approvals",
     "table:public.market_digests",
     "table:public.market_evidence_snapshot_records",
     "table:public.market_evidence_snapshots",

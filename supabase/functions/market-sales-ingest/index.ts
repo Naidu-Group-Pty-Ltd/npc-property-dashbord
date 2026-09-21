@@ -38,6 +38,10 @@ import {
   dataflowRef,
   resolveBuildingApprovalsFlow,
   surveyConstructionFlows,
+  ABS_BA_LICENCE,
+  ABS_BA_SOURCE_LABEL,
+  parseAbsBuildingApprovals,
+  type ApprovalRow,
 } from '../_shared/reports/market/openData/absBuildingApprovals.pure.ts';
 import {
   VIC_QUARTERLY_FILE,
@@ -272,6 +276,71 @@ async function upsertRecords(supabase: any, records: RegisterRecord[]): Promise<
   return written;
 }
 
+/**
+ * The approvals register's own writer.
+ *
+ * Separate from `upsertRecords` rather than generalised with it, because the
+ * two tables carry different keys and different absences and a shared writer
+ * would have to branch on both. The one rule they share is the one that
+ * matters: **a column the publisher released nothing for is dropped from the
+ * payload rather than sent as null**, so a re-run cannot overwrite a figure
+ * the ABS published earlier with the silence of a later, partial release.
+ * That is `market-sales-ingest`'s own lesson — sending `sales_count` on every
+ * record rewrote every historical count back to NULL on every daily run, and
+ * `scoreTransactionVolume` needs four periods carrying one.
+ */
+async function upsertApprovals(
+  supabase: any,
+  rows: ReadonlyArray<ApprovalRow>,
+  sourceUrl: string,
+  loadedAt: string,
+): Promise<number> {
+  const CONFLICT = 'area_kind,area_code,period,building_type';
+  const base = rows.map((r) => ({
+    area_kind: r.areaKind,
+    area_code: r.areaCode,
+    area: r.area,
+    area_token: r.areaToken,
+    state: r.state,
+    period: r.period,
+    building_type: r.buildingType,
+    dwelling_units: r.dwellingUnits,
+    value_aud: r.value,
+    source: ABS_BA_SOURCE_LABEL,
+    source_url: sourceUrl,
+    licence: ABS_BA_LICENCE,
+    loaded_at: loadedAt,
+  }));
+  // Four shapes, because either measure may be absent independently and a
+  // null in the payload is a WRITE of null.
+  const shape = (units: boolean, value: boolean) => base
+    .filter((r) => (r.dwelling_units !== null) === units && (r.value_aud !== null) === value)
+    .map((r) => {
+      const out: Record<string, unknown> = { ...r };
+      if (!units) delete out.dwelling_units;
+      if (!value) delete out.value_aud;
+      return out;
+    });
+
+  let written = 0;
+  for (const [rowsOfShape, label] of [
+    [shape(true, true), 'units+value'],
+    [shape(true, false), 'units only'],
+    [shape(false, true), 'value only'],
+    [shape(false, false), 'neither'],
+  ] as const) {
+    for (const batch of chunk(rowsOfShape as Record<string, unknown>[], 500)) {
+      if (!batch.length) continue;
+      const { error } = await supabase
+        .from('market_building_approvals')
+        .upsert(batch, { onConflict: CONFLICT });
+      if (error) throw new Error(`market_building_approvals upsert failed (${label}): ${error.message}`);
+      written += batch.length;
+    }
+  }
+  return written;
+}
+
 Deno.serve(async (req) => {
   const corsHeaders = createCorsHeaders(req.headers.get('origin'));
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
@@ -416,6 +485,65 @@ Deno.serve(async (req) => {
         stage, file: ABS_RES_DWELL_URL, bytes: text.length, source: ABS_RES_DWELL_SOURCE_LABEL, licence: ABS_RES_DWELL_LICENCE,
         periods: parsed.periods.length, first_period: parsed.periods[0], latest_period: parsed.latestPeriod,
         states: parsed.states, preliminary_periods: parsed.preliminaryPeriods, revised_periods: parsed.revisedPeriods,
+        rows_written: written,
+      };
+      await supabase.from('market_sales_sync').insert({ detail });
+      return json({ success: true, ...detail });
+    }
+
+    if (stage === 'approvals') {
+      /*
+       * The dataflow is DISCOVERED, then read. Two calls, and the first one
+       * is what makes the second safe: the version is part of an SDMX
+       * identifier, the ABS reissues it, and a constant nobody here can
+       * verify fetches a 404 that reads exactly like an outage.
+       */
+      const catalogueRes = await fetch(ABS_BA_DATAFLOW_CATALOGUE_URL, {
+        headers: { 'User-Agent': UA, Accept: 'application/vnd.sdmx.structure+json;version=1.0,application/xml,*/*' },
+      });
+      if (!catalogueRes.ok) throw new Error(`${ABS_BA_DATAFLOW_CATALOGUE_URL} answered ${catalogueRes.status}`);
+      const catalogue = await catalogueRes.text();
+      // Throws, naming what it saw, on an unparseable catalogue, on nothing
+      // matching, and on a tie inside the chosen grain. Nothing is written.
+      const choice = resolveBuildingApprovalsFlow(
+        catalogue,
+        typeof body.dataflow === 'string' ? body.dataflow : null,
+      );
+      const startPeriod = typeof body.startPeriod === 'string' ? body.startPeriod : '2018-01';
+      const url = absBuildingApprovalsUrl(choice.flow, startPeriod);
+
+      const res = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'text/csv,*/*' } });
+      if (!res.ok) throw new Error(`${url} answered ${res.status}`);
+      const text = await res.text();
+      // Throws on a reshaped, truncated or unit-drifted answer, so a partial
+      // register is never written as though it were whole.
+      const parsed = parseAbsBuildingApprovals(text, choice.areaKind);
+      const written = await upsertApprovals(supabase, parsed.rows, url, loadedAt);
+
+      const detail = {
+        stage,
+        file: url,
+        bytes: text.length,
+        source: ABS_BA_SOURCE_LABEL,
+        licence: ABS_BA_LICENCE,
+        // How the flow was arrived at, and what lost — so an operator can see
+        // the decision rather than only its result.
+        flow: dataflowRef(choice.flow),
+        flow_name: choice.flow.name,
+        how: choice.how,
+        catalogued_flows: choice.cataloguedFlows,
+        candidates: choice.candidates,
+        area_kind: choice.areaKind,
+        geography_score: choice.geographyScore,
+        // What the download itself turned out to be.
+        columns: parsed.columns,
+        series_type_unfiltered: parsed.seriesTypeUnfiltered,
+        areas: parsed.areas,
+        periods: parsed.periods.length,
+        first_period: parsed.periods[0],
+        latest_period: parsed.latestPeriod,
+        states: parsed.states,
+        rows_skipped: parsed.skipped,
         rows_written: written,
       };
       await supabase.from('market_sales_sync').insert({ detail });
@@ -945,7 +1073,7 @@ Deno.serve(async (req) => {
     // a rejected argument rather than as a deployment that had not landed yet.
     return json({
       success: false,
-      error: 'stage must be "qld", "nsw", "abs", "vic", "vic_volume", "vic_discover", "sa" or "probe"',
+      error: 'stage must be "qld", "nsw", "abs", "approvals", "vic", "vic_volume", "vic_discover", "sa" or "probe"',
     }, 400);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
