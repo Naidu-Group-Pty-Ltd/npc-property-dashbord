@@ -173,18 +173,22 @@ export async function readApprovalsRegister(
 
   try {
     for (const rung of rungs) {
-      let request = supabase
+      let filtered = supabase
         .from('market_building_approvals')
         .select(SELECT)
         .eq('area_kind', rung.areaKind)
-        .eq('area_token', rung.ask.token)
-        .limit(ROW_CEILING);
+        .eq('area_token', rung.ask.token);
       // The state narrows a token that could collide across jurisdictions —
       // there are several Springfields. A row the publisher left stateless is
       // deliberately still reachable at state grain, where the state IS the
       // area, so the filter is applied only to sub-state asks.
-      if (query.state && rung.areaKind !== 'state') request = request.eq('state', query.state);
-      const { data, error } = await request;
+      //
+      // Every filter goes on BEFORE the bound. `.eq()` after `.limit()` is
+      // chainable and reads as though the bound had already been applied,
+      // which is how a row ceiling comes to be believed while sitting on the
+      // wrong side of a filter.
+      if (query.state && rung.areaKind !== 'state') filtered = filtered.eq('state', query.state);
+      const { data, error } = await filtered.limit(ROW_CEILING);
       if (error) throw new Error(`market_building_approvals read failed: ${error.message}`);
       const rows = (data ?? []) as ApprovalsRow[];
       if (rows.length === 0) continue;

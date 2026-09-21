@@ -123,6 +123,7 @@ import {
 import { ENRICHMENT_STAMP } from '../_shared/reports/location/locationEnrichmentReuse.pure.ts';
 import { transportCountReading } from '../_shared/transportReading.pure.ts';
 import { readSalesRegister } from '../_shared/reports/market/salesRegisterRead.ts';
+import { readApprovalsRegister } from '../_shared/reports/market/approvalsRegisterRead.ts';
 import type { SalesRegisterState } from '../_shared/reports/market/openData/salesRegister.pure.ts';
 import { describeLandArea } from '../_shared/reports/investment/landAreaScope.pure.ts';
 import { applyDisplayOverrides, buildAnnualCostOverrides, normalisePropertyType, toFiniteNumber } from '../_shared/reports/investment/overrides.pure.ts';
@@ -4470,9 +4471,44 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
        * scoring failure must not take the evidence with it: what was measured
        * was measured whether or not a grade came back.
        */
+      /*
+       * Approved dwelling supply, from this deployment's own register.
+       *
+       * `approvalsFactBlocks` was wired to `enhancedData.buildingApprovals`
+       * and NOTHING wrote it, so every report would have carried the absence
+       * branch for ever — a correct sentence about a feature that could never
+       * turn on, which is the shape `builder_network_connections` has on the
+       * prime: read in four places, written in none. Nothing false ships from
+       * a gap like that, which is exactly why nothing reports it.
+       *
+       * It is a read of our OWN table rather than a vendor call, so it is not
+       * on the acquisition ledger, costs no budget and is not reuse-gated: a
+       * resume picks up whatever the last ingest wrote, which is what a
+       * resumed report should see.
+       *
+       * The whole answer is stored, absence and all, because WHICH absence it
+       * is decides what the document says — `not_loaded` is about this
+       * deployment, `none_for_area` is about the area, and the call site used
+       * to guess between them from whether planning had named a council.
+       */
+      const approvals = await readApprovalsRegister(supabase, {
+        state: (marketState ?? null) as SalesRegisterState | null,
+        trustedSuburb: marketSuburb,
+        cadastreLga: enhancedData.planningData?.parcel?.status === 'ok'
+          && typeof enhancedData.planningData?.parcel?.lga === 'string'
+          ? enhancedData.planningData.parcel.lga.trim() || null
+          : null,
+      });
+      console.log(
+        `[approvals] ${approvals.kind === 'series'
+          ? `${approvals.series.months.length} months at ${approvals.askedAt} for ${approvals.series.area}`
+          : `${approvals.absence}${approvals.askedAt ? ` (asked at ${approvals.askedAt})` : ''}`}`,
+      );
+
       enhancedData = {
         ...enhancedData,
         marketEvidence: { points: marketPoints, providersConsulted, providersUnavailable },
+        buildingApprovals: approvals,
       };
 
       // Calculate investment score - property OR area scoring
@@ -5945,9 +5981,23 @@ Produce a comprehensive statewide investment analysis following the structure ab
        * figures, and an authority `limitPromptContext` can cut while its rule
        * survives is the defect that put `450 m²` into a client's document.
        */
+      /*
+       * The absence is the REGISTER'S own answer now, not a guess.
+       *
+       * This used to read `planningFacts.council ? 'not_loaded' :
+       * 'no_area_resolved'` — a stand-in for a question nothing had asked,
+       * which would have told a reader the register was unloaded on a
+       * deployment where it was loaded and simply held nothing for the area.
+       * The four absences are four different sentences and only the read
+       * knows which one is true.
+       */
       approvalsFactBlocks(
-        enhancedData.buildingApprovals ? summariseApprovals(enhancedData.buildingApprovals) : null,
-        planningFacts.council ? 'not_loaded' : 'no_area_resolved',
+        enhancedData.buildingApprovals?.kind === 'series'
+          ? summariseApprovals(enhancedData.buildingApprovals.series)
+          : null,
+        enhancedData.buildingApprovals?.kind === 'absent'
+          ? enhancedData.buildingApprovals.absence
+          : 'not_loaded',
       ),
       // Recorded from official publications rather than retrieved from a
       // register, and pinned for the same reason everything else here is:

@@ -403,8 +403,10 @@ describe('the refusals', () => {
   });
 
   it('refuses a series shorter than two years', () => {
+    // The refusal names the range it DID hold, because "9 months" and
+    // "9 months, all of them 2024" send an operator to different questions.
     expect(() => parseAbsBuildingApprovals(download({ months: 9 }), 'lga'))
-      .toThrow(/holds 9 months, fewer than 24/);
+      .toThrow(/holds 9 months \(2024-01 to 2024-09\), fewer than the 24 a year-on-year reading needs/);
   });
 
   it('refuses a unit drift rather than writing an implausible count', () => {

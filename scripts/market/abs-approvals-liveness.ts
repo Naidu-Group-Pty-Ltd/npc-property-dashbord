@@ -49,6 +49,18 @@ const START_PERIOD = process.env.ABS_START_PERIOD ?? '2023-01';
 /** One year: the narrowest window `approvalsFactBlocks` actually reports on. */
 const TWELVE_MONTHS = process.env.ABS_SHORT_PERIOD ?? '2025-01';
 
+/*
+ * Everything prints on ONE stream. The first failing run rendered
+ *
+ *     THE PARSER REFUSED THE ABS'S OWN DOWNLOAD
+ *       the ABS building-approvals download holds 1 months...
+ *     ─────────────────────────────────────────
+ *
+ * with the rule under the message rather than under the heading, because a
+ * heading on stdout and a verdict on stderr are two buffers a log viewer
+ * interleaves as it pleases. The exit code is what reports the failure; the
+ * text is for a person to read, and a garbled verdict is harder to trust.
+ */
 const h = (s: string) => { console.log(`\n${s}`); console.log('─'.repeat(s.length)); };
 const kv = (k: string, v: unknown) => console.log(`  ${k.padEnd(26)} ${String(v)}`);
 
@@ -101,7 +113,7 @@ async function main(): Promise<void> {
     survey = surveyConstructionFlows(catalogue);
   } catch (error) {
     // The catalogue arrived and we could not read it. Ours.
-    console.error(`  REFUSED: ${error instanceof Error ? error.message : String(error)}`);
+    console.log(`  REFUSED: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   }
   kv('flows matching a term', survey.length);
@@ -118,10 +130,10 @@ async function main(): Promise<void> {
     // Discovery refused a catalogue the ABS really sent. Ours, and the exact
     // thing a synthetic fixture cannot tell us.
     h('DISCOVERY REFUSED THE ABS’S OWN CATALOGUE');
-    console.error(`  ${error instanceof Error ? error.message : String(error)}`);
-    console.error('\n  The catalogue above is what it was given. Either the selection rule');
-    console.error('  is wrong about what the Bureau publishes, or the Bureau publishes');
-    console.error('  nothing this loader should read — and the survey says which.');
+    console.log(`  ${error instanceof Error ? error.message : String(error)}`);
+    console.log('\n  The catalogue above is what it was given. Either the selection rule');
+    console.log('  is wrong about what the Bureau publishes, or the Bureau publishes');
+    console.log('  nothing this loader should read — and the survey says which.');
     process.exit(1);
   }
   kv('flow', dataflowRef(choice.flow));
@@ -282,16 +294,105 @@ async function main(): Promise<void> {
       : `${rs.map((r) => `${r.start}: ${(r.bytes / 1_048_576).toFixed(1)} MB`).join(', ')}`);
   }
 
+  /*
+   * 4b · Where the HISTORY is.
+   *
+   * Settled 21 Sep 2026: `BA_LGA2026` holds **one month**, so the identical
+   * byte counts above were not the ABS disregarding `startPeriod` — they were
+   * an edition with nothing earlier to withhold. That is `currentEdition`'s
+   * rule biting from the far side: it picks the newest BOUNDARY vintage,
+   * which is exactly the edition with the least series behind it, and the
+   * product needs 24 months before it may state a year-on-year change.
+   *
+   * So the question is no longer "which edition is current" but "where does
+   * the series live", and the two may not be the same flow. One vintage back
+   * answers it, and the same pair of windows against a flow that HAS a
+   * history is also the only honest test of whether `startPeriod` narrows a
+   * download at all — which decides whether the window is a lever or the key
+   * is the only one.
+   */
+  h('4b · Where the history is, and whether a window narrows it');
+  const priorEditionOf = (kind: ApprovalsAreaKind): DataflowEntry | null => {
+    const current = currentAt(kind);
+    const refs = surveyConstructionFlows(catalogue)
+      .filter((f) => f.areaKind === kind && ABS_BA_NAME_PATTERN.test(f.name))
+      .map((f) => f.ref);
+    const pool = parseDataflowCatalogue(catalogue)
+      .filter((f) => refs.includes(dataflowRef(f)))
+      .filter((f) => !current || dataflowRef(f) !== dataflowRef(current));
+    return currentEdition(pool).chosen ?? pool[pool.length - 1] ?? null;
+  };
+  const prior = priorEditionOf('lga');
+  if (!prior) {
+    kv('prior LGA edition', 'none published — nothing to compare');
+  } else {
+    kv('prior LGA edition', `${dataflowRef(prior)} — ${prior.name}`);
+    const short = await measure(absBuildingApprovalsUrl(prior, TWELVE_MONTHS));
+    const long = await measure(absBuildingApprovalsUrl(prior, START_PERIOD));
+    const mb = (b: number) => `${(b / 1_048_576).toFixed(1)} MB`;
+    kv(`from ${TWELVE_MONTHS}`, `${mb(short.bytes)} in ${(short.ms / 1000).toFixed(1)}s ${short.finished ? '' : '(DID NOT FINISH)'}`);
+    kv(`from ${START_PERIOD}`, `${mb(long.bytes)} in ${(long.ms / 1000).toFixed(1)}s ${long.finished ? '' : '(DID NOT FINISH)'}`);
+    if (short.finished && long.finished) {
+      kv('the window', short.bytes === long.bytes
+        ? 'narrows NOTHING — this edition holds no month before either start, or startPeriod is ignored'
+        : `narrows the download: ${mb(long.bytes - short.bytes)} of the ${mb(long.bytes)} is the extra two years`);
+    }
+  }
+
+  /*
+   * 4c · What the cube actually contains.
+   *
+   * The parser keeps Original estimates of three residential building types
+   * on two measures and discards everything else — and we are downloading the
+   * whole cube to do it, which is why one month of LGA data is 61.8 MB and
+   * three years of SA2 is past 5 GB. Narrowing at the SOURCE is the lever the
+   * window is not.
+   *
+   * An SDMX key is POSITIONAL, so composing one needs the publisher's own
+   * dimension order; typing it from memory is the mistyped-Airtable-column
+   * failure with a 200 in front of it. This reads the data structure and
+   * reports the order and the size of each codelist, which is what a narrowed
+   * key has to be built from.
+   */
+  h('4c · The data structure, and what a narrowed key would need');
+  const dsdUrl = `https://data.api.abs.gov.au/rest/dataflow/ABS/${choice.flow.id}/${choice.flow.version}`
+    + '?references=all&detail=referencepartial';
+  kv('url', dsdUrl);
+  try {
+    const res = await fetch(dsdUrl, {
+      headers: { 'User-Agent': UA, Accept: 'application/vnd.sdmx.structure+json;version=1.0,application/xml,*/*' },
+      signal: AbortSignal.timeout(90_000),
+    });
+    kv('status', res.status);
+    const text = await res.text();
+    kv('bytes', text.length.toLocaleString('en-AU'));
+    // Reported as evidence, never parsed into a rule here: this script
+    // measures, and the rule belongs in the pure module with its own tests.
+    const dims = [...text.matchAll(/"id"\s*:\s*"([A-Z0-9_]+)"[^}]*?"type"\s*:\s*"Dimension"/g)].map((m) => m[1]);
+    const xmlDims = [...text.matchAll(/<str:Dimension[^>]*id="([A-Z0-9_]+)"[^>]*position="(\d+)"/g)]
+      .sort((a, b) => Number(a[2]) - Number(b[2])).map((m) => `${m[2]}:${m[1]}`);
+    kv('dimensions (JSON order)', dims.length ? dims.join(' · ') : '(none read)');
+    kv('dimensions (XML position)', xmlDims.length ? xmlDims.join(' · ') : '(none read)');
+    for (const want of ['TYPE_BUILD', 'BUILDING_TYPE', 'MEASURE', 'TSEST', 'SERIES_TYPE', 'FREQ', 'REGION']) {
+      const codes = [...text.matchAll(new RegExp(`"${want}[^"]*"[\\s\\S]{0,200}?"codes"`, 'g'))].length;
+      if (text.includes(`"${want}"`) || text.includes(`id="${want}"`)) kv(`  names ${want}`, codes ? `yes (${codes} codelist mentions)` : 'yes');
+    }
+  } catch (error) {
+    kv('the structure', error instanceof Error ? error.message : String(error));
+    console.log('  Reported, not failed on: the key-narrowing design needs this and the');
+    console.log('  rest of the check does not.');
+  }
+
   h('5 · What an invocation can actually carry');
   if (!carried) {
-    console.error('  No window completed inside the probe budget.');
-    console.error('');
-    console.error(`  The Bureau ANSWERED every one of them — this is not an outage. The`);
-    console.error('  register as configured cannot be loaded by an edge function with a');
-    console.error(`  ~${EDGE_BUDGET_MS / 1000}s wall clock, and the loader must page the query or drop to`);
-    console.error('  a coarser grain. Failing, because a schedule that cannot finish is');
-    console.error('  worse than no schedule: it writes a partial register every night and');
-    console.error('  reports success.');
+    console.log('  No window completed inside the probe budget.');
+    console.log('');
+    console.log(`  The Bureau ANSWERED every one of them — this is not an outage. The`);
+    console.log('  register as configured cannot be loaded by an edge function with a');
+    console.log(`  ~${EDGE_BUDGET_MS / 1000}s wall clock, and the loader must page the query or drop to`);
+    console.log('  a coarser grain. Failing, because a schedule that cannot finish is');
+    console.log('  worse than no schedule: it writes a partial register every night and');
+    console.log('  reports success.');
     process.exit(1);
   }
   kv('workable window', carried.label);
@@ -330,9 +431,9 @@ async function main(): Promise<void> {
     console.log('  Verified against the publisher, not against a fixture.');
   } catch (error) {
     h('THE PARSER REFUSED THE ABS\u2019S OWN DOWNLOAD');
-    console.error(`  ${error instanceof Error ? error.message : String(error)}`);
-    console.error('\n  The ABS answered and this reader would not take it. That is ours,');
-    console.error('  and it is exactly what no synthetic fixture could have told us.');
+    console.log(`  ${error instanceof Error ? error.message : String(error)}`);
+    console.log('\n  The ABS answered and this reader would not take it. That is ours,');
+    console.log('  and it is exactly what no synthetic fixture could have told us.');
     process.exit(1);
   }
 }

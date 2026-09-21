@@ -803,8 +803,9 @@ export function parseAbsBuildingApprovals(
   const sorted = [...periods].sort();
   if (sorted.length < ABS_BA_PLAUSIBILITY.minPeriods) {
     throw new Error(
-      `the ABS building-approvals download holds ${sorted.length} months, `
-      + `fewer than ${ABS_BA_PLAUSIBILITY.minPeriods} — refused`,
+      `the ABS building-approvals download holds ${sorted.length} month${sorted.length === 1 ? '' : 's'} `
+      + `(${sorted[0]}${sorted.length > 1 ? ` to ${sorted[sorted.length - 1]}` : ''}), `
+      + `fewer than the ${ABS_BA_PLAUSIBILITY.minPeriods} a year-on-year reading needs — refused`,
     );
   }
   return {
