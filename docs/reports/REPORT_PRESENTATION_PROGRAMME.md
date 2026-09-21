@@ -265,6 +265,50 @@ golden render per family showing charts are byte-identical across a family's ten
 colourways except for token values, which is the catalogue's existing guarantee
 for geometry.
 
+### W1.5 · Vocabulary, and what a drawing may say — **done**
+
+Four more read off the same PDF, each closed where it is produced.
+
+**A heading written twice around its own content is one heading.** Five
+sub-headings printed twice — every risk in the register — each announced,
+summed up, and announced again before its detail list.
+`mergeAdjacentDuplicateHeadings` merges rather than choosing, because the two
+bodies differ and keeping either alone deletes half the section.
+
+**A database key is never the name of a publisher.** `vic_vpsr_suburb` in the
+column headed *Where it is published*, beside a row that names Vicmap Planning
+correctly. `PROVIDER_LABEL[p] ?? p` under a comment reading "never the enum";
+the two archived suburb series were never added, and they are the readings
+that answer for **Victoria and South Australia**. The map is total now, so the
+compiler refuses the next one.
+
+**`transactionVolume` is a field name.** The same defect one module over, on
+the page that explains what each dimension rested on. Named, and the fallback
+drops a label it cannot supply rather than printing the key.
+
+**A paragraph is never a column.** The Monitoring & Review Plan's fifth column
+runs to 190 characters against 16–65 for the other four, so in a fifth of the
+measure the header set as `What to re-Where it isHow often itAs read for this`.
+It is one block per dependency now.
+
+**A heatmap's title fits the grid it belongs to.** `House price growth · Golden
+Square vs Victoria (Valuer-Genera` — cut mid-word, because `w` is computed from
+the labels and the title was never measured. Fitted, with the header band
+growing rather than the type shrinking.
+
+### Still open from the page-by-page read
+
+**Page 5 repeats page 3.** The *Risk Register* part divider carries the
+verdict headline and the graded line verbatim from the Executive Verdict two
+pages earlier, and nothing else: 558 characters on a page, stopping 600pt from
+the foot. It is a master page sequence, so closing it is a seed version plus an
+active-master refresh rather than a read-path rule — the same shape as v16–v18.
+
+**A growth heatmap printed `0` for Victoria's ten-year CAGR.** Absent is never
+zero, and the grid grammar has no null. The `0` is in the directive the model
+wrote, so nothing at presentation can tell it from a real zero; closing it is a
+producer change.
+
 ### W2 · Structure and placement
 
 **W2.1 · Section placement by declared order** — **done**
