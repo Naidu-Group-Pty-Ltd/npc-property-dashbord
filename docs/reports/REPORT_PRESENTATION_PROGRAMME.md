@@ -357,10 +357,59 @@ made it, not about the tree you are reading** — and it is why every other
 finding in this programme was traced to the line that produces it before
 anything was changed.
 
-**A growth heatmap printed `0` for Victoria's ten-year CAGR.** Absent is never
-zero, and the grid grammar has no null. The `0` is in the directive the model
-wrote, so nothing at presentation can tell it from a real zero; closing it is a
-producer change.
+### W1.8 · The chart guard could read three forms in twelve — **partly done**
+
+**A growth heatmap printed `0` for Victoria's ten-year CAGR.** I recorded this
+as needing a producer change, on the reasoning that *"the `0` is in the
+directive the model wrote, so nothing at presentation can tell it from a real
+zero"*. **That was wrong, and a guard for exactly this already existed.**
+
+`suppressUnevidencedMarketSeries` removes a market-worded directive carrying
+any figure the market evidence table does not state — the guarantee behind
+`CHART_IS_A_CLAIM`'s *"a series … may contain only values from the table
+above"*. It re-parses the directive grammar privately: a `spark=` / `values=` /
+`data=` / `series=` option, or a bare head that is entirely numeric. Measured
+by execution over all twelve production forms, one real figure beside one the
+table does not hold:
+
+| form | judged |
+| --- | --- |
+| `bars` (`spark=`) | yes |
+| `wheel` (numeric head) | yes |
+| `margin` (`spark=`) | yes |
+| `heatmap` (grid head) | **no** — now yes |
+| `bars` (head pairs), `donut`, `tiles`, `waterfall` | no |
+| `gauge`, `pictograph`, `quadrant`, `timeline` | no |
+
+**Nine of twelve were unread**, including `bars` with head pairs — the first
+example in the grammar's own documentation and the commonest form in the
+corpus. The guard was written against the 18 Annabelle Crescent defect, which
+used `spark=`, and it catches precisely that shape.
+
+A grid head is `8.6,3.9 / 2.0,1.0`; the head-is-a-series test is
+`/^[\s\d.,-]+$/`, the `/` fails it, so the head is taken for a **title** and no
+value is read at all. That is closed, and `describingWords` now recognises a
+grid head as a series for the same reason — one string read as a value list in
+one place and a title in another is how two readings of one grammar come to
+disagree.
+
+**The other eight are deliberately left open**, and
+`marketSeriesCoverage.spec.ts` pins the list by execution rather than leaving
+it in this document, because a blind spot written into a document is one
+nobody re-reads. Two reasons for stopping. A grid is unambiguously a set of
+**magnitudes in the table's own units**, while a `gauge`'s max, a
+`pictograph`'s total and a `quadrant`'s axis positions are a **scale** —
+judging a position against a table of medians would remove a sound chart. And
+removal is destructive: extending to the label-carrying kinds means judging
+values whose units this module cannot confirm, and the exposure can only be
+measured against the directive corpus in `report_content`, which this session
+may not query. That is a decision to take with the measurement, not an
+argument to win without it.
+
+The lesson is §5's again, from the other direction: **the absence of the shape
+you expected is not the absence of the thing.** Twice in one sitting — the
+amenity blocks that existed inline, and the chart guard that existed and could
+not see.
 
 **The document cites listing sites and third-party tools as evidence.** Page 21
 attributes a suburb zoning breakdown to **Landchecker** and a "5-minute drive
@@ -380,11 +429,85 @@ Landchecker and Ray White/Domain for is a suburb zoning breakdown and a drive
 time: **locality** claims, not market figures, which is why the market block's
 rule never reached them.
 
-**Amenity and transport are what remain**, and neither has a prompt-block
-module of its own — the amenity counts and the single recorded stop reach the
-prompt through the location enrichment rather than through a composed block
-with rules attached. That is the next thing to do, and it is a larger change
-than the five above: it needs a block, not a clause.
+**Amenity and transport are what remain.** Closed in W1.7 below — and the
+scoping sentence that stood here was wrong, which is worth keeping rather than
+overwriting. It read: *"neither has a prompt-block module of its own — the
+amenity counts and the single recorded stop reach the prompt through the
+location enrichment rather than through a composed block with rules attached
+… it needs a block, not a clause."* Both blocks existed, inline in
+`propertyPrompt`, with rules attached to each. I had grepped for a `*Blocks`
+module and concluded from its absence that there was no block, which is the
+same mistake as judging a column against `types.ts`: **the absence of the shape
+you expected is not the absence of the thing.** What was actually wrong was
+worse than a missing block and invisible from the outside.
+
+### W1.7 · Four of six field names were written by nothing — **done**
+
+Read against what `location-intelligence-service` publishes rather than against
+what the blocks asked for:
+
+| the block read | published as | what fired |
+| --- | --- | --- |
+| `transport.stationDistance` | `transport.distanceToStation` | never |
+| `transport.transportTypes` | *nothing publishes it* | never |
+| `transport.commuteToCbd` | `commute.durationMinutes` + destination | never |
+| `lifestyle.supermarkets` | *no supermarket lookup is taken* | never |
+| `lifestyle.nearestSupermarket` | *the same* | never |
+| `lifestyle.nearestShoppingCenter` | `lifestyle.nearestShopping` | rendered `—` |
+
+`commuteToCbd` had **exactly one occurrence in the repository**: the line that
+reads it. So the commute — measured, with a named destination and the
+`ownCentre` flag that `A_PREMIUM_DOCUMENT.md` §20 exists for — has never
+reached the prose on any report. `PLACES_CATEGORIES` holds six and no
+supermarket lookup is among them, so that row was a labelled promise of a
+figure the platform cannot produce — law 2, committed in the fix for law 2.
+
+**And one is worse than a silent field.**
+`projectTransportForLocationIntelligence` returned `nearestStation: 'N/A'`
+where no stop was found, and the block guarded on `if (t.nearestStation)`.
+`'N/A'` is truthy. So every property outside a loaded GTFS network — every
+Victorian, Western Australian, South Australian, Tasmanian and ACT property,
+which is most of this deployment — printed `Nearest public transport stop on
+record: **N/A**`, and because `parts.length` was then 1 the block's own
+fallback **suppressed** its prohibition on naming a station, stating a distance
+or calling the area car-dependent. The prohibition was skipped in exactly the
+case it was written for. `placesAvailability.pure.ts` established that rule and
+corrected the sibling branch; this is the branch that actually runs.
+
+That is the mechanism behind page 21 citing **Landchecker** and **Ray White
+Bendigo and Domain**. The readings were measured, stored and stamped with their
+own provenance; the blocks in front of them read almost none of it and named no
+publisher at all, so a model asked to evidence a count supplied a source.
+
+`amenityFactBlocks.pure.ts` composes both from the fields the record publishes,
+under six rules: a count **names the register that produced it** from
+`stages.amenitySources`; a publisher common to every row is **stated once below
+the table** rather than as a column repeating one value; **no stop found is a
+fact about the FEEDS**, in the register's own terms with the loaded networks
+named; **a commute names where it was measured to** and says plainly when that
+is not this property's own centre; **absent is never zero and never `'N/A'`**;
+and both carry `webSearchIsNotARetrieval`.
+
+Three things the gates caught, each worth recording:
+
+- `oneDateFormatter.spec.ts` failed the first draft for carrying its own month
+  table and its own ISO regex. Correct — that is the defect `AU_LOCALE` and
+  `auDate.pure.ts` were each written to close, committed a third time.
+  `stampDate` delegates to `formatIsoDate`.
+- The first `TRANSPORT_VERDICT_SENTENCE` carried a `sourceUnavailable` key the
+  projection never produces and had **no sentence for `stops_nearby`**, the
+  ordinary case. An entry that can never fire and a case that has none are the
+  same mistake read from two ends; the map is `Record<TransportVerdict, string>`
+  and therefore total.
+- `transportGtfs.spec.ts` held a test named *"reports no distance rather than
+  zero when nothing was found"* which pinned `distanceToStation` to null and
+  `nearestStation` to the sentinel **one line below**. The test asserted the
+  violation of its own name.
+
+`compassDocumentContract.spec.ts` asserted these absences by grepping the
+prompt's source. They move to `amenityFactBlocks.spec.ts`, where they are
+executed against the shape the service publishes — which is precisely why the
+old inline blocks could carry four dead field names while that file passed.
 
 ### W2 · Structure and placement
 

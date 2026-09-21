@@ -675,6 +675,50 @@ function statedNumbers(facts: MarketFacts): Set<string> {
   return out;
 }
 
+/**
+ * A `heatmap`'s grid, which `seriesValues` structurally cannot see.
+ *
+ * `seriesValues` reads a bare head only when it matches `/^[\s\d.,-]+$/`, and
+ * a grid head is `8.6,3.9 / 2.0,1.0` — the `/` fails that test, so the head is
+ * taken for a TITLE and no value is read. Measured by execution: the same
+ * fabricated `0` beside a real 8.6 is caught in `{{bars: … | spark=8.6,0}}`
+ * and passes untouched in `{{heatmap: 8.6,0 / … | title=Price growth}}`.
+ *
+ * That is the growth heatmap on the 9 Hollow Street Compass, which printed
+ * `0` for a ten-year CAGR nothing had measured. `CHART_IS_A_CLAIM` says a
+ * series "may contain only values from the table above"; for this kind the
+ * guard behind that sentence read nothing at all.
+ *
+ * **Only `heatmap` is added here, and the limit is deliberate.** Eight other
+ * forms are equally unread — `bars` with head pairs, `donut`, `tiles`,
+ * `waterfall`, `gauge`, `pictograph`, `quadrant`, `timeline` — and
+ * `marketSeriesCoverage.spec.ts` pins that list by execution rather than
+ * leaving it in a document. Two reasons for stopping here. A grid is
+ * unambiguously a set of MAGNITUDES in the table's own units, whereas a
+ * `gauge`'s max, a `pictograph`'s total and a `quadrant`'s axis positions are
+ * a SCALE rather than a measurement, and judging a position against a table of
+ * medians would remove a sound chart. And removal is destructive: extending to
+ * the label-carrying kinds means judging values whose units this module cannot
+ * confirm, which needs the production corpus in `report_content` to measure
+ * and not an argument.
+ */
+function heatmapGrid(payload: string): number[] {
+  const head = payload.split('|')[0] ?? '';
+  if (!head.includes('/')) return [];
+  // The same shape the parser accepts, minus the row separator.
+  if (!/^[\s\d.,\/-]+$/.test(head) || !/\d/.test(head)) return [];
+  const out: number[] = [];
+  for (const row of head.split('/')) {
+    for (const cell of row.split(',')) {
+      const t = cell.trim();
+      if (t === '') continue;
+      const n = Number(t);
+      if (Number.isFinite(n)) out.push(n);
+    }
+  }
+  return out;
+}
+
 /** The numbers a directive's payload draws, ignoring prose options. */
 function seriesValues(payload: string): number[] {
   const parts = payload.split('|').map((p) => p.trim());
@@ -702,7 +746,11 @@ function seriesValues(payload: string): number[] {
 function describingWords(payload: string): string {
   const parts = payload.split('|').map((p) => p.trim());
   const head = parts[0] ?? '';
-  const headIsSeries = /^[\s\d.,-]+$/.test(head);
+  // A grid head (`8.6,3.9 / 2.0,1.0`) is a series, not a title. It carries no
+  // word, so including it changed no verdict — but leaving it would mean the
+  // same string is a title here and a value list in `heatmapGrid`, which is
+  // how two readings of one grammar come to disagree.
+  const headIsSeries = /^[\s\d.,\/-]+$/.test(head) && /\d/.test(head);
   const labels = parts
     .filter((p) => /^(label|title)\s*=/i.test(p))
     .map((p) => p.slice(p.indexOf('=') + 1));
@@ -724,7 +772,9 @@ export function suppressUnevidencedMarketSeries(
     const words = describingWords(payload);
     const matched = MARKET_WORDS.filter((w) => words.includes(w));
     if (!matched.length) { out.push(line); continue; }
-    const values = seriesValues(payload);
+    const values = kind === 'heatmap'
+      ? [...seriesValues(payload), ...heatmapGrid(payload)]
+      : seriesValues(payload);
     if (!values.length) { out.push(line); continue; }
     const unsupported = values.filter((v) => !stated.has(v.toFixed(1)));
     if (!unsupported.length) { out.push(line); continue; }
