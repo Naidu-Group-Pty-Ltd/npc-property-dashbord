@@ -782,6 +782,7 @@ export function parseAbsBuildingApprovals(
             + `outside 0–${ceiling} for a ${rowKind} area (unit or column drift) — refused`,
           );
         }
+        assertNoCollision(row.value, scaled, 'value of building approved', area, period, buildingType);
         row.value = scaled;
       } else {
         const ceiling = ABS_BA_PLAUSIBILITY.maxUnitsPerAreaMonth[rowKind];
@@ -791,6 +792,7 @@ export function parseAbsBuildingApprovals(
             + `outside 0–${ceiling} for a ${rowKind} area (unit or column drift) — refused`,
           );
         }
+        assertNoCollision(row.dwellingUnits, scaled, 'dwelling units', area, period, buildingType);
         row.dwellingUnits = scaled;
       }
     }
@@ -855,6 +857,49 @@ export function monthPeriod(timePeriod: string): string | null {
   const month = Number(m[2]);
   if (month < 1 || month > 12) return null;
   return `${m[1]}-${m[2]}`;
+}
+
+/**
+ * Two different figures for one (area, month, building type) mean this reader
+ * is not filtering a dimension the download carries.
+ *
+ * ## Asserted by EFFECT, never by configuration
+ *
+ * The ABS cube has EIGHT dimensions — measured 21 Sep 2026 from the Bureau's
+ * own structure: `MEASURE[3] · SECTOR[3] · WORK_TYPE[9] · BUILDING_TYPE[34] ·
+ * REGION_TYPE[43] · REGION[2985] · FREQ[9] · TIME_PERIOD` — and this parse
+ * reads four of them. Private, public and total sector figures for one month
+ * all map to the same row key, as do new work, alterations and conversions,
+ * and the last one written silently wins. The stored figure would then be an
+ * arbitrary SLICE presented as a total: plausible, wrong, and impossible to
+ * tell from a correct one by looking at it.
+ *
+ * Enumerating every dimension the publisher might add is a losing game — the
+ * `Number of buildings` defect was exactly that bet, and it was lost because
+ * the fixture published two measures and the cube publishes three. So this
+ * detects the SYMPTOM instead: a second, DIFFERENT figure arriving for a key
+ * that already has one. It is the rule the retention purge and the
+ * verification self-test already answer to, applied to a parse.
+ *
+ * An identical second write is not a collision — a download may legitimately
+ * repeat a row — so only a disagreement refuses.
+ */
+function assertNoCollision(
+  held: number | null,
+  incoming: number,
+  measure: string,
+  area: string,
+  period: string,
+  buildingType: ApprovalsBuildingType,
+): void {
+  if (held === null || held === incoming) return;
+  throw new Error(
+    `the ABS building-approvals download gives two different ${measure} figures for `
+    + `${area} ${period} ${buildingType} (${held} then ${incoming}) — it carries a dimension `
+    + 'this reader does not filter, so rows collide on (area, period, building type) and the '
+    + 'last one silently wins. Narrow the query or read the extra dimension; do not average '
+    + 'them — refused',
+  );
 }
 
 function matchBuildingType(label: string): ApprovalsBuildingType | null {

@@ -324,6 +324,53 @@ describe('a count of BUILDINGS is not a count of dwellings', () => {
   });
 });
 
+describe('an unfiltered dimension is caught by its EFFECT', () => {
+  /*
+   * The Bureau's own structure, measured 21 Sep 2026:
+   *   MEASURE[3] · SECTOR[3] · WORK_TYPE[9] · BUILDING_TYPE[34] ·
+   *   REGION_TYPE[43] · REGION[2985] · FREQ[9] · TIME_PERIOD
+   * This parse reads four of the eight. Private, public and total sector
+   * figures for one month all land on the same row key, as do new work,
+   * alterations and conversions — and the last one written silently wins, so
+   * the register would store an arbitrary SLICE presented as a total.
+   *
+   * Enumerating every dimension the publisher might add is the bet that lost
+   * over `Number of buildings`. This asserts the symptom instead.
+   */
+  const withSectorSplit = () => {
+    const lines = download().split('\n');
+    const extra = lines.slice(1)
+      .filter((l) => l.includes('Number of dwelling units') && l.includes('10050'))
+      // The same cell as the public-sector slice: a different figure under an
+      // identical (area, period, building type).
+      .map((l) => l.replace(/,(\d+),0$/, ',3,0'));
+    return [...lines, ...extra].join('\n');
+  };
+
+  it('refuses two different figures for one area, month and type', () => {
+    let message = '';
+    try {
+      parseAbsBuildingApprovals(withSectorSplit(), 'lga');
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toMatch(/two different dwelling units figures for Albury \(C\)/);
+    expect(message).toMatch(/carries a dimension this reader does not filter/);
+    expect(message).toMatch(/do not average them/);
+  });
+
+  it('accepts an identical repeat, because a download may legitimately repeat a row', () => {
+    const lines = download().split('\n');
+    const repeated = [...lines, ...lines.slice(1, 40)].join('\n');
+    expect(() => parseAbsBuildingApprovals(repeated, 'lga')).not.toThrow();
+  });
+
+  it('is silent on a clean download — it detects, it does not filter', () => {
+    const clean = parseAbsBuildingApprovals(download(), 'lga');
+    expect(clean.rows.length).toBeGreaterThan(0);
+  });
+});
+
 describe('the columns are read off the header, never assumed', () => {
   it('resolves one region pair, the measure, the type and the series', () => {
     const cols = resolveColumns(HEADER.split(','));

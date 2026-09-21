@@ -43,6 +43,8 @@ import {
   type DataflowEntry,
 } from '../../supabase/functions/_shared/reports/market/openData/absBuildingApprovals.pure.ts';
 import {
+  ABS_BA_KEY_RULES,
+  AREA_DIMENSION,
   absDataStructureUrl,
   composeApprovalsKey,
   narrowedApprovalsUrl,
@@ -311,6 +313,30 @@ async function main(): Promise<void> {
       kv(`  narrowed ${n.dimension}`, `${n.kept.length} of ${n.of} — ${n.why}`);
     }
     for (const u of composed.unnarrowed) kv(`  OPEN ${u.dimension}`, u.reason);
+    /*
+     * The dimensions no rule NAMES at all, with their vocabulary.
+     *
+     * Measured 21 Sep 2026, the cube is eight dimensions and this register
+     * filters four — so `SECTOR` and `WORK_TYPE` come back whole and their
+     * rows collide on (area, period, building type), which the parse now
+     * refuses. Writing a rule for them needs the publisher's own words, and
+     * guessing at them is the `Number of buildings` bet again. So the check
+     * hands over the vocabulary rather than leaving the next person to fetch
+     * three megabytes of structure by hand.
+     */
+    const unruled = structure.dimensions
+      .filter((d) => !d.isTime && d.codes.length > 0 && !ABS_BA_KEY_RULES.some((r) => r.dimension.test(d.id)))
+      .filter((d) => !AREA_DIMENSION.test(d.id));
+    for (const d of unruled) {
+      kv(`  NO RULE ${d.id}`, `${d.codes.length} codes: ${d.codes.slice(0, 12).map((c) => `${c.id}=${c.name}`).join(' | ')}`);
+    }
+    if (unruled.length) {
+      console.log('');
+      console.log('  Each of those comes back WHOLE, and its rows land on the same key as');
+      console.log('  every other value of it. The parse refuses a disagreement rather than');
+      console.log('  storing an arbitrary slice as a total — so this is a size problem AND');
+      console.log('  a correctness one, and the vocabulary above is what a rule needs.');
+    }
     if (composed.key === 'all') {
       kv('the narrowing', 'nothing narrowed — this is byte-for-byte the request that shipped');
     }
