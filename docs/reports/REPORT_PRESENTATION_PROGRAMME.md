@@ -637,9 +637,51 @@ not index 0.
 is printed in prose on page 34. The AML module already forbids underscore-cased
 identifiers in rendered fields and has a test for it; port the rule.
 
-**W4.8 · Glyph coverage.** U+2011 falls back to a substituted face on three
-pages. Either supply the glyph in the primary face or normalise it at the write
-boundary.
+**W4.8 · Glyph coverage.** ✅ **DONE** — and the premise is measured rather
+than inferred from the PDF. `fontTools` over all nine faces
+`weasyprint-service/fonts/` ships, 21 Sep 2026:
+
+| code point | Cinzel (2) | Playfair (4) | IBM Plex Mono (3) |
+| --- | --- | --- | --- |
+| `U+2011` non-breaking hyphen | absent | absent | absent |
+| `U+2010` hyphen | absent | **present** | absent |
+| `U+2013` en dash | present | present | present |
+| `U+2014` em dash | present | present | present |
+| `U+002D` hyphen-minus | present | present | present |
+
+**Nine of nine lack `U+2011`; five of nine lack `U+2010`.** So a non-breaking
+hyphen anywhere in a heading, a display line or a figure run is drawn by
+whatever fontconfig reaches for — one hyphen in a different typeface from the
+words either side of it. The body face is Debian's `fonts-inter` rather than
+this repository's, and does not need measuring: the three families above set
+every heading, every display line and every figure in the document.
+
+`printableGlyphs.pure.ts` sets five dashes as ones the faces hold, LAST in
+`presentStoredMarkdown` because it is the only pass there that works on
+characters — running it earlier would mean every other pass read a document
+one character different from the one the generator wrote.
+
+**It is not the prose scrub §8 forbids**, for two reasons that are checked
+rather than argued. It **changes no word**: `U+2011` and `U+002D` are the same
+character to a reader, and what differs is a line-breaking instruction already
+lost, because a glyph the face does not hold is not set by that face. A spec
+folds both sides onto the drawable dash and asserts they are identical, and a
+second asserts the length is unchanged because every substitution is one
+character for one. And it is a **closed set of five**, every one a dash,
+listed in one module: nothing about meaning, claim, figure or source is
+examined, so there is no sentence it can change and no rule it can be extended
+into. The en dash and em dash are deliberately excluded — every face holds
+both, this product's prose uses them constantly, and flattening them is what
+`documentText.pure.ts`'s `asciiPunctuation` does for the different purpose of
+extracting text out of somebody else's PDF.
+
+**Code is a quotation and is never edited.** `IBMPlexMono` is exactly the
+family missing `U+2010` as well, so the substitution would matter most inside
+a code span — and a code span is somebody else's bytes. An undrawable dash
+there is left as written and counted, so it can be reported rather than
+repaired. The partition that decides this is asserted to reproduce its input
+byte-for-byte over thirteen shapes, including an unclosed fence and a backtick
+inside a fence.
 
 **W4.9 · Correct the stale skill note.** `REPORT_RULES.md` §4 states "Cinzel is
 not installed yet". The delivered PDF embeds `FWDZFX+Cinzel`. Left uncorrected,

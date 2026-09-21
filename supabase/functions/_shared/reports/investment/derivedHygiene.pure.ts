@@ -24,6 +24,7 @@ import { alignChartScales } from './chartScale.pure.ts';
 import { tabulateMixedUnitCharts } from './chartUnits.pure.ts';
 import { dedupeChartDirectives } from './blockHygiene.pure.ts';
 import { enforceChartQuantity } from './chartQuantity.pure.ts';
+import { substituteUndrawableGlyphs } from './printableGlyphs.pure.ts';
 import { scrubUnresolvedBraces } from './braceHygiene.pure.ts';
 import { limitEmphasis } from './emphasisDensity.pure.ts';
 import { stripFootnoteDebris } from './footnoteDebris.pure.ts';
@@ -993,9 +994,27 @@ export function presentStoredMarkdown(
   const emphasised = limitEmphasis(unmarked);
   const { clause, figure, repeat, table } = emphasised.unwrapped;
   const calm = clause + figure + repeat + table ? emphasised.markdown : unmarked;
-  if (!evidence) return calm;
-  const judged = enforceChartEvidence(calm, evidence);
-  return judged.findings.length ? judged.markdown : calm;
+  const judged = evidence ? enforceChartEvidence(calm, evidence) : null;
+  const settled = judged && judged.findings.length ? judged.markdown : calm;
+  /*
+   * Last, because it is the only pass here that works on CHARACTERS.
+   *
+   * Every pass above matches on structure or on markup, so running this one
+   * before any of them would mean they were reading a document one character
+   * different from the one the generator wrote. Running it last also makes its
+   * own guarantee trivial to state: it cannot change what any other pass did.
+   *
+   * Measured with fontTools over all nine faces the print container ships —
+   * `U+2011` is in none of them and `U+2010` in four — so a non-breaking
+   * hyphen in a heading, a display line or a figure run is drawn by whatever
+   * fontconfig reaches for, setting one hyphen in a different typeface from
+   * the words either side of it. See `printableGlyphs.pure.ts` for why this is
+   * not the prose scrub §8 forbids: it is a closed set of five dashes, it
+   * changes no word, and a spec folds both sides onto the drawable dash and
+   * asserts they are identical.
+   */
+  const drawable = substituteUndrawableGlyphs(settled);
+  return drawable.substituted.length ? drawable.markdown : settled;
 }
 
 const normalizeHeading = (h: string): string =>
