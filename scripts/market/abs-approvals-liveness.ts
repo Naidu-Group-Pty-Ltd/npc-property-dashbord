@@ -289,128 +289,104 @@ async function main(): Promise<void> {
    * the narrowed download against the same window that could not be carried.
    * That comparison is the whole design question.
    */
-  h('4a · The query, narrowed at the source');
-  let narrowedKey = 'all';
-  try {
-    const dsdUrl = absDataStructureUrl(choice.flow);
-    kv('url', dsdUrl);
-    const res = await fetch(dsdUrl, {
-      headers: { 'User-Agent': UA, Accept: 'application/vnd.sdmx.structure+json;version=1.0,application/xml,*/*' },
-      signal: AbortSignal.timeout(90_000),
-    });
-    kv('status', res.status);
-    const text = await res.text();
-    kv('bytes', text.length.toLocaleString('en-AU'));
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const structure = parseDataStructure(text);
-    kv('dimensions', structure.dimensions
-      .slice().sort((a, b) => a.position - b.position)
-      .map((d) => `${d.position}:${d.id}${d.isTime ? '(time)' : `[${d.codes.length}]`}`).join(' · '));
-    const composed = composeApprovalsKey(structure);
-    narrowedKey = composed.key;
-    kv('key', composed.key);
-    for (const n of composed.narrowed) {
-      kv(`  narrowed ${n.dimension}`, `${n.kept.length} of ${n.of} — ${n.why}`);
+  /*
+   * A key belongs to the flow whose structure composed it.
+   *
+   * The first version composed ONE key from the chosen flow and measured
+   * both grains with it, and on 21 Sep 2026 that produced an LGA download of
+   * 9,818 bytes carrying eight states and one national row and not a single
+   * council — refused by the area floor, correctly. The SA2 flow's
+   * `REGION_TYPE` codelist is not the LGA flow's, and a code that means one
+   * thing in one document means nothing in another.
+   *
+   * It is the defect this script's own header warns about, committed one
+   * level up: the URL went through the production builder while the KEY came
+   * from the wrong document. The loader was never wrong — it reads
+   * `absDataStructureUrl(choice.flow)` and queries `choice.flow` — so this
+   * was the instrument measuring itself, which is the third time today.
+   */
+  interface FlowKey { key: string; structureBytes: number; note: string }
+
+  async function keyFor(flow: DataflowEntry, verbose: boolean): Promise<FlowKey> {
+    try {
+      const res = await fetch(absDataStructureUrl(flow), {
+        headers: { 'User-Agent': UA, Accept: 'application/vnd.sdmx.structure+json;version=1.0,application/xml,*/*' },
+        signal: AbortSignal.timeout(90_000),
+      });
+      const text = await res.text();
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const structure = parseDataStructure(text);
+      const composed = composeApprovalsKey(structure);
+      if (verbose) {
+        kv('url', absDataStructureUrl(flow));
+        kv('bytes', text.length.toLocaleString('en-AU'));
+        kv('dimensions', structure.dimensions
+          .slice().sort((a, b) => a.position - b.position)
+          .map((d) => `${d.position}:${d.id}${d.isTime ? '(time)' : `[${d.codes.length}]`}`).join(' · '));
+        kv('key', composed.key);
+        for (const n of composed.narrowed) kv(`  narrowed ${n.dimension}`, `${n.kept.length} of ${n.of} — ${n.why}`);
+        for (const u of composed.unnarrowed) kv(`  OPEN ${u.dimension}`, u.reason);
+        /*
+         * The dimensions no rule NAMES, with their vocabulary. Each comes
+         * back whole and its rows land on the same key as every other value
+         * of it — which is how $14,857,000 and $45,670,000 arrived for one
+         * council in one month. Guessing at a publisher's words is the
+         * `Number of buildings` bet, so the check hands them over.
+         */
+        const unruled = structure.dimensions
+          .filter((d) => !d.isTime && d.codes.length > 0 && !ABS_BA_KEY_RULES.some((r) => r.dimension.test(d.id)))
+          .filter((d) => !AREA_DIMENSION.test(d.id));
+        for (const d of unruled) {
+          kv(`  NO RULE ${d.id}`, `${d.codes.length} codes: ${d.codes.slice(0, 12).map((c) => `${c.id}=${c.name}`).join(' | ')}`);
+        }
+        if (unruled.length) {
+          console.log('');
+          console.log('  Each of those comes back WHOLE and collides on (area, period, type).');
+          console.log('  That is a correctness problem before it is a size one.');
+        }
+      }
+      return { key: composed.key, structureBytes: text.length, note: composed.unnarrowed.length ? `${composed.unnarrowed.length} dimension(s) left open` : '' };
+    } catch (error) {
+      const note = error instanceof Error ? error.message : String(error);
+      if (verbose) {
+        kv('the structure', note);
+        kv('the narrowing', 'none — falling back to /all, exactly as the loader does');
+      }
+      return { key: 'all', structureBytes: 0, note };
     }
-    for (const u of composed.unnarrowed) kv(`  OPEN ${u.dimension}`, u.reason);
-    /*
-     * The dimensions no rule NAMES at all, with their vocabulary.
-     *
-     * Measured 21 Sep 2026, the cube is eight dimensions and this register
-     * filters four — so `SECTOR` and `WORK_TYPE` come back whole and their
-     * rows collide on (area, period, building type), which the parse now
-     * refuses. Writing a rule for them needs the publisher's own words, and
-     * guessing at them is the `Number of buildings` bet again. So the check
-     * hands over the vocabulary rather than leaving the next person to fetch
-     * three megabytes of structure by hand.
-     */
-    const unruled = structure.dimensions
-      .filter((d) => !d.isTime && d.codes.length > 0 && !ABS_BA_KEY_RULES.some((r) => r.dimension.test(d.id)))
-      .filter((d) => !AREA_DIMENSION.test(d.id));
-    for (const d of unruled) {
-      kv(`  NO RULE ${d.id}`, `${d.codes.length} codes: ${d.codes.slice(0, 12).map((c) => `${c.id}=${c.name}`).join(' | ')}`);
-    }
-    if (unruled.length) {
-      console.log('');
-      console.log('  Each of those comes back WHOLE, and its rows land on the same key as');
-      console.log('  every other value of it. The parse refuses a disagreement rather than');
-      console.log('  storing an arbitrary slice as a total — so this is a size problem AND');
-      console.log('  a correctness one, and the vocabulary above is what a rule needs.');
-    }
-    if (composed.key === 'all') {
-      kv('the narrowing', 'nothing narrowed — this is byte-for-byte the request that shipped');
-    }
-  } catch (error) {
-    // Reported, never failed on: a narrowing is an optimisation and the
-    // fallback is `/all`, which is what shipped.
-    kv('the structure', error instanceof Error ? error.message : String(error));
-    kv('the narrowing', 'none — falling back to /all, exactly as the loader does');
   }
+
+  h(`4a · The query for ${dataflowRef(choice.flow)}, narrowed at the source`);
+  const chosenKey = await keyFor(choice.flow, true);
 
   h('4b · What the query costs');
-  if (narrowedKey === 'all') {
-    /*
-     * Nothing narrowed, so `/all` IS the live path and has to be measured —
-     * the fallback is the thing that would run. It is measured HERE and
-     * nowhere else: re-downloading 3.7 GB on every build to re-derive a
-     * settled number is somebody else's bandwidth spent on a figure that is
-     * already written down (`SUPPLY_EVIDENCE.md` §3).
-     */
-    kv('the key', '`all` — nothing narrowed, so the fallback is what would run');
-    for (const [label, flow] of [[choice.areaKind.toUpperCase(), choice.flow], ['LGA', currentAt('lga')]] as const) {
-      if (!flow) continue;
-      const m = await measure(absBuildingApprovalsUrl(flow, START_PERIOD));
-      console.log(
-        `  ${`${label}, ${START_PERIOD}→, /all`.padEnd(28)} ${String(m.status ?? 'ERR').padStart(3)}  `
-        + `${(m.bytes / 1_048_576).toFixed(1).padStart(7)} MB  `
-        + `${(m.ms / 1000).toFixed(1).padStart(6)} s  ${verdictOf(m)}`,
-      );
-      if (workable(m) && !carried) {
-        carried = {
-          label: `${label}, /all, from ${START_PERIOD}`,
-          flow,
-          grain: flow === choice.flow ? choice.areaKind : 'lga',
-          start: START_PERIOD,
-          url: absBuildingApprovalsUrl(flow, START_PERIOD),
-          bytes: m.bytes,
-        };
-      }
-    }
-  } else {
-    for (const [label, flow] of [['SA2', choice.flow], ['LGA', currentAt('lga')]] as const) {
-      if (!flow) continue;
-      const m = await measure(narrowedApprovalsUrl(flow, START_PERIOD, narrowedKey));
-      const rate = m.ms > 0 ? m.bytes / (m.ms / 1000) : 0;
-      console.log(
-        `  ${`${label}, ${START_PERIOD}→, narrowed`.padEnd(28)} ${String(m.status ?? 'ERR').padStart(3)}  `
-        + `${(m.bytes / 1_048_576).toFixed(1).padStart(7)} MB  `
-        + `${(m.ms / 1000).toFixed(1).padStart(6)} s  `
-        + `${(rate / 1024).toFixed(0).padStart(6)} KB/s  `
-        + `${verdictOf(m)}${m.error ? ` (${m.error})` : ''}`,
-      );
-      if (workable(m) && flow === choice.flow) {
-        // The finest grain, carried. This is the answer the design needed.
-        carried = {
-          label: `${label}, narrowed, from ${START_PERIOD}`,
-          flow,
-          grain: choice.areaKind,
-          start: START_PERIOD,
-          url: narrowedApprovalsUrl(flow, START_PERIOD, narrowedKey),
-          bytes: m.bytes,
-        };
-      } else if (workable(m) && !carried) {
-        carried = {
-          label: `${label}, narrowed, from ${START_PERIOD}`,
-          flow,
-          grain: 'lga',
-          start: START_PERIOD,
-          url: narrowedApprovalsUrl(flow, START_PERIOD, narrowedKey),
-          bytes: m.bytes,
-        };
-      }
-    }
+  const grains: Array<{ label: string; flow: DataflowEntry; grain: ApprovalsAreaKind; key: string }> = [
+    { label: choice.areaKind.toUpperCase(), flow: choice.flow, grain: choice.areaKind, key: chosenKey.key },
+  ];
+  const lgaFlow = currentAt('lga');
+  if (lgaFlow && dataflowRef(lgaFlow) !== dataflowRef(choice.flow)) {
+    // Its OWN structure, its OWN key.
+    const lgaKey = await keyFor(lgaFlow, false);
+    kv(`${dataflowRef(lgaFlow)} key`, `${lgaKey.key}${lgaKey.note ? ` (${lgaKey.note})` : ''}`);
+    grains.push({ label: 'LGA', flow: lgaFlow, grain: 'lga', key: lgaKey.key });
   }
 
+  for (const g of grains) {
+    const url = g.key === 'all'
+      ? absBuildingApprovalsUrl(g.flow, START_PERIOD)
+      : narrowedApprovalsUrl(g.flow, START_PERIOD, g.key);
+    const m = await measure(url);
+    const rate = m.ms > 0 ? m.bytes / (m.ms / 1000) : 0;
+    console.log(
+      `  ${`${g.label}, ${START_PERIOD}→, ${g.key === 'all' ? '/all' : 'narrowed'}`.padEnd(30)} `
+      + `${String(m.status ?? 'ERR').padStart(3)}  ${(m.bytes / 1_048_576).toFixed(1).padStart(7)} MB  `
+      + `${(m.ms / 1000).toFixed(1).padStart(6)} s  ${(rate / 1024).toFixed(0).padStart(6)} KB/s  `
+      + `${verdictOf(m)}${m.error ? ` (${m.error})` : ''}`,
+    );
+    if (workable(m) && !carried) {
+      carried = { label: `${g.label}, from ${START_PERIOD}`, flow: g.flow, grain: g.grain, start: START_PERIOD, url, bytes: m.bytes };
+    }
+  }
 
   h('5 · What an invocation can actually carry');
   if (!carried) {

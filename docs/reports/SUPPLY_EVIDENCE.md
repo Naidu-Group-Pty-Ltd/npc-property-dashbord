@@ -232,19 +232,66 @@ something CI can weigh**: this instrument measures transfer from a runner, so
 a green run proves the download fits the constraint the check can see, and
 not that the parse fits the one it cannot.
 
-## 8 · Open
+## 8 · What narrowing bought, and what is left
 
-**Whether the narrowed query makes the finest grain loadable.** That is what
-4d measures and it is the number the loader's design turns on. If SA2
-narrowed still cannot be carried, the next lever is paging by state — the SA2
-code's leading digit is its state, and `market-sales-ingest` is already
-staged one publisher per invocation for exactly this reason ("one heavy
-workbook per invocation", `OPEN_DATA_GROWTH_EVIDENCE.md` §10). If the LGA
-fallback is needed, the current and prior editions have to be unioned, which
-the register's primary key already does correctly: the newest edition's rows
-overwrite where they overlap.
+Measured across four CI runs on 21 Sep 2026, against the Bureau's own bytes:
 
-Nothing is written to `market_building_approvals` on any deployment yet, and
-until something is, every report reads **Not searched.** and is forbidden from
-stating a figure — which is `CLONE_PROVISIONING_GAPS.md`'s rule applied before
-the gap exists.
+| Query | SA2 | LGA |
+| --- | --- | --- |
+| `/all` | 8,307 MB | 61.8 MB |
+| MEASURE + BUILDING_TYPE + FREQ | 1,798 MB | 8.0 MB |
+| + SECTOR + WORK_TYPE + REGION_TYPE | **111.6 MB** | — |
+
+Seventy-four times smaller at the finest grain, and the ceiling an invocation
+can hold is 24 MB. **So SA2 pages by state**: the SA2 code's leading digit is
+its state, eight invocations come to roughly 14 MB each, and
+`market-sales-ingest` has been staged one publisher per invocation since the
+DCJ workbooks exhausted an edge worker's compute allowance
+(`OPEN_DATA_GROWTH_EVIDENCE.md` §10). That is a known shape in this loader
+rather than a new mechanism.
+
+### The four defects narrowing exposed
+
+Every one was a pattern written against an imagined vocabulary meeting the
+vocabulary the publisher actually has, and every one was invisible while the
+reader only had to ACCEPT what arrived:
+
+| Pattern | Written for | What the cube publishes |
+| --- | --- | --- |
+| `^number\b` | dwelling units | also `Number of buildings` — one building, forty dwellings |
+| the requested grain | councils | councils AND states AND Australia, in one body |
+| no SECTOR / WORK_TYPE rule | one figure per key | three sectors × nine work types = 27 |
+| `^total$` | total residential | `Total` = all buildings, including factories and offices |
+
+The third produced a wrong figure on live data and it is the one to remember:
+the Bureau's LGA download gave **$14,857,000 and then $45,670,000 for Greater
+Bendigo 2026-07 total residential**. Three times wrong, and indistinguishable
+from a correct figure by looking at it.
+
+`assertNoCollision` catches that class by its EFFECT — a second, different
+figure for a key that already holds one — rather than by enumerating the
+dimensions a publisher might add, because enumerating is precisely the bet
+that lost over `Number of buildings`. An identical repeat is not a collision;
+only a disagreement refuses.
+
+### A key belongs to the flow whose structure composed it
+
+The check itself then committed the same class one level up: it composed one
+key from the chosen flow and measured BOTH grains with it, producing an LGA
+download of 9,818 bytes carrying eight states, one national row and not a
+single council. The SA2 flow's `REGION_TYPE` codelist is not the LGA flow's,
+and a code that means one thing in one document means nothing in another. The
+loader was never wrong — it reads and queries the same flow — so this was the
+instrument measuring itself, for the third time (after the runner-bandwidth
+criterion and the hard-coded namespace prefix).
+
+### Still not measured
+
+**Memory.** `EDGE_BYTE_CEILING` is derived from a 256 MB isolate and the
+shape of the parse, not weighed, and CI measures transfer from a runner. A
+green run proves the download fits the constraint the check can see.
+
+**And nothing writes to `market_building_approvals` on any deployment.**
+Until something does, every report reads **Not searched.** and is forbidden
+from stating a figure, which is `CLONE_PROVISIONING_GAPS.md`'s rule applied
+before the gap exists.
