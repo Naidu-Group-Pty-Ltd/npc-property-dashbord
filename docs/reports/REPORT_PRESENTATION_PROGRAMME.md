@@ -404,12 +404,46 @@ p5 either carries a real risk register or is removed and its dashboard given the
 room; p37's five-column, one-row table is restructured.
 *Accept:* no content page below a declared fill floor (see W2.4).
 
-**W2.4 · A page-fill floor.**
-No content page below ~45% fill; short tails fold back under the existing
-`NARRATIVE_PACKING` rules, which already cut a paragraph at a sentence, repeat a
-table head, float a figure and refuse a stub last page.
-*Accept:* the fill probe over a regenerated document reports no content page
-under the floor, with front matter and deliberate dividers excluded by name.
+**W2.4 · ~~A page-fill floor.~~ WITHDRAWN — there is no packing defect, and
+the two measurements that said otherwise were both mine.**
+
+The first fill probe counted CHARACTERS and reported 14 of 39 pages under
+45%. That measures text, not ink: a page carrying a chart is not under-filled,
+and the metric topped out near 59% on a full page, so the "floor" was a
+property of the instrument. **It is §7's rule again — an instrument that can
+fail the way its subject fails is not an instrument** — and it is the second
+time in this programme that a probe counted the wrong thing.
+
+The second was a grep. `PackOptions` has nine page-filling switches —
+`keepWithNext`, `splitTables`, `splitAtBoundary`, `floatFigures`,
+`absorbTail`, `balanceTail`, `splitParagraphs`, `splitLists`, `reserveLines` —
+and searching for them outside `markdownPaging.pure.ts` returns nothing, which
+reads exactly like the unmounted-component defect this repository has found
+three times. **They are all passed**, inside `packNarrativeGeometry`, in the
+file the search excluded, and `markdownBlockContent.ts` is the renderer's call
+site. Every filling behaviour is on.
+
+Measured properly — the vertical extent of every glyph AND every path
+construction, banded at 6pt, over the content box — the body pages (6–35) sit
+at **58–80% inked, reaching 69–89% of the box**, which is what typeset prose
+looks like. Three body pages stop short:
+
+| Page | Reaches | Why |
+| --- | --- | --- |
+| 16 | 69% | the `General Residential Zone (GRZ) 1` single bar, and a sidenote that floated past it |
+| 25 | 64% | the `{{stat …` markup and the doubled `Crime & personal safety` heading |
+| 36 | 69% | the five-column Monitoring table |
+
+**All three are already closed by W1.1, W1.3, the duplicate-heading merge and
+the Monitoring rewrite.** Page 5's 28% is the Risk Register divider whose
+withheld-register callout was fixed on `main` on 19 Sep; pages 4, 37 and the
+cover are master-fixed and correctly sparse.
+
+So the under-filled pages were a SYMPTOM of the content defects, not an
+independent packing failure, and a fill floor would have been a rule invented
+to fix something that was not broken. What is worth keeping is the
+instrument — ink extent rather than character count — for the next
+regeneration.
 
 ### W3 · Evidence — national by construction
 
