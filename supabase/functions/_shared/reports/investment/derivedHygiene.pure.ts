@@ -23,6 +23,7 @@ import { enforceChartEvidence, type EvidenceInventory } from './chartEvidence.pu
 import { alignChartScales } from './chartScale.pure.ts';
 import { tabulateMixedUnitCharts } from './chartUnits.pure.ts';
 import { dedupeChartDirectives } from './blockHygiene.pure.ts';
+import { enforceChartQuantity } from './chartQuantity.pure.ts';
 import { scrubUnresolvedBraces } from './braceHygiene.pure.ts';
 import { limitEmphasis } from './emphasisDensity.pure.ts';
 import { stripFootnoteDebris } from './footnoteDebris.pure.ts';
@@ -766,6 +767,28 @@ export function presentStoredMarkdown(
   const rated = withholdRatedAbsenceCharts(single);
   const unrated = rated.withheld.length ? rated.markdown : single;
   /*
+   * A chart is a measurement, or it is not drawn as one.
+   *
+   * Two rules, both read off the twelve quantitative directives in the
+   * 9 Hollow Street Compass driven through the real parser. **A flag set is
+   * not a quantity**: five of the twelve plot nothing but 0 and 1, one of them
+   * as three identical full-length bars and another drawing `Overlays mapped`
+   * at zero height beside two full ones — a retrieval result stated as a count
+   * of zero, which is `rentalEvidence`'s rule in ink. **A value cut out of a
+   * sentence is not this item's value**: `Healthcare 10 within 5 km` parses to
+   * 5, the RADIUS, so four amenity categories the enrichment measured at 10,
+   * 10, 9 and 10 drew as four identical bars.
+   *
+   * Directly after `withholdRatedAbsenceCharts`, whose withhold-whole rule the
+   * first half is, and BEFORE `tabulateMixedUnitCharts` below — which would
+   * otherwise set the climate chart as a table of the long-run normals while
+   * the readings the title is about stayed lost in the labels.
+   */
+  const measured = enforceChartQuantity(unrated);
+  const quantified = measured.withheld.length || measured.tabulated.length
+    ? measured.markdown
+    : unrated;
+  /*
    * A shared axis is a claim that the quantities on it are comparable.
    *
    * Page 13 of the 97 Poole Road Compass plotted `99.1%`, `100%` and
@@ -779,8 +802,8 @@ export function presentStoredMarkdown(
    * dropped: every label, value and their order survive as the table the
    * data already was.
    */
-  const mixed = tabulateMixedUnitCharts(unrated);
-  const commensurable = mixed.tabulated.length ? mixed.markdown : unrated;
+  const mixed = tabulateMixedUnitCharts(quantified);
+  const commensurable = mixed.tabulated.length ? mixed.markdown : quantified;
   // One scale per quantity across the whole document. Unconditional, because
   // it needs no record to know that two charts of kilometres must agree, and
   // it is a no-op on a document with one chart per unit.

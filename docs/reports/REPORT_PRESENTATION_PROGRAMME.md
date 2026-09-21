@@ -53,23 +53,61 @@ re-opened without new evidence:
   weights), Inter (5 weights), IBM Plex Mono (3 weights). Tabular/monospaced
   figures are available to financial tables, which REPORT_RULES §4 requires.
 
-### 1.2 The finding that reframes the rest: the document draws no charts
+### 1.2 The finding that reframes the rest: the charts draw, and half of them are not measurements
 
-`investment_reports.report_content` for this report holds **20 `{{kind: …}}`
-chart directives** and 26 `{{` sequences in total. The delivered PDF contains
-**zero charts**.
+**A correction to the first version of this plan, kept rather than quietly
+rewritten.** It stated that the delivered PDF contains *zero charts*, on the
+evidence of a per-page operator list showing no image XObject in the body. That
+reading was wrong and the probe was counting the wrong thing:
+`chartFigure()` emits an SVG, and **WeasyPrint draws a data-URI SVG as native
+vector paths** — there is no image to count. Re-measured by FILL COLOUR, the
+brand gold `rgb(142,108,21)` appears in the path fills of the chart pages and
+in none of the text-only ones. The figures are on the page. The rule this cost
+is the one §7 of `INVESTMENT_REPORT_RESUME.md` already charges for: *an
+instrument that can fail the way its subject fails is not an instrument*.
 
-The evidence is the per-page operator list. The floor across the document is
-**11 path constructions and 4 fills** — that is page furniture: the rules under
-the running head and above the foot. **Fourteen of thirty-nine pages sit at
-exactly that floor**, which is to say they are pure text. Every page above the
-floor is above it because of *strokes*, which are table rules. There is not one
-image XObject in the body; the only two in the file are the mark on the cover
-and the closing page.
+What is true, and is worse, is what those figures SAY. Driven through the real
+parser, the twelve quantitative directives in `report_content` divide like
+this:
 
-So the model composed twenty figures and the reader received none.
+| | |
+| --- | --- |
+| Measure something and draw correctly | **4** (two price-vs-median pairs, two growth heatmaps) |
+| Plot nothing but flags | **5** |
+| Have no series the parser can read | **1** |
+| Draw the wrong numbers, convincingly | **2** |
 
-Worse, three of them printed **raw template markup to the client**:
+**Five plot nothing but 0 and 1.** `{{bars: Zone GRZ … 1, Overlays checked &
+none mapped at coordinate 1, Land use table & certificate not yet read 1 |
+unit=index}}` draws three identical full-length bars.
+`{{bars: GRZ zoning verified 1, Overlays mapped 0, Overlays checked list 1}}`
+draws `Overlays mapped` at zero height beside two full ones — which a reader
+takes as *no overlays*, when the register says overlays were CHECKED and none
+were mapped at the coordinate. That is a retrieval result stated as a count of
+zero: `rentalEvidence`'s rule — **absent is never zero** — committed in ink.
+`{{margin: Overlay check basis | spark=1,0}}` is the same thing at the smallest
+size the document draws.
+
+**And two draw the wrong numbers while looking entirely correct**, which is the
+finding that reframes the rest:
+
+```
+{{bars: Healthcare 10 within 5 km, Shopping centres 10 within 5 km,
+       Parks & recreation 9 within 5 km, Restaurants & cafés 10 within 5 km
+       | title=Local amenity counts within 5 km | unit=facilities}}
+```
+
+The grammar is `Label Value` and the model wrote a sentence. The parser takes
+the last number, so every item plots **5** — the RADIUS — and the counts 10,
+10, 9 and 10 are stranded in the labels, which are left reading
+`Healthcare 10 within`. Four identical bars, under a title promising amenity
+counts, on a record whose own enrichment measured four different ones. The
+climate chart is the same cut: `Annual rainfall vs local normal 683.1mm vs
+511.3mm` plots **511.3**, the long-run normal, and discards the 683.1 the title
+exists to compare it against.
+
+Three of the document's `{{` sequences also printed **raw template markup to
+the client**:
 
 ```
 p25   {{stat label="Crime data coverage" unit="" sub="Recorded-crime register …"
@@ -77,36 +115,9 @@ p26   {{stat label="Registered major public projects" unit="" sub="Within ~15 km
 p30   {{stat label="Golden Square house median" unit="$" sub="Vic Valuer-General, 2025" 567500
 ```
 
-`{{stat …}}` is written with `label=` rather than `kind:`, so the parser never
-matches it, nothing strips it, and it reaches paper verbatim. This is the most
-serious presentation defect in the document.
-
-And where directives do parse, roughly half of them **encode a boolean as a
-chart**:
-
-```
-{{bars: General Residential Zone (GRZ) 1 | title=Planning framework context}}
-{{heatmap: 1,0 / 1,0 | rows=Zone,Overlays | cols=Checked,Not in layer}}
-{{margin: Overlay check basis | spark=1,0}}
-{{bars: GRZ zoning verified 1, Overlays mapped 0, Overlays checked list 1}}
-```
-
-A bar of height 1 meaning "verified" is a checkbox drawn as a chart. It is the
-same family as the rule `withholdRatedAbsenceCharts` already enforces for
-absences, one step earlier: a retrieval status is not a quantity.
-
-The good directives are there and are also lost:
-
-```
-{{bars: Subject house $387,500, Golden Square house median $567,500}}
-{{heatmap: 8.6,5.6 / 1.5,1.9 / 8.5,3.8 | rows=1-year,3-year,5-year
-          | cols=Golden Square,Victoria}}
-{{bars: Annual rainfall vs local normal 683.1mm vs 511.3mm, …}}
-{{tiles: Healthcare 10 facilities sub="Within 5 km of the property"}}
-```
-
-A price-against-median comparison and a three-horizon growth comparison against
-the state benchmark are exactly the figures a client reads a report for.
+`stat` is a FENCE kind opened with the DIRECTIVE delimiter, so it matches
+neither parser, nothing strips it, and it reaches paper verbatim. Closed by
+W1.1.
 
 ### 1.3 Structure and placement
 
@@ -218,23 +229,31 @@ stripped.
 through the real read path, and asserts no `{{` survives in the output; plus a
 scan of the delivered corpus for `{{`.
 
-**W1.2 · Make the template path draw figures.**
-The primitives exist — `renderHeatmap`, `renderWaterfall`, gauge, donut,
-timeline, pictograph, `fitLines`. The WeasyPrint/template route is not invoking
-them. Where a kind genuinely cannot be drawn, tabulate it through
-`vizDirectiveTables.pure.ts` — *a promise of a figure is a figure*, never
-dropped behind the sentence that introduced it.
-*Accept:* the operator-list probe over a regenerated document shows image or
-path counts materially above the 11/4 furniture floor on the pages carrying
-directives, and no directive is silently lost between `report_content` and the
-page.
+**W1.2 · ~~Make the template path draw figures.~~ WITHDRAWN — the premise was
+wrong.** The figures already draw. Measured by fill colour rather than by image
+count, the chart pages carry brand-gold path fills and the text pages carry
+none; of the twelve quantitative directives, eleven reach the page and one is
+dropped by the renderer for having no series. Nothing here needs building. The
+finding it was standing in front of is W1.3.
 
-**W1.3 · Refuse the boolean chart at the producer.**
-A series whose every value is 0 or 1, or whose axis is "Checked / Not in layer",
-is a retrieval status, not a quantity. Render it as a status row.
-*Accept:* a unit test over the real directives from this document; the four
-named above become status rows and the price/growth/rainfall/amenity ones are
+**W1.3 · A chart is a measurement, or it is not drawn as one.** ✅ **DONE**
+Two rules, in `chartQuantity.pure.ts`, on the read path beside
+`withholdRatedAbsenceCharts`. **A flag set is not a quantity** — withheld
+whole, with nothing worded in its place, and only where the directive itself
+confesses: every plotted value a flag AND either a unit that is not a unit
+(`index`, `Zone code`, `Descriptor`) or a retrieval state on an axis
+(`Checked`, `Not in layer`). A genuine count that happens to read 1 and 0 under
+`unit=facilities` is drawn exactly as it is today. **A value cut out of a
+sentence is not this item's value** — the label and the display are re-joined
+into the phrase the model wrote and set as the table it always was, split at
+its first number, so `| Healthcare | 10 within 5 km |`. The tell is exact: a
+label ending in a connective is a sentence the parser cut, and it must also
+still carry a number, so `3-bedroom houses` and `Minimum lot size 450 m²` are
 untouched.
+*Accepted:* 29 specs, every fixture verbatim from the delivered document.
+Measured over its twelve quantitative directives — **withheld 6 · tabulated 2 ·
+kept 4**, the four kept being the two price comparisons and the two growth
+heatmaps, byte-identical.
 
 **W1.4 · One chart standard.**
 Apply the `dataviz` method through the colourway tokens, honouring REPORT_RULES
@@ -353,7 +372,8 @@ designers will keep avoiding a face that is available.
 ## 4 · Sequence, and why
 
 ```
-W1.1 ─┬─> W1.2 ──> W1.3 ──> W1.4          the cascade foundation
+W1.1 ──> W1.3 ──> W1.4                   the cascade foundation
+      (W1.2 withdrawn: the figures already draw)
       │
 W2.2 ─┴─> W3.1 ──> W3.2/3.3 ──> W3.4/3.5  evidence, national
       │
@@ -361,9 +381,10 @@ W2.3/2.4, W4.*                            presentation, parallel
 ```
 
 **W1.1 first**, because raw template markup is reaching clients today and it is
-the cheapest defect in the document to close. **W1.2 next**, because twenty
-figures per report are being composed and discarded, and it is the single
-largest gain in the programme — it cascades to all ten formats at once.
+the cheapest defect in the document to close. **W1.3 next** — W1.2 was
+withdrawn on measurement — because a chart that draws the wrong number is worse
+than one that does not draw at all, and both rules land in the read path, which
+cascades to every stored report and all ten formats at once.
 
 **W2.2 before any of W3**, because a national register with nowhere to be
 explained produces a better paragraph inside Location, not a section.
