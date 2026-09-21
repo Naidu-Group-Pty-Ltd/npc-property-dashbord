@@ -33,6 +33,40 @@ const arg = (name) => {
 };
 const has = (name) => process.argv.includes(name);
 
+/**
+ * The SQL with its comments removed.
+ *
+ * `objectsCreatedIn` deliberately counts a name that appears only in a
+ * comment, and its own header says why: for the PARITY report that pushes an
+ * object toward "ours", which is the side that gets reviewed rather than the
+ * side that gets dropped. Here the same imprecision points the other way. A
+ * phantom object can never exist in the catalogue, so it makes an applied
+ * migration read as NOT APPLIED — and measured 21 Sep 2026 on the prime it
+ * produced `table:if` (from `-- Everything here is idempotent (CREATE TABLE IF
+ * NOT EXISTS …`), `table:skips` (`-- … CREATE TABLE IF NOT EXISTS skips the
+ * new inline definition`), `function:as` and `trigger:on`, each condemning a
+ * migration that had run.
+ *
+ * So the rule is not changed, it is asked of code alone. The index keeps its
+ * bytes and its meaning; the gate stops crying wolf.
+ */
+export function sqlWithoutComments(src) {
+  return String(src ?? '')
+    // Block comments first: a `--` inside one is not a line comment.
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/--[^\n]*/g, ' ');
+}
+
+/**
+ * An object this migration creates that could still be absent afterwards.
+ *
+ * `pg_temp` is the only exclusion and it is not a heuristic: a function in the
+ * temporary schema is dropped when the session that made it ends, so it is
+ * absent from the catalogue on every correct run. Judging a migration by one
+ * is judging it by something guaranteed false.
+ */
+const isDurable = (o) => !/(^|:)pg_temp\./.test(o);
+
 /** Every migration in the repo, with what it creates and what it claims. */
 export function readRepoMigrations(dir = MIGRATIONS_DIR) {
   return readdirSync(dir)
@@ -44,7 +78,7 @@ export function readRepoMigrations(dir = MIGRATIONS_DIR) {
       return {
         version: file.slice(0, 14),
         file,
-        objects: objectsCreatedIn(src),
+        objects: objectsCreatedIn(sqlWithoutComments(src)).filter(isDurable),
         // A probe that is not a lone SELECT is refused here rather than sent to
         // the database, and the file is then judged on its objects alone.
         probe: probe && probeIsReadOnly(probe) ? probe : null,

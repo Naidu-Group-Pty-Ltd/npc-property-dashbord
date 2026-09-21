@@ -79,10 +79,16 @@ jobs:
       - name: Report drift
         id: drift
         run: |
+          # NOT a pipeline. `$?` after `cmd | tee` is tee's status, which is
+          # always 0, so the gate below was skipped on every run — including
+          # the one that correctly found fourteen unapplied migrations and
+          # reported success. Redirect, capture, then print.
           set +e
-          node scripts/ops/migration-drift.mjs --facts /tmp/facts.json | tee /tmp/drift.txt
-          echo "status=$?" >> "$GITHUB_OUTPUT"
+          node scripts/ops/migration-drift.mjs --facts /tmp/facts.json > /tmp/drift.txt 2>&1
+          status=$?
           set -e
+          cat /tmp/drift.txt
+          echo "status=$status" >> "$GITHUB_OUTPUT"
 
       - name: Summarise
         if: always()

@@ -152,3 +152,62 @@ describe('the probes this repository actually declares', () => {
     expect(bad.map((x) => x.f)).toEqual([]);
   });
 });
+
+/*
+ * What the reporter's first real run found — about itself.
+ *
+ * Dispatched 21 Sep 2026 against the prime, the job reported fourteen
+ * unapplied migrations and finished GREEN, and five of the fourteen were
+ * condemned by an object that appears only in a comment. Each half on its own
+ * makes the gate useless: one never fails, the other fails for nothing.
+ */
+describe('the gate reports on itself', () => {
+  it('reads no object out of a comment', async () => {
+    const { sqlWithoutComments } = await import('../../../../scripts/ops/migration-drift.mjs');
+    const { objectsCreatedIn } = await import('../../../../scripts/build-migration-object-index.mjs');
+
+    // Verbatim from the four migrations the run named.
+    const src = [
+      '-- Everything here is idempotent (CREATE TABLE IF NOT EXISTS / CREATE OR REPLACE',
+      'CREATE TABLE IF NOT EXISTS public.provider_circuit_state (id int);',
+      '-- constraint (CREATE TABLE IF NOT EXISTS skips the new inline definition)',
+      "-- WP-17's `secdef_execute` rule reads CREATE FUNCTION as granting EXECUTE to",
+      '-- though a role able to CREATE TRIGGER on its own table could still have',
+      '/* CREATE VIEW in_a_block_comment AS select 1; */',
+    ].join('\n');
+
+    const objects = objectsCreatedIn(sqlWithoutComments(src));
+    expect(objects).toEqual(['table:public.provider_circuit_state']);
+    // The shared extractor still counts them, deliberately, for parity.
+    expect(objectsCreatedIn(src)).toContain('table:if');
+  });
+
+  it('keeps a real object that sits beside prose mentioning another', async () => {
+    const { sqlWithoutComments } = await import('../../../../scripts/ops/migration-drift.mjs');
+    const { objectsCreatedIn } = await import('../../../../scripts/build-migration-object-index.mjs');
+    const src = 'CREATE INDEX idx_a ON t(c); -- replaces CREATE INDEX idx_b\nCREATE VIEW v AS select 1;';
+    expect(objectsCreatedIn(sqlWithoutComments(src)).sort()).toEqual(['index:idx_a', 'view:v']);
+  });
+
+  it('never judges a migration by a pg_temp function, which cannot survive its session', async () => {
+    const mod = await import('../../../../scripts/ops/migration-drift.mjs');
+    const { objectsCreatedIn } = await import('../../../../scripts/build-migration-object-index.mjs');
+    const src = 'CREATE FUNCTION pg_temp.safe_jsonb(t text) RETURNS jsonb AS $$ select null::jsonb $$ LANGUAGE sql;';
+    const objects = objectsCreatedIn(mod.sqlWithoutComments(src));
+    expect(objects).toContain('function:pg_temp.safe_jsonb');
+    // …and the reader drops it, so the file falls through to its probe.
+    const kept = objects.filter((o: string) => !/(^|:)pg_temp\./.test(o));
+    expect(kept).toEqual([]);
+  });
+
+  /*
+   * `$?` after `cmd | tee` is tee's status. The gate read it and was therefore
+   * skipped on every run ever made.
+   */
+  it('does not take its exit status from the end of a pipe', async () => {
+    const { readFileSync } = await import('node:fs');
+    const wf = readFileSync('.github/workflows/migration-drift.yml', 'utf8');
+    expect(wf).not.toMatch(/migration-drift\.mjs[^\n]*\|\s*tee/);
+    expect(wf).toMatch(/status=\$status/);
+  });
+});
