@@ -1862,9 +1862,31 @@ export function risks(
 ): FlowItem {
   const c = ctx();
   const bars = riskKind(c.manifest.risk_display) === 'bars';
+  /*
+   * `+22` was 8pt of cell padding above, 8pt below and 6pt spare, and the
+   * spare is what ran out. Measured on `Frontispiece [compass]` p6 with the
+   * catalogue's real faces installed — the first measurement of this block
+   * ever taken in the face it ships in, because every earlier run of the
+   * geometry gate loaded no webfont at all (`assertDeclaredFacesResolve` in
+   * `qa.ts`) — the register's ink ends at 369.1pt where the block below it
+   * begins at 363.0pt: **6.1pt** past its declared slot.
+   *
+   * What made that 6.1pt a collision rather than a tight fit is the block
+   * BELOW. The page declares the register at y=199, a withheld-register
+   * callout at 363 and the recommendation at 437; the callout is conditional
+   * on there being no risk string, so on a record that carries one it is
+   * dropped and `closeDroppedBlocks` moves the recommendation up into the
+   * band the callout held — onto the 6.1pt the register had already
+   * overrun. Neither block is wrong on its own, which is why this needed a
+   * render to find.
+   *
+   * 30 rather than 22: the observed shortfall plus headroom, since the two
+   * prose columns are bound and this budget is a promise about text the
+   * template does not hold.
+   */
   const rowHeight = chars === undefined
     ? 46
-    : Math.max(46, textHeight(chars, { size: c.scale.cell, width: c.contentWidth * 0.74 }) * 2 + 22);
+    : Math.max(46, textHeight(chars, { size: c.scale.cell, width: c.contentWidth * 0.74 }) * 2 + 30);
   return {
     height: bars ? 26 + items.length * 24 : 44 + items.length * rowHeight,
     block: (y) => block('risk-register', {
