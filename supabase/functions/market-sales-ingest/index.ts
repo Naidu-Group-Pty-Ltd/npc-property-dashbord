@@ -42,6 +42,7 @@ import {
   dwellingOfTimeSeriesName,
   parseVicQuarterly,
   parseVicTimeSeries,
+  VIC_VPSR_PAGE_URL,
 } from '../_shared/reports/market/openData/vicVpsrSuburb.pure.ts';
 import {
   chooseNextVicVolumeFile,
@@ -382,6 +383,103 @@ Deno.serve(async (req) => {
      * workbook, because five in one call is what hit the edge worker's
      * compute limit on the DCJ load.
      */
+    /*
+     * Where Victoria's CURRENT figures are, and whether they can be had live.
+     *
+     * Measured 21 Sep 2026: the register's newest Victorian period is
+     * `2025-12` on both spans while Queensland is current to 2026-09-10 and
+     * South Australia's `lsg_stats_2026_q1.xlsx` was captured 2026-09-18. The
+     * archive plainly carries 2026 files; Victoria is the only stale source,
+     * so the 2026 editions are published somewhere this pipeline is not
+     * looking.
+     *
+     * Three questions, asked rather than assumed, and NOTHING is written:
+     *
+     *  1. Does the publisher still answer a non-browser client? The archive
+     *     route exists because it did not — `zeroCostSources` records a
+     *     Cloudflare "Just a moment..." 403 — and that is a measurement with
+     *     a date on it, not a permanent property of the internet.
+     *  2. What file names does the archive actually hold under that path? The
+     *     loader only ever asked for names matching the 2025 spelling, so a
+     *     renamed 2026 edition would be invisible to it and present all along.
+     *  3. Is the same series on `data.vic.gov.au`? It is a CKAN portal with a
+     *     JSON API and its resources are served from hosts that do not sit
+     *     behind the same challenge — which is what a LIVE route would look
+     *     like.
+     */
+    if (stage === 'vic_discover') {
+      const answers: Record<string, unknown> = {};
+      const spreadsheetLinks = (html: string): string[] => [
+        ...new Set([...html.matchAll(/href="([^"]+\.xlsx?)"/gi)].map((m) => m[1])),
+      ].slice(0, 40);
+
+      // 1. The publisher itself.
+      try {
+        const res = await fetch(VIC_VPSR_PAGE_URL, { headers: { 'User-Agent': UA, Accept: 'text/html,*/*' } });
+        const text = await res.text();
+        answers.publisher_page = {
+          status: res.status,
+          bytes: text.length,
+          challenged: /just a moment|cf-browser-verification|challenge-platform/i.test(text),
+          opening: text.slice(0, 160).replace(/\s+/g, ' '),
+          spreadsheets: spreadsheetLinks(text),
+        };
+      } catch (error) {
+        answers.publisher_page = { error: error instanceof Error ? error.message : String(error) };
+      }
+
+      // 2. Every name the archive holds under that path — unfiltered, because
+      //    filtering by the old spelling is what made a rename invisible.
+      try {
+        const index = await archiveIndex(VIC_VPSR_ARCHIVE_PATTERN, String(body.from ?? '2025'));
+        const byName = new Map<string, string>();
+        for (const c of index) {
+          const name = fileNameOf(c.original);
+          const prev = byName.get(name);
+          if (!prev || c.timestamp > prev) byName.set(name, c.timestamp);
+        }
+        const names = [...byName.entries()]
+          .sort((a, b) => (a[1] < b[1] ? 1 : -1))
+          .slice(0, 60)
+          .map(([name, ts]) => ({ name, newest_capture: capturedAtIso(ts) }));
+        answers.archive = { captures: index.length, distinct_files: byName.size, newest_first: names };
+      } catch (error) {
+        answers.archive = { error: error instanceof Error ? error.message : String(error) };
+      }
+
+      // 3. The open-data portal — the candidate live route.
+      for (const [label, url] of [
+        ['ckan_search', 'https://discover.data.vic.gov.au/api/3/action/package_search?q=%22property%20sales%22&rows=10'],
+      ] as const) {
+        try {
+          const res = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json,*/*' } });
+          const text = await res.text();
+          let parsed: Record<string, unknown> | null = null;
+          try { parsed = JSON.parse(text) as Record<string, unknown>; } catch { /* reported by shape */ }
+          const result = (parsed?.result ?? {}) as Record<string, unknown>;
+          const packages = Array.isArray(result.results) ? result.results as Array<Record<string, unknown>> : [];
+          answers[label] = {
+            status: res.status,
+            bytes: text.length,
+            count: result.count ?? null,
+            datasets: packages.slice(0, 8).map((pkg) => ({
+              title: pkg.title,
+              name: pkg.name,
+              resources: (Array.isArray(pkg.resources) ? pkg.resources as Array<Record<string, unknown>> : [])
+                .filter((r) => /xlsx?|csv/i.test(String(r.format ?? '')))
+                .slice(0, 6)
+                .map((r) => ({ format: r.format, name: r.name, url: r.url, last_modified: r.last_modified })),
+            })),
+          };
+        } catch (error) {
+          answers[label] = { error: error instanceof Error ? error.message : String(error) };
+        }
+      }
+
+      console.log(`[market-sales-ingest] vic_discover ${JSON.stringify(answers).slice(0, 1200)}`);
+      return json({ success: true, stage, answers, wrote: false });
+    }
+
     if (stage === 'vic_volume') {
       const apply = body.apply === true;
       const wantDwelling = String(body.dwelling ?? 'house') === 'unit' ? 'attached' : 'house';
@@ -706,7 +804,7 @@ Deno.serve(async (req) => {
     // a rejected argument rather than as a deployment that had not landed yet.
     return json({
       success: false,
-      error: 'stage must be "qld", "nsw", "abs", "vic", "vic_volume", "sa" or "probe"',
+      error: 'stage must be "qld", "nsw", "abs", "vic", "vic_volume", "vic_discover", "sa" or "probe"',
     }, 400);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
