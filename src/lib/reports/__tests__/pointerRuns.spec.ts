@@ -124,3 +124,56 @@ describe('the read path carries it', () => {
     expect(md).toContain(PLANNING_REGISTER_SECTION);
   });
 });
+
+/**
+ * Naming the section is a courtesy; removing the bracket is the guarantee.
+ *
+ * A defect I put in this rule and caught by reading further into the same
+ * document. Page 9 closes a paragraph about PRICE GROWTH with
+ * `[vic_vpsr_suburb][Australian Bureau of Statistics — Residential Dwellings]`,
+ * and page 11 does it twice more. Pointing those at the planning register
+ * would send a reader after a market figure to the wrong table — worse than
+ * the bracket, because it is confidently wrong rather than merely opaque.
+ */
+describe('a run is pointed at the register it is about, or at nothing', () => {
+  /** Page 9, verbatim. */
+  const MARKET = ['## Why This Location Matters', '',
+    'The Valuer-General series records 1-year price growth of 8.6% and 10-year compound annual growth '
+    + 'of 6.4% for Golden Square houses to 31 December 2025. '
+    + '[vic_vpsr_suburb][Australian Bureau of Statistics — Residential Dwellings]'].join('\n');
+
+  /** Page 11, verbatim — the same key, twice more, in one section. */
+  const MARKET_TWICE = ['## Demand Drivers', '',
+    'The Victorian Valuer-General\u2019s Property Sales Report records a median sale price of $567,500 for '
+    + 'houses in Golden Square in calendar year 2025, with 1-year price growth of 8.6%. [vic_vpsr_suburb]',
+    '',
+    'Over the 10-year period 2015-2025, compound annual price growth of 6.4% is recorded. [vic_vpsr_suburb]',
+  ].join('\n');
+
+  it('removes a market citation without naming the planning register', () => {
+    const r = rewriteScaffoldingPointers(MARKET);
+    expect(r.rewritten).toBe(2);
+    expect(r.markdown).not.toContain('[');
+    expect(r.markdown).not.toContain(PLANNING_REGISTER_SECTION);
+  });
+
+  it('loses nothing, because the sentence already names its source', () => {
+    const md = rewriteScaffoldingPointers(MARKET_TWICE).markdown;
+    expect(md).toContain('The Victorian Valuer-General’s Property Sales Report records a median sale price');
+    expect(md).toContain('$567,500');
+    expect(md).toContain('compound annual price growth of 6.4%');
+    expect(md).not.toContain('vic_vpsr_suburb');
+  });
+
+  it('still names the section for a run that IS about planning', () => {
+    const planning = '## Risk\n\nOverlays were checked at the coordinate. [Vicmap Planning — plan_overlay]';
+    const md = rewriteScaffoldingPointers(planning).markdown;
+    expect(md).toContain(`(see *${PLANNING_REGISTER_SECTION}*)`);
+  });
+
+  it('judges the whole run, so a mixed run still finds its section', () => {
+    const mixed = '## Market\n\nThe zone is GRZ and the median is $567,500. '
+      + '[vic_vpsr_suburb][Zoning & Planning table]';
+    expect(rewriteScaffoldingPointers(mixed).markdown).toContain(PLANNING_REGISTER_SECTION);
+  });
+});

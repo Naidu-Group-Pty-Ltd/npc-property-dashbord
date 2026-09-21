@@ -622,6 +622,30 @@ const POINTER_RUN_RE =
 const HAS_A_LETTER = /[A-Za-z]/;
 
 /**
+ * Whether this run can be pointed AT the planning register, or only removed.
+ *
+ * Substituting the section name is a courtesy; removing the bracket is the
+ * guarantee. The two are not interchangeable, and getting that wrong is a
+ * defect I put in this rule and caught by reading further into the same
+ * document. Page 9 closes a paragraph about PRICE GROWTH with
+ *
+ *     [vic_vpsr_suburb][Australian Bureau of Statistics — Residential Dwellings]
+ *
+ * and page 11 does it twice more. Pointing those at *Planning controls and
+ * development registers* would send a reader after a market figure to the
+ * wrong table — worse than the bracket, because it is confidently wrong rather
+ * than merely opaque.
+ *
+ * So the section is named only where the run is ABOUT what that section
+ * carries. Everywhere else the run is removed, and nothing is lost: on every
+ * one of those pages the sentence already names its source in words — "The
+ * Victorian Valuer-General's Property Sales Report records a median sale price
+ * of $567,500" — so the bracket beside it was a citation of something already
+ * cited.
+ */
+const ABOUT_THE_PLANNING_REGISTER = /planning|zoning|overlay|land use|infrastructure|major public project/i;
+
+/**
  * Split at `## ` headings, so the reference is made once where the reader is.
  *
  * Three paragraphs each closing on a run would otherwise carry three identical
@@ -649,7 +673,7 @@ export function rewriteScaffoldingPointers(
       const brackets = run.match(/\[[^\]\n]*\]/g) ?? [];
       if (!brackets.length || !brackets.every((b) => HAS_A_LETTER.test(b))) return whole;
       rewritten += brackets.length;
-      if (named) return `${punct}`;
+      if (named || !ABOUT_THE_PLANNING_REGISTER.test(run)) return `${punct}`;
       named = true;
       // The reference belongs INSIDE the sentence it sources, so the
       // punctuation the run followed is re-emitted after it — otherwise the
