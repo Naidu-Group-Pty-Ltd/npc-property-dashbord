@@ -146,14 +146,33 @@ export function partitionCode(markdown: string): Array<[string, boolean]> {
  *
  * Walks the original string and re-slices it at the same boundaries, so the
  * concatenation is byte-identical by construction rather than by care.
+ *
+ * ## The fallback fails CLOSED, and its first draft did not
+ *
+ * When a part cannot be located this returns the whole document as ONE region,
+ * and that region is marked **code** — so nothing is substituted and the
+ * document comes back byte-identical.
+ *
+ * It first returned `[[markdown, false]]`: the whole document as PROSE, which
+ * would have let the substitution run inside every fence and code span in it.
+ * That is failing open on the one bound this module's header states as a
+ * rule — *"Code is a quotation and is never edited"* — and it would have done
+ * so silently, because the result still looks like an ordinary clean pass.
+ *
+ * The branch is defensive and, as far as the partition's own construction
+ * goes, unreachable: parts are in-order substrings of the source, so
+ * `indexOf(part, cursor)` always finds them. But a defence that fails open is
+ * worse than no defence, because the header promises something the code then
+ * does not do. Exported so the branch can be exercised directly rather than
+ * reasoned about.
  */
-function rejoin(markdown: string, parts: Array<[string, boolean]>): Array<[string, boolean]> {
+export function rejoin(markdown: string, parts: Array<[string, boolean]>): Array<[string, boolean]> {
   const out: Array<[string, boolean]> = [];
   let cursor = 0;
   for (const [text, isCode] of parts) {
     if (!text) continue;
     const at = markdown.indexOf(text, cursor);
-    if (at === -1) return [[markdown, false]];
+    if (at === -1) return [[markdown, true]];
     if (at > cursor) out.push([markdown.slice(cursor, at), false]);
     out.push([markdown.slice(at, at + text.length), isCode]);
     cursor = at + text.length;

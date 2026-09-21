@@ -11,6 +11,7 @@ import { describe, it, expect } from 'vitest';
 import {
   substituteUndrawableGlyphs,
   partitionCode,
+  rejoin,
   UNDRAWABLE_DASHES,
 } from '../investment/printableGlyphs.pure';
 
@@ -161,5 +162,33 @@ describe('the partition reproduces its input exactly', () => {
     expect(partitionCode(src).map(([t]) => t).join('')).toBe(src);
     // And the substitution over it preserves length.
     expect(substituteUndrawableGlyphs(src).markdown).toHaveLength(src.length);
+  });
+});
+
+describe('the reconciliation fallback fails closed', () => {
+  // The branch is defensive and unreachable from `partitionCode`'s own
+  // construction, so it is exercised directly. It first returned the document
+  // as PROSE, which would have let the substitution run inside every fence and
+  // code span in it -- failing open on the one bound this module promises.
+  const doc = 'prose with a pre\u2011GST dash and `a\u2011b` in code';
+
+  it('marks the whole document as code when a part cannot be located', () => {
+    const out = rejoin(doc, [['a part that is not in the document', false]]);
+    expect(out).toEqual([[doc, true]]);
+  });
+
+  it('so nothing is substituted, and the document is byte-identical', () => {
+    // The region the fallback produces is code, and the substitution skips
+    // code -- so an unreconcilable partition costs the repair, never the text.
+    const [[text, isCode]] = rejoin(doc, [['absent', false]]);
+    expect(isCode).toBe(true);
+    expect(text).toBe(doc);
+  });
+
+  it('still reconciles normally when every part is present and in order', () => {
+    const parts: Array<[string, boolean]> = [['prose with a pre\u2011GST dash and ', false], ['`a\u2011b`', true]];
+    const out = rejoin(doc, parts);
+    expect(out.map(([t]) => t).join('')).toBe(doc);
+    expect(out.some(([, c]) => c)).toBe(true);
   });
 });

@@ -158,13 +158,24 @@ export function provenanceSentence(
   }
   if (byProvider.size === 0) return null;
 
-  // The register's own currency, where the register answered. One date: the
-  // oldest slice drawn, because that is the claim the whole table can carry.
+  /*
+   * The register's own currency, where the register answered. One date: the
+   * OLDEST slice drawn, because that is the claim the whole table can carry.
+   *
+   * Sorted as ISO, then formatted. The first version formatted first and
+   * sorted the results, and `'1 Oct 2026' < '18 Sep 2026'` lexically — so with
+   * slices loaded on different days it reported the NEWEST as the oldest,
+   * which is the one direction that overstates the reading's currency. The
+   * code contradicted the comment directly above it, and the spec's fixture
+   * carried a single date, so nothing could see it.
+   */
   const registerDates = drawn
-    .map((c) => stampDate(loadedAt[c]))
-    .filter((d): d is string => d !== null);
-  const currency = registerDates.length
-    ? ` The register slice this reading came from was last loaded ${registerDates.sort()[0]}.`
+    .map((c) => text(loadedAt[c]))
+    .filter((d): d is string => d !== null)
+    .sort();
+  const oldest = registerDates.length ? stampDate(registerDates[0]) : null;
+  const currency = oldest
+    ? ` The register slice this reading came from was last loaded ${oldest}.`
     : '';
 
   if (byProvider.size === 1) {

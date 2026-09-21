@@ -972,6 +972,37 @@ W2.3, W2.4 and W4 are independent and can run alongside.
 - **The migration-drift gate** — made to run, made to fire, and made to stop
   reporting phantoms (14 findings → 8, every removal verified as a phantom).
 
+## 5a · Two defects in THIS programme's own new code, found by re-reading it
+
+Both were found by reading the modules shipped earlier today the way this
+programme reads everybody else's: looking for a rule that cannot fire, a
+fallback that swallows a real case, and a comment the code does not obey.
+Neither was caught by its own spec, and in both cases the reason is the same
+one this programme keeps recording.
+
+**`provenanceSentence` reported the NEWEST register slice as the oldest.** It
+formatted each slice's load date and then sorted the RESULTS — and
+`'1 Oct 2026' < '18 Sep 2026'` lexically, so with slices loaded on different
+days the newest won. The comment directly above it says *"One date: the
+OLDEST slice drawn, because that is the claim the whole table can carry"*, so
+the code contradicted its own stated intent, in the one direction that
+**overstates** how current a reading is. It sorts ISO and formats afterwards
+now. The spec could not see it because its fixture carried a **single** date —
+a fixture simpler than production, which is §2's rule at the smallest scale.
+
+**`printableGlyphs`' partition fallback failed OPEN.** When reconciliation
+cannot locate a part it returns the whole document as one region, and that
+region was marked **prose** — so the substitution would have run inside every
+fence and code span in it, silently breaking the one bound the module's header
+states as a rule: *"Code is a quotation and is never edited."* It returns the
+document as CODE now, so an unreconcilable partition costs the repair and
+never the text. The branch is defensive and, from the partition's own
+construction, unreachable — but **a defence that fails open is worse than no
+defence**, because the header then promises something the code does not do.
+It is exported so the branch is exercised directly rather than reasoned about.
+
+Both are pinned by specs verified non-vacuous by reverting the fix.
+
 ## 5b · Found on the way, and deliberately NOT fixed here
 
 **Three drift checks exist and nothing runs them, and one of them is

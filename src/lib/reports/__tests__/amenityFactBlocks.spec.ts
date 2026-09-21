@@ -102,6 +102,26 @@ describe('a count names the register that produced it', () => {
       .toContain('last loaded 18 Sep 2026');
   });
 
+  it('reports the OLDEST slice when they were loaded on different days', () => {
+    /*
+     * The fixture above carries ONE date, which is why the first version of
+     * this module could sort FORMATTED dates and look correct. Formatted,
+     * '1 Oct 2026' < '18 Sep 2026' lexically, so the newest slice was reported
+     * as the oldest -- the one direction that overstates currency. The dates
+     * below are chosen so the two orderings disagree.
+     */
+    const li = enrichment();
+    (li.__acquisition.stages as Record<string, unknown>).amenityRegisterLoadedAt = {
+      healthcare: '2026-09-18T02:00:00.000Z',
+      shopping: '2026-10-01T02:00:00.000Z',
+      recreation: '2026-10-02T02:00:00.000Z',
+    };
+    const out = amenityFactBlocks(li);
+    expect(out).toContain('last loaded 18 Sep 2026');
+    expect(out).not.toContain('last loaded 01 Oct 2026');
+    expect(out).not.toContain('last loaded 02 Oct 2026');
+  });
+
   it('says nothing about a publisher when the stamp records none', () => {
     const li = enrichment({ __acquisition: { stages: {} } });
     expect(provenanceSentence({}, ['healthcare'], {})).toBeNull();
