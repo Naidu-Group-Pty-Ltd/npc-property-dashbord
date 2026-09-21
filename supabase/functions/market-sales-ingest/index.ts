@@ -51,6 +51,20 @@ import {
   type ComposedKey,
 } from '../_shared/reports/market/openData/absDataStructure.pure.ts';
 import {
+  approvalsPage,
+  pagesToCover,
+} from '../_shared/reports/market/openData/absApprovalsPaging.pure.ts';
+
+/**
+ * How far back the supply register is loaded.
+ *
+ * Two years is what a year-on-year reading needs
+ * (`ABS_BA_PLAUSIBILITY.minPeriods`) and `approvalsFactBlocks` reports on
+ * twelve months against the twelve before them. Three years leaves a margin
+ * for a publisher's revision without asking for a decade nobody reads.
+ */
+const REGISTER_FLOOR_PERIOD = '2023-01';
+import {
   VIC_QUARTERLY_FILE,
   VIC_TIME_SERIES_FILE,
   VIC_VPSR_ARCHIVE_PATTERN,
@@ -555,17 +569,62 @@ Deno.serve(async (req) => {
           }],
         };
       }
+      /*
+       * ONE PAGE per invocation, newest first.
+       *
+       * Measured from CI on 21 Sep 2026: at SA2 grain with the query
+       * narrowed, 33 months is 111.6 MB and 12 months is 26.0 MB against a
+       * 24 MB budget, while 6 months is 12.2 MB. So a full load is several
+       * requests — the shape this loader has used since five DCJ workbooks
+       * in one call exhausted an edge worker's compute allowance.
+       *
+       * The FRONTIER is read from the register rather than assumed. The ABS
+       * publishes with a lag (a six-month window asked on 21 Sep returned
+       * four months, to 2026-07), so page 0 asks forward and whatever comes
+       * back defines it; every later page lies wholly in the past and must be
+       * full. The loader learns the lag from the publisher instead of
+       * carrying a constant nobody here can verify.
+       */
+      const pageIndex = Number.isInteger(body.page) ? Number(body.page) : 0;
+      const asOf = typeof body.asOf === 'string' ? body.asOf : new Date().toISOString().slice(0, 7);
+      const { data: frontierRow } = await supabase
+        .from('market_building_approvals')
+        .select('period')
+        .eq('area_kind', choice.areaKind)
+        .order('period', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const frontier = typeof frontierRow?.period === 'string' ? frontierRow.period : null;
+      const page = approvalsPage(pageIndex, asOf, frontier);
+
+      // An explicit window from an operator overrides the page arithmetic,
+      // and carries no floor: they are asking for exactly what they named.
+      const explicitStart = typeof body.startPeriod === 'string' ? body.startPeriod : null;
+      const window = explicitStart
+        ? { startPeriod: explicitStart, endPeriod: typeof body.endPeriod === 'string' ? body.endPeriod : undefined, minPeriods: null }
+        : { startPeriod: page.startPeriod, endPeriod: page.endPeriod, minPeriods: page.minPeriods };
+
       const url = keyNarrowing.key === 'all'
-        ? absBuildingApprovalsUrl(choice.flow, startPeriod)
-        : narrowedApprovalsUrl(choice.flow, startPeriod, keyNarrowing.key);
-      console.log(`[market-sales-ingest] approvals: ${dataflowRef(choice.flow)} key=${keyNarrowing.key}`);
+        ? absBuildingApprovalsUrl(choice.flow, window.startPeriod)
+        : narrowedApprovalsUrl(choice.flow, window.startPeriod, keyNarrowing.key, window.endPeriod);
+      console.log(
+        `[market-sales-ingest] approvals: ${dataflowRef(choice.flow)} key=${keyNarrowing.key} `
+        + `page=${pageIndex} ${window.startPeriod}→${window.endPeriod ?? 'open'} frontier=${frontier ?? 'none'}`,
+      );
 
       const res = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'text/csv,*/*' } });
       if (!res.ok) throw new Error(`${url} answered ${res.status}`);
       const text = await res.text();
-      // Throws on a reshaped, truncated or unit-drifted answer, so a partial
-      // register is never written as though it were whole.
-      const parsed = parseAbsBuildingApprovals(text, choice.areaKind);
+      /*
+       * Throws on a reshaped, truncated or unit-drifted answer, so a partial
+       * register is never written as though it were whole — and a PAGE is
+       * judged against the window it asked for. The register's own 24-month
+       * floor is a question about the table after a full load, not about one
+       * request of six months.
+       */
+      const parsed = parseAbsBuildingApprovals(text, choice.areaKind, {
+        minPeriods: window.minPeriods ?? 0,
+      });
       const written = await upsertApprovals(supabase, parsed.rows, url, loadedAt);
 
       const detail = {
@@ -603,6 +662,17 @@ Deno.serve(async (req) => {
         states: parsed.states,
         rows_skipped: parsed.skipped,
         rows_written: written,
+        // Which page this was, and what a full load still needs — so an
+        // operator reads what remains rather than working it out.
+        page: pageIndex,
+        page_window: `${window.startPeriod}→${window.endPeriod ?? 'open'}`,
+        page_judged_against: window.minPeriods,
+        frontier_before: frontier,
+        pages_remaining: Math.max(
+          0,
+          pagesToCover(parsed.latestPeriod, REGISTER_FLOOR_PERIOD) - (pageIndex + 1),
+        ),
+        register_floor: REGISTER_FLOOR_PERIOD,
       };
       await supabase.from('market_sales_sync').insert({ detail });
       return json({ success: true, ...detail });

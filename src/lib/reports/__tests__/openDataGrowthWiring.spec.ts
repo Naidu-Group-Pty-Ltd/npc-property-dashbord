@@ -170,6 +170,26 @@ describe('the loader and its declarations', () => {
     expect(STAGE).not.toMatch(/['"`][A-Z0-9_+]*\.[A-Z0-9_+]*\.[A-Z0-9_+]*['"`]/);
   });
 
+  it('the approvals stage reads ONE page and learns the frontier from the register', () => {
+    const from = LOADER.indexOf("if (stage === 'approvals') {");
+    const STAGE = LOADER.slice(from, LOADER.indexOf("if (stage === 'vic') {", from));
+    /*
+     * Measured: SA2 narrowed is 111.6 MB over 33 months and 12.2 MB over 6,
+     * against a 24 MB budget — so a full load is several requests, the shape
+     * this loader has used since five DCJ workbooks exhausted an edge
+     * worker's compute allowance.
+     */
+    expect(STAGE).toContain('approvalsPage(');
+    // The frontier is READ, never assumed: the ABS publishes with a lag and
+    // a constant for it is one nobody here can verify.
+    expect(STAGE).toMatch(/from\('market_building_approvals'\)[\s\S]{0,200}order\('period'/);
+    expect(STAGE).toContain('frontier');
+    // And the page is judged against the window it asked for.
+    expect(STAGE).toMatch(/minPeriods: window\.minPeriods/);
+    // What remains is reported rather than left to be worked out.
+    expect(STAGE).toContain('pages_remaining');
+  });
+
   it('a structure it cannot read costs the approvals stage nothing', () => {
     const from = LOADER.indexOf("if (stage === 'approvals') {");
     const STAGE = LOADER.slice(from, LOADER.indexOf("if (stage === 'vic') {", from));

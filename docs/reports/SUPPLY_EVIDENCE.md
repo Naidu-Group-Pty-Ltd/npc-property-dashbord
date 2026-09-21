@@ -324,6 +324,27 @@ loader was never wrong — it reads and queries the same flow — so this was th
 instrument measuring itself, for the third time (after the runner-bandwidth
 criterion and the hard-coded namespace prefix).
 
+### How the loader pages
+
+One page per invocation, **newest first**, in `absApprovalsPaging.pure.ts`.
+
+The frontier is READ from the register, never assumed. The ABS publishes
+with a lag — a six-month window asked on 21 Sep 2026 returned four months, to
+2026-07 — so page 0 asks forward from today and **whatever comes back defines
+the frontier**, with no floor, because the lag belongs to the publisher.
+Every later page steps back a whole window from that frontier, lies wholly in
+the past, and must therefore be FULL: short means truncated, and refuses.
+
+That is the same move as reading the dataflow from the catalogue and the key
+from the structure — the loader learns the lag from the Bureau instead of
+carrying a constant nobody here can verify and the Bureau can change without
+telling us.
+
+A run reports `page`, `page_window`, `page_judged_against`, `frontier_before`
+and `pages_remaining`, so an operator reads what is left rather than working
+it out. The floor is `2023-01`: two years is what a year-on-year reading
+needs and what `approvalsFactBlocks` reports on, plus a margin for revision.
+
 ### Still not measured
 
 **Memory.** `EDGE_BYTE_CEILING` is derived from a 256 MB isolate and the
