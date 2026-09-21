@@ -767,6 +767,42 @@ the evidence, and the `probe` stage answers whether the ABS catalogue is
 reachable from the production egress before anything is scheduled — which
 this session cannot answer, because its egress reaches neither host.
 
+### Answering "is it live" before approving anything
+
+The probe is shipped and needs no approval, because it writes nothing, needs
+no table and touches no schedule. It is a branch of `market-sales-ingest`'s
+existing read-only `probe` stage:
+
+```
+POST /functions/v1/market-sales-ingest   { "stage": "probe" }
+```
+
+Its `answers.abs_building_approvals` reports, in one call from production:
+
+| field | what it settles |
+| --- | --- |
+| `status`, `bytes`, `content_type` | whether the ABS answers this egress at all |
+| `catalogued_flows` | how many flows the catalogue held |
+| `flow`, `flow_name` | the identifier that would be read, **discovered not guessed** |
+| `area_kind`, `geography_score` | the grain it works at, and what the scorer prices it at |
+| `candidates` | every flow whose name matched, finest grain first — what was rejected and why it lost |
+| `data_url` | the exact query the loader would issue |
+| `refused` | the named refusal, where nothing was selected |
+
+A refusal is a finding rather than a crash: it states what the catalogue held
+and why nothing in it was chosen. `{ "stage": "probe", "dataflow": "ABS,X,1.0.0" }`
+tests an explicit identifier against the same checks.
+
+**Why this matters more than it looks.** Every test behind
+`absBuildingApprovals.pure.ts` runs on synthetic SDMX-CSV written to the
+published standard's shape, because neither `data.api.abs.gov.au` nor
+`www.abs.gov.au` answers a development egress. The reader is therefore
+verified against the FORMAT and not against the ABS's own bytes, and this
+probe is the only thing that closes that gap. It is also why the dataflow is
+discovered rather than hardcoded: an identifier nobody here could verify is
+the mistyped Airtable column again, and an absent flow fails exactly like an
+empty one.
+
 **W3.2 · National named projects: Infrastructure Australia Priority List.**
 Nationally significant projects carrying the publisher's own status word — an
 approval never read as funding, funding never as a start on site.

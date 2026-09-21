@@ -33,6 +33,12 @@ import {
   parseAbsResDwell,
 } from '../_shared/reports/market/openData/absResDwell.pure.ts';
 import {
+  ABS_BA_DATAFLOW_CATALOGUE_URL,
+  absBuildingApprovalsUrl,
+  dataflowRef,
+  resolveBuildingApprovalsFlow,
+} from '../_shared/reports/market/openData/absBuildingApprovals.pure.ts';
+import {
   VIC_QUARTERLY_FILE,
   VIC_TIME_SERIES_FILE,
   VIC_VPSR_ARCHIVE_PATTERN,
@@ -322,6 +328,58 @@ Deno.serve(async (req) => {
         answers.abs = { status: res.status, bytes: (await res.text()).length };
       } catch (error) {
         answers.abs = { status: null, error: error instanceof Error ? error.message : String(error) };
+      }
+      /*
+       * Building approvals: reachability and DISCOVERY, and nothing else.
+       *
+       * Read-only by construction — it asks the ABS for its own dataflow
+       * catalogue, runs the selection over it, and reports which flow would
+       * be read and which candidates were rejected. It writes nothing, needs
+       * no table and touches no schedule, which is the point: the register
+       * itself is held for approval, and this is what answers whether it can
+       * work at all BEFORE anybody approves a table for it.
+       *
+       * `absBuildingApprovals.pure.ts` cannot be verified against the ABS from
+       * a development egress — neither `data.api.abs.gov.au` nor
+       * `www.abs.gov.au` answers it — so every test behind it runs on
+       * synthetic SDMX-CSV written to the published standard's shape. This
+       * stage is the one that measures the real thing, and it is the same
+       * rule the retention purge and the verification self-test answer to:
+       * asserted by effect, never by configuration.
+       */
+      try {
+        const res = await fetch(ABS_BA_DATAFLOW_CATALOGUE_URL, {
+          headers: { 'User-Agent': UA, Accept: 'application/vnd.sdmx.structure+json;version=1.0,application/xml,*/*' },
+        });
+        const text = await res.text();
+        const answer: Record<string, unknown> = {
+          status: res.status,
+          bytes: text.length,
+          content_type: res.headers.get('content-type'),
+        };
+        if (res.ok) {
+          try {
+            const choice = resolveBuildingApprovalsFlow(text, typeof body.dataflow === 'string' ? body.dataflow : null);
+            answer.flow = dataflowRef(choice.flow);
+            answer.flow_name = choice.flow.name;
+            answer.area_kind = choice.areaKind;
+            answer.geography_score = choice.geographyScore;
+            answer.how = choice.how;
+            answer.catalogued_flows = choice.cataloguedFlows;
+            answer.candidates = choice.candidates;
+            answer.data_url = absBuildingApprovalsUrl(choice.flow, '2018-01');
+          } catch (error) {
+            // A refusal is the finding, not a crash: it names what the
+            // catalogue held and why nothing in it was selected.
+            answer.refused = error instanceof Error ? error.message : String(error);
+          }
+        }
+        answers.abs_building_approvals = answer;
+      } catch (error) {
+        answers.abs_building_approvals = {
+          status: null,
+          error: error instanceof Error ? error.message : String(error),
+        };
       }
       return json({ success: true, stage, answers, wrote: false });
     }
