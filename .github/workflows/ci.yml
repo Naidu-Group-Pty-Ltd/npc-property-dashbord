@@ -1040,10 +1040,21 @@ jobs:
   # format" is not "verified". A runner has open internet and closes that gap
   # here, before anything is merged, deployed or scheduled.
   #
-  # It writes nothing anywhere: no database, no Supabase, no credential. And
-  # it runs only when the register's own files change, because one catalogue
-  # fetch and one data query per relevant push is proportionate and per push
-  # is not.
+  # It writes nothing anywhere: no database, no Supabase, no credential.
+  #
+  # It runs on EVERY CI run, and the first version did not -- it was gated on
+  # `github.event.head_commit.message`, which does not exist on a
+  # `pull_request` event (that is a push-event field), and on an `ABS` in the
+  # PR title, which was not there. It reported `skipped`. A check written to
+  # verify a register against reality, gated on a condition that is false, is
+  # this repository's own recurring defect committed by the person cataloguing
+  # it.
+  #
+  # Unconditional is also the better design on its merits. Running only when
+  # OUR files change could never catch a change on THEIRS -- the ABS can
+  # reissue a dataflow version, rename a flow or restructure a column at any
+  # time, and the first symptom would be a 404 at 03:45 that reads like an
+  # outage. Asserted by effect, never by configuration.
   #
   # The exit code is the design. The ABS being unreachable REPORTS and passes
   # -- a compliance product must not have its build decided by another party's
@@ -1052,11 +1063,6 @@ jobs:
   abs-register-liveness:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      contains(github.event.pull_request.title, 'ABS') ||
-      contains(github.event.head_commit.message, 'ABS') ||
-      contains(github.event.head_commit.message, 'supply register')
     steps:
       - uses: actions/checkout@v7
         with:
