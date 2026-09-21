@@ -33,6 +33,7 @@ import { withPlanningEvidence } from '../_shared/reports/location/planningEviden
 import { crimeStatBlocks } from '../_shared/reports/crimePromptBlocks.pure.ts';
 import { climateStatBlocks } from '../_shared/reports/climatePromptBlocks.pure.ts';
 import { amenityFactBlocks, transportFactBlocks } from '../_shared/reports/location/amenityFactBlocks.pure.ts';
+import { approvalsFactBlocks, summariseApprovals } from '../_shared/reports/market/approvalsFactBlocks.pure.ts';
 import { macroEconomicBlock } from '../_shared/reports/macroPromptBlocks.pure.ts';
 import { activateSafeGenerationInputs, subjectPostcodeOf } from '../_shared/reports/contract/safeGenerationInputs.pure.ts';
 import { resolveOneReportGeography } from '../_shared/geography/resolveOneReportGeography.ts';
@@ -2911,6 +2912,17 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
        * point of recording it rather than passing it.
        */
       marketEvidence?: any;
+      /**
+       * The area's approved dwelling supply, as an `ApprovalsSeries`.
+       *
+       * Declared and written by nothing yet: the national register behind it
+       * needs a table, a schedule and a first ingest. It is declared HERE
+       * rather than when the loader lands because the prose block that reads
+       * it ships first, deliberately — a report with no reading must SAY so
+       * and be forbidden from describing the pipeline, which is a guarantee
+       * worth having before the evidence exists rather than after.
+       */
+      buildingApprovals?: any;
     }
     
     let enhancedData: EnhancedData = {};
@@ -5915,6 +5927,28 @@ Produce a comprehensive statewide investment analysis following the structure ab
       '# Infrastructure & Development Outlook — what the registers answered',
       infrastructureTable,
       infrastructureSectionRules,
+      /*
+       * Approved dwelling supply, and today it is always the ABSENCE branch.
+       *
+       * The register behind it (`absBuildingApprovals.pure.ts`) needs a table,
+       * a schedule and a first ingest, none of which this change makes. What
+       * ships now is the half that protects the document: the statewide
+       * prompt's `**Supply Pipeline Risk:** [New housing supply vs demand
+       * balance]` is a bracketed slot with no register behind it, and
+       * `PLANNING_CONTROLS_IN_THE_REPORT.md` records exactly what a model does
+       * with one of those. So the absence is STATED and the rating is
+       * forbidden, in the publisher's own terms, before the evidence exists —
+       * `CLONE_PROVISIONING_GAPS.md`'s rule that a feature the migrations have
+       * not reached degrades rather than failing, applied before the gap.
+       *
+       * It rides the pin for §6's reason: it is the authority for a set of
+       * figures, and an authority `limitPromptContext` can cut while its rule
+       * survives is the defect that put `450 m²` into a client's document.
+       */
+      approvalsFactBlocks(
+        enhancedData.buildingApprovals ? summariseApprovals(enhancedData.buildingApprovals) : null,
+        planningFacts.council ? 'not_loaded' : 'no_area_resolved',
+      ),
       // Recorded from official publications rather than retrieved from a
       // register, and pinned for the same reason everything else here is:
       // it is the AUTHORITY for a set of figures and dates, and a rule that

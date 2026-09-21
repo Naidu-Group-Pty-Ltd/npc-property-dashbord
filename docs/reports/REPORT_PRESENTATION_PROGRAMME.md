@@ -633,13 +633,124 @@ the publisher's; the scorer prices the grain; coverage travels with the answer.*
 This is `openDataSalesEvidence`'s existing rule — an LGA point scores 55, a
 postcode 80, a suburb 100 — applied to development evidence.
 
-**W3.1 · The national floor: ABS Building Approvals by LGA.**
+**W3.1 · The national floor: ABS Building Approvals by LGA.** — READER AND
+PROHIBITION SHIPPED; THE REGISTER ITSELF AWAITS APPROVAL.
+
 Monthly, free, authoritative, **every local government area in Australia**;
-dwelling counts and dollar value. One source, national coverage, no key. It is
-the direct analogue of the Queensland DA walk that produced 1,410 dwellings and
-$1.18bn, and `registerWalk` / `summariseDaRows` already exist to consume it.
-*Accept:* a development reading for a property in each of the eight
-jurisdictions, each naming its grain and period.
+dwelling counts and dollar value. One source, national coverage, no key.
+
+Two corrections to this entry as it was written. **`registerWalk` /
+`summariseDaRows` cannot consume it.** `DaSummary` is a
+development-application shape — applications, statuses, application types, a
+per-application dwelling count — and ABS Building Approvals is a monthly
+aggregate by area. Pushing an aggregate through a register walk would file a
+count as a set of applications, which is `absResDwell`'s *"a mean is filed as
+a mean"* committed in the other direction. And **the dataflow identifier is
+not knowable from this repository**: `absResDwell.pure.ts` hardcodes
+`ABS,RES_DWELL_ST,1.0.0`, the version is part of the identifier, the ABS
+reissues it, and neither `data.api.abs.gov.au` nor `www.abs.gov.au` answers
+this development egress. An identifier typed from memory is the mistyped
+Airtable column again — an absent flow and an empty flow fail the same way.
+
+So `absBuildingApprovals.pure.ts` **discovers** it: it reads the ABS's own
+dataflow catalogue, selects by name, prefers the finest grain published
+(because the scorer prices the grain), and refuses — naming what it saw — on a
+catalogue it cannot parse, a catalogue in which nothing matches, and a tie
+inside the chosen grain. An operator override is checked against the catalogue
+rather than trusted, so a typo cannot present as an outage. That is strictly
+better than the constant it was modelled on, and it self-heals across a
+version bump.
+
+**What shipped, and why in this order.** The register needs a table, a
+schedule and a first ingest — new infrastructure, which is held for separate
+approval (the DDL is below). What shipped without any of that is the half
+that protects the document: `approvalsFactBlocks.pure.ts`, pinned into
+`generate-investment-report` beside the planning and infrastructure
+registers, so every report now STATES that no approved-supply reading was
+retrieved and is forbidden from describing the pipeline. That matters
+independently of the register, because the statewide prompt carries
+`**Supply Pipeline Risk:** [New housing supply vs demand balance]` — a
+bracketed slot with nothing behind it, which is the exact shape that put
+`450 m²`, `8.5 m` and `0.5:1` into a Queensland property's document under New
+South Wales instrument names. `CLONE_PROVISIONING_GAPS.md`'s rule — a feature
+the migrations have not reached degrades rather than failing — applied before
+the gap exists rather than after.
+
+Five rules carry the prose. **An approval is not a completion** (approved,
+commenced and completed are three different things and the ABS counts the
+first). **A total summed from part of a register is a FLOOR and says so** —
+`DA_REGISTER_RECONCILIATION.md`'s rule, so a window states how many of its
+twelve months carried a figure. **A change is computed only between two
+COMPLETE windows**, because comparing a floor with a floor describes the gaps
+and arrives looking like a measurement. **The grain is the publisher's and is
+never renamed** — an LGA reading describes a council area, not this suburb.
+And **an absence may not be rated**: not tight, not constrained, not limited,
+and not strong either.
+
+*Accept:* unchanged — a development reading for a property in each of the
+eight jurisdictions, each naming its grain and period. **Not met**, and
+cannot be until the register loads.
+
+**What needs approval, exactly.** One table, one sync table, one `pg_cron`
+job, and one stage in `market-sales-ingest`. It is additive and non-
+destructive: nothing existing is altered or dropped.
+
+```sql
+-- The national supply register. Additive; drops and alters nothing.
+create table if not exists public.market_building_approvals (
+  area_kind      text        not null check (area_kind in ('sa2','lga','state','national')),
+  area_code      text        not null,             -- the publisher's own code
+  area           text        not null,             -- the publisher's own label
+  area_token     text        not null,             -- salesAreaToken, as the sales register
+  state          text            null check (state is null or state in
+                   ('NSW','VIC','QLD','SA','WA','TAS','NT','ACT','AU')),
+  period         text        not null check (period ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'),
+  building_type  text        not null check (building_type in
+                   ('house','other_residential','total_residential')),
+  dwelling_units integer         null check (dwelling_units is null or dwelling_units >= 0),
+  value_aud      numeric         null check (value_aud is null or value_aud >= 0),
+  source         text        not null,
+  source_url     text        not null,
+  licence        text        not null,
+  loaded_at      timestamptz not null default now(),
+  primary key (area_kind, area_code, period, building_type)
+);
+
+create index if not exists market_building_approvals_token_idx
+  on public.market_building_approvals (area_kind, area_token, period);
+
+comment on table public.market_building_approvals is
+  'ABS Building Approvals by area and month, loaded by market-sales-ingest '
+  '(stage "approvals"). An approval is a council decision, not a building: '
+  'approved dwellings are not commenced and commenced dwellings are not '
+  'completed. A suppressed month is NULL, never zero.';
+
+alter table public.market_building_approvals enable row level security;
+
+-- One more job on the existing daily schedule, using the function that is
+-- already deployed. 17:40 UTC keeps the loader's one-heavy-download-per-
+-- invocation rule (546 WORKER_RESOURCE_LIMIT on five at once).
+select cron.schedule(
+  'market-sales-refresh-approvals',
+  '40 17 * * *',
+  $job$select public.market_sales_refresh('{"stage": "approvals"}'::jsonb);$job$
+);
+```
+
+The edge-function stage is ~40 lines in `market-sales-ingest/index.ts`: fetch
+the catalogue, `resolveBuildingApprovalsFlow`, fetch the data URL,
+`parseAbsBuildingApprovals` (throws → nothing written), upsert, and write one
+`market_sales_sync` row carrying the flow chosen, every candidate rejected,
+the resolved column names, the area and period counts, and whether a
+series-type column was there to filter on. It is held with the migration
+because a stage that writes to a table which does not exist answers 500
+rather than refusing.
+
+**Asserted by effect, never by configuration**, as the retention purge and
+the verification self-test are: the first run's `market_sales_sync` row is
+the evidence, and the `probe` stage answers whether the ABS catalogue is
+reachable from the production egress before anything is scheduled — which
+this session cannot answer, because its egress reaches neither host.
 
 **W3.2 · National named projects: Infrastructure Australia Priority List.**
 Nationally significant projects carrying the publisher's own status word — an

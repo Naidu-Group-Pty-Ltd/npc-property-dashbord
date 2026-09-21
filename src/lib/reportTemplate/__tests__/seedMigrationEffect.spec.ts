@@ -25,6 +25,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { migrationNames, migrationText } from '../../testSupport/migrationCorpus';
 
 const REPO = resolve(__dirname, '../../../..');
 const MIGRATIONS = resolve(REPO, 'supabase/migrations');
@@ -43,24 +44,24 @@ const seedFile = `${releaseId}.sql`;
 
 describe('the seed migration declares what it did', () => {
   it('is named for the release the generator declares', () => {
-    expect(readdirSync(MIGRATIONS)).toContain(seedFile);
+    expect(migrationNames()).toContain(seedFile);
   });
 
   it('opens with an @effect probe naming that release', () => {
-    const first = readFileSync(resolve(MIGRATIONS, seedFile), 'utf8').split('\n')[0];
+    const first = migrationText(seedFile).split('\n')[0];
     expect(first).toMatch(/^-- @effect: select 1 from /);
     expect(first).toContain(releaseId);
   });
 
   it('the probe is a lone SELECT, which is all the runner will execute', () => {
-    const first = readFileSync(resolve(MIGRATIONS, seedFile), 'utf8').split('\n')[0];
+    const first = migrationText(seedFile).split('\n')[0];
     const probe = first.replace(/^-- @effect:\s*/, '');
     expect(probe.toLowerCase().startsWith('select ')).toBe(true);
     expect(probe).not.toMatch(/;|\binsert\b|\bupdate\b|\bdelete\b|\bdrop\b|\balter\b/i);
   });
 
   it('asserts the table the migration actually writes', () => {
-    const sql = readFileSync(resolve(MIGRATIONS, seedFile), 'utf8');
+    const sql = migrationText(seedFile);
     const probe = sql.split('\n')[0];
     const m = /from\s+([a-z_.]+)/i.exec(probe);
     expect(m, 'the probe names no table').not.toBeNull();
