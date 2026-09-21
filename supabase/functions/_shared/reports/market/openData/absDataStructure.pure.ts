@@ -147,6 +147,57 @@ export const ABS_BA_KEY_RULES: ReadonlyArray<{
     keep: [MONTHLY_FREQ],
     why: 'monthly; every other period is discarded by `monthPeriod` anyway',
   },
+  /*
+   * The two that produced a wrong figure on live data.
+   *
+   * Measured 21 Sep 2026, the Bureau's LGA download gave **two different
+   * values of building approved for Greater Bendigo 2026-07 total
+   * residential — $14,857,000 then $45,670,000**, because three sectors and
+   * nine work types all land on one (area, period, building type) key. Left
+   * unfiltered, the register stores whichever arrived last and presents it
+   * as the total: a figure three times wrong and indistinguishable from a
+   * correct one by looking at it.
+   *
+   * Both keep the PUBLISHER'S OWN TOTAL rather than a total reconstructed
+   * from parts. `Total Work` is the ABS's own headline dwelling-units
+   * figure; summing `New` with the conversion and alteration categories
+   * would invent a measure the Bureau does not publish and would double
+   * count `Alterations and additions including conversions` against its own
+   * two children. The register's rule is that the grain is the publisher's
+   * and is never renamed — this is the same rule applied to a measure.
+   */
+  {
+    dimension: /^(SECTOR|SECTORS)$/i,
+    keep: [/^total sectors?$/i],
+    why: 'the publisher\'s own total; private and public land on the same row key',
+  },
+  {
+    dimension: /^(WORK_TYPE|WORKTYPE|TYPE_OF_WORK)$/i,
+    keep: [/^total work$/i],
+    why: 'the publisher\'s own total; new, conversions and alterations share one key',
+  },
+  /*
+   * The grains this register stores, out of forty-three the flow offers.
+   *
+   * This is NOT narrowing the area, and the distinction is the one the guard
+   * below turns on: `REGION_TYPE` selects which ASGS LEVELS come back, while
+   * `REGION` — every one of its 2,985 codes — stays open. Every area at the
+   * kept levels still answers, and which area a report reads is still chosen
+   * at read time from a trusted geography.
+   *
+   * It is also the only one of these that is purely a size lever: two region
+   * types produce different area CODES, so they were never colliding.
+   */
+  {
+    dimension: /^(REGION_TYPE|ASGS_LEVEL|AREA_TYPE)$/i,
+    keep: [
+      /^australia$/i,
+      /^states and territories$/i,
+      /^statistical areas? level 2$/i,
+      /^local government areas?$/i,
+    ],
+    why: 'the four grains the register stores, of the levels this flow offers',
+  },
 ];
 
 /**

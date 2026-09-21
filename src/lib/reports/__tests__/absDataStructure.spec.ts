@@ -71,6 +71,89 @@ describe('the key is composed in the publisher’s own order', () => {
   });
 });
 
+describe('the real cube, as the Bureau publishes it', () => {
+  /*
+   * Not invented. These are the codelists `abs-register-liveness` read from
+   * ABS,BA_SA2,2.0.0 on 21 Sep 2026 and printed, and the collision they
+   * caused is in the same run's log: two different values of building
+   * approved for Greater Bendigo 2026-07 total residential, $14,857,000 then
+   * $45,670,000 — three sectors times nine work types on one row key.
+   */
+  const REAL: DataStructure = {
+    dimensions: [
+      dim('MEASURE', 1, [
+        ['1', 'Number of dwelling units'], ['2', 'Value of building approved'],
+        ['3', 'Number of buildings'],
+      ]),
+      dim('SECTOR', 2, [['9', 'Total Sectors'], ['1', 'Private Sector'], ['5', 'Public Sector']]),
+      dim('WORK_TYPE', 3, [
+        ['TOT', 'Total Work'], ['1', 'New'], ['5', 'Relocation of dwellings'],
+        ['6', 'Demolition of dwellings'], ['8', 'Alterations and additions including conversions'],
+        ['2', 'Alterations and additions'], ['3', 'Alterations and additions creating dwellings'],
+        ['4', 'Alterations and additions not creating dwellings'], ['7', 'Conversions'],
+      ]),
+      dim('BUILDING_TYPE', 4, [
+        ['110', 'Houses'], ['150', 'Other residential'], ['100', 'Total residential'],
+        ['TOT', 'Total'], ['190', 'Hotels etc'], ['230', 'Factories'], ['240', 'Offices'],
+      ]),
+      dim('REGION_TYPE', 5, [
+        ['AUS', 'Australia'], ['STE', 'States and Territories'],
+        ['SA4', 'Statistical Area Level 4'], ['SA3', 'Statistical Area Level 3'],
+        ['SA2', 'Statistical Area Level 2'], ['SA1', 'Statistical Area Level 1'],
+        ['RA', 'Remoteness Area'], ['SOS', 'Section of State'], ['UC', 'Urban Centres'],
+        ['LGA', 'Local Government Areas'],
+      ]),
+      dim('REGION', 6, [['10050', 'Albury'], ['235', 'Greater Bendigo']]),
+      dim('FREQ', 7, [['M', 'Monthly'], ['A', 'Annual'], ['Q', 'Quarterly']]),
+      dim('TIME_PERIOD', 8, [], true),
+    ],
+  };
+
+  it('takes the publisher’s own totals, never a total rebuilt from parts', () => {
+    const { narrowed } = composeApprovalsKey(REAL);
+    const of = (id: string) => narrowed.find((n) => n.dimension === id);
+    // Summing `New` with the conversion and alteration categories would
+    // invent a measure the Bureau does not publish, and would double count
+    // `Alterations and additions including conversions` against its children.
+    expect(of('SECTOR')).toMatchObject({ kept: ['9'], of: 3 });
+    expect(of('WORK_TYPE')).toMatchObject({ kept: ['TOT'], of: 9 });
+  });
+
+  it('closes the collision that produced $14.8m and $45.6m for one council', () => {
+    // Three sectors times nine work types is twenty-seven rows on one key.
+    const { narrowed } = composeApprovalsKey(REAL);
+    const collidable = ['SECTOR', 'WORK_TYPE'];
+    for (const id of collidable) {
+      const n = narrowed.find((x) => x.dimension === id);
+      expect(n, `${id} must be narrowed or rows collide`).toBeDefined();
+      expect(n!.kept).toHaveLength(1);
+    }
+  });
+
+  it('keeps the four grains the register stores and leaves every AREA open', () => {
+    const { key, narrowed } = composeApprovalsKey(REAL);
+    const rt = narrowed.find((n) => n.dimension === 'REGION_TYPE');
+    expect(rt!.kept.sort()).toEqual(['AUS', 'LGA', 'SA2', 'STE']);
+    // REGION itself is untouched: position 6 of the key is empty.
+    expect(key.split('.')[5]).toBe('');
+  });
+
+  it('leaves no dimension of the real cube unruled except the area', () => {
+    // Every unruled dimension comes back whole. After this commit the only
+    // one that should is REGION, deliberately.
+    const unruled = REAL.dimensions
+      .filter((d) => !d.isTime && !ABS_BA_KEY_RULES.some((r) => r.dimension.test(d.id)))
+      .map((d) => d.id);
+    expect(unruled).toEqual(['REGION']);
+  });
+
+  it('composes the whole key in the publisher’s own order', () => {
+    // `TOT = Total` is absent from the building-type slot deliberately: in
+    // this cube it means all buildings, not all dwellings.
+    expect(composeApprovalsKey(REAL).key).toBe('1+2.9.TOT.110+150+100.AUS+STE+SA2+LGA..M');
+  });
+});
+
 describe('a narrowing is an optimisation and never a dependency', () => {
   it('falls back to `all` where nothing could be narrowed', () => {
     const opaque: DataStructure = { dimensions: [dim('SOMETHING', 1, [['a', 'A']])] };

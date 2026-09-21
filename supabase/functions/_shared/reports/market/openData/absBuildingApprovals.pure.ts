@@ -564,8 +564,30 @@ export interface ApprovalRow {
  * one declaration. Two copies of "which building types are residential" is
  * how a narrowed download comes back missing a row the parser still expects.
  */
+/*
+ * A bare `Total` is NOT total residential.
+ *
+ * This matched `^total$` until 21 Sep 2026, and the Bureau's building-type
+ * codelist publishes `100 = Total residential` AND `TOT = Total` side by
+ * side across thirty-four categories that include hotels, shops, factories,
+ * offices, health and education. `Total` is all of them. Reading it as
+ * residential inflates approved dwelling supply by the whole non-residential
+ * programme — and the two land on one row key, so whichever arrived second
+ * silently won.
+ *
+ * It is dropped rather than disambiguated, because a label that could mean
+ * either must not be resolved to the narrower meaning: this register would
+ * rather skip a row than attribute a factory to housing. The cost is a flow
+ * whose building-type dimension carries only residential categories and
+ * calls its total `Total` — there, the row is skipped and counted in
+ * `skipped`, which is visible, rather than being wrong, which is not.
+ *
+ * Third instance of one shape today, after `Number of buildings` and the
+ * national rollup: a pattern written against one publisher's vocabulary,
+ * meeting the vocabulary the publisher actually has.
+ */
 export const BUILDING_TYPE_PATTERNS: ReadonlyArray<[ApprovalsBuildingType, RegExp]> = [
-  ['total_residential', /^total (residential|dwellings?)\b|^dwellings?,? total\b|^total$/i],
+  ['total_residential', /^total (residential|dwellings?)\b|^dwellings?,? total\b/i],
   ['house', /^houses?\b/i],
   ['other_residential', /other residential|non-?house/i],
 ];

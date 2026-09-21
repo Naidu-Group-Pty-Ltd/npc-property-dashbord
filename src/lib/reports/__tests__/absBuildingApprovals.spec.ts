@@ -324,6 +324,39 @@ describe('a count of BUILDINGS is not a count of dwellings', () => {
   });
 });
 
+describe('a bare “Total” is not total residential', () => {
+  /*
+   * The Bureau's building-type codelist publishes `100 = Total residential`
+   * AND `TOT = Total` across thirty-four categories including hotels, shops,
+   * factories, offices, health and education. `Total` is all of them.
+   */
+  it('does not read an all-buildings total as a dwelling total', () => {
+    const lines = download().split('\n');
+    // The same cell relabelled as the cube's bare `Total`.
+    const allBuildings = lines.slice(1)
+      .filter((l) => l.includes('Total residential') && l.includes('10050'))
+      .map((l) => l.replace('9,Total residential', 'TOT,Total').replace(/,(\d+),0$/, ',9999,0'));
+    const parsed = parseAbsBuildingApprovals([...lines, ...allBuildings].join('\n'), 'lga');
+    const row = parsed.rows.find((r) =>
+      r.areaCode === '10050' && r.period === '2024-01' && r.buildingType === 'total_residential');
+    // Unchanged — the non-residential total did not overwrite it, and it did
+    // not arrive as a fourth building type either.
+    expect(row?.dwellingUnits).not.toBe(9999);
+    expect(new Set(parsed.rows.map((r) => r.buildingType)))
+      .toEqual(new Set(['house', 'other_residential', 'total_residential']));
+  });
+
+  it('counts it as skipped, which is visible, rather than wrong, which is not', () => {
+    const lines = download().split('\n');
+    const allBuildings = lines.slice(1)
+      .filter((l) => l.includes('Total residential') && l.includes('10050'))
+      .map((l) => l.replace('9,Total residential', 'TOT,Total'));
+    const clean = parseAbsBuildingApprovals(download(), 'lga');
+    const withTotal = parseAbsBuildingApprovals([...lines, ...allBuildings].join('\n'), 'lga');
+    expect(withTotal.skipped).toBeGreaterThan(clean.skipped);
+  });
+});
+
 describe('an unfiltered dimension is caught by its EFFECT', () => {
   /*
    * The Bureau's own structure, measured 21 Sep 2026:
