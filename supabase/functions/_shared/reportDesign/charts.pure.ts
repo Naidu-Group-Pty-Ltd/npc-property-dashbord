@@ -30,7 +30,7 @@
  */
 import { contrastRatio, hexToRgb01, mixHex } from './color.pure.ts';
 import type { ResolvedReportPalette } from './roles.pure.ts';
-import { PRINT_SCALE } from './tokens.pure.ts';
+import { CONTRAST_FLOOR, PRINT_SCALE } from './tokens.pure.ts';
 import { PRINT_STACK } from './typography.pure.ts';
 import { contentWidthMm, spanWidthMm, type GridSpan } from './page.pure.ts';
 
@@ -646,6 +646,46 @@ export function renderWaterfall(
 }
 
 /** Heatmap — an m×n grid, cells tinted by value. */
+/**
+ * The darkest a heatmap cell may be shaded and still carry a legible figure.
+ *
+ * A cell is the accent mixed over the ground at the value's own alpha, and the
+ * figure on it is set in whichever of the two page colours reads better
+ * against it. That picks the BETTER of two, which is not the same as picking
+ * one that reads — and on a colourway whose accent is already dark, neither
+ * does.
+ *
+ * Measured on the Investment Compass delivered for 9 Hollow Street, Golden
+ * Square on 21 Sep 2026, whose colourway is `#8E6C15` on `#FAF7EF`: the better
+ * of the two page colours drops below 7:1 at **alpha 0.48**, and the renderer
+ * ramps to 0.90 — so **51% of the shading scale produced a cell no figure
+ * could be read on**, bottoming out at 3.49:1. The 8.6 and 8.5 in that
+ * document's growth grids are printed at 3.79:1.
+ *
+ * The ramp is therefore capped at the darkest alpha that still clears the
+ * micro floor, computed from the palette rather than fixed: a light-accent
+ * colourway keeps its full range (the default `#D9A520` clears it to 0.86, so
+ * its drawings are unchanged), and a dark-accent one compresses. Magnitude
+ * ordering is untouched — the scale is shorter, not reordered — and no colour
+ * is invented, which is what keeps `charts paint only palette roles` true.
+ */
+export const HEATMAP_ALPHA_FLOOR = 0.08;
+const HEATMAP_ALPHA_MAX = 0.90;
+
+export function heatmapAlphaCeiling(palette: ChartPalette): number {
+  const reads = (alpha: number): boolean => {
+    const cell = mixHex(palette.ground, palette.accent, alpha);
+    return Math.max(contrastRatio(cell, palette.ink), contrastRatio(cell, palette.ground))
+      >= CONTRAST_FLOOR.micro;
+  };
+  if (reads(HEATMAP_ALPHA_MAX)) return HEATMAP_ALPHA_MAX;
+  for (let a = HEATMAP_ALPHA_MAX; a > HEATMAP_ALPHA_FLOOR; a -= 0.01) {
+    if (reads(a)) return Number(a.toFixed(2));
+  }
+  // Nothing in the ramp reads: the palest shade is the only honest one.
+  return HEATMAP_ALPHA_FLOOR;
+}
+
 export function renderHeatmap(
   ctx: ChartContext,
   grid: number[][],
@@ -750,13 +790,16 @@ export function renderHeatmap(
   const cellH = Math.max(38, Math.ceil(microU * 1.7));
   const h = padT + padB + rows * cellH;
 
+  // Capped so the darkest cell still carries a readable figure — see
+  // `heatmapAlphaCeiling`.
+  const alphaCeiling = heatmapAlphaCeiling(ctx.palette);
   let cells = '';
   for (let r = 0; r < rows; r += 1) {
     for (let c = 0; c < cols; c += 1) {
       const v = grid[r][c];
       const x = padL + c * cellW, y = padT + r * cellH;
       const t = (v - lo) / span;
-      const alpha = 0.08 + t * 0.82;
+      const alpha = HEATMAP_ALPHA_FLOOR + t * (alphaCeiling - HEATMAP_ALPHA_FLOOR);
       // The value is set in whichever of the two page colours reads against
       // the cell it sits on. The cell is the accent over the ground at this
       // alpha; the ink was drawn unconditionally, and on a structure whose

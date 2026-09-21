@@ -39,6 +39,8 @@ import {
   renderDonut,
   renderGauge,
   renderHeatmap,
+  heatmapAlphaCeiling,
+  HEATMAP_ALPHA_FLOOR,
   renderInlineSpark,
   renderMarginSpark,
   renderMarimekko,
@@ -58,7 +60,7 @@ import {
 } from '../charts.pure';
 import { resolveReportPalette } from '../brandResolve.pure';
 import { CONTRAST_FLOOR, PRINT_SEMANTIC } from '../tokens.pure';
-import { contrastRatio } from '../color.pure';
+import { contrastRatio, mixHex } from '../color.pure';
 
 const palette = resolveReportPalette();
 const ctx = chartContext(palette);
@@ -784,5 +786,71 @@ describe('a tile carries its figure, or it is not drawn', () => {
     // Nothing before the first digit means no subject to split off.
     const t = { label: '450 m² minimum lot', value: '' };
     expect(tileWithItsFigure(t)).toBe(t);
+  });
+});
+
+/**
+ * A heatmap cell may not be shaded darker than its figure can be read on.
+ *
+ * The cell is the accent mixed over the ground at the value's own alpha, and
+ * the figure is set in whichever of the two page colours reads BETTER against
+ * it — which is not the same as one that reads. Measured on the colourway of
+ * the Investment Compass delivered for 9 Hollow Street on 21 Sep 2026
+ * (`#8E6C15` on `#FAF7EF`): the better of the two drops below 7:1 at alpha
+ * 0.48 while the ramp went to 0.90, so **51% of the shading scale produced a
+ * cell no figure could be read on**, bottoming out at 3.49:1.
+ */
+describe('a heatmap cell stays light enough to read its own figure', () => {
+  const DOCUMENT_COLOURWAY = {
+    ...chartPalette(palette), ground: '#FAF7EF', accent: '#8E6C15', ink: '#312A21',
+  };
+
+  const bestOn = (p: typeof DOCUMENT_COLOURWAY, alpha: number) => {
+    const cell = mixHex(p.ground, p.accent, alpha);
+    return Math.max(contrastRatio(cell, p.ink), contrastRatio(cell, p.ground));
+  };
+
+  it('caps the ramp where the better page colour still clears the micro floor', () => {
+    const ceiling = heatmapAlphaCeiling(DOCUMENT_COLOURWAY);
+    expect(ceiling).toBeLessThan(0.9);
+    expect(bestOn(DOCUMENT_COLOURWAY, ceiling)).toBeGreaterThanOrEqual(CONTRAST_FLOOR.micro);
+    // …and one step darker would not have.
+    expect(bestOn(DOCUMENT_COLOURWAY, ceiling + 0.02)).toBeLessThan(CONTRAST_FLOOR.micro);
+  });
+
+  it('every cell in the ramp carries a readable figure', () => {
+    for (const p of [chartPalette(palette), DOCUMENT_COLOURWAY]) {
+      const ceiling = heatmapAlphaCeiling(p);
+      for (let t = 0; t <= 1.0001; t += 0.1) {
+        const alpha = HEATMAP_ALPHA_FLOOR + t * (ceiling - HEATMAP_ALPHA_FLOOR);
+        expect(bestOn(p, alpha), `accent ${p.accent} at t=${t.toFixed(1)}`)
+          .toBeGreaterThanOrEqual(CONTRAST_FLOOR.micro);
+      }
+    }
+  });
+
+  it('leaves a light-accent colourway its full range', () => {
+    // The cap is computed from the palette, not fixed: a colourway whose
+    // accent never darkens past the floor is not compressed.
+    const pale = { ...DOCUMENT_COLOURWAY, accent: '#F2E3B0' };
+    expect(heatmapAlphaCeiling(pale)).toBe(0.9);
+  });
+
+  it('keeps the magnitude ordering — the scale is shorter, not reordered', () => {
+    const ceiling = heatmapAlphaCeiling(DOCUMENT_COLOURWAY);
+    let previous = -1;
+    for (let t = 0; t <= 1.0001; t += 0.25) {
+      const alpha = HEATMAP_ALPHA_FLOOR + t * (ceiling - HEATMAP_ALPHA_FLOOR);
+      expect(alpha).toBeGreaterThan(previous);
+      previous = alpha;
+    }
+  });
+
+  it('invents no colour — the drawing still paints only palette roles', () => {
+    const svg = renderHeatmap(ctx, [[1, 5], [3, 9]], { rowLabels: ['A', 'B'], colLabels: ['X', 'Y'] });
+    const used = new Set((svg.match(/#[0-9A-Fa-f]{6}/g) ?? []).map((h) => h.toUpperCase()));
+    const allowed = new Set(Object.values(chartPalette(palette)).flat()
+      .filter((v): v is string => typeof v === 'string').map((h) => h.toUpperCase()));
+    for (const hex of used) expect(allowed, `${hex} is not a palette role`).toContain(hex);
   });
 });
