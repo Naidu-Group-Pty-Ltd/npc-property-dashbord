@@ -1050,6 +1050,25 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
+      # The faces the render container sets type in, installed the same two
+      # ways it installs them: the Debian packages the Dockerfile names, and
+      # the files this repository ships. Without them Chromium falls back to
+      # whatever fontconfig picks and the geometry measured is a document
+      # nobody receives -- which is exactly what happened on the machine this
+      # gate was written on, where the Google Fonts stylesheet the masters
+      # declare fails behind an intercepting proxy and `document.fonts` stays
+      # empty. `assertDeclaredFacesResolve` refuses such a run; this step is
+      # what makes CI able to pass it without reaching the network at all,
+      # which is also the rule `RENDER_BOUNDARY.md` holds for print.
+      - name: Install the render container's typefaces
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            fonts-inter fonts-roboto fonts-lato fonts-noto-core
+          mkdir -p ~/.local/share/fonts
+          cp weasyprint-service/fonts/*.ttf ~/.local/share/fonts/
+          fc-cache -f
+
       # Fails on three things: a block whose bottom is past its page box, a
       # text node that overlaps another, and -- since 21 Sep 2026 -- debris in
       # the rendered TEXT: an unresolved binding, a label clipped to an

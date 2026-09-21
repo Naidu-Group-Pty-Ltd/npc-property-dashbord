@@ -348,6 +348,126 @@ async function open(browser: Browser, html: string): Promise<Page> {
  * The full browser is preferred over `chrome-headless-shell` because the shell
  * build cannot print a PDF, which is half of what this script is for.
  */
+/**
+ * Every typeface the catalogue's ten families declare.
+ *
+ * Read from the source the generator is built from, so a family added there
+ * is checked here without anybody remembering to.
+ */
+export const CATALOGUE_FAMILIES: readonly string[] = [
+  'Cinzel', 'Playfair Display', 'IBM Plex Mono', 'Inter', 'Roboto', 'Lato', 'Noto Serif',
+];
+
+/**
+ * Refuse to report a clean run this harness could not actually measure.
+ *
+ * ## What happened
+ *
+ * `open()` waits on `document.fonts.ready` under a comment that states the
+ * stakes exactly: *"Measuring before they land would measure the fallback and
+ * pass templates that overflow in the face they ship in."* It then never
+ * checks that anything landed.
+ *
+ * Measured in this repository's sandbox on 21 Sep 2026: the masters declare
+ * their faces with a Google Fonts `cssUrl`, the stylesheet request fails with
+ * `net::ERR_CERT_AUTHORITY_INVALID` because the egress proxy's CA is not in
+ * Chromium's trust store, `document.fonts` is **empty**, and
+ * `document.fonts.ready` therefore resolves instantly having loaded nothing.
+ * Cinzel and generic serif then set the same string to the same 546.63px.
+ *
+ * Every local run of this gate in that session reported
+ * *"no block overflows its page, and none prints over another, in any of the
+ * 710 renders"* — a statement about a document nobody receives. The same
+ * commit failed on CI, where the fonts do load, with **six** blocks printing
+ * over another: two at 6pt on the risk page and four at 2pt on the cash-flow
+ * page. Cinzel sets that probe string **19% wider** than the fallback, which
+ * is the whole difference.
+ *
+ * ## Why it is measured rather than asked
+ *
+ * `document.fonts.check('700 40px Cinzel')` returns **true** when no matching
+ * face is *pending* — which is trivially satisfied when no face exists at all.
+ * It answered true in exactly the run where nothing had loaded. So the test is
+ * the only one that cannot lie: set a probe string in the declared family and
+ * in both generics, and if the widths match a generic, the family did not
+ * resolve.
+ *
+ * This is the rule the whole programme runs on, applied to the instrument:
+ * **a failed read is not a clean result.** A gate that cannot see the document
+ * must say so, not pass.
+ */
+async function assertDeclaredFacesResolve(browser: Browser): Promise<void> {
+  const page = await browser.newPage({ viewport: A4_PX });
+  // Two probes: a coincidental width match against one generic is unlikely and
+  // against two, on two different strings, is not a case worth designing for.
+  const PROBES = ['Recommendation STRONG BUY', 'Hazard rating verification 1,902,114'];
+  /*
+   * `display:inline-block` and `width:max-content`, not a block element.
+   * The first version used `<div>`s: a block box is its CONTAINER's width, so
+   * every probe measured 794px and every family read as unresolved, including
+   * the three that were installed. A measure of set width has to measure the
+   * text, which is the same mistake as measuring a block's declared height
+   * instead of its drawn one, one level down.
+   */
+  const probe = (id: string, family: string, text: string) =>
+    `<span id="${id}" style="font-family:${family};font-size:40px;white-space:nowrap;`
+    + `display:inline-block;width:max-content">${text}</span>`;
+  await page.setContent(
+    `<body style="margin:0">${CATALOGUE_FAMILIES
+      .map((f, i) => PROBES.map((t, j) => probe(`f${i}_${j}`, `'${f}'`, t)).join(''))
+      .join('')}${PROBES
+      .map((t, j) => probe(`gs_${j}`, 'serif', t) + probe(`gx_${j}`, 'sans-serif', t))
+      .join('')}</body>`,
+    { waitUntil: 'networkidle' },
+  );
+  await page.evaluate('document.fonts && document.fonts.ready');
+  /*
+   * Evaluated as a STRING, like `measureCollisions` above it and for the same
+   * reason: tsx's transform injects a `__name` helper into every function it
+   * compiles, and a function passed to `page.evaluate` is serialised WITH that
+   * helper and without its definition, so it throws `__name is not defined`
+   * inside the page.
+   */
+  const widths = await page.evaluate(`(() => {
+    const w = (id) => document.getElementById(id).getBoundingClientRect().width;
+    const out = { fam: [], serif: [], sans: [] };
+    for (let i = 0; i < ${CATALOGUE_FAMILIES.length}; i += 1) {
+      const row = [];
+      for (let j = 0; j < ${PROBES.length}; j += 1) row.push(w('f' + i + '_' + j));
+      out.fam.push(row);
+    }
+    for (let j = 0; j < ${PROBES.length}; j += 1) { out.serif.push(w('gs_' + j)); out.sans.push(w('gx_' + j)); }
+    return out;
+  })()`) as { fam: number[][]; serif: number[]; sans: number[] };
+  await page.close();
+
+  const unresolved = CATALOGUE_FAMILIES.filter((_, i) => PROBES.every((_, j) =>
+    widths.fam[i][j] === widths.serif[j] || widths.fam[i][j] === widths.sans[j]));
+  if (unresolved.length === 0) return;
+
+  console.error('');
+  console.error(`\u2716 ${unresolved.length} of ${CATALOGUE_FAMILIES.length} declared typefaces did not resolve:`);
+  console.error('');
+  for (const family of unresolved) console.error(`  ${family}`);
+  console.error('');
+  console.error('  This run would have measured the FALLBACK face, not the one the');
+  console.error('  templates ship in, and a clean verdict from it would be a statement');
+  console.error('  about a document nobody receives. Cinzel sets 19% wider than the');
+  console.error('  fallback: the same commit that passed here failed CI with six blocks');
+  console.error('  printing over another.');
+  console.error('');
+  console.error('  The faces reach Chromium two ways. The catalogue names them with a');
+  console.error('  Google Fonts stylesheet, which needs outbound network AND a trusted');
+  console.error('  CA \u2014 behind an intercepting proxy the request fails and');
+  console.error('  `document.fonts` stays empty. Or they are installed on the machine,');
+  console.error('  which is how the render container does it: the nine files in');
+  console.error('  weasyprint-service/fonts/ plus fonts-inter, fonts-roboto, fonts-lato');
+  console.error('  and fonts-noto from the Dockerfile.');
+  console.error('');
+  process.exitCode = 1;
+  throw new Error('the declared typefaces did not resolve \u2014 refusing to measure the fallback');
+}
+
 function findChromium(): string | undefined {
   const root = process.env.PLAYWRIGHT_BROWSERS_PATH || '/opt/pw-browsers';
   if (!existsSync(root)) return undefined;
@@ -509,6 +629,10 @@ async function main(): Promise<void> {
   const executablePath = findChromium();
   if (executablePath) console.log(`  using ${executablePath}`);
   const browser = await chromium.launch(executablePath ? { executablePath } : {});
+  // Before anything is measured, not after: a run that cannot see the faces
+  // has nothing to say about the pages, and saying it anyway is what let six
+  // real overlaps through.
+  await assertDeclaredFacesResolve(browser);
   const report: Report = {
     templates: masters.length,
     colourways: 10,
