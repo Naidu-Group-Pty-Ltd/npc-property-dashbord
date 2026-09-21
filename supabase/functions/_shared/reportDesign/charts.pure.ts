@@ -1533,8 +1533,8 @@ export interface TileItem { label: string; value: string; sub?: string; intensit
 
 /** Tiles — small multiples that read like a faux-choropleth. */
 /**
- * A tile promises a figure, so a tile with no figure is not drawn — unless its
- * own label is carrying one.
+ * Where a tile's own label is carrying its figure, the figure is moved into
+ * the slot that promised it.
  *
  * Page 8 of the Investment Compass delivered for 9 Hollow Street on
  * 21 Sep 2026 drew four amenity tiles. Three read `SHOPPING CENTRES` over
@@ -1542,27 +1542,38 @@ export interface TileItem { label: string; value: string; sub?: string; intensit
  * first read `HEALTHCARE 10 FACILITIES` over **nothing at all** — an empty
  * `<text>` between a label and a sub-caption — because the model wrote
  * `Healthcare 10 facilities` where the grammar wants `Label Value`, so the
- * parser found no value and the figure stayed in the label.
- *
- * Two rules, and the order matters. **Where the label carries the figure it is
- * moved into the value slot**, split at its first number — the same repair
- * `chartQuantity.cutSentenceRow` makes for a bar whose value the parser took
- * out of a sentence, and it loses nothing: `Healthcare 10 facilities` becomes
+ * parser found no value and the figure stayed in the label. It becomes
  * `HEALTHCARE` over `10 facilities`, which is what its three siblings look
- * like. **Only then is a tile with nothing to show dropped**, which is
- * `renderKpiGridHtml`'s rule — a tile whose bound value resolved to nothing is
- * not drawn — and `stripPlaceholderRows`' one line up: a labelled slot is a
- * promise that a figure follows it.
+ * like, and no character is composed: the split is at the label's first
+ * number. Same repair `chartQuantity.cutSentenceRow` makes for a bar whose
+ * value the parser took out of a sentence.
+ *
+ * ## What it deliberately does NOT do, and why
+ *
+ * A first version also DROPPED a tile left with nothing to show, on
+ * `renderKpiGridHtml`'s rule that a tile whose bound value resolved to nothing
+ * is not drawn. That was wrong, and CI caught it: the tiles parser fills
+ * `value` only from a trailing NUMBER, so `{{tiles: Economic Moderate int=0.8,
+ * Tenant Moderate int=0.7}}` parses to `label: "Economic Moderate", value: ""`
+ * — a perfectly good qualitative tile, shaded by its intensity, which that
+ * rule deleted along with the whole figure.
+ *
+ * The two are not the same thing. `renderKpiGridHtml` drops a BINDING that
+ * resolved to nothing, which is a fact about the record; this is a directive
+ * that never had a separate value, which is a fact about the grammar. So the
+ * repair fires only where a figure is demonstrably stranded — an empty value
+ * slot AND a number in the label — and every other tile is drawn exactly as it
+ * was.
  */
-export function tileWithItsFigure(tile: TileItem): TileItem | null {
+export function tileWithItsFigure(tile: TileItem): TileItem {
   const value = String(tile?.value ?? '').trim();
   if (value) return tile;
   const label = String(tile?.label ?? '').trim();
   const at = label.search(/\d/u);
-  if (at <= 0) return null;
+  if (at <= 0) return tile;
   const head = label.slice(0, at).replace(/[\s:·•,-]+$/u, '').trim();
   const tail = label.slice(at).trim();
-  return head && tail ? { ...tile, label: head, value: tail } : null;
+  return head && tail ? { ...tile, label: head, value: tail } : tile;
 }
 
 export function renderTiles(
@@ -1576,7 +1587,7 @@ export function renderTiles(
   const padL = 12, padT = opts.title ? 38 : 12, padB = 12;
   const w = padL * 2 + cols * cellW + (cols - 1) * gap;
   const inner = cellW - 24;
-  const rows = Math.ceil(Math.max(1, tiles.filter((t) => tileWithItsFigure(t)).length) / cols);
+  const rows = Math.ceil(tiles.length / cols);
 
   // Every line of text is fitted to the cell — a label, a value or a sub-line
   // that ran past its tile ran into the next tile's ("Regional service hub"
@@ -1585,8 +1596,7 @@ export function renderTiles(
   // on up to two lines; the cell height is what the tallest tile needs.
   const labelChar = unitsPerChar(ctx, w, 'micro', true) + ptToUnits(0.9, w, ctx.widthMm);
   const microChar = unitsPerChar(ctx, w, 'micro');
-  const drawn = tiles.map(tileWithItsFigure).filter((t): t is TileItem => t !== null);
-  if (!drawn.length) return '';
+  const drawn = tiles.map(tileWithItsFigure);
   const fitted = drawn.map((t) => {
     const label = fitLines((t.label ?? '').toUpperCase(), inner, labelChar, 2);
     const valueText = String(t.value ?? '');

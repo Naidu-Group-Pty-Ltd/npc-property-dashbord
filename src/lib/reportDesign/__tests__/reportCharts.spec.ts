@@ -709,24 +709,34 @@ describe('a tile carries its figure, or it is not drawn', () => {
     expect(drawn).toContain('10 facilities');
   });
 
-  it('drops a tile with no figure anywhere', () => {
-    // `renderKpiGridHtml`'s rule: a tile whose bound value resolved to nothing
-    // is not drawn. A label with a sub and no number promises a figure that
-    // does not exist.
-    expect(tileWithItsFigure({ label: 'Crime rate', value: '', sub: 'Not assessed' })).toBeNull();
-    expect(renderTiles(ctx, [{ label: 'Crime rate', value: '', sub: 'Not assessed' }], {})).toBe('');
+  it('leaves a qualitative tile alone — the parser gives it no value either', () => {
+    /*
+     * A first version of this rule also DROPPED a tile left with nothing to
+     * show, and CI caught it. The tiles parser fills `value` only from a
+     * trailing NUMBER, so `{{tiles: Economic Moderate int=0.8, Tenant Moderate
+     * int=0.7}}` parses to `label: "Economic Moderate", value: ""` — a
+     * perfectly good qualitative tile, shaded by its intensity, which that
+     * rule deleted along with the whole figure.
+     *
+     * `renderKpiGridHtml` drops a BINDING that resolved to nothing, a fact
+     * about the record. This is a directive that never had a separate value, a
+     * fact about the grammar. They are not the same thing.
+     */
+    const qualitative = [
+      { label: 'Economic Moderate', value: '', intensity: 0.8 },
+      { label: 'Tenant Moderate', value: '', intensity: 0.7 },
+    ];
+    for (const t of qualitative) expect(tileWithItsFigure(t)).toBe(t);
+    expect(renderTiles(ctx, qualitative, {})).toMatch(/^<svg\b/);
+    expect(textNodes(renderTiles(ctx, qualitative, {}))).toContain('ECONOMIC MODERATE');
   });
 
-  it('leaves no empty row where a dropped tile stood', () => {
-    /*
-     * The row count is what `rows` is for, and it used to be taken from the
-     * tiles handed IN. Five tiles across four columns is two rows; drop the
-     * one with nothing to show and the four that remain are one row, so
-     * counting the input would have drawn a blank row under them.
-     */
+  it('draws every tile it was handed, in the rows they need', () => {
     const five = [...PAGE_8, { label: 'Crime rate', value: '', sub: 'Not assessed' }];
     const height = (svg: string) => Number(/viewBox="0 0 [\d.]+ ([\d.]+)"/.exec(svg)![1]);
-    expect(height(renderTiles(ctx, five, {}))).toBe(height(renderTiles(ctx, PAGE_8, {})));
+    // Five across four columns is two rows; four is one.
+    expect(height(renderTiles(ctx, five, {}))).toBeGreaterThan(height(renderTiles(ctx, PAGE_8, {})));
+    expect(textNodes(renderTiles(ctx, five, {}))).toContain('CRIME RATE');
   });
 
   it('is untouched where every tile already carries its value', () => {
@@ -738,6 +748,12 @@ describe('a tile carries its figure, or it is not drawn', () => {
   it('does not take a label that merely contains a number', () => {
     // A label carrying its own figure is one with NOTHING in the value slot.
     const t = { label: '3-bedroom houses', value: '620000' };
+    expect(tileWithItsFigure(t)).toBe(t);
+  });
+
+  it('leaves a label that opens on its number', () => {
+    // Nothing before the first digit means no subject to split off.
+    const t = { label: '450 m² minimum lot', value: '' };
     expect(tileWithItsFigure(t)).toBe(t);
   });
 });
