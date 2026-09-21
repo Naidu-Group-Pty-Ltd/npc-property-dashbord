@@ -1,0 +1,44 @@
+-- @effect: select 1 where not exists (select 1 from pg_class where relkind = 'i' and relname = 'client_portal_reports_unique_source_tier')
+--
+-- Drops the index `20260921070000` added, restoring the behaviour the
+-- reporting system has always had.
+--
+-- ## Why it is withdrawn
+--
+-- That index was written to salvage the uniqueness
+-- `20260724000000_prevent_duplicate_portfolio_publications.sql` asserts. The
+-- arithmetic of the key was right — it builds against the live table with no
+-- collisions and no row deleted — and the reading of the data was right: the
+-- two rows it was blamed on are a Compass report and a Cash Flow fork, not a
+-- duplicate.
+--
+-- What it did not check before landing is the WRITE path, and that is the
+-- thing that decides whether a constraint is safe.
+-- `src/components/reports/SendToClientModal.tsx` publishes with
+-- `source_report_id` AND `report_tier` set, in a loop, with no duplicate
+-- guard and `catch { errorCount++ }`. So sending the same report to the same
+-- client a second time — after regenerating or correcting it, which is an
+-- ordinary thing to do — previously inserted a second row and succeeded, and
+-- with the index in place fails 23505 and surfaces as "failed for 1 client"
+-- with no reason given. Nothing in the client handles that code.
+--
+-- The guarantee was never in force in production, so nothing depends on it.
+-- The regression would have been immediate and silent. That asymmetry decides
+-- it.
+--
+-- ## What this does NOT do
+--
+-- It does not restore `client_portal_reports_unique_portfolio_source`, which
+-- cannot be created at all — see `20260921070000`'s header for the measured
+-- reason. Both that migration and this one leave the table exactly as the
+-- product has always run it.
+--
+-- If double-sends are worth preventing, the place is the publish path, as an
+-- explicit "this was already sent — replace it?" decision the operator can
+-- see, not a database error the UI renders as a failure with no cause. That is
+-- a product decision and is deliberately not taken here.
+--
+-- ROLLBACK:
+--   see 20260921070000_client_portal_reports_unique_per_tier.sql
+
+DROP INDEX IF EXISTS public.client_portal_reports_unique_source_tier;
