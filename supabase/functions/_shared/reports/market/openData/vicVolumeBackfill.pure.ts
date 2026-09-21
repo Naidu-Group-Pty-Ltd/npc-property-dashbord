@@ -1,5 +1,5 @@
 /**
- * Victoria's transaction volumes — walking the archive one quarter at a time.
+ * Victoria's transaction volumes — one quarter at a time, from both sources.
  *
  * ## The gap this closes
  *
@@ -19,6 +19,13 @@
  * register was built. Measured 21 Sep 2026 on 9 Hollow Street, Golden Square:
  * three of five dimensions scored, 80% of the matrix by nominal weight, with
  * Demand's 15 points among the missing 20.
+ *
+ * ## Where the quarters are found
+ *
+ * Two sources, asked together rather than one behind the other, because
+ * neither contains the other (see {@link mergeVicQuarterSources}): the
+ * publisher's own CKAN catalogue names every release in words, and the
+ * Internet Archive holds the bytes the publisher will not serve a script.
  *
  * ## Why the archive answers it
  *
@@ -42,6 +49,8 @@
  * interrupted backfill resumes correctly and a completed one is a no-op.
  */
 
+import type { VicCatalogueResource } from './vicVpsrCatalogue.pure.ts';
+
 /** Quarter label to the month its period ends in, as `parseVicQuarterly` writes it. */
 const QUARTER_END_MONTH: Readonly<Record<string, string>> = {
   '1': '03', '2': '06', '3': '09', '4': '12',
@@ -62,6 +71,88 @@ export function periodOfVicQuarterlyName(name: string): string | null {
   if (!m) return null;
   const month = QUARTER_END_MONTH[m[1]];
   return month ? `${m[2]}-${month}` : null;
+}
+
+/**
+ * Where a quarter was found. Both sources are asked, every time.
+ *
+ * Neither is a superset of the other, measured 21 Sep 2026:
+ *
+ * - The ARCHIVE holds `median-house-q3-2025.xls`, which the loader reads
+ *   today, and the catalogue's own listing for that dataset is incomplete.
+ * - The CATALOGUE lists `Median-House-VGS-1st-Qtr-2024.xls`, a spelling no
+ *   filename pattern here matches, so the archive walk was blind to it even
+ *   though the bytes are in the archive.
+ *
+ * So they run together and the results are unioned. A quarter found by either
+ * is a quarter we can try; a quarter found by BOTH carries two ways to fetch
+ * it, and the canonical URL is tried before the pattern-matched capture
+ * because it is the publisher's own answer to "which file is this quarter".
+ */
+export type VicQuarterSource = 'catalogue' | 'archive' | 'both';
+
+export interface VicQuarterCandidate {
+  readonly period: string;
+  /** The publisher's canonical URL, where the catalogue named one. */
+  readonly canonicalUrl: string | null;
+  /** The archived original, where the pattern walk found one. */
+  readonly archivedUrl: string | null;
+  readonly discoveredBy: VicQuarterSource;
+}
+
+/**
+ * Every quarter either source knows about, newest first.
+ *
+ * `floor` keeps a backfill to a recent baseline rather than a history — see
+ * {@link chooseNextVicVolumeFile}.
+ */
+export function mergeVicQuarterSources(
+  catalogue: ReadonlyArray<VicCatalogueResource>,
+  archived: ReadonlyArray<{ original: string }>,
+  floor = '0000-00',
+): VicQuarterCandidate[] {
+  const byPeriod = new Map<string, { canonical: string | null; archived: string | null }>();
+  const put = (period: string | null, key: 'canonical' | 'archived', url: string) => {
+    if (!period || period < floor) return;
+    const held = byPeriod.get(period) ?? { canonical: null, archived: null };
+    // First wins within a source: the callers hand these in newest-capture
+    // order, and a second URL for the same quarter is the same quarter.
+    if (!held[key]) held[key] = url;
+    byPeriod.set(period, held);
+  };
+
+  for (const r of catalogue ?? []) put(r.period, 'canonical', r.url);
+  for (const f of archived ?? []) {
+    const name = String(f?.original ?? '');
+    put(periodOfVicQuarterlyName(name.slice(name.lastIndexOf('/') + 1)), 'archived', name);
+  }
+
+  return [...byPeriod.entries()]
+    .map(([period, held]) => ({
+      period,
+      canonicalUrl: held.canonical,
+      archivedUrl: held.archived,
+      discoveredBy: (held.canonical && held.archived
+        ? 'both'
+        : held.canonical ? 'catalogue' : 'archive') as VicQuarterSource,
+    }))
+    .sort((a, b) => (a.period < b.period ? 1 : a.period > b.period ? -1 : 0));
+}
+
+/**
+ * The next quarter to read, from the merged set.
+ *
+ * Same rule as {@link chooseNextVicVolumeFile} and for the same reasons — the
+ * register's own contents decide, so an interrupted backfill resumes and a
+ * finished one is a no-op — but over both sources rather than one.
+ */
+export function chooseNextVicQuarter(
+  candidates: ReadonlyArray<VicQuarterCandidate>,
+  countedPeriods: ReadonlyArray<string>,
+): { next: VicQuarterCandidate | null; remaining: ReadonlyArray<VicQuarterCandidate> } {
+  const counted = new Set(countedPeriods ?? []);
+  const remaining = (candidates ?? []).filter((c) => !counted.has(c.period));
+  return { next: remaining[0] ?? null, remaining };
 }
 
 export interface VicVolumeCandidate {

@@ -45,9 +45,17 @@ import {
   VIC_VPSR_PAGE_URL,
 } from '../_shared/reports/market/openData/vicVpsrSuburb.pure.ts';
 import {
+  chooseNextVicQuarter,
   chooseNextVicVolumeFile,
+  mergeVicQuarterSources,
   quartersStillNeeded,
 } from '../_shared/reports/market/openData/vicVolumeBackfill.pure.ts';
+import {
+  VIC_CKAN_SEARCH_URL,
+  newestCatalogueQuarter,
+  parseVicCatalogue,
+  vicQuarterlyMedianResources,
+} from '../_shared/reports/market/openData/vicVpsrCatalogue.pure.ts';
 import { SA_LSG_ARCHIVE_FLOOR, SA_LSG_ARCHIVE_PATTERN, SA_LSG_FILE, SA_LSG_LICENCE, SA_LSG_SOURCE_LABEL, parseSaLsgStats, rankOfSaFileName } from '../_shared/reports/market/openData/saLsgStats.pure.ts';
 import { type RankedFile, type WaybackCapture, archivePageUrl, capturedAtIso, cdxUrl, newestByRank, originalBytesUrl, parseCdxJson, rankedCaptures, rankedFiles } from '../_shared/reports/market/openData/waybackMirror.pure.ts';
 
@@ -501,9 +509,49 @@ Deno.serve(async (req) => {
         ((countedRows ?? []) as Array<{ period: string }>).map((r) => String(r.period)),
       )];
 
-      const index = await archiveIndex(VIC_VPSR_ARCHIVE_PATTERN, from);
+      /*
+       * BOTH sources, asked together.
+       *
+       * The catalogue is the publisher's own index and answers a script; the
+       * archive holds the bytes the publisher will not serve one. Neither
+       * contains the other — the catalogue lists
+       * `Median-House-VGS-1st-Qtr-2024.xls`, a spelling the filename pattern
+       * cannot match, and the archive holds captures the catalogue never
+       * listed — so a union finds more quarters than either alone and a
+       * failure of one is not a failure of the walk.
+       *
+       * The catalogue also answers the question a regex cannot: what the
+       * NEWEST released quarter is. "No file I recognise" and "no file" are
+       * different statements, and only the publisher can make the second.
+       */
+      let catalogue: Awaited<ReturnType<typeof vicQuarterlyMedianResources>> = [];
+      let catalogueNewest: string | null = null;
+      let catalogueError: string | null = null;
+      try {
+        const res = await fetch(VIC_CKAN_SEARCH_URL, { headers: { 'User-Agent': UA, Accept: 'application/json,*/*' } });
+        if (!res.ok) throw new Error(`the Victorian data catalogue answered ${res.status}`);
+        const all = parseVicCatalogue(await res.json());
+        catalogue = vicQuarterlyMedianResources(all, wantDwelling);
+        catalogueNewest = newestCatalogueQuarter(catalogue);
+      } catch (error) {
+        // Named, never swallowed: a catalogue that could not be reached is not
+        // a publisher with nothing to publish, and the archive still answers.
+        catalogueError = error instanceof Error ? error.message : String(error);
+      }
+
+      let index: WaybackCapture[] = [];
+      let archiveError: string | null = null;
+      try {
+        index = await archiveIndex(VIC_VPSR_ARCHIVE_PATTERN, from);
+      } catch (error) {
+        archiveError = error instanceof Error ? error.message : String(error);
+      }
       const files = rankedFiles(index, VIC_QUARTERLY_FILE,
         (m) => (dwellingOfQuarterlyName(m[0]) === wantDwelling ? Number(m[3]) * 4 + Number(m[2]) : null));
+      if (catalogueError && archiveError) {
+        throw new Error(`neither source could be reached — catalogue: ${catalogueError}; archive: ${archiveError}`);
+      }
+      const merged = mergeVicQuarterSources(catalogue, files, floor);
       /*
        * `skip` steps over a quarter the parser refuses, and `period` names one
        * outright. Both exist because selection is "newest uncounted" and a
@@ -526,10 +574,24 @@ Deno.serve(async (req) => {
         : choice.next;
       const shortfall = quartersStillNeeded(countedPeriods);
 
+      const mergedChoice = chooseNextVicQuarter(merged, [...countedPeriods, ...skip]);
       const base = {
         stage, dwelling: wantDwelling, floor,
         counted_quarters: countedPeriods.sort().reverse(),
         quarters_still_needed_for_demand: shortfall,
+        // What the PUBLISHER has released, which is the only honest answer to
+        // "is this current as at today" — and is not the same question as what
+        // the register holds.
+        publisher_newest_quarter: catalogueNewest,
+        register_is_current_with_publisher: catalogueNewest
+          ? countedPeriods.includes(catalogueNewest) || countedPeriods.some((p) => p >= catalogueNewest)
+          : null,
+        sources: {
+          catalogue: catalogueError ? { error: catalogueError } : { quarters: catalogue.length },
+          archive: archiveError ? { error: archiveError } : { quarters: files.length },
+        },
+        discovered_quarters: merged.map((c) => ({ period: c.period, by: c.discoveredBy })),
+        merged_remaining: mergedChoice.remaining.map((c) => c.period),
         archived_quarters: files.length,
         remaining: choice.remaining.map((c) => c.period),
         next: targeted?.period ?? null,
