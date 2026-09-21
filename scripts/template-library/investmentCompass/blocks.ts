@@ -1572,6 +1572,7 @@ export function kpis(items: KpiItem[]): FlowItem {
     );
     // A bound label or note cannot be measured from its own source text.
     const literal = (s: string | undefined): number => (s && !s.includes('{{') ? s.length : 0);
+    const bound = (s: string | undefined): boolean => !!s && s.includes('{{');
     const labelLines = Math.max(
       shared.labelLines,
       ...shown.map((k) => linesFor(literal(k.label), c.scale.kpiLabel)),
@@ -1579,8 +1580,27 @@ export function kpis(items: KpiItem[]): FlowItem {
     const valueLines = Math.max(
       1, ...shown.map((k) => (k.valueChars ? linesFor(k.valueChars, valueSize) : 1)),
     );
+    /*
+     * A BOUND note is budgeted two lines, for the reason `shared.labelLines`
+     * already budgets two for a bound label: `literal()` answers 0 for
+     * anything carrying `{{`, so `linesFor` returns its floor of 1 and the
+     * budget becomes a promise about text the template does not hold.
+     *
+     * Measured on the cash-flow page's "Where it lands", 21 Sep 2026: the
+     * note under *Value at year ten* renders "From $1,336,400 at year one"
+     * and sets two lines in the cell, and the block below — the optional
+     * equity callout `ifItFits` keeps — took 2pt of it on four masters. The
+     * comment two lines above states the limitation and the arithmetic then
+     * ignored it.
+     *
+     * A note whose text IS literal is still measured from it, so nothing that
+     * fits today grows.
+     */
     const noteLines = shown.some((k) => k.note)
-      ? Math.max(1, ...shown.map((k) => linesFor(literal(k.note), c.scale.kpiNote)))
+      ? Math.max(
+        shown.some((k) => bound(k.note)) ? 2 : 1,
+        ...shown.map((k) => linesFor(literal(k.note), c.scale.kpiNote)),
+      )
       : 0;
     const cell = padTop
       + labelLines * c.scale.kpiLabel * 1.25
