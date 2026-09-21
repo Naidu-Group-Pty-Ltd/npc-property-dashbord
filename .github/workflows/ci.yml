@@ -1030,6 +1030,50 @@ jobs:
   # of list once: the deploy workflow built its changed-function set from
   # `supabase/functions/**` alone, so a config-only edit deployed nothing and
   # a `verify_jwt` declaration and production came to disagree.
+  # Does the ABS answer, and does our reader accept what it actually sends?
+  #
+  # `absBuildingApprovals.pure.ts` is verified against the SDMX-CSV FORMAT --
+  # every test behind it runs on synthetic bodies -- because the development
+  # egress cannot reach the Bureau: the gateway answers 403 to CONNECT for
+  # `data.api.abs.gov.au`, a policy denial in the network allowlist. So the
+  # reader has never seen the publisher's own bytes, and "verified against the
+  # format" is not "verified". A runner has open internet and closes that gap
+  # here, before anything is merged, deployed or scheduled.
+  #
+  # It writes nothing anywhere: no database, no Supabase, no credential. And
+  # it runs only when the register's own files change, because one catalogue
+  # fetch and one data query per relevant push is proportionate and per push
+  # is not.
+  #
+  # The exit code is the design. The ABS being unreachable REPORTS and passes
+  # -- a compliance product must not have its build decided by another party's
+  # uptime, which is this repository's own rule. What fails is the case that is
+  # ours: the ABS answered and our discovery or parser refused what it sent.
+  abs-register-liveness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.title, 'ABS') ||
+      contains(github.event.head_commit.message, 'ABS') ||
+      contains(github.event.head_commit.message, 'supply register')
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Ask the ABS what it publishes, and read it
+        run: npx tsx scripts/market/abs-approvals-liveness.ts
+
   template-geometry:
     runs-on: ubuntu-latest
     timeout-minutes: 45
