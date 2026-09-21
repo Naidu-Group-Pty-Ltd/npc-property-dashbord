@@ -113,6 +113,11 @@ import {
   readStrategyRecord,
   strategySectionRules,
 } from '../_shared/reports/investment/strategyPositions.pure.ts';
+import {
+  headingSequence,
+  placeBlocksByDeclaredOrder,
+  type PlaceableBlock,
+} from '../_shared/reports/investment/documentPlacement.pure.ts';
 import { ENRICHMENT_STAMP } from '../_shared/reports/location/locationEnrichmentReuse.pure.ts';
 import { transportCountReading } from '../_shared/transportReading.pure.ts';
 import { readSalesRegister } from '../_shared/reports/market/salesRegisterRead.ts';
