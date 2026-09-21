@@ -40,6 +40,7 @@ import {
   foldStraySections,
   mergeAdjacentDuplicateHeadings,
 } from './sectionFolding.pure.ts';
+import { stripPromptRulesBlocks } from './promptLeakage.pure.ts';
 
 const PLACEHOLDER_CELL = /^(?:n\/?a|tbd|to be determined|not available|not provided|unknown|—|-|–)\.?$/i;
 
@@ -737,8 +738,29 @@ export function presentStoredMarkdown(
    * them; anything that cannot be repaired is removed rather than printed.
    * See `braceHygiene.pure.ts`.
    */
-  const braces = scrubUnresolvedBraces(markdown);
-  const resolved = braces.repaired.length || braces.stripped.length ? braces.markdown : markdown;
+  /*
+   * An instruction addressed to the MODEL, removed before anything else reads
+   * the body.
+   *
+   * Three pinned blocks end in a rules list written to the writer, and this
+   * repository has already measured what a model does with pinned text it was
+   * told not to reproduce: the planning block tells it never to write a
+   * bracketed pointer, and nine of ten delivered documents carried one
+   * anyway. That is `stripEditorialBlocks`' lesson — an instruction is a
+   * request; this is the guarantee — and the rules blocks had none.
+   *
+   * FIRST, for the reason every other pass here is ordered: a leaked block is
+   * a numbered list under a shouting header, and letting the table promoter
+   * or the emphasis scrub see it first means they act on text that should not
+   * be in the document at all.
+   *
+   * A body that never says "RULES FOR" is returned byte-identical, which is
+   * what lets this sit in front of every stored report ever written.
+   */
+  const deleaked = stripPromptRulesBlocks(markdown);
+  const body = deleaked.removed ? deleaked.markdown : markdown;
+  const braces = scrubUnresolvedBraces(body);
+  const resolved = braces.repaired.length || braces.stripped.length ? braces.markdown : body;
   /*
    * A row of pipes is a table the model did not mark up.
    *
