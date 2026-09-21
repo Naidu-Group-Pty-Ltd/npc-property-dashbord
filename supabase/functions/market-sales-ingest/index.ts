@@ -489,8 +489,56 @@ Deno.serve(async (req) => {
       if (counted.length === 0) {
         throw new Error(`${fileNameOf(file.original)} parsed ${parsed.rows.length} rows and none carries a count — refused`);
       }
+      /*
+       * A backfill may add a count and must never regress a figure the live
+       * stage already holds.
+       *
+       * This is not hypothetical. Measured 21 Sep 2026 from the two archived
+       * workbooks: for ABBOTSFORD, quarter 2025-09, `median-house-q3-2025`
+       * reports 1,370,000 and `median-house-q4-2025` reports 1,391,500. The
+       * later file carries the publisher's own revision, the live stage
+       * already loaded it, and an unguarded upsert of the older workbook would
+       * quietly put the superseded number back — on every suburb, for every
+       * quarter this walks.
+       *
+       * So the count is added and NOTHING else is: a row that already exists
+       * is written back with its stored median, provenance and capture stamp
+       * untouched and only `sales_count` changed, and a full record is written
+       * only where no row exists at all — where there is nothing to regress
+       * and this file is the only source there is.
+       */
       const records = toRecords(counted, VIC_VPSR_SOURCE_LABEL, archivePageUrl(file.captures[0]), VIC_VPSR_LICENCE, loadedAt);
-      const written = await upsertRecords(supabase, records);
+      const { data: liveRows, error: liveError } = await supabase
+        .from('market_sales_medians')
+        .select('area_token, median_price, sales_count, source, source_url, licence, captured_at, price_measure, loaded_at')
+        .eq('state', 'VIC')
+        .eq('dwelling_type', wantDwelling)
+        .eq('period_span', 'quarter')
+        .eq('period', parsed.latestPeriod);
+      if (liveError) throw new Error(`reading the live Victorian rows for ${parsed.latestPeriod} failed: ${liveError.message}`);
+      const live = new Map(
+        ((liveRows ?? []) as Array<Record<string, unknown>>).map((r) => [String(r.area_token), r]),
+      );
+
+      const fresh = records.filter((r) => !live.has(r.area_token));
+      const preserved = records
+        .filter((r) => live.has(r.area_token))
+        .map((r) => {
+          const held = live.get(r.area_token)!;
+          return {
+            state: r.state, area_kind: r.area_kind, area: r.area, area_token: r.area_token,
+            dwelling_type: r.dwelling_type, period: r.period, period_span: r.period_span,
+            // Everything the live stage owns, handed straight back.
+            median_price: held.median_price, source: held.source, source_url: held.source_url,
+            licence: held.licence, captured_at: held.captured_at,
+            price_measure: held.price_measure, loaded_at: held.loaded_at,
+            // The one thing this backfill is for.
+            sales_count: r.sales_count,
+          };
+        });
+
+      const written = (fresh.length ? await upsertRecords(supabase, fresh) : 0)
+        + (preserved.length ? await upsertRecords(supabase, preserved as never) : 0);
 
       const detail = {
         ...base,
@@ -498,6 +546,7 @@ Deno.serve(async (req) => {
         source: VIC_VPSR_SOURCE_LABEL, licence: VIC_VPSR_LICENCE,
         parsed_period: parsed.latestPeriod, localities: parsed.localities,
         counted_rows: counted.length, rows_written: written,
+        rows_new: fresh.length, rows_count_added_without_touching_medians: preserved.length,
         implausible_cells: parsed.implausible.length,
         remaining: choice.remaining.filter((c) => c.period !== targeted.period).map((c) => c.period),
       };
