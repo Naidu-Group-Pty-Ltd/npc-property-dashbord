@@ -103,12 +103,60 @@ describe('the loader and its declarations', () => {
     expect(LOADER).toContain('choice.chosen.slice(0, 1)');
   });
 
-  it('refuses rather than stores, and writes only the register and its log', () => {
+  it('refuses rather than stores, and writes only its registers and its log', () => {
     expect(LOADER).toContain('parseQgsoRldaSales(sheets); // throws → nothing written');
     expect(LOADER).toMatch(/\.from\('market_sales_medians'\)/);
     expect(LOADER).toMatch(/\.from\('market_sales_sync'\)/);
+    /*
+     * The containment rule, widened DELIBERATELY and once.
+     *
+     * This assertion is why the rule works: adding the `approvals` stage
+     * failed it in CI, because that stage writes a second register. The set
+     * is exhaustive on purpose — a loader that quietly gains a table is how a
+     * function's blast radius grows without anybody deciding it should — so
+     * the fix is to name the new table here rather than to relax the shape of
+     * the check.
+     *
+     * Two registers and one log, and the log is shared: `market_sales_sync`
+     * carries a row per run of every stage, approvals included, so an
+     * operator reads one table to see what this function did.
+     */
     const tables = [...LOADER.matchAll(/\.from\('([a-z_]+)'\)/g)].map((m) => m[1]);
-    expect(new Set(tables)).toEqual(new Set(['market_sales_medians', 'market_sales_sync']));
+    expect(new Set(tables)).toEqual(new Set([
+      'market_sales_medians',
+      'market_building_approvals',
+      'market_sales_sync',
+    ]));
+  });
+
+  it('the approvals stage discovers its dataflow and refuses before it writes', () => {
+    // The stage that failed the assertion above, asserted rather than assumed.
+    expect(LOADER).toContain("stage === 'approvals'");
+    /*
+     * Discovery precedes the data query, asserted INSIDE the stage rather
+     * than over the whole file. The read-only `probe` stage calls the same
+     * two functions earlier in the module, so a first-occurrence ordering
+     * over `LOADER` measures the probe and not this — which is what the
+     * first version of this assertion did, and it failed for that reason
+     * rather than because the stage was wrong.
+     */
+    const from = LOADER.indexOf("if (stage === 'approvals') {");
+    const to = LOADER.indexOf("if (stage === 'vic') {", from);
+    expect(from).toBeGreaterThan(-1);
+    expect(to).toBeGreaterThan(from);
+    const STAGE = LOADER.slice(from, to);
+    const at = (needle: string) => {
+      const i = STAGE.indexOf(needle);
+      expect(i, `${needle} is not in the approvals stage`).toBeGreaterThan(-1);
+      return i;
+    };
+    expect(at('resolveBuildingApprovalsFlow(')).toBeGreaterThan(at('ABS_BA_DATAFLOW_CATALOGUE_URL'));
+    expect(at('absBuildingApprovalsUrl(')).toBeGreaterThan(at('resolveBuildingApprovalsFlow('));
+    expect(at('parseAbsBuildingApprovals(')).toBeGreaterThan(at('absBuildingApprovalsUrl('));
+    expect(at('upsertApprovals(')).toBeGreaterThan(at('parseAbsBuildingApprovals('));
+    // No dataflow identifier is spelled in the loader: it comes from the
+    // catalogue or from an operator override checked against the catalogue.
+    expect(LOADER).not.toMatch(/'ABS,[A-Z0-9_]+,\d/);
   });
 
   it('the register keeps a suppressed median as null and keys a quarter by its end month', () => {
