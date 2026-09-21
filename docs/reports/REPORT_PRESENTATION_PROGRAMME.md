@@ -683,9 +683,46 @@ repaired. The partition that decides this is asserted to reproduce its input
 byte-for-byte over thirteen shapes, including an unclosed fence and a backtick
 inside a fence.
 
-**W4.9 · Correct the stale skill note.** `REPORT_RULES.md` §4 states "Cinzel is
-not installed yet". The delivered PDF embeds `FWDZFX+Cinzel`. Left uncorrected,
-designers will keep avoiding a face that is available.
+**W4.9 · The stale skill note.** ✅ **DONE**, and it was stale three ways, not
+one — in the file `CLAUDE.md` names as the thing to read before touching any
+PDF generator, which a designer reads and specifies type from.
+
+| §4 said | the image holds |
+| --- | --- |
+| *"**Cinzel is not installed yet**"* | Cinzel, with a Dockerfile that FAILS THE BUILD without it |
+| ships *"Cormorant Garamond, Fraunces"* | neither — no Debian binary package exists, and both were removed from the type stacks entirely |
+| *"**Cinzel Bold** and Playfair Display **Medium** are the display faces"* | Cinzel Regular/SemiBold and Playfair Regular/Italic/SemiBold/Bold — **neither of those two weights** |
+
+The third is the one that would have cost something. Those two files are the
+`public/fonts/` SCREEN copies; asking the print container for Cinzel 700 gets a
+synthetic bold of an inscriptional roman that never had one, and
+`typography.pure.ts`'s whole weight table exists to stop exactly that.
+
+**And the file it documents had the same defect.** `PRINT_STACK.cover`'s own
+comment read *"Cinzel is the brand's cover face and ships Bold only, which is
+why it is confined to the two places set large and short"* — forty lines below
+the table that had REMOVED Bold and shipped Regular and SemiBold in its place,
+with the reasoning written out. Two statements of one fact, disagreeing, in one
+file. The reason now given is the one that was always true and does not depend
+on what the image happens to hold: at body sizes an all-caps roman is
+unreadable.
+
+Four statements of one fact, then — Dockerfile, weight table, stack comment,
+skill file. `reportTypography.spec.ts` already read the first; it reads all
+four now.
+
+**Two of the four new gates were vacuous when first written, and running them
+against the original text is the only reason I know.** The "not installed"
+check matched `[^.\n]{0,40}` and the doc wraps prose, so
+`**Cinzel is not\ninstalled yet.**` carries a newline in the middle of the
+claim and the regex stepped over it. The (family, weight) check excused any
+mention within 200 characters of `public/fonts` — and the offending sentence
+was *"Cinzel Bold and Playfair Display Medium (`public/fonts/`) are the display
+faces"*, so the excuse sat inside the defect. Both are fixed, both now name
+`Cinzel Bold` and `Cormorant Garamond` when run against the original, and the
+excuse is now scoped to the **sentence** rather than a window — which also
+forced the doc to put its qualification beside its claim rather than in the
+next sentence.
 
 ---
 
