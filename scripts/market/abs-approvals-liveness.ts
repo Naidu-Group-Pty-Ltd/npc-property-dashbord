@@ -340,7 +340,12 @@ async function main(): Promise<void> {
           .slice().sort((a, b) => a.position - b.position)
           .map((d) => `${d.position}:${d.id}${d.isTime ? '(time)' : `[${d.codes.length}]`}`).join(' · '));
         kv('key', composed.key);
-        for (const n of composed.narrowed) kv(`  narrowed ${n.dimension}`, `${n.kept.length} of ${n.of} — ${n.why}`);
+        // The kept CODES, not just how many. "4 of 43" said nothing about
+        // whether `LGA` was the code the data is tagged with, which is the
+        // question that turned a working download into nine kilobytes.
+        for (const n of composed.narrowed) {
+          kv(`  narrowed ${n.dimension}`, `${n.kept.join('+')} (${n.kept.length} of ${n.of}) — ${n.why}`);
+        }
         for (const u of composed.unnarrowed) kv(`  OPEN ${u.dimension}`, u.reason);
         /*
          * The dimensions no rule NAMES, with their vocabulary. Each comes

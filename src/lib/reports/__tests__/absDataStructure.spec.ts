@@ -130,27 +130,39 @@ describe('the real cube, as the Bureau publishes it', () => {
     }
   });
 
-  it('keeps the four grains the register stores and leaves every AREA open', () => {
+  it('leaves the LEVEL open as well as the area, and both on purpose', () => {
     const { key, narrowed } = composeApprovalsKey(REAL);
-    const rt = narrowed.find((n) => n.dimension === 'REGION_TYPE');
-    expect(rt!.kept.sort()).toEqual(['AUS', 'LGA', 'SA2', 'STE']);
-    // REGION itself is untouched: position 6 of the key is empty.
+    // `REGION_TYPE` was narrowed to AUS+STE+SA2+LGA for exactly one commit.
+    // Measured, that turned the LGA flow's working 8.0 MB download into
+    // 9,818 bytes of eight states and one national row: `AUS` and `STE`
+    // answered, `LGA` did not, because a code that names a level in a
+    // codelist is not necessarily the code the DATA is tagged with.
+    expect(narrowed.find((n) => n.dimension === 'REGION_TYPE')).toBeUndefined();
+    expect(key.split('.')[4]).toBe('');
+    // And the area itself, as always.
     expect(key.split('.')[5]).toBe('');
   });
 
-  it('leaves no dimension of the real cube unruled except the area', () => {
-    // Every unruled dimension comes back whole. After this commit the only
-    // one that should is REGION, deliberately.
+  it('narrows only where NOT narrowing would be wrong, never merely large', () => {
+    /*
+     * Every remaining rule is a CORRECTNESS narrowing: without it rows
+     * collide on (area, period, building type) and the register stores an
+     * arbitrary slice as a total. Size is solved by `endPeriod` — SA2 loads
+     * in eight requests of six months at 10.4 MB each — so a rule that only
+     * makes a download smaller is a bet that a code matches, and it loses
+     * quietly.
+     */
     const unruled = REAL.dimensions
       .filter((d) => !d.isTime && !ABS_BA_KEY_RULES.some((r) => r.dimension.test(d.id)))
       .map((d) => d.id);
-    expect(unruled).toEqual(['REGION']);
+    expect(unruled).toEqual(['REGION_TYPE', 'REGION']);
   });
 
   it('composes the whole key in the publisher’s own order', () => {
     // `TOT = Total` is absent from the building-type slot deliberately: in
-    // this cube it means all buildings, not all dwellings.
-    expect(composeApprovalsKey(REAL).key).toBe('1+2.9.TOT.110+150+100.AUS+STE+SA2+LGA..M');
+    // this cube it means all buildings, not all dwellings. Positions 5 and 6
+    // are open: the level and the area.
+    expect(composeApprovalsKey(REAL).key).toBe('1+2.9.TOT.110+150+100...M');
   });
 });
 

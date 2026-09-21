@@ -177,27 +177,30 @@ export const ABS_BA_KEY_RULES: ReadonlyArray<{
     why: 'the publisher\'s own total; new, conversions and alterations share one key',
   },
   /*
-   * The grains this register stores, out of forty-three the flow offers.
+   * `REGION_TYPE` is deliberately NOT narrowed, and the reason is the rule
+   * this module opens with.
    *
-   * This is NOT narrowing the area, and the distinction is the one the guard
-   * below turns on: `REGION_TYPE` selects which ASGS LEVELS come back, while
-   * `REGION` — every one of its 2,985 codes — stays open. Every area at the
-   * kept levels still answers, and which area a report reads is still chosen
-   * at read time from a trusted geography.
+   * It was, for one commit, on the sound-looking argument that the SA2 flow
+   * offers forty-three ASGS levels and this register stores four. Measured
+   * 21 Sep 2026, keeping `AUS+STE+SA2+LGA` turned the LGA flow's working
+   * 8.0 MB download into **9,818 bytes carrying eight states, one national
+   * row and not a single council** — refused by the area floor, correctly.
+   * `AUS` and `STE` answered; `LGA` did not, because a code that names a
+   * level in a codelist is not necessarily the code the DATA is tagged with.
    *
-   * It is also the only one of these that is purely a size lever: two region
-   * types produce different area CODES, so they were never colliding.
+   * Every other rule here is a CORRECTNESS narrowing: without it rows
+   * collide on (area, period, building type) and the register stores an
+   * arbitrary slice as a total. This one was purely a SIZE narrowing, and
+   * size is already solved — `narrowedApprovalsUrl` takes an `endPeriod`,
+   * and SA2 loads in eight requests of six months at 10.4 MB each.
+   *
+   * So it fails the module's own standard: *a narrowing is an optimisation
+   * and must never be a dependency.* A narrowing that can silently exclude
+   * the data you came for is not an optimisation; it is a bet that a code
+   * matches, and it loses quietly. Left open, every level comes back, the
+   * parse files each row by its own area code (`grainOfAreaCode`) and one
+   * download fills every grain the register stores.
    */
-  {
-    dimension: /^(REGION_TYPE|ASGS_LEVEL|AREA_TYPE)$/i,
-    keep: [
-      /^australia$/i,
-      /^states and territories$/i,
-      /^statistical areas? level 2$/i,
-      /^local government areas?$/i,
-    ],
-    why: 'the four grains the register stores, of the levels this flow offers',
-  },
 ];
 
 /**

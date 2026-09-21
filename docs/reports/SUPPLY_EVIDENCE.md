@@ -261,6 +261,34 @@ the DCJ workbooks exhausted an edge worker's compute allowance
 this loader either way — but which axis they page on was a guess until
 measured.
 
+Measured:
+
+| SA2 window | Bytes | |
+| --- | --- | --- |
+| 33 months | 111.6 MB | past the ceiling |
+| 12 months | 26.0 MB | past the ceiling |
+| **6 months** | **10.4 MB** | **workable — 8 requests for the full span** |
+
+### And a narrowing that was a bet, not an optimisation
+
+`REGION_TYPE` was narrowed to `AUS+STE+SA2+LGA` for exactly one commit, on
+the sound-looking argument that the flow offers forty-three ASGS levels and
+this register stores four. It turned the LGA flow's working 8.0 MB download
+into **9,818 bytes carrying eight states, one national row and not a single
+council**, refused by the area floor. `AUS` and `STE` answered; `LGA` did
+not, because **a code that names a level in a codelist is not necessarily the
+code the DATA is tagged with.**
+
+It is dropped. Every other rule here is a CORRECTNESS narrowing — without it
+rows collide and the register stores an arbitrary slice as a total — while
+that one was purely a SIZE narrowing, and size is solved by `endPeriod`. It
+failed the module's own standard: *a narrowing is an optimisation and must
+never be a dependency.* One that can silently exclude the data you came for
+is not an optimisation.
+
+Left open, every level comes back and the parse files each row by its own
+area code, so one download fills every grain the register stores.
+
 ### The four defects narrowing exposed
 
 Every one was a pattern written against an imagined vocabulary meeting the
