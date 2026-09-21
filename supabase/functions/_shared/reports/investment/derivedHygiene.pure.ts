@@ -575,11 +575,90 @@ const SCAFFOLDING_RE = new RegExp(
   'gi',
 );
 
+/**
+ * …and the same defect in a vocabulary the list does not name.
+ *
+ * The four strings above are the ones the PROMPT wrote, and the model has
+ * moved on. Page 29 of the Investment Compass delivered for 9 Hollow Street on
+ * 21 Sep 2026 closes all three paragraphs of its **Final Recommendation** —
+ * the most-read section in the document — like this:
+ *
+ * ```
+ *   …settled only by the planning certificate and the planning scheme itself.
+ *   [Vicmap Planning — plan_zone][Vicmap Planning — plan_overlay]
+ *
+ *   …no project, corridor, or delivery horizon should be inferred from that
+ *   absence. [Planning registers in this report][Major public projects
+ *   register in this report]
+ * ```
+ *
+ * Six brackets, none of them one of the four. Keeping a literal list was the
+ * mistake: what the rule is actually about is not which words are inside the
+ * bracket but that **a bracket at the end of a sentence in a client document
+ * refers to nothing the reader can open.** A real reference in this document's
+ * vocabulary is a Markdown link or a footnote, and both are excluded by shape.
+ *
+ * Four bounds, each one a form that must survive untouched:
+ *
+ *  - **a link** — `[text](url)`, excluded by the `(` that follows it;
+ *  - **a footnote** — `[^12]`, and a `[^12]:` definition, which opens a line
+ *    and so has no sentence punctuation before it;
+ *  - **a bare numeric marker** — `[12]` pointing at a literal Notes list, which
+ *    `footnoteDebris.pure.ts` owns: the content must carry a letter and run to
+ *    four characters;
+ *  - **an aside inside a sentence** — the run must FOLLOW a full stop, a
+ *    question mark or an exclamation, which is where a citation marker goes
+ *    and where a parenthetical does not. A colon and a semicolon are
+ *    deliberately not included: they introduce what comes after them, so a
+ *    reference moved inside the clause would read as its subject.
+ *
+ * Measured on that document: 6 matches in 3 runs, 0 false positives over all
+ * 39 pages.
+ */
+const POINTER_RUN_RE =
+  /([.!?])([ \t]*)((?:\[(?!\^)[^\]\n]{4,80}\](?!\())+)/g;
+
+/** A bracket with no letter in it is a marker, not a pointer. */
+const HAS_A_LETTER = /[A-Za-z]/;
+
+/**
+ * Split at `## ` headings, so the reference is made once where the reader is.
+ *
+ * Three paragraphs each closing on a run would otherwise carry three identical
+ * parentheticals in a row. The first names the section; the rest are removed,
+ * because by then the sentence before them is already sourced.
+ */
+function bySection(markdown: string): string[] {
+  const out: string[] = [];
+  let buf: string[] = [];
+  for (const line of markdown.split('\n')) {
+    if (/^##[ \t]+\S/.test(line) && buf.length) { out.push(buf.join('\n')); buf = []; }
+    buf.push(line);
+  }
+  out.push(buf.join('\n'));
+  return out;
+}
+
 export function rewriteScaffoldingPointers(
   markdown: string,
 ): { markdown: string; rewritten: number } {
   let rewritten = 0;
-  const out = (markdown || '').replace(SCAFFOLDING_RE, (_whole, offset: number, whole: string) => {
+  const sectioned = bySection(markdown || '').map((section) => {
+    let named = false;
+    return section.replace(POINTER_RUN_RE, (whole, punct: string, gap: string, run: string) => {
+      const brackets = run.match(/\[[^\]\n]*\]/g) ?? [];
+      if (!brackets.length || !brackets.every((b) => HAS_A_LETTER.test(b))) return whole;
+      rewritten += brackets.length;
+      if (named) return `${punct}`;
+      named = true;
+      // The reference belongs INSIDE the sentence it sources, so the
+      // punctuation the run followed is re-emitted after it — otherwise the
+      // parenthetical stands alone as a fragment after a full stop.
+      return ` (see *${PLANNING_REGISTER_SECTION}*)${punct}`;
+    });
+  }).join('\n');
+
+  const out = sectioned.replace(SCAFFOLDING_RE, (_whole, offset: number, whole: string) => {
     rewritten += 1;
     // "See [Zoning & Planning notes]" must not become "See (see …)". Where the
     // sentence already introduces the reference, only the section is named.
