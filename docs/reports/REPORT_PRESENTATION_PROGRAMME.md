@@ -296,6 +296,46 @@ Square vs Victoria (Valuer-Genera` — cut mid-word, because `w` is computed fro
 the labels and the title was never measured. Fitted, with the header band
 growing rather than the type shrinking.
 
+### W1.6 · Where a figure may come FROM — **done**
+
+The page read reached pages 19–22 and stopped being about presentation.
+
+**The document contradicts itself on crime.** Page 20 states a per-100,000
+violent-crime rate compared against the Greater Bendigo benchmark, attributes
+property-crime rates to **Crime Statistics Agency Victoria**, quotes a
+"moderate" exposure reading and a count of **522 crimes**. Pages 24, 25 and 26
+say four times that no recorded-crime register is integrated and that *no crime
+counts, rates or safety scores are held for the Golden Square area in this
+report*. The register section says the figures on page 20 do not exist.
+
+**And on rainfall.** Pages 8 and 28 state **511.3 mm** from the SILO grid cell
+with its 1991–2020 window named; page 19 states *"about 420–430 mm"* and names
+no source. Twenty per cent apart, one property, one document.
+
+Both have one cause. The crime and climate instructions are scoped to the
+TABLE and the OUTPUT — *"do NOT print a crime table, a safety score, a rating
+or an estimated rate"*, *"discuss only the measured figures above"* — and a
+model that searches obeys both and still writes the paragraph, because neither
+says where a figure may come **from**. `planningFactBlocks` closed this for
+planning in one clause, which is why the planning section of the same document
+is sound. The clause is now stated once in `registerAuthority.pure.ts` and
+imported by both blocks, on the held branch as well as the absent one, because
+page 20 mixed an unheld rate into a comparison rather than inventing a table.
+
+**And the same document restates one fact forty-five times.** Counted over its
+29 body pages: `GRZ` / *General Residential Zone* **45**, *Vicmap Planning*
+**26**, *a planning certificate / Section 32* **24**, *no mapped control*
+**15**, the layer's currency date **5**. The cause is structural and correct —
+the planning block is pinned into every section call, because trimming it once
+made the model invent controls — so `planningFactBlocks` gains rule 9, the one
+rule there about PLACEMENT rather than content, scoped to the provenance
+apparatus and never to the caveat.
+
+Also closed on the same pages: `[Market Evidence table]` and
+`[Zoning & Planning table, 6]` printed raw (the literal list missed both — the
+first is a fifth heading, the second carries `, 6` inside the bracket), and a
+tile reading `HEALTHCARE 10 FACILITIES` over nothing at all.
+
 ### Still open from the page-by-page read
 
 **Page 5 — WITHDRAWN, it was already closed.** I read the delivered page as a
@@ -321,6 +361,16 @@ anything was changed.
 zero, and the grid grammar has no null. The `0` is in the directive the model
 wrote, so nothing at presentation can tell it from a real zero; closing it is a
 producer change.
+
+**The document cites listing sites and third-party tools as evidence.** Page 21
+attributes a suburb zoning breakdown to **Landchecker** and a "5-minute drive
+from Bendigo CBD" to **Ray White Bendigo and Domain**; page 19 attributes flood
+behaviour to an **SES Local Flood Guide** and "excellent air quality" to
+unnamed "suburb-level environmental profiling". W1.6 closes crime and climate.
+The remaining surfaces — amenity, market positioning, transport — have no
+equivalent clause, and each would need the same one sentence beside its own
+register. This is the next thing to do and it is bounded: the rule exists and
+is imported, so each is a two-line change plus its spec.
 
 ### W2 · Structure and placement
 
