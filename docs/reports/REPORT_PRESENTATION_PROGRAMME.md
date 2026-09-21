@@ -771,6 +771,47 @@ nothing, that it prints muted, that it still prints the WORD (an absence is a
 reading), and that every other level keeps its bar. Its colours are the real
 `resolveReportPalette({})` rather than four literals.
 
+### Verified as INK, not only as a schema
+
+Everything above this line was verified in the source, the seed and the
+geometry gate. The rendered document was then read, and three things confirmed
+on the page rather than inferred from it:
+
+**The risk register now says the platform's own word.** From the PDF:
+
+```
+RISK                RATING          CONFIDENCE    WHY IT MATTERS
+Interest rate       Not assessed    Indicative    High LVR (80%) increases ...
+sensitivity
+```
+
+**The running head fits at the corpus maximum, using exactly its reserve.**
+
+```
+Investment Compass · Apartment 1204A, 'Waterline    Residences',    Why This Location Matters
+145-149 Marine Parade, Kingscliff, NSW 2487
+```
+
+Two lines against a two-line reserve, nothing clipped, the whole 84-character
+address present. The confirming run at that exact length: *"no block overflows
+its page, and none prints over another, in any of the 710 renders."* Worth
+recording that the reserve is **exactly consumed** at the maximum — there is no
+headroom, so a longer address or a wider document label would be the first
+thing to overflow it.
+
+**And the Opportunities callout had never been rendered by anything.** The
+geometry gate could not see it: its PDF is written once per family reference
+and overwritten per tier, so the artefact on disk is whichever tier rendered
+LAST, and that tier's page set excludes the page this block sits on. So a
+block that CHANGED TYPE in v19 was verified in the seed (34 schemas carry
+`"title":"Opportunity"`, 0 carry `"term":"Noted"`) and in the geometry, and
+not once as ink. `opportunityCallout.spec.ts` closes that: it renders every
+Compass master against a record that holds an opportunity and asserts the text
+appears, against one that holds none and asserts nothing is drawn — the 98%
+case, since `opportunities` is empty on all but **19 of the 985 scored
+reports** — and that no master anywhere reintroduces `Noted` or any other word
+outside the four-level exposure vocabulary.
+
 ### W4.10 · The field accent was judged at the wrong size — **done**
 
 **And the `#D5A220` residual was wrong in the opposite direction.** It was
