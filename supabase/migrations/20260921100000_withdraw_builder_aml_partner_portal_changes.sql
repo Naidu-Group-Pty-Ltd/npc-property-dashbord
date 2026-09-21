@@ -31,8 +31,13 @@
 -- carried ON CONFLICT DO NOTHING. There is nothing of today's to withdraw, and
 -- deleting that catalogue would destroy real compliance records.
 --
--- ROLLBACK: re-apply 20260719000000, 20260728120000 and
--- 20260921080000_builder_accept_current_terms.sql.
+-- ROLLBACK: re-apply 20260719000000 and 20260728120000. The Builder Portal
+-- function has no file to re-apply — `20260921080000` is deleted in the same
+-- commit as this migration, because a file whose only object is dropped here
+-- would report NOT APPLIED every night for ever. Its definition is recoverable
+-- verbatim from lines 105-171 of
+-- `20260901000700_partner_portal_agreement_cascade.sql`, which is where it
+-- came from and which is untouched.
 
 -- Builder Portal.
 DROP FUNCTION IF EXISTS public.builder_accept_current_terms(uuid, uuid, text, text, jsonb);
