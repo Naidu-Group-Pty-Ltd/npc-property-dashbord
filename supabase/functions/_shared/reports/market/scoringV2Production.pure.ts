@@ -812,11 +812,25 @@ function swot(
   if (permits.fromInput('populationGrowth') && typeof pop === 'number' && pop > 2) {
     opportunities.push('Strong population growth driving future demand');
   }
-  const median = input.market.points.medianPrice?.value;
-  if (permits.fromInput('medianSuburbPrice') && typeof median === 'number' && median > 0
-    && (input.property.price ?? 0) > 0 && (input.property.price as number) < median * 0.9) {
-    opportunities.push('Priced below suburb median - potential for value appreciation');
-  }
+  /*
+   * NO VALUATION OF THE SUBJECT.
+   *
+   * This pushed 'Priced below suburb median - potential for value
+   * appreciation', and it reached page 4 of the Compass delivered for
+   * 9 Hollow Street on 21 Sep 2026, printed under "Opportunities Noted".
+   *
+   * `MARKET_FIGURES_IN_THE_REPORT.md` rule 6 forbids it by name: "A median
+   * describes a market, not this property. The rule forbids 'below the
+   * median', 'above market' and 'under-priced' by name, because that
+   * comparison is what the report made." The appreciation clause is a second
+   * claim on top of the first - an inference about this property's future
+   * price drawn from one comparison against a market average.
+   *
+   * The comparison is not suppressed, it is relocated: the median is drawn as
+   * a market figure with its geography, period and publisher beside it, under
+   * the rule that a benchmark never borrows the subject's authority. What is
+   * gone is the report telling a client their property is cheap.
+   */
   const g1 = input.market.points.growth1Year?.value;
   if (permits.fromInput('priceGrowth1Year') && typeof g1 === 'number' && g1 > 15) {
     risks.push('Rapid recent price growth may indicate market cooling ahead');
