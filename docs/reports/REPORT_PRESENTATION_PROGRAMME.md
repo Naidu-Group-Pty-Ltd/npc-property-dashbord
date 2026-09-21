@@ -627,7 +627,56 @@ codebase already contains eight because this was solved ad hoc.
 **W4.3 · Page 4** — drop the "Noted" placeholder term; draw all opportunities,
 not index 0.
 
-**W4.4 · Page 3** — one strength on a half-empty page.
+**W4.4 · Page 3 — WITHDRAWN. One strength on the page is the RECORD, not a
+binding.** I wrote it up as *"one strength on a half-empty page"*, implying the
+binding should draw more. It should not, and the master already says so with a
+measurement: across the 985 scored reports `investment_score.strengths` holds
+at least one on **745** and at least two on **47**; `weaknesses` one on 874 and
+two on **15**. A second row *"printed a marker with nothing beside it on 95%
+and 98% of reports respectively"*, which is why `strengthsWatch` draws one
+each. There is no second strength to draw. Whether the page should carry
+something else is a design question rather than a defect — and §9's rule
+applies: a fill floor invented for a page that is correctly sparse is a rule
+with no reader behind it.
+
+### W4.10 · The field accent was judged at the wrong size — **done**
+
+**And the `#D5A220` residual was wrong in the opposite direction.** It was
+recorded as *"a raw hex at 8pt, from a master binding rather than the
+palette"*. It is neither raw nor a defect: it is exactly
+`ensureContrast('#AD831A', field, 7)` — the colourway path's own correctly
+corrected value, at **7.00:1**. Chasing it found the real fault next door.
+
+`accentOnField` is derived in **three** places, and the odd one out is the one
+serving a tenant's own brand colour:
+
+| path | floor |
+| --- | --- |
+| `templateColourways.pure.ts` — the 500 seeded masters | `PRINT_SMALL_TYPE_CONTRAST` = 7 |
+| `designSystem.ts` — the 43 voice templates | `PRINT_SMALL_TYPE_CONTRAST` = 7 |
+| `brandResolve.pure.ts` — a tenant brand hex, and every route that resolves a palette rather than reading a stored one | `CONTRAST_FLOOR.display` = **4.5** |
+
+`roles.pure.ts` declared `display` for it too — **directly under a docstring
+reading "the cover eyebrow and rule"**. §2 puts an eyebrow in the `< 10pt`
+band at 7:1 and names this exact case: *"It fails at the 8.5pt eyebrow that is
+the brand's own signature."* `.eyebrow` is set at `type.caption`, which is
+**8.5pt**. The role's own comment described the case that made its floor
+wrong — and it was the only FIELD role out of step, since `onFieldInk` is
+`body` and `mutedInk` and `accentOnPaper` are `micro`.
+
+Measured over the catalogue's hundred approved accents resolved through
+`brandResolve`: **89 of 100 sat between 4.5 and 4.7:1** on the field, while the
+identical element on paper sits at 7.83 through `accentOnPaper`. One element,
+one size, two floors.
+
+Three things bound it. **The 500 masters never changed** — they store a value
+already derived at 7, which is why the delivered document's own eyebrow was
+fine and why this reached no seeded report. **The default is byte-identical**:
+`PRINT_BRAND.onField` is `#D9A520` at 7.26:1, so it already cleared the
+stricter floor and passes through uncorrected, asserted as the pass-through
+rather than as a literal. And **no accent changes hue** — `ensureContrast`
+walks lightness only, asserted over all 100 at a stated 2.5° tolerance rather
+than promised.
 
 **W4.5 · Cover** — the verdict block at 11pt against a 41pt address.
 

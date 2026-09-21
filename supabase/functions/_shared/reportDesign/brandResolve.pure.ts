@@ -222,8 +222,28 @@ export function resolveReportPalette(
     tenantBrand ?? PRINT_BRAND.onPaper,
     CONTRAST_FLOOR.micro,
   );
+  /*
+   * `micro`, matching the two template-library derivations of this same token.
+   *
+   * It read `CONTRAST_FLOOR.display`. Measured over the catalogue's hundred
+   * approved accents, that put **89 of 100** between 4.5 and 4.7:1 on the
+   * field, while the identical element on paper — `.eyebrow` at
+   * `type.caption`, 8.5pt — sits at 7.83 through `accentOnPaper`. One
+   * element, one size, two floors.
+   *
+   * The 500 seeded masters were never affected: they store an `accentOnField`
+   * already derived at `PRINT_SMALL_TYPE_CONTRAST` (7), which is why the
+   * delivered document's `#D5A220` at 8pt is 7.00:1 and correct — it is
+   * exactly `ensureContrast(#AD831A, field, 7)`. What was exposed is the
+   * TENANT path: a workspace that supplies its own brand hex, and the routes
+   * that resolve a palette rather than reading a stored colourway.
+   *
+   * The default is untouched: `PRINT_BRAND.onField` is `#D9A520`, 7.26:1 on
+   * the signature field, so it already cleared the stricter floor and is
+   * passed through uncorrected exactly as before.
+   */
   const accentOnField = tenantBrand
-    ? ensureContrast(tenantBrand, neutrals.field, CONTRAST_FLOOR.display)
+    ? ensureContrast(tenantBrand, neutrals.field, CONTRAST_FLOOR.micro)
     : PRINT_BRAND.onField;
 
   // Category B, corrected for the stock it will print on — hue untouched.
