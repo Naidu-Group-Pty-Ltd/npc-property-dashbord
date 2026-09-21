@@ -27,6 +27,8 @@ import {
   stateOfAreaCode,
   surveyConstructionFlows,
   ABS_CONSTRUCTION_SURVEY,
+  currentEdition,
+  flowEdition,
 } from '../../../../supabase/functions/_shared/reports/market/openData/absBuildingApprovals.pure.ts';
 
 // ─── Catalogues ─────────────────────────────────────────────────────────────
@@ -106,11 +108,11 @@ describe('the flow is discovered, and the finest grain wins', () => {
     expect(choice.geographyScore).toBe(55);
   });
 
-  it('refuses rather than choosing between two flows at one grain', () => {
+  it('refuses two flows at one grain that tie on vintage with no declared end', () => {
     expect(() => resolveBuildingApprovalsFlow(xmlCatalogue([
-      LGA_FLOW,
-      ['BA_LGA_ALT', '1.0.0', 'Building Approvals, Local Government Areas, Annual'],
-    ]))).toThrow(/refused rather than picking one/);
+      ['BA_LGA_A', '1.0.0', 'Building Approvals by Local Government Area'],
+      ['BA_LGA_B', '1.0.0', 'Building Approvals, Local Government Areas, Annual'],
+    ]))).toThrow(/same vintage and no declared end[\s\S]*refused rather than picking one/);
   });
 
   it('refuses a catalogue in which nothing names building approvals', () => {
@@ -420,5 +422,82 @@ describe('the construction survey reports and never decides', () => {
       'building_approvals', 'non_residential', 'engineering_construction',
       'building_activity', 'public_infrastructure',
     ]);
+  });
+});
+
+/**
+ * The ABS's own catalogue, as `abs-register-liveness` read it on 21 Sep 2026
+ * (HTTP 200, 791,134 bytes). Not invented: these are the identifiers and the
+ * names the Bureau publishes, and they are why the selection rule changed.
+ */
+const REAL_EDITIONS: Array<[string, string, string]> = [
+  ['BA_SA2_201116', '1.0.0', 'Building Approvals by SA2 and above, July 2011 to June 2016'],
+  ['BA_SA2_2016-21', '1.0.0', 'Building Approvals by SA2 and above, 2016 to 2021'],
+  ['BA_SA2', '2.0.0', 'Building Approvals by SA2 and above, from July 2021 onwards'],
+  ['BA_LGA2018', '1.0.0', 'Building Approvals by Local Government Area (LGA 2018)'],
+  ['BA_LGA2021', '1.0.0', 'Building Approvals by Local Government Area (LGA 2021)'],
+  ['BA_LGA2026', '1.0.0', 'Building Approvals by Local Government Area (LGA 2026)'],
+  ['BA_GCCSA', '1.0.0', 'Building Approvals by Greater Capital Cities Statistical Area (GCCSA) and above'],
+  ['BUILDING_ACTIVITY', '1.0.0', 'Building Activity'],
+  ['EWD', '1.0.0', 'Engineering Construction Work Done, Preliminary'],
+];
+
+describe('one series cut into editions, read from the catalogue the ABS sent', () => {
+  it('reads a declared END, and does not read one where the name declares a beginning', () => {
+    expect(flowEdition({ agency: 'ABS', id: 'BA_SA2_201116', version: '1.0.0', name: REAL_EDITIONS[0][2] }))
+      .toEqual({ closedAt: 2016, vintage: 2016 });
+    // `2016 to 2021` closes in 2021 and is still finished.
+    expect(flowEdition({ agency: 'ABS', id: 'BA_SA2_2016-21', version: '1.0.0', name: REAL_EDITIONS[1][2] }))
+      .toEqual({ closedAt: 2021, vintage: 2021 });
+    // "from July 2021 onwards" declares a beginning, not an end.
+    expect(flowEdition({ agency: 'ABS', id: 'BA_SA2', version: '2.0.0', name: REAL_EDITIONS[2][2] }))
+      .toEqual({ closedAt: null, vintage: 2021 });
+    expect(flowEdition({ agency: 'ABS', id: 'BA_LGA2026', version: '1.0.0', name: REAL_EDITIONS[5][2] }))
+      .toEqual({ closedAt: null, vintage: 2026 });
+  });
+
+  it('an open edition beats a closed one that reaches the same year', () => {
+    // This is the pair the openness rule exists for: `BA_SA2_2016-21` carries
+    // 2021 and so does `BA_SA2`, and only one of them is still being added to.
+    const flows = [
+      { agency: 'ABS', id: 'BA_SA2_2016-21', version: '1.0.0', name: REAL_EDITIONS[1][2] },
+      { agency: 'ABS', id: 'BA_SA2', version: '2.0.0', name: REAL_EDITIONS[2][2] },
+    ];
+    expect(currentEdition(flows).chosen?.id).toBe('BA_SA2');
+  });
+
+  it('takes the latest vintage among the nine LGA editions', () => {
+    const flows = [2018, 2021, 2026].map((y) => ({
+      agency: 'ABS', id: `BA_LGA${y}`, version: '1.0.0',
+      name: `Building Approvals by Local Government Area (LGA ${y})`,
+    }));
+    expect(currentEdition(flows).chosen?.id).toBe('BA_LGA2026');
+  });
+
+  it('resolves the REAL catalogue to the current SA2 edition', () => {
+    /*
+     * The regression this whole change exists for. Against the Bureau's own
+     * catalogue the previous rule threw
+     *   "names 3 building-approvals flows at sa2 grain — refused rather than
+     *    picking one"
+     * and a hardcoded identifier could have taken `BA_SA2_201116`, whose data
+     * ends in June 2016, and presented a decade-old series as current supply.
+     */
+    const choice = resolveBuildingApprovalsFlow(xmlCatalogue(REAL_EDITIONS));
+    expect(dataflowRef(choice.flow)).toBe('ABS,BA_SA2,2.0.0');
+    expect(choice.areaKind).toBe('sa2');
+    expect(choice.how).toBe('discovered');
+    // Every edition that lost is still reported, so a sync row shows the
+    // eight vintages behind the winner rather than only the winner.
+    expect(choice.candidates.length).toBeGreaterThanOrEqual(7);
+  });
+
+  it('the survey reports the work-done series the LGA flows do not carry', () => {
+    const found = surveyConstructionFlows(xmlCatalogue(REAL_EDITIONS));
+    const ewd = found.find((f) => f.ref === 'ABS,EWD,1.0.0')!;
+    expect(ewd.keys).toContain('engineering_construction');
+    // And it declares no sub-state grain, which is the finding: engineering
+    // construction is national/state, so LGA-grain evidence is approvals.
+    expect(ewd.areaKind).toBeNull();
   });
 });

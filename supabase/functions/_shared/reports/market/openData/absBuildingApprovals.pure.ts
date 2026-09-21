@@ -304,20 +304,124 @@ export function resolveBuildingApprovalsFlow(
   }
   const best = ABS_BA_GRAIN_LADDER.find((g) => graded.some((c) => c.rule.areaKind === g.areaKind))!;
   const atBest = graded.filter((c) => c.rule.areaKind === best.areaKind);
-  if (atBest.length > 1) {
+  // Not "which of these is the flow" but "which of these is CURRENT" — the
+  // Bureau publishes one per edition. See `currentEdition`.
+  const { chosen, tied } = currentEdition(atBest.map((c) => c.flow));
+  if (!chosen) {
     throw new Error(
-      `the ABS catalogue names ${atBest.length} building-approvals flows at ${best.areaKind} grain `
-      + `(${atBest.map((c) => dataflowRef(c.flow)).join(', ')}) — refused rather than picking one`,
+      `the ABS catalogue names ${tied.length} building-approvals flows at ${best.areaKind} grain `
+      + `with the same vintage and no declared end (${tied.map(dataflowRef).join(', ')}) `
+      + '— refused rather than picking one',
     );
   }
   return {
-    flow: atBest[0].flow,
+    flow: chosen,
     areaKind: best.areaKind,
     geographyScore: best.geographyScore,
     how: 'discovered',
     candidates,
     cataloguedFlows: all.length,
   };
+}
+
+/**
+ * Which EDITION of a series a flow is, and whether it is the current one.
+ *
+ * ## Measured, not assumed — and the assumption was wrong
+ *
+ * `resolveBuildingApprovalsFlow` originally refused any grain holding more
+ * than one flow, on the reasoning that two candidates mean an ambiguity a
+ * loader must not resolve by itself. Run against the ABS's own catalogue on
+ * 21 Sep 2026 (`abs-register-liveness`, HTTP 200, 791,134 bytes) that refused
+ * outright, and it was RIGHT to:
+ *
+ *     the ABS catalogue names 3 building-approvals flows at sa2 grain
+ *     (ABS,BA_SA2,2.0.0, ABS,BA_SA2_201116, ABS,BA_SA2_2016-21)
+ *     — refused rather than picking one
+ *
+ * The Bureau publishes one flow per EDITION, not one per subject:
+ *
+ *   * SA2 — `BA_SA2_201116` (July 2011 to June 2016), `BA_SA2_2016-21`
+ *     (2016 to 2021), `BA_SA2,2.0.0` (from July 2021 onwards);
+ *   * LGA — `BA_LGA2018` through `BA_LGA2026`, one per LGA vintage. Nine.
+ *
+ * So they are not competitors to disambiguate. They are one series cut into
+ * editions, and the question is not "which of these is the flow" but "which
+ * of these is CURRENT". Refusing twelve flows is as wrong as picking one at
+ * random — and picking at random is what a hardcoded identifier does, which
+ * is the whole reason this module discovers instead. Had the loader named a
+ * flow from memory it could have taken `BA_SA2_201116`, whose data ends in
+ * **June 2016**, and presented a decade-old series as this month's supply.
+ *
+ * ## Two rules, in order
+ *
+ * **A period a publisher declares CLOSED is history.** A name saying "to June
+ * 2016" or "2016 to 2021" states its own end; one saying "from July 2021
+ * onwards" does not. Where any open edition exists the closed ones are not
+ * candidates at all, whatever year they carry — `BA_SA2_2016-21` reaches 2021
+ * and is still finished.
+ *
+ * **Then the latest vintage wins**, read as the greatest four-digit year in
+ * the identifier or the name. That is what separates `BA_LGA2026` from the
+ * eight LGA editions behind it.
+ *
+ * A tie after both is still refused, because two editions claiming the same
+ * vintage with neither declaring an end is an ambiguity nothing here can
+ * settle. The rule narrowed; it did not go away.
+ */
+export interface FlowEdition {
+  /** The year the publisher's own name says the period ENDS, where it says. */
+  closedAt: number | null;
+  /** The greatest four-digit year in the identifier or the name. */
+  vintage: number | null;
+}
+
+/** `2011` through the year after next: a year in an ABS series, not an ABN. */
+const PLAUSIBLE_YEAR = /\b(20[0-4]\d)\b/g;
+
+/**
+ * A declared END. Both shapes the catalogue uses, and neither matches
+ * "from July 2021 onwards", which declares a beginning.
+ */
+const DECLARES_AN_END = [
+  /\bto\s+(?:\w+\s+)?(20\d\d)\b/i,
+  /\b(20\d\d)\s*[-\u2013]\s*(\d{2,4})\b/,
+];
+
+export function flowEdition(entry: DataflowEntry): FlowEdition {
+  const text = `${entry.id} ${entry.name}`;
+  let closedAt: number | null = null;
+  for (const re of DECLARES_AN_END) {
+    const m = re.exec(entry.name);
+    if (!m) continue;
+    // `2016-21` closes in 2021; `to June 2016` closes in 2016.
+    const tail = m[2] ?? m[1];
+    const year = tail.length === 2 ? Number(`20${tail}`) : Number(tail);
+    if (Number.isFinite(year)) closedAt = Math.max(closedAt ?? 0, year);
+  }
+  const years = [...text.matchAll(PLAUSIBLE_YEAR)].map((m) => Number(m[1]));
+  return { closedAt, vintage: years.length ? Math.max(...years) : null };
+}
+
+/**
+ * The current edition among flows at one grain, or null where two tie.
+ *
+ * Exported because the probe reports what it rejected: an operator reading a
+ * sync row should see the eight LGA vintages that lost, not only the one
+ * that won.
+ */
+export function currentEdition(
+  flows: ReadonlyArray<DataflowEntry>,
+): { chosen: DataflowEntry | null; tied: DataflowEntry[] } {
+  if (flows.length === 0) return { chosen: null, tied: [] };
+  if (flows.length === 1) return { chosen: flows[0], tied: [] };
+  const withEdition = flows.map((flow) => ({ flow, edition: flowEdition(flow) }));
+  const open = withEdition.filter((f) => f.edition.closedAt === null);
+  const pool = open.length > 0 ? open : withEdition;
+  const best = Math.max(...pool.map((f) => f.edition.vintage ?? -1));
+  const at = pool.filter((f) => (f.edition.vintage ?? -1) === best);
+  if (at.length === 1) return { chosen: at[0].flow, tied: [] };
+  return { chosen: null, tied: at.map((f) => f.flow) };
 }
 
 const rank = (kind: ApprovalsAreaKind | null): number => {
