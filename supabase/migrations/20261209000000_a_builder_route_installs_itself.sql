@@ -117,6 +117,15 @@ BEGIN
   END IF;
 END $function$;
 
+-- A worker's instrument, never a browser's. CREATE grants EXECUTE to PUBLIC
+-- and this project's default privileges grant it to `anon` and
+-- `authenticated` directly, so all three are closed and only the role that
+-- runs the sweep is granted back. The apply loop reaches it as the definer.
+REVOKE EXECUTE ON FUNCTION public.builder_network_halt_identity_mismatch(
+  uuid, uuid, text, uuid, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.builder_network_halt_identity_mismatch(
+  uuid, uuid, text, uuid, uuid) TO service_role;
+
 CREATE OR REPLACE FUNCTION public.builder_network_apply_inbound_events(_limit integer DEFAULT 50)
  RETURNS TABLE(applied integer, refused integer, deferred integer)
  LANGUAGE plpgsql
@@ -619,13 +628,19 @@ BEGIN
   RETURN v_cleared;
 END $function$;
 
+REVOKE EXECUTE ON FUNCTION public.builder_network_clear_settled_mismatches()
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.builder_network_clear_settled_mismatches()
+  TO service_role;
+
 -- ---------------------------------------------------------------------------
 -- WHAT THIS WORKSPACE ACTUALLY RECEIVES, PER BUILDER.
 --
 -- A view rather than a written table, so it cannot disagree with the rows it
 -- describes — the failure this whole change exists to end.
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE VIEW public.builder_network_receive_state AS
+CREATE OR REPLACE VIEW public.builder_network_receive_state
+WITH (security_invoker = true) AS
 SELECT
   c.id                                AS connection_id,
   c.network_connection_id,

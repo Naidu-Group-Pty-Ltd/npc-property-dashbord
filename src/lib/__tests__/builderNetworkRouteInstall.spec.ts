@@ -133,3 +133,31 @@ describe('what this workspace receives is queryable', () => {
     expect(sql).toMatch(/WHERE i\.organisation_id = c\.builder_organisation_id\s*AND i\.lifecycle_status = 'active'\)\s*AS mirrored_active_items/);
   });
 });
+
+describe('the new functions are not reachable from a browser', () => {
+  /**
+   * CREATE grants EXECUTE to PUBLIC, and this project's default privileges
+   * grant it to `anon` and `authenticated` DIRECTLY — so closing one and not
+   * the others leaves a SECURITY DEFINER function reachable by the
+   * publishable key in the browser bundle while the revoke that missed still
+   * reports success.
+   */
+  const revoked = (signature: string) =>
+    new RegExp(`REVOKE EXECUTE ON FUNCTION public\\.${signature}[\\s\\S]{0,160}?FROM PUBLIC, anon, authenticated`);
+
+  it('closes the halt to PUBLIC, anon and authenticated', () => {
+    expect(sql).toMatch(revoked('builder_network_halt_identity_mismatch\\('));
+    expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION public\.builder_network_halt_identity_mismatch\([\s\S]{0,60}?\)\s*TO service_role/);
+  });
+
+  it('closes the mismatch sweep the same way', () => {
+    expect(sql).toMatch(revoked('builder_network_clear_settled_mismatches\\(\\)'));
+    expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION public\.builder_network_clear_settled_mismatches\(\)\s*TO service_role/);
+  });
+
+  it('reads the receive-state view with the caller’s own rights', () => {
+    expect(sql).toMatch(
+      /CREATE OR REPLACE VIEW public\.builder_network_receive_state\s*WITH \(security_invoker = true\)/,
+    );
+  });
+});
