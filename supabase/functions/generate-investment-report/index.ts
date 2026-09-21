@@ -99,6 +99,7 @@ import { recordedScoreValues, suppressUnrecordedScores, suppressUnrecordedVerdic
 import { investmentScorePromptBlock, overallRecommendationLine } from '../_shared/reports/investment/scorePromptBlock.pure.ts';
 import { abbreviateState, domainCategoryFor, dwellingTypeFor } from '../_shared/reports/market/domainEvidence.pure.ts';
 import { populationGrowthPoint } from '../_shared/reports/market/populationGrowthEvidence.pure.ts';
+import { rentalMarketEvidence } from '../_shared/reports/market/rentalMarketEvidence.pure.ts';
 import { EVIDENCE_KEYS, emptyEvidence, mergeEvidence, type EvidenceSubject, type MarketEvidence } from '../_shared/reports/market/marketEvidence.pure.ts';
 import { openDataSalesPoints, salesRegisterSourcesFor } from '../_shared/reports/market/openDataSalesEvidence.pure.ts';
 import {
@@ -1693,6 +1694,7 @@ VISUAL-FIRST RULES (CRITICAL):
 - Any "median grew from X to Y" / trend sentence MUST include either \`~~[…]~~\` inline or a \`::: stat\` callout nearby.
 - Any "subject vs suburb vs metro/state" comparison MUST use \`{{bars: Subject X, Suburb Y, Metro Z | title=…}}\`.
 - **A RATING YOU INVENTED MAY NOT BE DRAWN, IN ANY PRIMITIVE.** A 0-100 rating is a SCORE, and the only scores that exist are the ones supplied to you above — the Investment Score and the dimensions the engine actually scored. Do NOT mint a rating for appeal, suitability, confidence, affordability, land quality, certainty, risk, "focus", "emphasis" or any other attribute, and do NOT draw one as a \`{{gauge}}\`, a \`{{wheel}}\`, a \`{{bars}}\`, a \`{{heatmap}}\`, a \`{{radar}}\` or anything else. In particular: do NOT write \`max=100\` on a chart whose numbers you chose. Where no score was supplied, state the finding in WORDS and draw no chart of it. A number on a scale is read as a measurement however it is drawn, and the reader has no way to tell one you assigned from one that was calculated.
+- **AN ABSENCE MAY NOT BE RATED, IN ANY PRIMITIVE.** Where something was not assessed, not searched, not available or not held, it gets NO position on a scale — not the top of it, not the bottom of it, and never a convention that stands in for one. Do NOT write a legend such as \`Not assessed shown as 5\`, \`n/a = 0\` or \`unknown treated as 3\`: a number on a scale is read as a measurement, so an absence drawn at 5 is a reader being told this is a high risk. Leave the unmeasured item OUT of the chart and name it in the register or the prose, where \`Not assessed\` is a level in its own right. A chart that declares such a convention is withheld from the document in full, so the whole drawing is lost — including the items that were measured.
 - Any list of 3+ ranked metrics MUST be rendered as \`{{bars: …}}\` instead of a table — where the metrics are MEASURED quantities that came from the data supplied to you (distances, counts, prices, shares, times, rates), each carrying its own real unit. A list of qualities you are ranking yourself is not a set of metrics: write it as prose or as a table with the reasons in it.
 - Any "X of Y households / dwellings / buyers" stat MUST use \`{{pictograph: …}}\`.
 - Any composition / share-of-total (tenure mix, age bands, expense split, capital
@@ -4349,6 +4351,92 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         } else if (!isAreaReport) {
           providersUnavailable.push({ provider: 'abs_erp', reason: 'no SA2 population series was served for the verified coordinate' });
         }
+
+        /*
+         * The suburb's own rent and vacancy — the MARKET's, not the subject's.
+         *
+         * `sqm-rent-service` has always answered with three figures and this
+         * generator read one of them, conditionally: the call was made only
+         * where the operator supplied no rent, and the answer stood in for the
+         * SUBJECT'S rent. `vacancyRate` was dropped on every call, and nothing
+         * anywhere assigned `evidence.medianRent`.
+         *
+         * Both cost real points. Vacancy is 0.30 of the Demand dimension — its
+         * largest component — and the suburb median rent is the denominator
+         * `scoreIncomeAdvantage` needs; without it the income dimension falls
+         * back to a declared national frontier that does not describe a Sydney
+         * market. See `rentalMarketEvidence.pure.ts` for the measurement.
+         *
+         * It is asked unconditionally, because it is evidence about the MARKET
+         * and whether the operator typed a rent has no bearing on whether the
+         * market published one. The service is cache-first
+         * (`median_rent_cache`), so a second look inside one run is a cache
+         * read rather than a second scrape.
+         *
+         * `SUPABASE_ANON_KEY` is read here rather than reused: the generator's
+         * other copies are declared inside blocks that do not contain this one,
+         * and reaching for one of those is the scoping fault that served 23
+         * consecutive 500s on 19 Sep (`INVESTMENT_REPORT_RESUME.md` §7).
+         */
+        if (marketSuburb && marketState) {
+          providersConsulted.push('sqm_research');
+          try {
+            const rentAnonKey = (Deno.env.get('SUPABASE_ANON_KEY') || '').trim();
+            const rentMarketResponse = await acquisitionFetch(
+              `${Deno.env.get('SUPABASE_URL')}/functions/v1/sqm-rent-service`,
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${rentAnonKey}`,
+                  'x-internal-edge-secret': INTERNAL_EDGE_SECRET,
+                  ...(rentAnonKey ? { 'apikey': rentAnonKey } : {}),
+                },
+                body: JSON.stringify({
+                  suburb: marketSuburb.replace(/-/g, ' '),
+                  state: marketState,
+                  postcode: marketPostcode || '',
+                  propertyType: (effectivePropertyType || 'house').toLowerCase(),
+                  bedrooms: modelledBeds,
+                }),
+              },
+              'register',
+              'sqm-rent-service',
+            );
+            if (rentMarketResponse.ok) {
+              const rentBody = await rentMarketResponse.json();
+              const rentProjected = rentalMarketEvidence(
+                rentBody?.success ? rentBody.data : null,
+                {
+                  suburb: marketSuburb,
+                  postcode: marketPostcode,
+                  state: marketState,
+                  dwellingType: dwellingTypeFor(effectivePropertyType),
+                  resolvedFrom: marketPostcode ? 'coordinate' : null,
+                },
+                new Date(),
+              );
+              for (const [rentKey, rentPoint] of Object.entries(rentProjected.points)) {
+                if (rentPoint) marketPoints[rentKey] = rentPoint;
+              }
+              if (rentProjected.missing.length) {
+                providersUnavailable.push({ provider: 'sqm_research', reason: rentProjected.missing.join('; ') });
+              }
+              console.log(
+                `✓ Rental market evidence: rent ${rentProjected.points.medianRent ? `$${rentProjected.points.medianRent.value}` : 'none'}`
+                + `, vacancy ${rentProjected.points.vacancyRate ? `${rentProjected.points.vacancyRate.value}%` : 'none'}`,
+              );
+            } else {
+              providersUnavailable.push({ provider: 'sqm_research', reason: `the rental market service answered ${rentMarketResponse.status}` });
+            }
+          } catch (error: any) {
+            // Never fails the report: the evidence is absent and says so.
+            providersUnavailable.push({
+              provider: 'sqm_research',
+              reason: `the rental market service could not be reached: ${error?.message || 'unknown error'}`,
+            });
+          }
+        }
       }
 
       /*
@@ -5705,13 +5793,29 @@ Produce a comprehensive statewide investment analysis following the structure ab
         ),
       },
     );
-    const compassStrategySections = composeStrategySections(compassStrategyRecord, [
+    /*
+     * ONE list, read twice.
+     *
+     * This array is what the document carries, and it is what the model is
+     * told the document carries. `strategySectionRules` used to name five
+     * sections from a literal of its own — the SWOT, the suitability profile,
+     * the holding strategy, the exit outlook and the monitoring plan — while
+     * this call composes three. `suitability` and `holdingStrategy` are
+     * `financial:required` in `sectionRegistry.pure.ts` and belong to no other
+     * tier, so a model writing a Compass was told two sections existed, was
+     * shown neither, and wrote them both.
+     */
+    const COMPASS_STRATEGY_SECTIONS = [
       { id: 'exitStrategy', heading: 'Resale Liquidity & Exit Outlook' },
       { id: 'swot', heading: 'SWOT Analysis' },
       { id: 'monitoring', heading: 'Monitoring & Review Plan' },
-    ]);
+    ] as const;
+    const compassStrategySections = composeStrategySections(
+      compassStrategyRecord,
+      COMPASS_STRATEGY_SECTIONS,
+    );
     const strategySectionsMarkdown = compassStrategySections.map((x) => x.markdown).join('\n\n');
-    const strategyRules = strategySectionRules(compassStrategyRecord);
+    const strategyRules = strategySectionRules(compassStrategyRecord, COMPASS_STRATEGY_SECTIONS);
     console.log('🧭 Strategy sections composed:', compassStrategySections.map((x) => ({
       id: x.id, chars: x.markdown.length,
     })));

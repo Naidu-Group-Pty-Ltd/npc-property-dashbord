@@ -233,7 +233,34 @@ function productionInputFrom(rawInput: any, now: Date): ProductionScoringInput {
     location: {
       walkScore: locationIntelligence.walkScore ?? null,
       commuteTimeCBD: locationIntelligence.commute?.durationMinutes ?? null,
+      /*
+       * Where that commute was measured TO, as `location-intelligence-service`
+       * recorded it. An enrichment written before the destination was stored
+       * carries none, and `scoreLocation` then behaves exactly as it did.
+       *
+       * `urbanCentre.pure.ts` has the reason: Golden Square's commute was
+       * measured to Melbourne at 114 minutes and scored 0 of 100 on a
+       * property five minutes from Bendigo's CBD.
+       */
+      commuteDestination: locationIntelligence.commute?.destination
+        ? {
+          label: locationIntelligence.commute.destination as string,
+          ownCentre: (locationIntelligence.commute.destinationOwnCentre ?? 'unknown') as
+            'yes' | 'no' | 'unknown',
+        }
+        : null,
       schoolsNearby: locationIntelligence.schools?.schoolsWithin3km ?? null,
+      /*
+       * The per-category counts and distances the enrichment already
+       * publishes. `scoreLocation` prefers these over `walkScore`, because
+       * the composite is five capped terms over lookups that cap at ten
+       * results and 62.8% of the corpus lands at 90 or above, while distance
+       * saturates nowhere. `?? null` rather than `|| null`, and no `[]`
+       * floor: an empty array would be read as "measured, nothing found".
+       */
+      amenities: Array.isArray(locationIntelligence.amenities)
+        ? locationIntelligence.amenities
+        : null,
     },
     // DERIVED from the enrichment's RF-7.2B acquisition stamp, never read
     // from the request: the stamp must name the same subject the caller is
