@@ -247,7 +247,19 @@ export function parseDataStructure(text: string): DataStructure {
   if (body === '') throw new Error('the ABS data structure is empty — refused');
   const parsed = body.startsWith('{') ? parseJsonStructure(body) : parseXmlStructure(body);
   if (parsed.dimensions.length === 0) {
-    throw new Error('the ABS data structure names no dimension — refused');
+    /*
+     * Say what was handed over. The first version refused 3,193,984 bytes of
+     * the Bureau's own structure with "names no dimension", which is true and
+     * useless: it does not say whether the body was JSON or XML, what its
+     * root element was, or whether it was an error page. A refusal that
+     * cannot be acted on costs a whole build cycle to diagnose, and the
+     * fallback means nothing else reports it at all.
+     */
+    const shape = body.startsWith('{') ? 'JSON' : 'XML';
+    throw new Error(
+      `the ABS data structure (${body.length.toLocaleString('en-AU')} bytes, read as ${shape}) `
+      + `names no dimension — refused. It opens: ${JSON.stringify(body.slice(0, 220))}`,
+    );
   }
   return parsed;
 }
@@ -330,22 +342,36 @@ function parseJsonStructure(body: string): DataStructure {
   return { dimensions };
 }
 
+/**
+ * SDMX-ML, with no assumption about the namespace PREFIX.
+ *
+ * The first version matched `<str:Dimension>` literally, and on 21 Sep 2026
+ * the Bureau answered 3,193,984 bytes of real structure from which it read
+ * **no dimension at all**. A prefix is a document's own choice — `str:`,
+ * `structure:`, or none — and binding to one is the same mistake as binding
+ * to a dataflow identifier: it fails silently, on a 200, and the fallback
+ * hides it. Every element here is matched prefix-agnostically, and both the
+ * container and self-closing spellings are accepted.
+ */
 function parseXmlStructure(body: string): DataStructure {
   const attr = (tag: string, name: string): string | null => {
     const m = new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"`, 'i').exec(tag);
     return m ? m[1] : null;
   };
+  /** `<ns:Thing …>…</ns:Thing>` and `<Thing …>…</Thing>` alike. */
+  const blocks = (name: string, text: string) =>
+    text.matchAll(new RegExp(`<(?:[A-Za-z0-9_]+:)?${name}\\b([^>]*?)(?:/>|>([\\s\\S]*?)</(?:[A-Za-z0-9_]+:)?${name}>)`, 'g'));
 
   // Codelists, by id.
   const byCodelist = new Map<string, StructureCode[]>();
-  for (const block of body.matchAll(/<str:Codelist\b([^>]*)>([\s\S]*?)<\/str:Codelist>/g)) {
+  for (const block of blocks('Codelist', body)) {
     const id = attr(block[1], 'id');
     if (!id) continue;
     const codes: StructureCode[] = [];
-    for (const code of block[2].matchAll(/<str:Code\b([^>]*)>([\s\S]*?)<\/str:Code>/g)) {
+    for (const code of blocks('Code', block[2] ?? '')) {
       const codeId = attr(code[1], 'id');
       if (!codeId) continue;
-      const name = /<com:Name[^>]*>([\s\S]*?)<\/com:Name>/.exec(code[2]);
+      const name = /<(?:[A-Za-z0-9_]+:)?Name\b[^>]*>([\s\S]*?)<\/(?:[A-Za-z0-9_]+:)?Name>/.exec(code[2] ?? '');
       codes.push({ id: codeId, name: (name?.[1] ?? '').trim() });
     }
     byCodelist.set(id, codes);
@@ -353,23 +379,33 @@ function parseXmlStructure(body: string): DataStructure {
 
   const dimensions: StructureDimension[] = [];
   let fallbackPosition = 0;
-  for (const block of body.matchAll(/<str:(Dimension|TimeDimension)\b([^>]*)>([\s\S]*?)<\/str:(?:Dimension|TimeDimension)>/g)) {
-    // The time dimension is read so positions stay the publisher's own, and
-    // is then excluded from the key: the period is a query parameter.
-    const isTime = block[1] === 'TimeDimension';
-    const id = attr(block[2], 'id');
-    if (!id) continue;
-    if (!isTime) fallbackPosition += 1;
-    const declared = attr(block[2], 'position');
-    const enumeration = /<Ref\b([^>]*)\bpackage="codelist"([^>]*)\/>/.exec(block[3])
-      ?? /<Ref\b([^>]*)\bclass="Codelist"([^>]*)\/>/.exec(block[3]);
-    const clId = enumeration ? attr(enumeration[0], 'id') : null;
-    dimensions.push({
-      id,
-      position: declared && /^\d+$/.test(declared) ? Number(declared) : fallbackPosition,
-      codes: (clId && byCodelist.get(clId)) || [],
-      isTime,
-    });
+  for (const kind of ['Dimension', 'TimeDimension'] as const) {
+    for (const block of blocks(kind, body)) {
+      const isTime = kind === 'TimeDimension';
+      const id = attr(block[1], 'id');
+      if (!id) continue;
+      // `<DimensionList>` wraps `<Dimension>`, and a prefix-agnostic match for
+      // `Dimension` would also match nothing else — but a `MeasureDimension`
+      // or `AttributeList` entry must not arrive here, so the id is the guard
+      // and a duplicate is dropped.
+      if (dimensions.some((d) => d.id === id)) continue;
+      if (!isTime) fallbackPosition += 1;
+      const declared = attr(block[1], 'position');
+      const inner = block[2] ?? '';
+      const ref = /<(?:[A-Za-z0-9_]+:)?Ref\b([^>]*)\/?>/g;
+      let clId: string | null = null;
+      for (const m of inner.matchAll(ref)) {
+        const pkg = attr(m[1], 'package');
+        const cls = attr(m[1], 'class');
+        if (pkg === 'codelist' || cls === 'Codelist') { clId = attr(m[1], 'id'); break; }
+      }
+      dimensions.push({
+        id,
+        position: declared && /^\d+$/.test(declared) ? Number(declared) : fallbackPosition,
+        codes: (clId && byCodelist.get(clId)) || [],
+        isTime,
+      });
+    }
   }
   return { dimensions };
 }

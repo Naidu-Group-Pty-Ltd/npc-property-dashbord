@@ -200,6 +200,51 @@ describe('the structure is read in both shapes the standard admits', () => {
     expect(composeApprovalsKey(s).key).toBe('10.');
   });
 
+  /*
+   * The prefix is the document's own choice. The first version matched
+   * `<str:Dimension>` literally and read NO dimension from 3,193,984 bytes of
+   * the Bureau's real structure — silently, on a 200, with the `/all`
+   * fallback hiding it. These fixtures are the same document under three
+   * spellings, and the one with `str:` is the one that already passed.
+   */
+  const reprefix = (xml: string, prefix: string) =>
+    xml.replace(/<(\/?)str:/g, `<$1${prefix}`).replace(/<(\/?)com:/g, `<$1${prefix}`);
+
+  it('reads it whatever namespace prefix the document chose', () => {
+    for (const prefix of ['', 'structure:', 'x:']) {
+      const s = parseDataStructure(reprefix(XML, prefix));
+      expect(s.dimensions.map((d) => d.id), `prefix "${prefix}"`)
+        .toEqual(['TSEST', 'REGION', 'TIME_PERIOD']);
+      expect(s.dimensions[0].codes.map((c) => c.name)).toEqual(['Original', 'Seasonally Adjusted']);
+      expect(composeApprovalsKey(s).key).toBe('10.');
+    }
+  });
+
+  it('reads a self-closing dimension as well as a container one', () => {
+    const selfClosed = XML.replace(
+      '<str:Dimension id="REGION" position="2"></str:Dimension>',
+      '<str:Dimension id="REGION" position="2"/>',
+    );
+    expect(parseDataStructure(selfClosed).dimensions.map((d) => d.id))
+      .toEqual(['TSEST', 'REGION', 'TIME_PERIOD']);
+  });
+
+  it('a refusal says what it was handed, not merely that it failed', () => {
+    // "names no dimension" is true and useless: it does not say whether the
+    // body was JSON or XML, nor what it opened with. A refusal that cannot be
+    // acted on costs a whole build cycle, and the fallback means nothing else
+    // reports it at all.
+    let message = '';
+    try {
+      parseDataStructure('<html><body>Service Unavailable</body></html>');
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toMatch(/read as XML/);
+    expect(message).toMatch(/It opens: /);
+    expect(message).toContain('Service Unavailable');
+  });
+
   it('both shapes produce the same key from the same cube', () => {
     expect(composeApprovalsKey(parseDataStructure(XML)).key)
       .toBe(composeApprovalsKey(parseDataStructure(JSON_BODY)).key);
