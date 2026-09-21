@@ -39,13 +39,13 @@ const FORMS: ReadonlyArray<{ name: string; directive: string; read: boolean }> =
     directive: '{{heatmap: 8.6,3.9 / 2.0,1.0 | rows=House,Unit | cols=10yr,5yr | title=Price growth}}' },
 
   // Still unread. Each carries the same unstated 3.9.
-  { name: 'bars (head pairs)', read: false,
+  { name: 'bars (head pairs)', read: true,
     directive: '{{bars: Price growth 10yr 8.6, Price growth 5yr 3.9 | max=100}}' },
-  { name: 'donut', read: false,
+  { name: 'donut', read: true,
     directive: '{{donut: Growth 8.6, Other 3.9 | title=Price growth mix}}' },
-  { name: 'tiles', read: false,
+  { name: 'tiles', read: true,
     directive: '{{tiles: Price growth 8.6 int=0.9, Vacancy 3.9 int=0.2 | title=Market}}' },
-  { name: 'waterfall', read: false,
+  { name: 'waterfall', read: true,
     directive: '{{waterfall: Median price +3.9, Growth =8.6 | title=Price growth}}' },
   { name: 'gauge', read: false,
     directive: '{{gauge: 3.9 | Price growth | Ten-year compound}}' },
@@ -65,12 +65,21 @@ describe('the market series guard, per directive kind', () => {
     });
   }
 
-  it('four of twelve forms are judged, and the list is explicit', () => {
+  it('eight of twelve forms are judged, and the four that are not are a KIND', () => {
     expect(FORMS.filter((f) => f.read).map((f) => f.name)).toEqual([
       'bars (spark option)',
       'wheel (numeric head)',
       'margin (spark option)',
       'heatmap (grid head)',
+      'bars (head pairs)',
+      'donut',
+      'tiles',
+      'waterfall',
+    ]);
+    // Not an oversight and not a backlog: these four plot a POSITION on a
+    // declared scale or no number at all.
+    expect(FORMS.filter((f) => !f.read).map((f) => f.name)).toEqual([
+      'gauge', 'pictograph', 'quadrant', 'timeline',
     ]);
   });
 });
@@ -112,5 +121,80 @@ describe('the heatmap grid', () => {
   it('is byte-identical on a document that draws no chart at all', () => {
     const prose = 'The ten-year compound annual growth rate is 8.6%.\n\nNo chart here.';
     expect(suppressUnevidencedMarketSeries(prose, facts).markdown).toBe(prose);
+  });
+});
+
+describe('the classes a destructive rule must not touch', () => {
+  /*
+   * The corpus in `report_content` would say how OFTEN this fires; it cannot
+   * say whether it is RIGHT. These are the false-positive classes that can be
+   * named, and naming them is what the correctness argument rests on.
+   */
+  const kept = (directive: string) => {
+    const r = suppressUnevidencedMarketSeries(directive, facts);
+    expect(r.removed, directive).toHaveLength(0);
+    expect(r.markdown).toBe(directive);
+  };
+
+  it('a gauge rating is a POSITION on a declared scale, not a market figure', () => {
+    kept('{{gauge: 7/10 | Market strength | Higher is stronger}}');
+    kept('{{gauge: 62 | Price growth outlook | Suburb percentile}}');
+  });
+
+  it('a pictograph total is a scale', () => {
+    kept('{{pictograph: 3/10 | label=Median price bracket | icon=house}}');
+  });
+
+  it('a quadrant plots placements on its own axes', () => {
+    kept('{{quadrant: 8,3 "Median price" | xlabel=Yield | ymax=10}}');
+  });
+
+  it('a timeline\u2019s digits live in its labels and are never values', () => {
+    kept('{{timeline: 2024 "Median price fell 3.9", 2025 "Growth 8.6" | title=Price growth}}');
+  });
+
+  it('a bars scale is the axis, never a claim', () => {
+    // `max=100` is not among the judged values; the two plotted ones are, and
+    // both are stated, so nothing is removed.
+    kept('{{bars: Price growth 10yr 8.6, Price growth 5yr 8.6 | max=100 | unit=%}}');
+  });
+
+  it('a qualitative tile carries no magnitude', () => {
+    kept('{{tiles: Median price Moderate int=0.8, Growth Strong int=0.9 | title=Market}}');
+  });
+
+  it('a chart with no market word is never this rule\u2019s to judge', () => {
+    kept('{{bars: Structure 75, Pest 70, Roof 65 | title=Condition | max=100}}');
+    kept('{{waterfall: Stamp duty and transfer -58287, Legal and conveyancing -1800}}');
+  });
+
+  it('a chart drawn honestly from the table survives', () => {
+    kept('{{bars: Price growth 10yr 8.6, Price growth also 8.6 | unit=%}}');
+    kept('{{donut: Growth 8.6, Growth again 8.6 | title=Price growth mix}}');
+  });
+});
+
+describe('the newly judged kinds remove what they should', () => {
+  const removes = (directive: string, value: number) => {
+    const r = suppressUnevidencedMarketSeries(directive, facts);
+    expect(r.removed, directive).toHaveLength(1);
+    expect(r.removed[0].values).toContain(value);
+    expect(r.markdown.trim()).toBe('');
+  };
+
+  it('bars with head pairs \u2014 the commonest form in the corpus', () => {
+    removes('{{bars: Price growth 10yr 8.6, Price growth 5yr 3.9 | unit=%}}', 3.9);
+  });
+
+  it('donut', () => {
+    removes('{{donut: Growth 8.6, Other 3.9 | title=Price growth mix}}', 3.9);
+  });
+
+  it('a numeric tile', () => {
+    removes('{{tiles: Price growth 8.6 int=0.9, Vacancy 3.9 int=0.2 | title=Market}}', 3.9);
+  });
+
+  it('waterfall', () => {
+    removes('{{waterfall: Median price +8.6, Growth =3.9 | title=Price growth}}', 3.9);
   });
 });

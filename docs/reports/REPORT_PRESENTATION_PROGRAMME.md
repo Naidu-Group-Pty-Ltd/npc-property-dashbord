@@ -430,18 +430,39 @@ grid head as a series for the same reason — one string read as a value list in
 one place and a title in another is how two readings of one grammar come to
 disagree.
 
-**The other eight are deliberately left open**, and
-`marketSeriesCoverage.spec.ts` pins the list by execution rather than leaving
-it in this document, because a blind spot written into a document is one
-nobody re-reads. Two reasons for stopping. A grid is unambiguously a set of
-**magnitudes in the table's own units**, while a `gauge`'s max, a
-`pictograph`'s total and a `quadrant`'s axis positions are a **scale** —
-judging a position against a table of medians would remove a sound chart. And
-removal is destructive: extending to the label-carrying kinds means judging
-values whose units this module cannot confirm, and the exposure can only be
-measured against the directive corpus in `report_content`, which this session
-may not query. That is a decision to take with the measurement, not an
-argument to win without it.
+**Four more are judged now — eight of twelve — and the block dissolved once
+two questions were separated.** I had said the corpus in `report_content` was
+needed before extending a destructive rule. The corpus says how OFTEN the rule
+fires; it cannot say whether the rule is RIGHT. Correctness on the ambiguous
+classes is testable here, and that is what the extension rests on.
+
+The root cause was the private re-parse itself. `plottedMagnitudes` asks
+`parseVizDirective` — the one implementation of the grammar every renderer
+already uses — instead of reading the payload a second way, which is what let
+nine of twelve forms go unread in the first place.
+
+**`bars` (head pairs), `donut`, `tiles` and `waterfall`** join the four already
+judged: their plotted values are magnitudes in the table's own units, the same
+class as a grid. **`gauge`, `pictograph`, `quadrant` and `timeline` stay out,
+and that is a KIND rather than a backlog** — a gauge's `max`, a pictograph's
+`total` and a quadrant's axis are a POSITION on a declared scale, and a
+timeline's digits live in label text. A scale is never judged either: a `max=`
+is the axis, not a claim.
+
+The false-positive classes that can be named are pinned as tests rather than
+argued: a gauge rating, a pictograph total, a quadrant placement, a timeline
+label carrying a number, a `max=` scale, a qualitative tile, a chart with no
+market word, and a chart drawn honestly from the table. All are kept
+byte-identical.
+
+**And writing it re-committed a trap this repository has already paid for.**
+The first tiles reader stripped non-numerics and tested `Number.isFinite` —
+but stripping `"Moderate"` leaves `""`, and **`Number('') is 0`**, which is
+finite. A qualitative tile therefore reported a magnitude of zero and a
+market-worded tile grid was removed for a figure nobody plotted. That is the
+same trap `urban-centre-register-ingest` records, where a feature with no point
+parsed as `(0, 0)`. The digit test is the guard, and the spec is what caught
+it.
 
 The lesson is §5's again, from the other direction: **the absence of the shape
 you expected is not the absence of the thing.** Twice in one sitting — the
