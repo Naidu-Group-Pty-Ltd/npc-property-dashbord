@@ -54,6 +54,23 @@
  * **A structure that cannot be read costs nothing.** The caller falls back to
  * `/all`, which is what shipped, so this can only improve a load or leave it
  * alone. A narrowing is an optimisation and must never be a dependency.
+ *
+ * ## Why a mis-composed key cannot produce a wrong FIGURE
+ *
+ * The danger with a positional key is not an error, it is an HTTP 200 over a
+ * slice nobody asked for. What bounds that here is that the first rule above
+ * makes the parse an INDEPENDENT check on the query: both ends match the same
+ * labels, so a key that selected the wrong codes returns rows whose labels
+ * the parse then discards. A wrong key can therefore only make a download
+ * SMALLER — and a download that lost its rows is refused by
+ * `ABS_BA_PLAUSIBILITY`'s area and period floors, which is a loud failure.
+ *
+ * It cannot smuggle in a row the parse would accept and should not: to do
+ * that, a code would have to carry a name the parse matches while being the
+ * wrong series — which is a publisher relabelling its own cube, and no
+ * arrangement of a key defends against that. `UNITS_MEASURE` admitting
+ * `Number of buildings` was exactly that shape, and it was fixed in the rule
+ * both ends read rather than in either end.
  */
 import {
   BUILDING_TYPE_PATTERNS,

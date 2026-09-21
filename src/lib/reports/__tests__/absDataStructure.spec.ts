@@ -9,6 +9,8 @@
  * a production measurement, taken by `abs-approvals-liveness`.
  */
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   ABS_BA_KEY_RULES,
   AREA_DIMENSION,
@@ -201,6 +203,42 @@ describe('the structure is read in both shapes the standard admits', () => {
   it('both shapes produce the same key from the same cube', () => {
     expect(composeApprovalsKey(parseDataStructure(XML)).key)
       .toBe(composeApprovalsKey(parseDataStructure(JSON_BODY)).key);
+  });
+});
+
+describe('the parse is an independent check on the query', () => {
+  const SOURCE = readFileSync(
+    join(process.cwd(), 'supabase/functions/_shared/reports/market/openData/absDataStructure.pure.ts'),
+    'utf8',
+  );
+
+  it('imports the label rules rather than restating them', () => {
+    /*
+     * This is the property that makes a positional key safe. Both ends match
+     * the SAME labels, so a key that selected the wrong codes returns rows
+     * whose labels the parse discards — a wrong key can only make a download
+     * smaller, and a download that lost its rows is refused by the area and
+     * period floors, which is a loud failure rather than a wrong figure.
+     *
+     * A second copy of any of these rules breaks exactly that, and it breaks
+     * it silently: the query would ask for one thing and the parse keep
+     * another, and the difference would show up as rows quietly missing.
+     */
+    for (const rule of ['BUILDING_TYPE_PATTERNS', 'UNITS_MEASURE', 'VALUE_MEASURE', 'ORIGINAL_SERIES', 'MONTHLY_FREQ']) {
+      expect(SOURCE).toMatch(new RegExp(`^\\s*${rule},`, 'm'));
+      // Imported, never declared here.
+      expect(SOURCE).not.toMatch(new RegExp(`(const|let)\\s+${rule}\\b`));
+    }
+    expect(SOURCE).toContain("from './absBuildingApprovals.pure.ts'");
+  });
+
+  it('declares no measure, type or series regex of its own', () => {
+    // `AREA_DIMENSION` and each rule's `dimension` are patterns over
+    // dimension IDS, which the parse never sees; anything matching a code
+    // NAME must come from the one declaration.
+    const ownRegexes = [...SOURCE.matchAll(/^(?:export )?const (\w+)(?::[^=]+)? = \/(.+?)\/[gimsuy]*;$/gm)]
+      .map((m) => m[1]);
+    expect(ownRegexes).toEqual(['AREA_DIMENSION']);
   });
 });
 
