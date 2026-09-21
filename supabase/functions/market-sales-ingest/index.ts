@@ -43,6 +43,10 @@ import {
   parseVicQuarterly,
   parseVicTimeSeries,
 } from '../_shared/reports/market/openData/vicVpsrSuburb.pure.ts';
+import {
+  chooseNextVicVolumeFile,
+  quartersStillNeeded,
+} from '../_shared/reports/market/openData/vicVolumeBackfill.pure.ts';
 import { SA_LSG_ARCHIVE_FLOOR, SA_LSG_ARCHIVE_PATTERN, SA_LSG_FILE, SA_LSG_LICENCE, SA_LSG_SOURCE_LABEL, parseSaLsgStats, rankOfSaFileName } from '../_shared/reports/market/openData/saLsgStats.pure.ts';
 import { type RankedFile, type WaybackCapture, archivePageUrl, capturedAtIso, cdxUrl, newestByRank, originalBytesUrl, parseCdxJson, rankedCaptures, rankedFiles } from '../_shared/reports/market/openData/waybackMirror.pure.ts';
 
@@ -362,6 +366,102 @@ Deno.serve(async (req) => {
       };
       await supabase.from('market_sales_sync').insert({ detail });
       return json({ success: true, ...detail });
+    }
+
+    /*
+     * Victoria's transaction volumes, one archived quarter per invocation.
+     *
+     * Why this exists at all is in `vicVolumeBackfill.pure.ts`: Victoria
+     * prints ONE `No. of Sales` column per workbook, so a single file yields
+     * one counted period and `scoreTransactionVolume` needs four — which is
+     * why Demand is unscoreable here and scores in NSW, QLD and SA. The
+     * publisher names a separate workbook per quarter and the archive holds
+     * them, so the counts were never lost.
+     *
+     * It ASKS by default and writes nothing. `apply: true` reads exactly one
+     * workbook, because five in one call is what hit the edge worker's
+     * compute limit on the DCJ load.
+     */
+    if (stage === 'vic_volume') {
+      const apply = body.apply === true;
+      const wantDwelling = String(body.dwelling ?? 'house') === 'unit' ? 'attached' : 'house';
+      const floor = String(body.floor ?? '2023-01');
+      const from = String(body.from ?? '2023');
+
+      // What the register already carries a Victorian count for. This drives
+      // the choice, so an interrupted backfill resumes and a finished one is
+      // a no-op — no cursor is kept anywhere.
+      const { data: countedRows, error: countedError } = await supabase
+        .from('market_sales_medians')
+        .select('period')
+        .eq('state', 'VIC')
+        .eq('dwelling_type', wantDwelling)
+        .eq('period_span', 'quarter')
+        .not('sales_count', 'is', null);
+      if (countedError) throw new Error(`reading the counted Victorian quarters failed: ${countedError.message}`);
+      const countedPeriods: string[] = [...new Set<string>(
+        ((countedRows ?? []) as Array<{ period: string }>).map((r) => String(r.period)),
+      )];
+
+      const index = await archiveIndex(VIC_VPSR_ARCHIVE_PATTERN, from);
+      const files = rankedFiles(index, VIC_QUARTERLY_FILE,
+        (m) => (dwellingOfQuarterlyName(m[0]) === wantDwelling ? Number(m[3]) * 4 + Number(m[2]) : null));
+      const choice = chooseNextVicVolumeFile(files, countedPeriods, floor);
+      const shortfall = quartersStillNeeded(countedPeriods);
+
+      const base = {
+        stage, dwelling: wantDwelling, floor,
+        counted_quarters: countedPeriods.sort().reverse(),
+        quarters_still_needed_for_demand: shortfall,
+        archived_quarters: files.length,
+        remaining: choice.remaining.map((c) => c.period),
+        next: choice.next?.period ?? null,
+      };
+
+      if (!apply || !choice.next) {
+        return json({ success: true, ...base, wrote: false });
+      }
+
+      const file = files.find((f) => f.original === choice.next!.original);
+      if (!file) throw new Error(`the chosen quarter ${choice.next.period} is not in the archive listing — refused`);
+      // Every capture of that file, newest first: the index can list a capture
+      // the store answers 404 for, which is why `rankedFiles` keeps them all.
+      let loaded: { capturedAt: string; bytes: number; grid: unknown[][] } | null = null;
+      let lastError = '';
+      for (const capture of file.captures.slice(0, 4)) {
+        try {
+          const { workbook, bytes } = await fetchWorkbook(originalBytesUrl(capture));
+          loaded = { capturedAt: capturedAtIso(capture.timestamp), bytes, grid: firstGrid(workbook) as unknown[][] };
+          break;
+        } catch (error) {
+          lastError = error instanceof Error ? error.message : String(error);
+        }
+      }
+      if (!loaded) throw new Error(`no capture of ${fileNameOf(file.original)} could be read — ${lastError}`);
+
+      const parsed = parseVicQuarterly(loaded.grid as never, wantDwelling, loaded.capturedAt);
+      // ONLY the counted rows are written. The medians in an archived workbook
+      // are a revision of periods the live stage already loads, and this
+      // backfill is not the authority on those — it is here for the counts
+      // the live stage cannot reach.
+      const counted = parsed.rows.filter((r) => typeof r.salesCount === 'number');
+      if (counted.length === 0) {
+        throw new Error(`${fileNameOf(file.original)} parsed ${parsed.rows.length} rows and none carries a count — refused`);
+      }
+      const records = toRecords(counted, VIC_VPSR_SOURCE_LABEL, archivePageUrl(file.captures[0]), VIC_VPSR_LICENCE, loadedAt);
+      const written = await upsertRecords(supabase, records);
+
+      const detail = {
+        ...base,
+        file: file.original, captured_at: loaded.capturedAt, bytes: loaded.bytes,
+        source: VIC_VPSR_SOURCE_LABEL, licence: VIC_VPSR_LICENCE,
+        parsed_period: parsed.latestPeriod, localities: parsed.localities,
+        counted_rows: counted.length, rows_written: written,
+        implausible_cells: parsed.implausible.length,
+        remaining: choice.remaining.slice(1).map((c) => c.period),
+      };
+      await supabase.from('market_sales_sync').insert({ detail });
+      return json({ success: true, ...detail, wrote: true });
     }
 
     if (stage === 'sa') {
