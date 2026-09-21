@@ -240,9 +240,11 @@ async function main(): Promise<void> {
    * of this script: name what was actually read.
    */
   let carried: Window & { url: string; bytes: number } | null = null;
+  const seen: Array<{ label: string; flow: string; start: string; bytes: number; finished: boolean }> = [];
   for (const w of windows) {
     const url = absBuildingApprovalsUrl(w.flow, w.start);
     const m = await measure(url);
+    seen.push({ label: w.label, flow: dataflowRef(w.flow), start: w.start, bytes: m.bytes, finished: m.finished });
     const rate = m.ms > 0 ? m.bytes / (m.ms / 1000) : 0;
     console.log(
       `  ${w.label.padEnd(16)} ${String(m.status ?? 'ERR').padStart(3)}  `
@@ -252,6 +254,32 @@ async function main(): Promise<void> {
       + `${m.finished ? 'complete' : 'DID NOT FINISH'}${m.error ? ` (${m.error})` : ''}`,
     );
     if (m.finished && m.ms < EDGE_BUDGET_MS && !carried) carried = { ...w, url, bytes: m.bytes };
+  }
+
+  /*
+   * Does narrowing the window narrow the download?
+   *
+   * Measured 21 Sep 2026: the two LGA windows came back **byte-identical**
+   * (61.8 MB from 2025-01 and from 2023-01), which means one of two things
+   * and they lead to different designs — either the ABS is ignoring
+   * `startPeriod` for this flow, in which case the only lever left is the
+   * KEY, or the edition simply holds no month before the later start, in
+   * which case it may not reach `minPeriods` at all. Stating the observation
+   * is not the same as settling it, so this names the reading and step 6's
+   * period range settles which.
+   */
+  h('5a · Does the window narrow the download?');
+  const byFlow = new Map<string, typeof seen>();
+  for (const r of seen) byFlow.set(r.flow, [...(byFlow.get(r.flow) ?? []), r]);
+  for (const [flow, rs] of byFlow) {
+    if (rs.length < 2 || !rs.every((r) => r.finished)) {
+      kv(flow, 'not comparable — a window did not finish');
+      continue;
+    }
+    const identical = rs.every((r) => r.bytes === rs[0].bytes);
+    kv(flow, identical
+      ? `IDENTICAL bytes from ${rs.map((r) => r.start).join(' and ')} — startPeriod narrowed nothing`
+      : `${rs.map((r) => `${r.start}: ${(r.bytes / 1_048_576).toFixed(1)} MB`).join(', ')}`);
   }
 
   h('5 · What an invocation can actually carry');

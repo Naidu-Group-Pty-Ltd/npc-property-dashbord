@@ -539,6 +539,10 @@ Deno.serve(async (req) => {
         columns: parsed.columns,
         series_type_unfiltered: parsed.seriesTypeUnfiltered,
         areas: parsed.areas,
+        // Which grains the body turned out to carry. A region download is the
+        // whole hierarchy, so this is how an operator sees that one LGA read
+        // also filled the state and national rungs.
+        areas_by_grain: parsed.areasByGrain,
         periods: parsed.periods.length,
         first_period: parsed.periods[0],
         latest_period: parsed.latestPeriod,

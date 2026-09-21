@@ -118,15 +118,53 @@ export const ABS_BA_GRAIN_LADDER: readonly GrainRule[] = [
 /** The subject pattern. Both words, in either order, anywhere in the name. */
 export const ABS_BA_NAME_PATTERN = /building\s+approvals?/i;
 
+/**
+ * The bounds a download has to satisfy to be believed.
+ *
+ * ## The ceilings are PER GRAIN, and that was measured the hard way
+ *
+ * The first version carried one ceiling — `maxValuePerAreaMonth:
+ * 20_000_000_000` — written for a council area, and the liveness check
+ * refused the Bureau's own LGA download on its first real run:
+ *
+ *     the ABS building-approvals value for Australia 2026-07 reads
+ *     $22,314,955,000, outside 0–20,000,000,000 — refused
+ *
+ * Every fact in that refusal is correct and the conclusion was wrong. The
+ * flow is *"Building Approvals by Local Government Area"* and its SA2
+ * sibling is *"by SA2 **and above**"*: an ABS region download carries the
+ * whole hierarchy — councils, states and Australia — in one body, and
+ * $22.3bn of building approved nationally in a month is an ordinary
+ * national figure. A bound written for one grain, applied to a body that
+ * carries four, refuses the publisher for publishing correctly.
+ *
+ * So a row is bounded by ITS OWN grain, read from the publisher's area code
+ * (`grainOfAreaCode`), and the ceilings are an order of magnitude above the
+ * real figures because their job is catching a 1,000× shift — a changed
+ * `UNIT_MULT`, a moved column — and never trimming a real outlier. A bound
+ * that fires on a true figure is not a plausibility check, it is a filter
+ * nobody asked for.
+ */
 export const ABS_BA_PLAUSIBILITY = {
-  /** Minimum distinct areas, by grain. Australia has ~540 LGAs, ~2,500 SA2s. */
+  /** Minimum distinct areas AT THE REQUESTED GRAIN. ~540 LGAs, ~2,500 SA2s. */
   minAreas: { sa2: 800, lga: 200, state: 8, national: 1 } as Record<ApprovalsAreaKind, number>,
   /** Months. Two years is the shortest window a year-on-year reading needs. */
   minPeriods: 24,
-  /** Dwelling units approved in one area in one month. */
-  maxUnitsPerAreaMonth: 100_000,
-  /** Dollars of building approved in one area in one month. */
-  maxValuePerAreaMonth: 20_000_000_000,
+  /**
+   * Dwelling units approved in one area in one month, by that area's grain.
+   * Australia approves roughly 15,000–20,000 a month; a state a few thousand.
+   */
+  maxUnitsPerAreaMonth: {
+    sa2: 100_000, lga: 100_000, state: 500_000, national: 2_000_000,
+  } as Record<ApprovalsAreaKind, number>,
+  /**
+   * Dollars of building approved in one area in one month, by grain. The
+   * national figure measured on 2026-07 is $22.3bn; the ceiling is ten times
+   * it, because this detects unit drift rather than ranking areas.
+   */
+  maxValuePerAreaMonth: {
+    sa2: 20_000_000_000, lga: 20_000_000_000, state: 80_000_000_000, national: 250_000_000_000,
+  } as Record<ApprovalsAreaKind, number>,
 } as const;
 
 // ─── The dataflow catalogue ─────────────────────────────────────────────────
@@ -534,6 +572,31 @@ export const ABS_BA_STATE_OF_CODE: Readonly<Record<string, SalesRegisterState>> 
   '1': 'NSW', '2': 'VIC', '3': 'QLD', '4': 'SA', '5': 'WA', '6': 'TAS', '7': 'NT', '8': 'ACT', AUS: 'AU',
 };
 
+/**
+ * The grain of one row, read from the publisher's own area code.
+ *
+ * An ABS region download is a HIERARCHY, not a list: *"Building Approvals by
+ * SA2 and above"* carries SA2s, states and Australia in one body, and the LGA
+ * flow does the same. So the grain is a property of the ROW, never of the
+ * request — stamping every row with the requested kind files the national
+ * total as a council area, which is what the read path would then serve as a
+ * suburb's supply.
+ *
+ * The scheme is the ASGS's and is stable across editions: `AUS` is Australia,
+ * one digit is a state or territory, five digits an LGA, nine an SA2. A code
+ * in no known shape takes the download's requested grain, which is the
+ * behaviour that shipped — unreadable is not a licence to guess upward, and
+ * the tightest ceiling is the conservative side.
+ */
+export function grainOfAreaCode(code: string, requested: ApprovalsAreaKind): ApprovalsAreaKind {
+  const trimmed = code.trim();
+  if (/^AUS$/i.test(trimmed) || trimmed === '0') return 'national';
+  if (/^[1-8]$/.test(trimmed)) return 'state';
+  if (/^\d{5}$/.test(trimmed)) return 'lga';
+  if (/^\d{9}$/.test(trimmed)) return 'sa2';
+  return requested;
+}
+
 /** An LGA/SA2 code's leading digit is its state, under every ASGS edition. */
 export function stateOfAreaCode(code: string): SalesRegisterState | null {
   const trimmed = code.trim();
@@ -592,7 +655,10 @@ export interface AbsApprovalsParse {
   rows: ApprovalRow[];
   periods: string[];
   latestPeriod: string;
+  /** Distinct areas AT THE REQUESTED GRAIN — what the floor is judged on. */
   areas: number;
+  /** Every grain the download turned out to carry, and how many of each. */
+  areasByGrain: Partial<Record<ApprovalsAreaKind, number>>;
   states: SalesRegisterState[];
   columns: ResolvedColumns;
   /** True where the download carried no series-type column to filter on. */
@@ -626,7 +692,10 @@ export function parseAbsBuildingApprovals(
   // (area code, period, building type) → the row being built.
   const byKey = new Map<string, ApprovalRow>();
   const periods = new Set<string>();
-  const areas = new Set<string>();
+  // Distinct area codes per GRAIN. A hierarchical download carries councils,
+  // states and Australia together, so one undifferentiated count judged
+  // against one grain's floor is a count of the wrong thing.
+  const areasByGrain = new Map<ApprovalsAreaKind, Set<string>>();
   const states = new Set<SalesRegisterState>();
   let skipped = 0;
   let sawSeriesType = false;
@@ -659,15 +728,17 @@ export function parseAbsBuildingApprovals(
     const mult = hasUnitMult ? Number(rec.UNIT_MULT) : 0;
     const scaled = raw === null ? null : Math.round(raw * 10 ** (Number.isInteger(mult) ? mult : 0));
 
+    // The row's OWN grain, not the request's. See `grainOfAreaCode`.
+    const rowKind = grainOfAreaCode(areaCode, areaKind);
     const key = `${areaCode}|${period}|${buildingType}`;
     let row = byKey.get(key);
     if (!row) {
       const state = stateOfAreaCode(areaCode);
       row = {
         state,
-        areaKind,
+        areaKind: rowKind,
         area,
-        areaToken: salesAreaToken(areaKind === 'sa2' ? 'suburb' : areaKind, area),
+        areaToken: salesAreaToken(rowKind === 'sa2' ? 'suburb' : rowKind, area),
         areaCode,
         period,
         buildingType,
@@ -679,25 +750,29 @@ export function parseAbsBuildingApprovals(
     }
     if (scaled !== null) {
       if (isValue) {
-        if (scaled < 0 || scaled > ABS_BA_PLAUSIBILITY.maxValuePerAreaMonth) {
+        const ceiling = ABS_BA_PLAUSIBILITY.maxValuePerAreaMonth[rowKind];
+        if (scaled < 0 || scaled > ceiling) {
           throw new Error(
             `the ABS building-approvals value for ${area} ${period} reads $${scaled}, `
-            + `outside 0–${ABS_BA_PLAUSIBILITY.maxValuePerAreaMonth} (unit or column drift) — refused`,
+            + `outside 0–${ceiling} for a ${rowKind} area (unit or column drift) — refused`,
           );
         }
         row.value = scaled;
       } else {
-        if (scaled < 0 || scaled > ABS_BA_PLAUSIBILITY.maxUnitsPerAreaMonth) {
+        const ceiling = ABS_BA_PLAUSIBILITY.maxUnitsPerAreaMonth[rowKind];
+        if (scaled < 0 || scaled > ceiling) {
           throw new Error(
             `the ABS building-approvals count for ${area} ${period} reads ${scaled} dwelling units, `
-            + `outside 0–${ABS_BA_PLAUSIBILITY.maxUnitsPerAreaMonth} (unit or column drift) — refused`,
+            + `outside 0–${ceiling} for a ${rowKind} area (unit or column drift) — refused`,
           );
         }
         row.dwellingUnits = scaled;
       }
     }
     periods.add(period);
-    areas.add(areaCode);
+    let atGrain = areasByGrain.get(rowKind);
+    if (!atGrain) { atGrain = new Set<string>(); areasByGrain.set(rowKind, atGrain); }
+    atGrain.add(areaCode);
   }
 
   const rows = [...byKey.values()];
@@ -707,11 +782,22 @@ export function parseAbsBuildingApprovals(
       + `(${records.length} records read, ${skipped} skipped) — refused`,
     );
   }
+  /*
+   * The floor is on the REQUESTED grain alone. An LGA download naming 40
+   * councils is a truncated body however many state and national rollups rode
+   * in with it — and counting those towards the floor is how a body carrying
+   * nothing but rollups passes a check designed to catch exactly that.
+   */
+  const areasAtGrain = areasByGrain.get(areaKind)?.size ?? 0;
   const minAreas = ABS_BA_PLAUSIBILITY.minAreas[areaKind];
-  if (areas.size < minAreas) {
+  if (areasAtGrain < minAreas) {
+    const seen = [...areasByGrain.entries()]
+      .sort((a, b) => b[1].size - a[1].size)
+      .map(([kind, set]) => `${set.size} ${kind}`)
+      .join(', ');
     throw new Error(
-      `the ABS building-approvals download names ${areas.size} ${areaKind} areas, fewer than ${minAreas} `
-      + '(a truncated download) — refused',
+      `the ABS building-approvals download names ${areasAtGrain} ${areaKind} areas, fewer than ${minAreas} `
+      + `(it carries ${seen || 'nothing'}) — a truncated download, refused`,
     );
   }
   const sorted = [...periods].sort();
@@ -725,7 +811,10 @@ export function parseAbsBuildingApprovals(
     rows,
     periods: sorted,
     latestPeriod: sorted[sorted.length - 1],
-    areas: areas.size,
+    areas: areasAtGrain,
+    areasByGrain: Object.fromEntries(
+      [...areasByGrain.entries()].map(([kind, set]) => [kind, set.size]),
+    ) as Partial<Record<ApprovalsAreaKind, number>>,
     states: [...states],
     columns,
     seriesTypeUnfiltered: !sawSeriesType,

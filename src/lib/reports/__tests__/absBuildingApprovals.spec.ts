@@ -212,6 +212,79 @@ function download(
   return lines.join('\n');
 }
 
+/**
+ * The rollup rows an ABS region download really carries.
+ *
+ * Measured, not imagined: the liveness check fetched the Bureau's own LGA
+ * download on 21 Sep 2026 and the parser refused it on
+ * `Australia 2026-07 reads $22,314,955,000`. `Building Approvals by SA2 AND
+ * ABOVE` means what it says — a region download is the whole hierarchy.
+ */
+function rollupRows(monthCount = 26): string[] {
+  const lines: string[] = [];
+  for (const [code, label] of [['AUS', 'Australia'], ['1', 'New South Wales'], ['2', 'Victoria']]) {
+    for (let m = 0; m < monthCount; m++) {
+      const period = `${2024 + Math.floor(m / 12)}-${String((m % 12) + 1).padStart(2, '0')}`;
+      // A real national month: ~17,000 dwellings and ~$22.3bn of building.
+      const units = code === 'AUS' ? 17_000 : 4_000;
+      const value = code === 'AUS' ? 22_314 : 6_100;
+      lines.push(`BA,1,Number of dwelling units,9,Total residential,10,Original,${code},${label},M,${period},${units},0`);
+      lines.push(`BA,2,Value of building approved,9,Total residential,10,Original,${code},${label},M,${period},${value},6`);
+    }
+  }
+  return lines;
+}
+
+describe('a region download is a HIERARCHY, and the grain is the row’s own', () => {
+  const hierarchical = () => [download(), ...rollupRows()].join('\n');
+
+  it('accepts the national total that refused the Bureau’s own download', () => {
+    // $22,314,955,000 in one month is an ordinary national figure and was
+    // refused against a ceiling written for a council area.
+    const parsed = parseAbsBuildingApprovals(hierarchical(), 'lga');
+    const au = parsed.rows.find((r) => r.areaCode === 'AUS' && r.buildingType === 'total_residential');
+    expect(au?.value).toBe(22_314_000_000);
+    expect(au?.areaKind).toBe('national');
+  });
+
+  it('files a state rollup as a state and a council as a council', () => {
+    const parsed = parseAbsBuildingApprovals(hierarchical(), 'lga');
+    expect(parsed.rows.find((r) => r.areaCode === '1')?.areaKind).toBe('state');
+    expect(parsed.rows.find((r) => r.areaCode === '10050')?.areaKind).toBe('lga');
+  });
+
+  it('counts the floor on the requested grain alone, and reports every grain', () => {
+    const parsed = parseAbsBuildingApprovals(hierarchical(), 'lga');
+    expect(parsed.areas).toBe(205);
+    expect(parsed.areasByGrain).toMatchObject({ lga: 205, state: 2, national: 1 });
+  });
+
+  it('refuses a body that is all rollup and no councils', () => {
+    // 3 rollup areas would pass an undifferentiated count of "areas" against
+    // nothing; against the lga floor of 200 it is the truncated body it is.
+    let message = '';
+    try {
+      parseAbsBuildingApprovals([HEADER, ...rollupRows()].join('\n'), 'lga');
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toMatch(/names 0 lga areas/);
+    expect(message).toMatch(/it carries 2 state, 1 national/);
+  });
+
+  it('still refuses a figure that is implausible FOR ITS OWN grain', () => {
+    // The bound did not go away; it became the right bound. A council with
+    // 900,000 dwellings approved in a month is unit drift.
+    const mad = [HEADER, ...rollupRows()]
+      .concat(download().split('\n').slice(1))
+      .join('\n')
+      .replace('BA,1,Number of dwelling units,1,Houses,10,Original,10050,Albury (C),M,2024-01,10,0',
+        'BA,1,Number of dwelling units,1,Houses,10,Original,10050,Albury (C),M,2024-01,900000,0');
+    expect(() => parseAbsBuildingApprovals(mad, 'lga'))
+      .toThrow(/900000 dwelling units, outside 0–100000 for a lga area/);
+  });
+});
+
 describe('the columns are read off the header, never assumed', () => {
   it('resolves one region pair, the measure, the type and the series', () => {
     const cols = resolveColumns(HEADER.split(','));
@@ -322,7 +395,11 @@ describe('the refusals', () => {
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
     }
-    expect(message).toMatch(/names 40 lga areas, fewer than 200 \(a truncated download\)/);
+    expect(message).toMatch(/names 40 lga areas, fewer than 200/);
+    // It says what the body DID carry, so an operator can tell a truncated
+    // walk from a body that is all rollup and no councils.
+    expect(message).toMatch(/it carries 40 lga/);
+    expect(message).toMatch(/truncated download, refused/);
   });
 
   it('refuses a series shorter than two years', () => {
