@@ -54,6 +54,22 @@ import {
 const UA = 'npc-property-dashboard/1.0 (+https://github.com/Naidu-Group-Pty-Ltd)';
 /** Three years: past the parser's 24-month floor with room to spare. */
 const START_PERIOD = process.env.ABS_START_PERIOD ?? '2023-01';
+/** The newest month to bound a paged window with. */
+const LATEST_MONTH = process.env.ABS_LATEST_MONTH ?? new Date().toISOString().slice(0, 7);
+
+/** `YYYY-MM` n months before `LATEST_MONTH`. */
+function monthsBack(n: number): string {
+  const [y, m] = LATEST_MONTH.split('-').map(Number);
+  const d = new Date(Date.UTC(y, m - 1 - n, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+/** Inclusive month count between two `YYYY-MM`. */
+function monthsBetween(from: string, to: string): number {
+  const [fy, fm] = from.split('-').map(Number);
+  const [ty, tm] = to.split('-').map(Number);
+  return (ty - fy) * 12 + (tm - fm) + 1;
+}
 
 /*
  * Everything prints on ONE stream. The first failing run rendered
@@ -356,6 +372,8 @@ async function main(): Promise<void> {
     }
   }
 
+  const oversize: Array<{ label: string; flow: DataflowEntry; grain: ApprovalsAreaKind; key: string; bytes: number; over: boolean }> = [];
+
   h(`4a · The query for ${dataflowRef(choice.flow)}, narrowed at the source`);
   const chosenKey = await keyFor(choice.flow, true);
 
@@ -385,6 +403,47 @@ async function main(): Promise<void> {
     );
     if (workable(m) && !carried) {
       carried = { label: `${g.label}, from ${START_PERIOD}`, flow: g.flow, grain: g.grain, start: START_PERIOD, url, bytes: m.bytes };
+    }
+    oversize.push({ ...g, bytes: m.bytes, over: m.finished && m.bytes > EDGE_BYTE_CEILING });
+  }
+
+  /*
+   * 4c · How small a window has to be.
+   *
+   * A grain that is too wide for one invocation is loaded in several, and the
+   * only paging lever the KEY does not give is the period: a key selects
+   * exact codes, so asking for one state's SA2s means enumerating three
+   * hundred of them in a URL, while `startPeriod`/`endPeriod` is two
+   * parameters whatever the geography.
+   *
+   * (A correction rides here. `SUPPLY_EVIDENCE.md` said SA2 "pages by state"
+   * because the code's leading digit is its state — which is true for
+   * READING a state off a code and useless for ASKING for one. Naming the
+   * lever is not the same as having measured it, which is the rule this
+   * whole exercise keeps paying for.)
+   *
+   * So this halves the window until something fits, and reports the number of
+   * requests a full load would take. It runs only where the full window did
+   * not fit, because a register that already loads needs no paging.
+   */
+  const tooBig = oversize.filter((o) => o.over && o.key !== 'all');
+  if (tooBig.length) {
+    h('4c · How small a window has to be');
+    for (const g of tooBig) {
+      for (const months of [12, 6, 3]) {
+        const from = monthsBack(months - 1);
+        const m = await measure(narrowedApprovalsUrl(g.flow, from, g.key, LATEST_MONTH));
+        const fits = workable(m);
+        console.log(
+          `  ${`${g.label}, ${months} months (${from}→${LATEST_MONTH})`.padEnd(34)} `
+          + `${(m.bytes / 1_048_576).toFixed(1).padStart(7)} MB  ${verdictOf(m)}`,
+        );
+        if (fits) {
+          const spanMonths = monthsBetween(START_PERIOD, LATEST_MONTH);
+          kv('  a full load would take', `${Math.ceil(spanMonths / months)} requests of ${months} months`);
+          break;
+        }
+      }
     }
   }
 

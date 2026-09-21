@@ -275,12 +275,33 @@ export function composeApprovalsKey(structure: DataStructure): ComposedKey {
 }
 
 /** The data query for a flow, narrowed to what this register reads. */
-export function narrowedApprovalsUrl(flow: DataflowEntry, startPeriod: string, key: string): string {
-  if (!/^\d{4}-\d{2}$/.test(startPeriod)) {
-    throw new Error(`startPeriod must be YYYY-MM, not "${startPeriod}"`);
+/**
+ * The data query for a flow, narrowed to what this register reads.
+ *
+ * `endPeriod` bounds the window at the far end, which is what makes a
+ * register too wide for one invocation loadable in several. It is the only
+ * paging lever the SDMX key does NOT give: a key selects exact codes, so
+ * asking for one state's SA2s would mean enumerating three hundred of them
+ * in the URL, while a period is two parameters whatever the geography.
+ */
+export function narrowedApprovalsUrl(
+  flow: DataflowEntry,
+  startPeriod: string,
+  key: string,
+  endPeriod?: string,
+): string {
+  for (const [name, value] of [['startPeriod', startPeriod], ['endPeriod', endPeriod]] as const) {
+    if (value !== undefined && !/^\d{4}-\d{2}$/.test(value)) {
+      throw new Error(`${name} must be YYYY-MM, not "${value}"`);
+    }
+  }
+  if (endPeriod !== undefined && endPeriod < startPeriod) {
+    throw new Error(`endPeriod ${endPeriod} is before startPeriod ${startPeriod} — refused`);
   }
   return `https://data.api.abs.gov.au/rest/data/${flow.agency},${flow.id},${flow.version}/${key}`
-    + `?startPeriod=${startPeriod}&format=csvfilewithlabels`;
+    + `?startPeriod=${startPeriod}`
+    + (endPeriod ? `&endPeriod=${endPeriod}` : '')
+    + '&format=csvfilewithlabels';
 }
 
 // ─── Reading the structure ──────────────────────────────────────────────────

@@ -388,4 +388,20 @@ describe('the URLs', () => {
   it('refuses a start period that is not a month', () => {
     expect(() => narrowedApprovalsUrl(flow, '2023', 'all')).toThrow(/YYYY-MM/);
   });
+
+  it('bounds the far end of the window, which is the only paging lever a key lacks', () => {
+    // A key selects exact codes, so asking for one state's SA2s would mean
+    // enumerating three hundred of them; a period is two parameters whatever
+    // the geography.
+    const url = narrowedApprovalsUrl(flow, '2024-01', '1+2.9.TOT', '2024-06');
+    expect(url).toContain('startPeriod=2024-01');
+    expect(url).toContain('endPeriod=2024-06');
+    expect(narrowedApprovalsUrl(flow, '2024-01', 'all')).not.toContain('endPeriod');
+  });
+
+  it('refuses a window that ends before it starts', () => {
+    expect(() => narrowedApprovalsUrl(flow, '2024-06', 'all', '2024-01'))
+      .toThrow(/is before startPeriod/);
+    expect(() => narrowedApprovalsUrl(flow, '2024-01', 'all', '2024')).toThrow(/endPeriod must be YYYY-MM/);
+  });
 });

@@ -243,12 +243,23 @@ Measured across four CI runs on 21 Sep 2026, against the Bureau's own bytes:
 | + SECTOR + WORK_TYPE + REGION_TYPE | **111.6 MB** | — |
 
 Seventy-four times smaller at the finest grain, and the ceiling an invocation
-can hold is 24 MB. **So SA2 pages by state**: the SA2 code's leading digit is
-its state, eight invocations come to roughly 14 MB each, and
-`market-sales-ingest` has been staged one publisher per invocation since the
-DCJ workbooks exhausted an edge worker's compute allowance
-(`OPEN_DATA_GROWTH_EVIDENCE.md` §10). That is a known shape in this loader
-rather than a new mechanism.
+can hold is 24 MB. So SA2 still has to be loaded in several requests.
+
+**It pages by PERIOD, not by state**, and the first version of this section
+said the opposite. The reasoning was that the SA2 code's leading digit is its
+state — which is true, and is how `stateOfAreaCode` labels a row, and is
+useless for ASKING: an SDMX key selects exact codes, so requesting one
+state's SA2s means enumerating three hundred of them in a URL. A period is
+two parameters whatever the geography, so `narrowedApprovalsUrl` takes an
+`endPeriod` and 4c measures how small a window has to be before it fits.
+
+That correction is the same rule the rest of this document is about, paid
+again by its own author: naming a lever is not the same as having measured
+it. `market-sales-ingest` has been staged one heavy read per invocation since
+the DCJ workbooks exhausted an edge worker's compute allowance
+(`OPEN_DATA_GROWTH_EVIDENCE.md` §10), so several requests is a known shape in
+this loader either way — but which axis they page on was a guess until
+measured.
 
 ### The four defects narrowing exposed
 
