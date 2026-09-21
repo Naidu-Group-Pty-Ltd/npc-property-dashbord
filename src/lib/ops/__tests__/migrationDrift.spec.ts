@@ -306,3 +306,52 @@ describe('a bare source name needs a bare catalogue entry', () => {
     expect(result.notApplied).toHaveLength(0);
   });
 });
+
+/*
+ * And the same fault once more, in the CLASS rather than the schema.
+ *
+ * A test above records that `CREATE MATERIALIZED VIEW` normalises to `view:`.
+ * What it did not follow through to is that the catalogue spells relkind 'm'
+ * as `materialized_view:`, so the two could never meet — which is why
+ * `public.pdf_import_cost_daily` was reported absent on two migrations that
+ * had both run.
+ */
+describe('a materialized view answers to both words', () => {
+  it('is published under view: as well, so an extracted view: can match', async () => {
+    const { readFileSync } = await import('node:fs');
+    const sql = readFileSync('.github/scripts/migration-drift-facts.mjs', 'utf8');
+    expect(sql).toMatch(/'view:'\|\|n\.nspname[^\n]*relkind in \('v','m'\)/);
+    expect(sql).toMatch(/'view:'\|\|c\.relname\s+from pg_class c where c\.relkind in \('v','m'\)/);
+  });
+
+  it('resolves the finding it was written for', async () => {
+    const { assessMigrationDrift } = await import('../../../../scripts/ops/migrationDrift.pure.mjs');
+    const migrations = [{
+      version: '20260614032708', file: 'docling.sql',
+      objects: ['view:public.pdf_import_cost_daily'], probe: null,
+    }];
+    // Before: the catalogue offered only the materialized spelling.
+    expect(assessMigrationDrift({
+      migrations, appliedVersions: [],
+      existingObjects: ['materialized_view:public.pdf_import_cost_daily'],
+    }).notApplied).toHaveLength(1);
+    // After: both words.
+    expect(assessMigrationDrift({
+      migrations, appliedVersions: [],
+      existingObjects: ['materialized_view:public.pdf_import_cost_daily', 'view:public.pdf_import_cost_daily'],
+    }).notApplied).toHaveLength(0);
+  });
+
+  /*
+   * The SQL lives in a template literal, so a backtick in one of its comments
+   * ends the string and the file stops parsing. It did, on the commit that
+   * added the comment above.
+   */
+  it('keeps the catalogue query free of backticks', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync('.github/scripts/migration-drift-facts.mjs', 'utf8');
+    const open = 'const existingObjects = await q(`';
+    const body = src.slice(src.indexOf(open) + open.length);
+    expect(body.slice(0, body.indexOf('`);'))).not.toContain('`');
+  });
+});

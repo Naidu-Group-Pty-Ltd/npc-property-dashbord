@@ -98,8 +98,14 @@ const appliedVersions = await q(
 const existingObjects = await q(`
   select 'table:'||n.nspname||'.'||c.relname from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind in ('r','p')
   union all select 'table:'||c.relname            from pg_class c where c.relkind in ('r','p')
-  union all select 'view:'||n.nspname||'.'||c.relname from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind='v'
-  union all select 'view:'||c.relname             from pg_class c where c.relkind='v'
+  -- A MATERIALIZED view is published under BOTH words. The shared extractor
+  -- consumes the optional materialized prefix before it reads the class, so
+  -- CREATE MATERIALIZED VIEW IF NOT EXISTS public.pdf_import_cost_daily
+  -- records view:public.pdf_import_cost_daily and could never match a
+  -- catalogue that spells relkind 'm' one way only — measured 21 Sep 2026 on
+  -- two migrations that had both run.
+  union all select 'view:'||n.nspname||'.'||c.relname from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind in ('v','m')
+  union all select 'view:'||c.relname             from pg_class c where c.relkind in ('v','m')
   union all select 'materialized_view:'||n.nspname||'.'||c.relname from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind='m'
   union all select 'materialized_view:'||c.relname from pg_class c where c.relkind='m'
   union all select 'sequence:'||n.nspname||'.'||c.relname from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind='S'
