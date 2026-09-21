@@ -171,6 +171,46 @@ async function main(): Promise<void> {
   const PROBE_MS = 60_000;
 
   /**
+   * The most CSV one invocation may take — and it is a SIZE, not a time.
+   *
+   * Measured 21 Sep 2026: a runner pulled **3,765 MB in 13.2 s** at 291 MB/s,
+   * and the first criterion here ("finished inside the edge budget") called
+   * that workable. It was measuring GitHub's bandwidth. An edge function has
+   * neither that pipe nor that memory, so a download's feasibility is a
+   * property of the download, never of the machine that happened to fetch it
+   * — the same rule as everywhere else in this programme: name what was
+   * actually measured, not what the measurement was taken on.
+   *
+   * The number is DERIVED and says so. `await res.text()` holds the body as
+   * UTF-16 (2×) and `parseSdmxCsv` builds an object per row before anything
+   * is filtered, so peak is several times the wire size against a 256 MB
+   * isolate: 24 MB of CSV is ~48 MB of string plus perhaps 100 MB of records.
+   *
+   * **Memory is estimated here and not measured**, which is the honest limit
+   * of this instrument: it measures transfer from a runner, and an edge
+   * function's isolate is not something CI can weigh. A download under this
+   * ceiling has cleared the constraint this check CAN see.
+   */
+  const EDGE_BYTE_CEILING = 24 * 1_048_576;
+
+  /**
+   * Can an invocation carry this? Finished, under the byte ceiling, and
+   * inside the wall clock — in that order of importance. The elapsed check
+   * stays as a floor under a transfer that is small but pathologically slow;
+   * it is not what decides.
+   */
+  const workable = (m: { bytes: number; ms: number; finished: boolean }): boolean =>
+    m.finished && m.bytes <= EDGE_BYTE_CEILING && m.ms < EDGE_BUDGET_MS;
+
+  /** Says which bound a window failed, because "complete" hid a 3.7 GB body. */
+  const verdictOf = (m: { bytes: number; ms: number; finished: boolean }): string => {
+    if (!m.finished) return 'DID NOT FINISH';
+    if (m.bytes > EDGE_BYTE_CEILING) return `complete, but ${(m.bytes / 1_048_576).toFixed(0)} MB — PAST THE ${EDGE_BYTE_CEILING / 1_048_576} MB CEILING`;
+    if (m.ms >= EDGE_BUDGET_MS) return 'complete, but past the wall clock';
+    return 'workable';
+  };
+
+  /**
    * Stream, count, and stop at the budget. A partial read is a measurement.
    *
    * The byte count is kept across the throw, because losing it is the defect
@@ -269,9 +309,9 @@ async function main(): Promise<void> {
       + `${(m.bytes / 1_048_576).toFixed(1).padStart(7)} MB  `
       + `${(m.ms / 1000).toFixed(1).padStart(6)} s  `
       + `${(rate / 1024).toFixed(0).padStart(6)} KB/s  `
-      + `${m.finished ? 'complete' : 'DID NOT FINISH'}${m.error ? ` (${m.error})` : ''}`,
+      + `${verdictOf(m)}${m.error ? ` (${m.error})` : ''}`,
     );
-    if (m.finished && m.ms < EDGE_BUDGET_MS && !carried) carried = { ...w, url, bytes: m.bytes };
+    if (workable(m) && !carried) carried = { ...w, url, bytes: m.bytes };
   }
 
   /*
@@ -406,9 +446,9 @@ async function main(): Promise<void> {
         + `${(m.bytes / 1_048_576).toFixed(1).padStart(7)} MB  `
         + `${(m.ms / 1000).toFixed(1).padStart(6)} s  `
         + `${(rate / 1024).toFixed(0).padStart(6)} KB/s  `
-        + `${m.finished ? 'complete' : 'DID NOT FINISH'}${m.error ? ` (${m.error})` : ''}`,
+        + `${verdictOf(m)}${m.error ? ` (${m.error})` : ''}`,
       );
-      if (m.finished && m.ms < EDGE_BUDGET_MS && flow === choice.flow) {
+      if (workable(m) && flow === choice.flow) {
         // The finest grain, carried. This is the answer the design needed.
         carried = {
           label: `${label}, narrowed, from ${START_PERIOD}`,
@@ -418,7 +458,7 @@ async function main(): Promise<void> {
           url: narrowedApprovalsUrl(flow, START_PERIOD, narrowedKey),
           bytes: m.bytes,
         };
-      } else if (m.finished && m.ms < EDGE_BUDGET_MS && !carried) {
+      } else if (workable(m) && !carried) {
         carried = {
           label: `${label}, narrowed, from ${START_PERIOD}`,
           flow,
@@ -434,20 +474,30 @@ async function main(): Promise<void> {
 
   h('5 · What an invocation can actually carry');
   if (!carried) {
-    console.log('  No window completed inside the probe budget.');
+    console.log('  No window is small enough for one invocation.');
     console.log('');
-    console.log(`  The Bureau ANSWERED every one of them — this is not an outage. The`);
-    console.log('  register as configured cannot be loaded by an edge function with a');
-    console.log(`  ~${EDGE_BUDGET_MS / 1000}s wall clock, and the loader must page the query or drop to`);
-    console.log('  a coarser grain. Failing, because a schedule that cannot finish is');
-    console.log('  worse than no schedule: it writes a partial register every night and');
-    console.log('  reports success.');
+    console.log('  The Bureau ANSWERED every one of them — this is not an outage, and');
+    console.log('  a window marked "complete" above was a runner with a 291 MB/s pipe');
+    console.log('  finishing something an edge function could never hold. The bound');
+    console.log(`  that decides is ${EDGE_BYTE_CEILING / 1_048_576} MB of CSV, not the clock.`);
+    console.log('');
+    console.log('  So the register as configured cannot be loaded, and the remaining');
+    console.log('  levers are paging the query — the SA2 code\'s leading digit is its');
+    console.log('  state, and this loader is already staged one publisher per');
+    console.log('  invocation — or dropping to a coarser grain and saying so on the');
+    console.log('  page. Failing, because a schedule that cannot finish is worse than');
+    console.log('  no schedule: it writes a partial register every night and reports');
+    console.log('  success.');
     process.exit(1);
   }
   kv('workable window', carried.label);
   kv('grain', carried.grain);
-  kv('bytes', carried.bytes.toLocaleString('en-AU'));
+  kv('bytes', `${carried.bytes.toLocaleString('en-AU')} (${(carried.bytes / 1_048_576).toFixed(1)} MB of ${EDGE_BYTE_CEILING / 1_048_576} MB)`);
   kv('url', carried.url);
+  console.log('');
+  console.log('  Transfer is what this can measure. An isolate\'s memory is not, so');
+  console.log('  the ceiling above is derived rather than weighed — stated so nobody');
+  console.log('  reads a green run as proof the parse fits.');
 
   h('6 · What the parser makes of it');
   let body: string;

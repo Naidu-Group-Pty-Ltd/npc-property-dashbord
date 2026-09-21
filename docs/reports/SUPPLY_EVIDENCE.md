@@ -200,6 +200,38 @@ It has found a real defect on every run it has made: discovery refusing the
 Bureau's own catalogue, a ceiling refusing a correct national figure, an
 edition holding one month, and a measure rule admitting building counts.
 
+## 7a · A download's feasibility is a property of the DOWNLOAD
+
+The check's first criterion for "can an invocation carry this" was *finished
+inside the edge budget*. On 21 Sep 2026 a runner produced
+
+```
+SA2, 12 months   200   3765.2 MB   13.2 s   291404 KB/s   complete
+```
+
+— three and three-quarter gigabytes, complete, in thirteen seconds, because
+that runner had a 291 MB/s pipe — and the criterion called it workable. It
+was measuring GitHub's bandwidth.
+
+That is this programme's own recurring failure wearing a new costume: a green
+measurement standing for a thing that does not work. The bound is now a
+**size** (`EDGE_BYTE_CEILING`, 24 MB of CSV), the elapsed check stays only as
+a floor under a transfer that is small but pathologically slow, and a window
+that completes over the ceiling reports *"complete, but N MB — PAST THE
+CEILING"* rather than "complete".
+
+The same measurement settles the SA2 question by completion rather than by
+inference: `/all` at SA2 grain for twelve months **is** 3,765 MB. Not "at
+least"; that is the size.
+
+Two honest limits on the ceiling itself, both stated in the code. It is
+**derived, not measured** — `await res.text()` holds the body as UTF-16 and
+`parseSdmxCsv` builds an object per row before anything is filtered, so peak
+is several times the wire size against a 256 MB isolate. And **memory is not
+something CI can weigh**: this instrument measures transfer from a runner, so
+a green run proves the download fits the constraint the check can see, and
+not that the parse fits the one it cannot.
+
 ## 8 · Open
 
 **Whether the narrowed query makes the finest grain loadable.** That is what
