@@ -32,6 +32,7 @@ import {
 import { withPlanningEvidence } from '../_shared/reports/location/planningEvidenceRecord.pure.ts';
 import { crimeStatBlocks } from '../_shared/reports/crimePromptBlocks.pure.ts';
 import { climateStatBlocks } from '../_shared/reports/climatePromptBlocks.pure.ts';
+import { amenityFactBlocks, transportFactBlocks } from '../_shared/reports/location/amenityFactBlocks.pure.ts';
 import { macroEconomicBlock } from '../_shared/reports/macroPromptBlocks.pure.ts';
 import { activateSafeGenerationInputs, subjectPostcodeOf } from '../_shared/reports/contract/safeGenerationInputs.pure.ts';
 import { resolveOneReportGeography } from '../_shared/geography/resolveOneReportGeography.ts';
@@ -6112,51 +6113,13 @@ ${(() => {
 
 ## Healthcare, shopping and recreation
 
-${(() => {
-  const li: any = enhancedData.locationIntelligence ?? {};
-  const rows: string[] = [];
-  const add = (label: string, count: unknown, nearest: unknown) => {
-    // `absent is never zero` — a failed Places category stores null and a
-    // reached-but-empty one stores 0, so a number is a measurement and
-    // anything else is a category nobody reached.
-    if (typeof count !== 'number') return;
-    rows.push(`| ${label} | ${count} within 5 km | ${typeof nearest === 'string' && nearest ? nearest : '—'} |`);
-  };
-  add('Healthcare facilities', li.healthcare?.facilitiesWithin5km, li.healthcare?.nearestHospital);
-  add('Supermarkets', li.lifestyle?.supermarkets, li.lifestyle?.nearestSupermarket);
-  add('Shopping centres', li.lifestyle?.shoppingCenters, li.lifestyle?.nearestShoppingCenter);
-  add('Parks and recreation', li.lifestyle?.parks, li.lifestyle?.nearestPark);
-  add('Restaurants and cafés', li.lifestyle?.restaurants, null);
-  if (!rows.length) {
-    return 'No amenity reading was retrieved for this property. Say that amenity data was not '
-      + 'retrieved; do NOT state a count, a distance or a named facility, and do NOT describe '
-      + 'the area as well or poorly served.';
-  }
-  return `| Category | Count | Nearest |\n|---|---|---|\n${rows.join('\n')}\n\n`
-    + 'A count of zero here is a measurement and may be reported as one — a rural address with no '
-    + 'hospital within five kilometres is a fact worth printing. A category absent from this table '
-    + 'was not measured and must not be described either way.';
-})()}
+${amenityFactBlocks(enhancedData.locationIntelligence)}
 
 ---
 
 ## Getting about
 
-${(() => {
-  const t: any = enhancedData.locationIntelligence?.transport ?? {};
-  const parts: string[] = [];
-  if (t.nearestStation) parts.push(`Nearest public transport stop on record: **${t.nearestStation}**${t.stationDistance ? `, ${t.stationDistance}` : ''}.`);
-  if (Array.isArray(t.transportTypes) && t.transportTypes.length) parts.push(`Modes recorded: ${t.transportTypes.join(', ')}.`);
-  if (t.commuteToCbd) parts.push(`Measured commute: ${t.commuteToCbd}.`);
-  if (!parts.length) {
-    return 'No public-transport reading was retrieved for this property. Say that transport data '
-      + 'was not retrieved; do NOT name a station, state a distance or a commute time, and do NOT '
-      + 'call the area well served or car-dependent. Car dependence is a finding that needs a '
-      + 'measurement like any other.';
-  }
-  return `${parts.join('\n\n')}\n\nA stop found is a fact about this area; no stop found is a fact about the `
-    + 'FEEDS that were loaded. Neither is a score, and no service frequency or mode quality was measured.';
-})()}
+${transportFactBlocks(enhancedData.locationIntelligence)}
 
 ---
 
