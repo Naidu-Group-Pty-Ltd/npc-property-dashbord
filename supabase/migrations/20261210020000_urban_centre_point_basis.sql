@@ -1,3 +1,11 @@
+-- @effect: select 1 from pg_constraint where conname = 'urban_centre_register_point_basis_check' and pg_get_constraintdef(oid) like '%sua_boundary_centroid%'
+-- The line above is this file's own statement of what is true once it has
+-- run. It exists because this migration creates no object, so
+-- `scripts/ops/migration-drift.mjs` has nothing to count and would report
+-- it as unverifiable — which is exactly how seed v18 merged to main, never
+-- landed, and left every report printing the heading it was written to fix.
+-- Read-only by construction: the runner refuses anything that is not a
+-- lone SELECT.
 -- A point basis must name the instrument, not borrow a word from a service
 -- that declined to supply one.
 --

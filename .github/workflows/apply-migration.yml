@@ -1,6 +1,6 @@
 name: Apply a migration
 
-# Applies ONE named migration file to the Supabase project, on request.
+# Applies the named migration file(s) to the Supabase project, on request.
 #
 # ## Why this is not `supabase db push`
 #
@@ -14,9 +14,15 @@ name: Apply a migration
 # `db push` trusts that ledger. Running it would replay ~130 already-applied
 # migrations, including data mutations — `listing_image_chrome_purge`,
 # `aml_record_classification_correction` — where a second application is not a
-# no-op. So this workflow applies exactly the one file it is given, and nothing
-# else. Deciding *which* file is a human judgement made before dispatch, not a
-# thing this workflow infers.
+# no-op. So this workflow applies exactly the files it is given, in the order
+# it is given them, and nothing else. Deciding *which* files is a human
+# judgement made before dispatch, not a thing this workflow infers.
+#
+# Several may be named in one dispatch. That is not a relaxation of the rule
+# above — every file is still chosen by a person — it removes the friction that
+# let a backlog form: clearing seven merged-but-unapplied migrations previously
+# meant seven dispatches, and "Migration drift" now reports that backlog as a
+# list, which is only useful if the list can be acted on in one go.
 #
 # ## Why it chunks
 #
@@ -56,7 +62,7 @@ on:
   workflow_dispatch:
     inputs:
       file:
-        description: 'Migration file path, relative to the repo root'
+        description: 'Migration file path(s), relative to the repo root. Several may be given, one per line or comma-separated; they are applied in the order written and the run stops at the first failure.'
         required: true
         type: string
         default: supabase/migrations/20260812090000_seed_template_library_v5_borrowing_capacity_portfolio.sql
@@ -145,7 +151,22 @@ jobs:
         run: |
           set -euo pipefail
           psql --version
-          test -f "$FILE" || { echo "::error title=No such file::$FILE"; exit 1; }
+          # Several files may be named, and they are applied in the order
+          # written. Order is the dispatcher's responsibility and it matters:
+          # migrations are ordered by construction, so a later file may need an
+          # object an earlier one creates — list them oldest first, as the
+          # drift report prints them. Every file is checked to exist BEFORE any
+          # is applied, so a typo in the fourth cannot leave the first three
+          # applied against an operator who thought they had named four.
+          mapfile -t FILES < <(printf '%s' "$FILE" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$')
+          if [ "${#FILES[@]}" -eq 0 ]; then echo '::error title=No file named::'; exit 1; fi
+          for f in "${FILES[@]}"; do
+            test -f "$f" || { echo "::error title=No such file::$f"; exit 1; }
+          done
+          echo "Applying ${#FILES[@]} file(s), in the order given."
+          for FILE in "${FILES[@]}"; do
+          echo "--- $FILE"
+
           # ON_ERROR_STOP and no --single-transaction, matching what the API
           # route does: statements are applied in order and the run stops at the
           # first error, leaving what came before it applied. Idempotence is the
@@ -172,6 +193,7 @@ jobs:
             echo
             echo "- over psql, in one file"
           } >> "$GITHUB_STEP_SUMMARY"
+          done
 
       - name: Apply over the Management API
         if: steps.route.outputs.route == 'api'
@@ -181,4 +203,13 @@ jobs:
           FILE: ${{ inputs.file }}
           RECORD_VERSION: ${{ inputs.record_version }}
           TUPLES_PER_CHUNK: ${{ inputs.tuples_per_chunk }}
-        run: node .github/scripts/apply-migration.mjs
+        run: |
+          set -euo pipefail
+          mapfile -t FILES < <(printf '%s' "$FILE" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$')
+          for f in "${FILES[@]}"; do
+            test -f "$f" || { echo "::error title=No such file::$f"; exit 1; }
+          done
+          for f in "${FILES[@]}"; do
+            echo "--- $f"
+            FILE="$f" node .github/scripts/apply-migration.mjs
+          done
