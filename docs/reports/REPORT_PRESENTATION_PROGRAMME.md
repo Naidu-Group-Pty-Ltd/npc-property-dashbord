@@ -255,7 +255,44 @@ Measured over its twelve quantitative directives — **withheld 6 · tabulated 2
 kept 4**, the four kept being the two price comparisons and the two growth
 heatmaps, byte-identical.
 
-**W1.4 · One chart standard.**
+**W1.4 · One chart standard — the contrast half is DONE (W4.2, W4.10); the
+SATURATION half is measured and deliberately NOT implemented.**
+
+§2's `< 10pt` band has **two** clauses — *"7:1 **and** never a chromatic accent
+at full saturation"* — and only the first was implemented. Measuring the
+second over the catalogue's hundred approved accents, resolved through
+`brandResolve` at the micro roles:
+
+```
+TOP: sm-inverse 100%  ir-research-blue 98%  mf-amber-signal 93%
+     sm-signal-orange 89%  sm-ultramarine-inverse 87%  sm-red-accent 85% …
+HIST (saturation): 100+:1  90-99:2  80-89:7  70-79:15  60-69:12  50-59:15
+                   40-49:11  30-39:11  20-29:9  10-19:11  0-9:6
+```
+
+**There is no natural break.** The spread is continuous from 0 to 100, so
+unlike the eight-word emphasis ceiling — where the survivors split into two
+populations with 80% at eight words or fewer and **not one at nine** — no
+threshold can be derived from this evidence. Any number picked would be
+invented, and it would reclassify approved designs.
+
+And the decisive reading is §2's own: its stated remedy for small type is
+*"Keep hue and saturation, clamp lightness into the 30–36% band"*, which is
+exactly what `ensureContrast` does. So the saturation clause is guidance about
+**choosing** an accent, not an instruction to desaturate a derived ink — and
+desaturating would contradict the sentence two lines below it in the same
+section.
+
+Recorded rather than built: a validator here would be a rule invented to
+enforce a threshold the design system does not state, against a method the
+design system explicitly prescribes.
+
+The other two acceptance criteria are met: `auditPaletteContrast` judges every
+role against its declared floor at each size band (and W4.10 corrected the one
+role whose declared floor was wrong), and a catalogue spec already asserts
+every block's geometry is byte-identical across a family's ten palettes.
+
+**W1.4 · Original statement, for the record.**
 Apply the `dataviz` method through the colourway tokens, honouring REPORT_RULES
 §2 (7:1 under 10pt; never a saturated chromatic accent at that size) and §3 (no
 shadow, no gradient text, no glass — hierarchy by rule, weight, ground and
