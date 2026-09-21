@@ -326,6 +326,66 @@ const rank = (kind: ApprovalsAreaKind | null): number => {
   return at === -1 ? ABS_BA_GRAIN_LADDER.length : at;
 };
 
+/**
+ * What else the ABS publishes that bears on construction in an area.
+ *
+ * ## Why a SURVEY rather than a wider selection
+ *
+ * `INFRASTRUCTURE_COVERAGE_LIMITS` states, on every report, that this
+ * platform does not reach *"council capital works programmes and their
+ * budgets"* or *"state and federal budget infrastructure programmes"* — and
+ * those are precisely the scheduled projects a reader most wants named. The
+ * residential approvals this module loads are dwelling supply; they say
+ * nothing about a hospital, a school, a distribution centre or a road.
+ *
+ * The ABS collection carries more than dwellings — non-residential building
+ * approvals by value and purpose, engineering construction, building activity
+ * — and some of it is published at sub-state grain. **Which of it, at what
+ * grain, is not knowable from this repository**: neither ABS host answers a
+ * development egress, so any list written here would be a list of what
+ * somebody remembered rather than what the Bureau publishes.
+ *
+ * So this reports rather than decides. It is read by the `probe` stage alone,
+ * changes no selection, and turns "could we also look at scheduled
+ * infrastructure?" into one measurement from production instead of an opinion
+ * about a catalogue nobody here can open. `resolveBuildingApprovalsFlow` stays
+ * exactly as narrow as it was: a survey that widened the selection would be a
+ * loader choosing a series because its name sounded relevant.
+ */
+export const ABS_CONSTRUCTION_SURVEY: ReadonlyArray<{ key: string; pattern: RegExp }> = [
+  { key: 'building_approvals', pattern: /building\s+approvals?/i },
+  { key: 'non_residential', pattern: /non-?residential/i },
+  { key: 'engineering_construction', pattern: /engineering\s+construction/i },
+  { key: 'building_activity', pattern: /building\s+activity|work\s+done|construction\s+activity/i },
+  { key: 'public_infrastructure', pattern: /infrastructure|public\s+works|capital\s+works/i },
+];
+
+export interface SurveyedFlow {
+  /** Which survey term matched. A flow may match more than one. */
+  keys: string[];
+  ref: string;
+  name: string;
+  /** The grain its NAME declares, where it declares one. */
+  areaKind: ApprovalsAreaKind | null;
+}
+
+/**
+ * Every catalogue flow whose name matches a construction term, with the grain
+ * its name declares. Ordered finest-grain first, so an LGA or SA2 series is
+ * the first thing an operator reads.
+ */
+export function surveyConstructionFlows(catalogueText: string): SurveyedFlow[] {
+  return parseDataflowCatalogue(catalogueText)
+    .map((flow) => ({
+      keys: ABS_CONSTRUCTION_SURVEY.filter((t) => t.pattern.test(flow.name)).map((t) => t.key),
+      ref: dataflowRef(flow),
+      name: flow.name,
+      areaKind: grainOf(flow.name)?.areaKind ?? null,
+    }))
+    .filter((f) => f.keys.length > 0)
+    .sort((a, b) => rank(a.areaKind) - rank(b.areaKind) || a.ref.localeCompare(b.ref));
+}
+
 /** The data query for a chosen flow. Labels, because the parse reads labels. */
 export function absBuildingApprovalsUrl(flow: DataflowEntry, startPeriod: string): string {
   if (!/^\d{4}-\d{2}$/.test(startPeriod)) {

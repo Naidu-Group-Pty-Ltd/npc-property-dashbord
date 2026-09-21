@@ -37,6 +37,7 @@ import {
   absBuildingApprovalsUrl,
   dataflowRef,
   resolveBuildingApprovalsFlow,
+  surveyConstructionFlows,
 } from '../_shared/reports/market/openData/absBuildingApprovals.pure.ts';
 import {
   VIC_QUARTERLY_FILE,
@@ -368,6 +369,26 @@ Deno.serve(async (req) => {
             answer.catalogued_flows = choice.cataloguedFlows;
             answer.candidates = choice.candidates;
             answer.data_url = absBuildingApprovalsUrl(choice.flow, '2018-01');
+          } catch (error) {
+            // A refusal is the finding, not a crash: it names what the
+            // catalogue held and why nothing in it was selected.
+            answer.refused = error instanceof Error ? error.message : String(error);
+          }
+          try {
+            /*
+             * What else the ABS publishes that bears on construction in an
+             * area, and at what grain. Reported, never selected on.
+             *
+             * `INFRASTRUCTURE_COVERAGE_LIMITS` tells every reader that this
+             * platform reaches neither council capital works nor budget
+             * infrastructure programmes, and those are the scheduled projects
+             * a reader most wants named. Residential approvals are dwelling
+             * supply and say nothing about a hospital, a school or a road.
+             * This turns "could we also read scheduled infrastructure?" into
+             * a measurement from production rather than a recollection of
+             * what the Bureau publishes.
+             */
+            answer.construction_survey = surveyConstructionFlows(text);
           } catch (error) {
             // A refusal is the finding, not a crash: it names what the
             // catalogue held and why nothing in it was selected.

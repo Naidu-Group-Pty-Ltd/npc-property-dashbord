@@ -788,10 +788,43 @@ Its `answers.abs_building_approvals` reports, in one call from production:
 | `candidates` | every flow whose name matched, finest grain first — what was rejected and why it lost |
 | `data_url` | the exact query the loader would issue |
 | `refused` | the named refusal, where nothing was selected |
+| `construction_survey` | **every** catalogue flow whose name matches a construction term, finest grain first |
 
 A refusal is a finding rather than a crash: it states what the catalogue held
 and why nothing in it was chosen. `{ "stage": "probe", "dataflow": "ABS,X,1.0.0" }`
 tests an explicit identifier against the same checks.
+
+### Scheduled infrastructure, and why the survey exists
+
+Residential approvals are dwelling SUPPLY. They say nothing about a hospital,
+a school, a distribution centre or a road — and those are exactly what
+`INFRASTRUCTURE_COVERAGE_LIMITS` tells every reader this platform does not
+reach: *"council capital works programmes and their budgets"* and *"state and
+federal budget infrastructure programmes"*.
+
+The ABS collection carries more than dwellings — non-residential approvals by
+value and purpose, engineering construction, building activity — and some of
+it is published at sub-state grain. **Which of it, at what grain, is not
+knowable from this repository**, so `surveyConstructionFlows` reports rather
+than decides: it lists every catalogue flow matching `building approvals`,
+`non-residential`, `engineering construction`, `building activity` or
+`infrastructure / public works / capital works`, with the grain each name
+declares, finest first.
+
+It is read by the `probe` stage alone and changes no selection.
+`resolveBuildingApprovalsFlow` stays exactly as narrow as it was, because a
+survey that widened the selection would be a loader choosing a series because
+its name sounded relevant — and a spec asserts the selection still refuses an
+ambiguous catalogue that the survey happily lists in full.
+
+**Where the rest of it lives.** Three tiers sit above the ABS floor and none
+is closed by it:
+
+| tier | what it is | state |
+| --- | --- | --- |
+| Development-application registers | private applications, including large ones — the QLD walk that produced 1,410 dwellings and $1.18bn | **built for QLD**; W3.4 extends it per jurisdiction |
+| State major-project registers | NSW Planning Portal's major projects, VIC's Big Build, and the equivalents | not built |
+| Council capital works programmes | each council's own scheduled works, in its annual budget | **not built, and the hardest** — roughly 537 councils, each publishing a PDF, no common schema and no API. A per-council scraper is unmaintainable and a model reading budget PDFs is exactly what "a web search is not a retrieval" forbids. This one needs a decision about SOURCE before any code. |
 
 **Why this matters more than it looks.** Every test behind
 `absBuildingApprovals.pure.ts` runs on synthetic SDMX-CSV written to the

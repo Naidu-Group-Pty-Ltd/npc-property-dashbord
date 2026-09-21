@@ -25,6 +25,8 @@ import {
   resolveBuildingApprovalsFlow,
   resolveColumns,
   stateOfAreaCode,
+  surveyConstructionFlows,
+  ABS_CONSTRUCTION_SURVEY,
 } from '../../../../supabase/functions/_shared/reports/market/openData/absBuildingApprovals.pure.ts';
 
 // ─── Catalogues ─────────────────────────────────────────────────────────────
@@ -362,5 +364,61 @@ describe('the small readers', () => {
     expect(APPROVALS_ARE_NOT_COMPLETIONS).toMatch(/approv/i);
     expect(APPROVALS_ARE_NOT_COMPLETIONS).toMatch(/commenc/i);
     expect(APPROVALS_ARE_NOT_COMPLETIONS).toMatch(/complet/i);
+  });
+});
+
+describe('the construction survey reports and never decides', () => {
+  const CATALOGUE = xmlCatalogue([
+    LGA_FLOW,
+    ['BA_NONRES_LGA', '1.0.0', 'Building Approvals, Non-residential Building by Local Government Area'],
+    ['ENGC', '1.0.0', 'Engineering Construction Activity, Australia'],
+    ['BACT', '1.0.0', 'Building Activity, Value of Work Done, States and Territories'],
+    ...NOISE,
+  ]);
+
+  it('finds every construction term, finest grain first', () => {
+    const found = surveyConstructionFlows(CATALOGUE);
+    expect(found.map((f) => f.ref)).toEqual([
+      // Both LGA flows lead; within a grain the order is the reference, so it
+      // is stable across catalogue reorderings.
+      'ABS,BA_NONRES_LGA,1.0.0',
+      'ABS,BUILDING_APPROVALS_LGA,1.0.0',
+      'ABS,BACT,1.0.0',
+      'ABS,ENGC,1.0.0',
+    ]);
+    expect(found[0].areaKind).toBe('lga');
+    expect(found.find((f) => f.ref === 'ABS,ENGC,1.0.0')?.areaKind).toBeNull();
+  });
+
+  it('records every term a flow matched, not just the first', () => {
+    const nonres = surveyConstructionFlows(CATALOGUE).find((f) => f.ref === 'ABS,BA_NONRES_LGA,1.0.0')!;
+    expect(nonres.keys.sort()).toEqual(['building_approvals', 'non_residential']);
+  });
+
+  it('leaves a flow no construction term matches out entirely', () => {
+    expect(surveyConstructionFlows(CATALOGUE).map((f) => f.ref)).not.toContain('ABS,CPI,1.1.0');
+  });
+
+  it('does NOT widen the selection \u2014 discovery is unchanged by the survey', () => {
+    /*
+     * The whole point. A survey that changed what gets loaded would be a
+     * loader choosing a series because its name sounded relevant; the
+     * selection stays the narrow, refuse-on-ambiguity rule it was, and the
+     * survey is read by the `probe` stage alone.
+     */
+    expect(() => resolveBuildingApprovalsFlow(CATALOGUE))
+      .toThrow(/refused rather than picking one/);
+    expect(ABS_CONSTRUCTION_SURVEY.map((t) => t.key)).toContain('public_infrastructure');
+  });
+
+  it('carries the terms the coverage statement names as unreached', () => {
+    // `INFRASTRUCTURE_COVERAGE_LIMITS` says council capital works and budget
+    // infrastructure programmes are not reached. If the ABS publishes
+    // anything at that grain, these are the words it would publish it under.
+    const keys = ABS_CONSTRUCTION_SURVEY.map((t) => t.key);
+    expect(keys).toEqual([
+      'building_approvals', 'non_residential', 'engineering_construction',
+      'building_activity', 'public_infrastructure',
+    ]);
   });
 });
