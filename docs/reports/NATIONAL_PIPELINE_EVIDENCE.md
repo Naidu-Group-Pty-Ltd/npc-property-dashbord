@@ -65,19 +65,56 @@ than anything any publisher did.
 
 | question | answer |
 | --- | --- |
-| Does the catalogue list Infrastructure Australia as a publishing organisation? | **No** |
+| Does the catalogue list Infrastructure Australia as a publishing organisation? | **Yes** — `infrastructure-australia` |
+| Packages it holds (declared / read) | **50 / 50** — the walk is complete |
+| Packages that are the Priority List | **0** |
 | `"infrastructure priority list"` — ranked hits | 3 of 3 declared, **0 survive both tests** |
 | `Infrastructure Australia priority` — ranked hits | 50 of **1,769** declared, **0 survive both tests** |
 | Machine-readable resources this repository would try | **none** |
 
-**Reading: `publisher_absent`.** The register is not distributed through the
-Commonwealth catalogue, so the coverage statement is the honest branch — and
-it is now a statement with a measurement behind it rather than a literal in a
-list.
+**Reading: `not_in_catalogue`.** The publisher is on the catalogue, its
+entries were enumerated in full, and none of them is this register. So the
+coverage statement is the honest branch — and it is now a statement with a
+measurement behind it rather than a literal in a list.
 
-The probe stands as the instrument that flips the branch the day that changes:
-it runs on every build, writes nothing anywhere, and its exit code is the
-whole design (§7).
+### 3.1 · What the publisher DOES hold, so the absence can be checked
+
+All fifty are spatial layers from the **Australian Infrastructure Audit 2019**
+and the **Outer Urban Public Transport** study, in SHP / SLD / WMS / WFS /
+GEOJSON — road congestion and public-transport crowding at 2016 and 2031 AM
+and PM peaks, travel time to the nearest hospital, primary school, secondary
+school and five childcare centres by car and by public transport, the
+percentage of a city's jobs reachable in thirty minutes, and the inner/middle/
+outer sector boundaries.
+
+They are real, current-licensed, machine-readable national layers — and they
+are **not** the Priority List. W3.2 asks for *nationally significant projects
+carrying the publisher's own status word*; an accessibility raster carries no
+project, no status and no date. Recorded here as a finding and deliberately
+not built on: using them because they are the thing that answered would be
+substituting an available measurement for the one the section needs, which is
+what a coverage statement exists to prevent. Whether the accessibility layers
+are worth a reading of their own is a question for W3.4, not an answer to this
+one.
+
+The probe stands as the instrument that flips the branch the day the Priority
+List is published there: it runs on every build, writes nothing anywhere, and
+its exit code is the whole design (§7).
+
+### 3.2 · The correction this table already needed
+
+The first version of this section reported **`publisher_absent`** — that the
+catalogue listed no Infrastructure Australia at all. That was wrong, and it
+was wrong for the reason §6.2 records: the enumeration behind it had been
+truncated at CKAN's default page size of 25.
+
+So the corroborated enumeration did not merely harden the method. **It changed
+the answer.** `publisher_absent` and `not_in_catalogue` send a person to
+different places — the publisher's own site versus another name in the same
+catalogue — so the truncation had not just weakened a claim, it had produced
+the wrong remedy. That is the strongest available argument for §5's insistence
+that the readings stay distinct, and for §6's rule that an absence is only an
+absence if the question could have found it.
 
 ---
 
@@ -327,9 +364,17 @@ defect in its general form.
 ## 9 · What is NOT claimed
 
 - **Nothing in the product reads the national pipeline today**, and the
-  measurement is why: the register is not distributed through the
-  Commonwealth catalogue. `INFRASTRUCTURE_COVERAGE_LIMITS` continues to name
-  it, which is the accepted branch.
+  measurement is why: Infrastructure Australia publishes fifty machine-readable
+  layers through the Commonwealth catalogue and the Priority List is not among
+  them. `INFRASTRUCTURE_COVERAGE_LIMITS` continues to name it, which is the
+  accepted branch.
+- **The Priority List is not claimed to be unpublished.** It is published, as
+  a web publication; what is measured is that it is not distributed as a feed
+  *there*. A project read off that publication may still travel, through
+  `publishedProjectRegister.pure.ts`, labelled *recorded from an official
+  publication* — which is a different act with a different label, not this
+  register.
+- **The accessibility layers are not used**, per §3.1.
 - **No per-report call is made to the catalogue.** A live lookup per report
   would spend a network round trip to learn a fact that changes on the scale
   of months — the `amenity_register` lesson (*amenities are a REGISTER, not a

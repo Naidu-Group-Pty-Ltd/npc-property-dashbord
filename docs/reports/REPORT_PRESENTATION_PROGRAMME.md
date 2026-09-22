@@ -844,10 +844,12 @@ a coverage statement that names the register asked.
 
 > **Closed 22 Sep 2026 on the second branch, by measurement.**
 > `nationalPipeline.pure.ts` asks the Commonwealth's own open data catalogue
-> and holds no identifier anybody typed. Measured from CI: data.gov.au lists
-> **no Infrastructure Australia among its publishing organisations** — so the
-> register is not distributed there, the coverage statement is the honest
-> branch, and it is now a measurement rather than a literal.
+> and holds no identifier anybody typed. Measured from CI: Infrastructure
+> Australia IS a publisher on data.gov.au and holds **50 packages, walked
+> complete, of which 0 are the Priority List** — all fifty are Audit 2019 and
+> Outer Urban PT accessibility layers, which carry no project and no status
+> word. So the coverage statement is the honest branch, and it is now a
+> measurement rather than a literal.
 > `national-pipeline-liveness.ts` runs on every build as the instrument that
 > flips the branch the day that changes. No per-report call is made: a live
 > lookup would spend a round trip to learn a fact that changes on the scale of
@@ -859,6 +861,9 @@ a coverage statement that names the register asked.
 > answered with CKAN's default 25 and a page read as a list, inside the commit
 > that fixed the first. The enumeration is corroborated from two endpoints
 > that fail differently, and an absence needs both to answer and to agree.
+> That corroboration changed the ANSWER, not just the method:
+> `publisher_absent` and `not_in_catalogue` send a person to different
+> remedies, so the truncation had produced the wrong one.
 
 **W3.3 · National forward demand: ABS population projections by SA2.**
 Replaces "no forward projection" everywhere rather than in one state.

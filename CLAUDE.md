@@ -2141,13 +2141,19 @@ Priority List as a standing limit since it was written, and W3.2's acceptance
 is two-branched — named entries, **or** a coverage statement naming the
 register asked. The statement shipped first; what had never been done is the
 part that decides which branch is honest, which is **asking the publisher**.
-Measured 22 Sep 2026 from CI: the Commonwealth catalogue lists **no
-Infrastructure Australia among its publishing organisations**, so the register
-is not distributed there and the statement is the honest branch — a
-measurement now rather than a literal. The probe stands as the instrument that
-flips it, and **no per-report call is made**, because a live lookup would spend
-a round trip to learn a fact that changes on the scale of months
-(`amenity_register`'s rule).
+Measured 22 Sep 2026 from CI: Infrastructure Australia **is** a publisher on
+the Commonwealth catalogue and holds **50 packages, walked complete, of which
+0 are the Priority List** — all fifty are Australian Infrastructure Audit 2019
+and Outer Urban PT spatial layers (congestion, crowding, travel time to
+hospital and school, jobs reachable in thirty minutes) in SHP/WFS/GEOJSON.
+Real, national, machine-readable, and **not** named projects with a status
+word, so they are recorded as a finding and deliberately not built on: using
+the thing that answered because it answered is what a coverage statement
+exists to prevent. Reading: `not_in_catalogue` — the statement is the honest
+branch, and it is a measurement now rather than a literal. The probe stands as
+the instrument that flips it, and **no per-report call is made**, because a
+live lookup would spend a round trip to learn a fact that changes on the scale
+of months (`amenity_register`'s rule).
 
 Nothing in it is an identifier anybody typed — no organisation slug, no package
 id, no resource id; a resource id is what the module OUTPUTS. Four rules: **a
@@ -2172,7 +2178,11 @@ a page was read as a list — inside the commit that fixed it. So the enumeratio
 is **corroborated from two endpoints that fail differently** (the plain slug
 list and the package index's own organisation facet), an absence needs both to
 answer AND to agree, a facet bucket outside the list refuses, and a matched
-slug that cannot be resolved is a refusal rather than an absence. The reader
+slug that cannot be resolved is a refusal rather than an absence. **That
+corroboration did not merely harden the method — it CHANGED the answer**, from
+`publisher_absent` to `not_in_catalogue`, which are two different remedies
+(the publisher's own site versus another name in the same catalogue): the
+truncation had not weakened a claim, it had produced the wrong one. The reader
 for the endpoint that lied is **deleted** rather than left unused, and the
 inverse guard refuses organisation OBJECTS from the slug endpoint. One rule
 also only ever half worked: `/infrastructure\s+australia/i` matches the TITLE
