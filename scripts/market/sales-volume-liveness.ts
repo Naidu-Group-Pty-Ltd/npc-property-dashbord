@@ -116,7 +116,12 @@ async function ask(url: string): Promise<Fetched> {
  * The merge de-duplicates by dataset id, so a dataset five queries all find is
  * counted once.
  */
-interface CatalogueRead { parse: VolumeCatalogueParse; verdict: CatalogueVerdict }
+interface CatalogueRead {
+  parse: VolumeCatalogueParse;
+  verdict: CatalogueVerdict;
+  /** What the index said about its own size, so an absence can state it. */
+  inventory: number | null;
+}
 
 async function askCatalogue(c: VolumeCatalogue): Promise<CatalogueRead> {
   console.log(`\n  · ${c.state} — ${c.publisher} (${c.kind})`);
@@ -189,7 +194,7 @@ async function askCatalogue(c: VolumeCatalogue): Promise<CatalogueRead> {
   kv('verdict', verdict.kind === 'not_this_index'
     ? `not this index — ${verdict.detail}`
     : verdict.kind);
-  return { parse, verdict };
+  return { parse, verdict, inventory };
 }
 
 function printCandidates(parse: VolumeCatalogueParse): void {
@@ -281,6 +286,7 @@ async function main(): Promise<void> {
     const coverage = assessVolumeCoverage(
       corroborated ? merged : (ownParse.kind === 'refused' ? ownParse : merged),
       corroborated,
+      ownRead.inventory,
     );
     console.log('');
     kv('reading', coverage.kind);

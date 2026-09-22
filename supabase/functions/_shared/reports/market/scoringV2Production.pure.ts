@@ -121,7 +121,7 @@ import {
 } from './scoringInputPolicy.pure.ts';
 import { dwellingTypeFor } from './domainEvidence.pure.ts';
 import { riskRemedyFor } from '../risk/propertyRiskSchema.pure.ts';
-import { volumeRemedyClause } from './openData/salesVolumePublishers.pure.ts';
+import { measuredVolumeNote, volumeRemedyClause } from './openData/salesVolumePublishers.pure.ts';
 import {
   MIN_VALID_DIMENSIONS_TO_PUBLISH,
   PUBLICATION_DIMENSIONS,
@@ -723,6 +723,20 @@ export function describeGaps(
          * checks against the loaders themselves — so this sentence cannot
          * drift from what the code does.
          */
+        /*
+         * And the CLIENT-facing sentence, for the four jurisdictions where
+         * the register itself was measured. `NOT_ASSESSED_REASON.demand` is
+         * true everywhere and says nothing about WHY this area in
+         * particular; where a publisher has actually been asked, the reader
+         * is told whether no count is published (WA, NT — established) or
+         * whether this platform could not establish it (ACT, TAS — ours).
+         *
+         * Keeping those two apart is the point. `null` for the other five
+         * jurisdictions, so the existing sentence stands everywhere it
+         * already did — a reading that narrows a sentence must never widen
+         * the set of pages it appears on.
+         */
+        reasonOverride = measuredVolumeNote(input.subject.state) ?? undefined;
         remedy = ['A PRIMARY demand measure — the population series alone is a driver and cannot carry '
           + 'the dimension. Either four periods of the open sales register\'s own transaction counts '
           + 'for this market (market-sales-ingest), or Domain days-on-market, vendor discount, '

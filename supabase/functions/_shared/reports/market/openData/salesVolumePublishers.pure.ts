@@ -564,10 +564,20 @@ export type VolumeCoverage =
   | { kind: 'state_grain_only'; title: string; publisher: string }
   /** A count series published as documents rather than as a feed. */
   | { kind: 'published_as_documents'; title: string; publisher: string; formats: string[] }
-  /** Sales data exists and carries no count. Not a find. */
-  | { kind: 'medians_only'; examined: number }
+  /**
+   * Sales data exists and carries no count. Not a find.
+   *
+   * `searched` is how many datasets MATCHED a sales query and `inventory` is
+   * how big the index is. Both, because the first version carried only the
+   * count that survived attribution and the Northern Territory's sentence
+   * then read *"0 datasets examined"* — which describes a five-query search
+   * of a populated catalogue as looking at nothing. An absence is only
+   * believable beside the size of the question that found it, which is the
+   * rule the sanctions register and the PEP index both answer to.
+   */
+  | { kind: 'medians_only'; searched: number; inventory: number | null }
   /** The catalogues answered and hold no count series. */
-  | { kind: 'no_count_published'; examined: number }
+  | { kind: 'no_count_published'; searched: number; inventory: number | null }
   /** A catalogue could not be read. Says nothing about the jurisdiction. */
   | { kind: 'catalogue_unavailable'; reason: string };
 
@@ -583,6 +593,12 @@ export type VolumeCoverage =
 export function assessVolumeCoverage(
   parse: VolumeCatalogueParse,
   corroborated: boolean,
+  /**
+   * How big the jurisdiction's own index is, where it said. Carried into an
+   * absence so the sentence can state the size of the question rather than
+   * only what survived it.
+   */
+  inventory: number | null = null,
 ): VolumeCoverage {
   if (parse.kind === 'refused') return { kind: 'catalogue_unavailable', reason: parse.reason };
   if (!corroborated) {
@@ -628,8 +644,8 @@ export function assessVolumeCoverage(
   }
   const anyMedian = parse.datasets.some((d) => judgeVolumeDataset(d).median);
   return anyMedian
-    ? { kind: 'medians_only', examined: parse.datasets.length }
-    : { kind: 'no_count_published', examined: parse.datasets.length };
+    ? { kind: 'medians_only', searched: parse.total, inventory }
+    : { kind: 'no_count_published', searched: parse.total, inventory };
 }
 
 /**
@@ -642,6 +658,26 @@ export function assessVolumeCoverage(
  * zero, which is `rentalEvidence`'s *absent is never zero* applied to a
  * register rather than to a field.
  */
+/** `state` for a state, `territory` for a territory. Printing one as the other reads as carelessness. */
+function grainWord(state: VolumeGapState): string {
+  return state === 'ACT' || state === 'NT' ? 'territory' : 'state';
+}
+
+/**
+ * The size of the question, in a reader's words.
+ *
+ * Never a bare "0 datasets examined". Where the catalogue stated its own
+ * size, both numbers are given — an absence found by searching 434 of 2,911
+ * datasets means something a bare zero does not.
+ */
+function searchScale(searched: number, inventory: number | null): string {
+  const matched = `${searched.toLocaleString('en-AU')} dataset${searched === 1 ? '' : 's'} `
+    + 'matched a sales query';
+  return inventory === null || inventory <= 0
+    ? matched
+    : `${matched} out of a published index of ${inventory.toLocaleString('en-AU')}`;
+}
+
 export function volumeCoverageNote(coverage: VolumeCoverage, state: VolumeGapState): string {
   switch (coverage.kind) {
     case 'countable':
@@ -662,13 +698,14 @@ export function volumeCoverageNote(coverage: VolumeCoverage, state: VolumeGapSta
         + 'form it is published in, not about the market.';
     case 'medians_only':
       return `${state}'s published sales data states prices and not counts — `
-        + `${coverage.examined} datasets were examined and none carries a number of sales. This `
-        + 'report therefore states no transaction-volume reading for this area, which is a limit of '
-        + 'what is published rather than a measurement.';
+        + `${searchScale(coverage.searched, coverage.inventory)} and none carries a number of `
+        + 'sales. This report therefore states no transaction-volume reading for this area, which '
+        + 'is a limit of what is published rather than a measurement.';
     case 'no_count_published':
-      return `No count of residential sales below state level was found published for ${state} `
-        + `(${coverage.examined} datasets examined across the territory's own catalogue and the `
-        + 'Commonwealth catalogue). This report states no transaction-volume reading for this area.';
+      return `No count of residential sales below ${grainWord(state)} level was found published `
+        + `for ${state} — ${searchScale(coverage.searched, coverage.inventory)} across its own `
+        + 'catalogue and the Commonwealth catalogue, and none carries a number of sales. This '
+        + 'report states no transaction-volume reading for this area.';
     case 'catalogue_unavailable':
       return `Whether ${state} publishes a count of residential sales could not be established for `
         + 'this report, so no transaction-volume reading is stated. That is a statement about the '
@@ -763,4 +800,57 @@ export function volumeRemedyClause(state: string | null | undefined): string | n
         + 'a price at whole-of-jurisdiction grain, which cannot measure this. More loads of what '
         + 'is already wired cannot close it; a register has to be identified and read first.';
   }
+}
+
+
+// ---------------------------------------------------------------------------
+// What the publishers answered — measured, and read by the report
+// ---------------------------------------------------------------------------
+
+/**
+ * The readings, measured 22 September 2026 from CI.
+ *
+ * A constant and not a live lookup, for `amenity_register`'s reason and
+ * `nationalPipeline`'s: a per-report round trip would spend a request to
+ * learn a fact that changes on the scale of months, and the probe in
+ * `scripts/market/sales-volume-liveness.ts` is the instrument that flips it.
+ *
+ *   WA   `medians_only`          the index states **2,911 datasets**, 434
+ *                                matched "property sales", 202 examined
+ *                                after attribution, and **none carries a
+ *                                count of sales**
+ *   NT   `no_count_published`    its index answered and matched none of the
+ *                                five phrasings
+ *   TAS  `catalogue_unavailable` `data.tas.gov.au` does not resolve — ours
+ *   ACT  `catalogue_unavailable` the portal is Socrata and 404s a CKAN 3
+ *                                path — ours
+ *
+ * Two of the four are therefore a real limit of what is published, and two
+ * are gaps in this repository. Keeping them apart is the whole point: a
+ * reader is told *"no count is published"* only where that was established,
+ * and *"this could not be established"* where the failure is ours.
+ */
+export const MEASURED_VOLUME_COVERAGE: Readonly<Record<VolumeGapState, VolumeCoverage>> = {
+  WA: { kind: 'medians_only', searched: 434, inventory: 2911 },
+  NT: { kind: 'no_count_published', searched: 0, inventory: null },
+  TAS: { kind: 'catalogue_unavailable', reason: 'data.tas.gov.au does not resolve from this egress' },
+  ACT: {
+    kind: 'catalogue_unavailable',
+    reason: 'the ACT portal answers a CKAN 3 path with 404 "No service found for this URL" — it is Socrata',
+  },
+};
+
+/**
+ * The client-facing sentence for a jurisdiction whose demand cannot be scored.
+ *
+ * `null` for the five jurisdictions this does not describe, so the existing
+ * `NOT_ASSESSED_REASON.demand` stands everywhere it already did. A reading
+ * that narrows a sentence must never widen the set of pages it appears on.
+ */
+export function measuredVolumeNote(state: string | null | undefined): string | null {
+  if (typeof state !== 'string') return null;
+  const key = state.trim().toUpperCase();
+  if (!(VOLUME_GAP_STATES as readonly string[]).includes(key)) return null;
+  const s = key as VolumeGapState;
+  return volumeCoverageNote(MEASURED_VOLUME_COVERAGE[s], s);
 }

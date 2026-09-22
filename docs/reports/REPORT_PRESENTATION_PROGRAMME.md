@@ -985,6 +985,46 @@ Sales counts for ACT, NT, TAS and WA, so Demand can score nationally rather than
 in four states. Today `scoreTransactionVolume` is the only primary demand
 measure this deployment is entitled to, and it needs four counted periods.
 
+> **Step one closed 22 Sep 2026** —
+> [`SALES_VOLUME_COVERAGE.md`](./SALES_VOLUME_COVERAGE.md). Loading a series
+> is a register WRITE and that boundary is not crossed without asking;
+> asking the publishers is not, so the read-only discovery went first and it
+> answered the question well enough that **there is nothing to ask for yet**.
+>
+> Measured from CI: **Western Australia's catalogue holds 2,911 datasets, 434
+> match "property sales" and 2,883 match "land sales" — and not one of the
+> 202 examined carries a number of sales.** The Northern Territory's index
+> answered and matched none of five phrasings. Both corroborated across the
+> jurisdiction's own catalogue and the Commonwealth catalogue. The other two
+> are OURS: `data.tas.gov.au` does not resolve, and the ACT portal 404s a
+> CKAN 3 path because it is **Socrata** — reaching it needs a second reader,
+> and that 404 body is the evidence the next increment needs, which is why
+> the wrong root is kept and printed rather than replaced with a guess.
+>
+> So W3.5's original shape — load counts for four jurisdictions — is answered
+> for two of them by *there is nothing to load*, and blocked for the other
+> two by our own endpoints rather than by an approval. **That is a better
+> outcome than asking for a table to put nothing in.**
+>
+> Three rules were each paid for again, and the first one caught its own
+> author. **A harvest hit is not a statement about a jurisdiction**: the
+> probe's first run read `countable` for the NT over "datasets examined 0"
+> and named a VICTORIAN department, because the harvest's datasets were
+> merged in and ranked — and the log exposed it only because it prints both
+> numbers, so the output contradicted itself on one screen.
+> **`200 · 0 declared` is not an answer** until the catalogue is asked its
+> own size. And **an absence carries the size of the question that found
+> it** — the sentence read "0 datasets examined" over a five-query search of
+> a populated index.
+>
+> What reaches a client: `measuredVolumeNote` is the demand dimension's
+> `reasonOverride` for those four jurisdictions and `null` for the other
+> five, so a Western Australian report says no count is published, a
+> Tasmanian one says this could not be established, and a New South Wales one
+> says exactly what it said before. The demand remedy's jurisdiction clause
+> was also **wrong about two states** and is composed from
+> `VOLUME_COUNT_SOURCE` now, which a spec checks against the loaders.
+
 **W3.6 · Coverage travels, with a jurisdiction dimension.**
 A Western Australian property must read *"no state planning register is loaded
 for Western Australia"*, never *"no overlays"*. The five absences already

@@ -2389,6 +2389,41 @@ refused 444 localities), and **a file is anchored on the newest capture
 that LOADS**, because the archive's index can list a capture its store
 answers 404 for.
 
+**Demand cannot score in four jurisdictions, and two of them publish
+nothing to score it with.** Read
+[`SALES_VOLUME_COVERAGE.md`](./docs/reports/SALES_VOLUME_COVERAGE.md) before
+touching `_shared/reports/market/openData/salesVolumePublishers.pure.ts`,
+`sales-volume-liveness.ts` or the demand branch of `describeGaps`.
+`scoreTransactionVolume` is the only PRIMARY demand measure this deployment
+is entitled to and it needs **four** periods carrying a count; NSW and QLD
+pair one with every period, SA publishes two counted quarters a release and
+VIC's four are recovered from the archive, while ACT/NT/TAS/WA reach the
+register only through `absResDwell` — state grain, `salesCount: null`.
+**The trap is the easy success**: all four already hold a price at state
+grain and every one publishes something called "property sales", so finding a
+sales dataset and reporting the gap closed changes nothing while looking
+exactly like a fix — `COUNT_PATTERN` asks whether the PUBLISHER says a count
+is in it, and `medians_only` / `state_grain_only` are readings rather than
+finds. Measured 22 Sep 2026 from CI: **WA's catalogue holds 2,911 datasets,
+434 match "property sales", and not one of the 202 examined carries a count**;
+the NT's index answered and matched none of five phrasings; `data.tas.gov.au`
+does not resolve; and the ACT portal 404s a CKAN 3 path because it is
+**Socrata**. Two are a real limit of what is published, two are OURS, and
+keeping them apart is the point. Three rules were each paid for again here.
+**A harvest hit is not a statement about a jurisdiction** — the probe's own
+first run read `countable` for the NT over "datasets examined 0" and named a
+VICTORIAN department, because the harvest catalogue's datasets were merged in
+and ranked; `attributableTo` judges the publishing ORGANISATION, by full name
+and never by abbreviation (`ACT` is inside "Climate Action", the very name
+that caused it) and never by the title. **`200 · 0 declared` is not an
+answer** until the catalogue is asked its own SIZE — 3,000 datasets matching
+none of five phrasings has answered, an index that says it holds none has
+not. And **an absence carries the size of the question that found it**: the
+sentence read *"0 datasets examined"* over a five-query search of a populated
+index, because it carried what survived attribution rather than what was
+searched. Nothing is loaded, no migration is requested, and a source scan
+asserts the probe names no table, client or credential.
+
 ## The 291 Stone Mason Drive audit (QA-291SM)
 Read [`docs/reports/QA_291SM_REMEDIATION_TRACKER.md`](./docs/reports/QA_291SM_REMEDIATION_TRACKER.md)
 before touching the standard (pdf-lib) presentation, the fork's section

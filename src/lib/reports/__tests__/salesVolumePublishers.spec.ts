@@ -29,7 +29,9 @@ import {
   attributableTo,
   catalogueAnswered,
   judgeCatalogueReach,
+  MEASURED_VOLUME_COVERAGE,
   judgeVolumeDataset,
+  measuredVolumeNote,
   mergeVolumeReads,
   parseVolumeCatalogue,
   rankVolumeCandidates,
@@ -295,6 +297,21 @@ describe('what may be stated', () => {
   });
 
   /*
+   * An absence carries the SIZE of the question that found it. The first
+   * version carried only what survived attribution, and the Northern
+   * Territory's sentence then read "0 datasets examined" — a five-query
+   * search of a populated catalogue described as looking at nothing.
+   */
+  it('carries the size of the question into an absence', () => {
+    const c = assessVolumeCoverage(
+      { kind: 'catalogue', total: 434, datasets: [dataset({ title: 'Median sale price' })] }, true, 2911);
+    expect(c.kind).toBe('medians_only');
+    if (c.kind !== 'medians_only') return;
+    expect(c.searched).toBe(434);
+    expect(c.inventory).toBe(2911);
+  });
+
+  /*
    * One catalogue's silence is a statement about that catalogue. This is the
    * fault W3.2's probe committed twice, so an absence requires corroboration
    * and an uncorroborated read cannot produce one.
@@ -316,8 +333,8 @@ describe('the sentence a report may carry', () => {
     { kind: 'countable', title: 'T', publisher: 'P', resourceId: 'r', format: 'CSV', licence: 'CC BY 4.0' },
     { kind: 'state_grain_only', title: 'T', publisher: 'P' },
     { kind: 'published_as_documents', title: 'T', publisher: 'P', formats: ['PDF'] },
-    { kind: 'medians_only', examined: 12 },
-    { kind: 'no_count_published', examined: 12 },
+    { kind: 'medians_only', searched: 434, inventory: 2911 },
+    { kind: 'no_count_published', searched: 0, inventory: null },
     { kind: 'catalogue_unavailable', reason: 'HTTP 503' },
   ];
 
@@ -352,7 +369,7 @@ describe('the sentence a report may carry', () => {
       .toMatch(/whole state|no smaller area/i);
     expect(volumeCoverageNote({ kind: 'published_as_documents', title: 'T', publisher: 'P', formats: ['PDF'] }, 'WA'))
       .toMatch(/rather than as a data feed/i);
-    expect(volumeCoverageNote({ kind: 'medians_only', examined: 3 }, 'NT'))
+    expect(volumeCoverageNote({ kind: 'medians_only', searched: 3, inventory: 9 }, 'NT'))
       .toMatch(/prices and not counts/i);
     expect(volumeCoverageNote({ kind: 'catalogue_unavailable', reason: 'x' }, 'ACT'))
       .toMatch(/about the retrieval/i);
@@ -697,5 +714,69 @@ describe('a harvest hit is not a statement about a jurisdiction', () => {
       .filter((line) => /mergeVolumeReads\(\[ownParse, harvest\]/.test(line))
       .filter((line) => !/^\s*(?:\*|\/\/|\/\*)/.test(line));
     expect(offending, 'the harvest is merged in unfiltered again').toEqual([]);
+  });
+});
+
+
+/**
+ * The measured readings, and the sentence a client's page carries.
+ *
+ * Two of the four are a real limit of what is published and two are gaps in
+ * this repository. Keeping them apart is the whole point.
+ */
+describe('the measured readings', () => {
+  it('records a reading for each of the four and nothing else', () => {
+    expect(Object.keys(MEASURED_VOLUME_COVERAGE).sort()).toEqual([...VOLUME_GAP_STATES].sort());
+  });
+
+  /* WA and the NT were established; ACT and TAS are ours. */
+  it('separates what was established from what this platform could not reach', () => {
+    expect(MEASURED_VOLUME_COVERAGE.WA.kind).toBe('medians_only');
+    expect(MEASURED_VOLUME_COVERAGE.NT.kind).toBe('no_count_published');
+    expect(MEASURED_VOLUME_COVERAGE.TAS.kind).toBe('catalogue_unavailable');
+    expect(MEASURED_VOLUME_COVERAGE.ACT.kind).toBe('catalogue_unavailable');
+  });
+
+  /*
+   * Never a bare zero. An absence found by searching 434 of 2,911 datasets
+   * means something a bare "0 examined" does not.
+   */
+  it('states the size of the question where the index stated it', () => {
+    const wa = measuredVolumeNote('WA') as string;
+    expect(wa).toContain('434');
+    expect(wa).toContain('2,911');
+    expect(wa).not.toMatch(/\b0 datasets\b/);
+    /* And omits it cleanly where the index did not say. */
+    const nt = measuredVolumeNote('NT') as string;
+    expect(nt).not.toMatch(/published index of/);
+    expect(nt).toMatch(/matched a sales query/);
+  });
+
+  /*
+   * A reading that narrows a sentence must never widen the set of pages it
+   * appears on: the other five jurisdictions keep `NOT_ASSESSED_REASON`.
+   */
+  it('says nothing for a jurisdiction it does not describe', () => {
+    for (const s of ['NSW', 'VIC', 'QLD', 'SA', 'AU', '', null, undefined, 'XYZ']) {
+      expect(measuredVolumeNote(s), String(s)).toBeNull();
+    }
+    expect(measuredVolumeNote(' tas ')).toBeTruthy();
+  });
+
+  /* Read by the demand gap's client sentence — not merely exported. */
+  it('is read by the demand grade gap', () => {
+    const src = readFileSync(
+      'supabase/functions/_shared/reports/market/scoringV2Production.pure.ts', 'utf8');
+    expect(src).toMatch(/reasonOverride = measuredVolumeNote\(input\.subject\.state\)/);
+  });
+
+  /* And it is still a statement about the register, never about the market. */
+  it('rates nothing and never reads an absence as few sales', () => {
+    for (const s of VOLUME_GAP_STATES) {
+      const note = measuredVolumeNote(s) as string;
+      expect(note, s).not.toMatch(/\b(?:few|little|no|weak|thin|quiet)\s+(?:sales|demand|activity|turnover)\b/i);
+      expect(note, s).not.toMatch(/\bdemand is\b/i);
+      expect(note, s).toContain(s);
+    }
   });
 });
