@@ -90,12 +90,31 @@ interface ApprovalsRow {
   loaded_at: string | null;
 }
 
+/*
+ * `== null` rather than `=== null`, and a finite check on the conversion.
+ *
+ * `Number(undefined)` is **NaN**, and NaN propagates through `windowOf`'s sum
+ * to the page: rendered, the table's money column reads `$NaN`. PostgREST
+ * returns `undefined` for a column that is not in the projection exactly as
+ * it returns `null` for one that is empty — the class
+ * `check-edge-column-names.mjs` exists for, which cost this repository
+ * `investment_reports.client_id`, `market_updates.summary` and
+ * `custom_users.role_display` — so a `SELECT` that lost `value_aud`, or a
+ * caller passing rows from a narrower select, would print a client a figure
+ * that is not a figure.
+ *
+ * `absent is never zero` is the rule this answers to, in its sharper form: an
+ * absence must travel as an ABSENCE, and NaN is neither. `dwelling_units`
+ * needs no conversion (it is an integer column, and `windowOf` guards it),
+ * but `value_aud` is `numeric`, which supabase-js hands back as a string.
+ */
 function toMonth(r: ApprovalsRow): ApprovalsMonth {
+  const value = r.value_aud == null ? null : Number(r.value_aud);
   return {
     period: r.period,
     buildingType: r.building_type as ApprovalsBuildingType,
-    dwellingUnits: r.dwelling_units,
-    value: r.value_aud === null ? null : Number(r.value_aud),
+    dwellingUnits: r.dwelling_units ?? null,
+    value: value === null || !Number.isFinite(value) ? null : value,
   };
 }
 
