@@ -34,10 +34,12 @@ import {
   ABS_SDMX_STRUCTURE_ACCEPT,
   isOurRequestFault,
 } from '@/lib/reports/../../../supabase/functions/_shared/reports/market/openData/absDataStructure.pure';
+import { regionalTrendBlocks } from '@/lib/reports/../../../supabase/functions/_shared/reports/regionalPromptBlocks.pure';
 import {
   FORWARD_DEMAND_PUBLISHERS,
   assessForwardDemand,
   forwardDemandCoverageNote,
+  trustedStateForForwardDemand,
 } from '@/lib/reports/../../../supabase/functions/_shared/reports/market/openData/forwardDemand.pure';
 import type {
   DataStructure,
@@ -559,5 +561,92 @@ describe('the instrument must not fail the way its subject fails', () => {
     // The guard has to come FIRST, or it guards nothing.
     expect(guard).toBeLessThan(conclusion);
     expect(verdict.slice(guard, guard + 400)).toContain('ours(');
+  });
+});
+
+describe('the prompt gets a permitted form, not a bare prohibition', () => {
+  const generator = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), '../../../../supabase/functions/generate-investment-report/index.ts'),
+    'utf8',
+  );
+  const regenerator = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), '../../../../supabase/functions/regenerate-report-qualitative/index.ts'),
+    'utf8',
+  );
+
+  it('the block carries the absence sentence beside the prohibition', () => {
+    /*
+     * The instruction already forbade "a population projection" and offered
+     * nothing to say instead, while the section validator REQUIRES the words
+     * population, income and employment. A prohibition with no demonstration
+     * of the permitted form is one a model routes around — this repository
+     * has recorded that twice.
+     */
+    const block = regionalTrendBlocks({});
+    expect(block).toMatch(/Forward demand — what this report holds/);
+    expect(block).toMatch(/no projected population, growth rate or horizon/i);
+    // And it must not invite a citation it cannot support.
+    expect(block).toMatch(/different statements/i);
+  });
+
+  it('says the measured table is backward-looking where one is rendered', () => {
+    const withTrend = regionalTrendBlocks({
+      regionalTrends: {
+        sa2: { name: 'Golden Square' },
+        population: { latest: { year: 2024, erp: 10234 }, source: 'ABS Regional population' },
+      },
+    });
+    expect(withTrend).toMatch(/BACKWARD-looking/);
+    expect(withTrend).toMatch(/nothing in it is a statement about\s+what will happen/);
+    expect(withTrend).toMatch(/Forward demand/);
+  });
+
+  it('the generator passes the TRUSTED state, never the NSW-defaulting one', () => {
+    /*
+     * The generator's own `state` is `detectedState || 'NSW'`, so reading it
+     * would name the NSW publisher on every property whose state was never
+     * resolved — a false statement about the jurisdiction, made silently, on
+     * exactly the properties whose evidence is thinnest.
+     */
+    expect(generator).toContain('trustedStateForForwardDemand(subjectGeography, abbreviateState)');
+    // Never the bare variable.
+    expect(generator).not.toMatch(/regionalTrendBlocks\(\s*\{[^}]*state:\s*state\b/);
+  });
+
+  it('and the trusted rule withholds rather than guessing', () => {
+    const abbrev = (v: string | null) => (v === 'New South Wales' ? 'NSW' : v);
+    expect(trustedStateForForwardDemand({ state: 'New South Wales' }, abbrev)).toBe('NSW');
+    expect(trustedStateForForwardDemand({ state: '   ' }, abbrev)).toBeNull();
+    expect(trustedStateForForwardDemand({}, abbrev)).toBeNull();
+    expect(trustedStateForForwardDemand(null, abbrev)).toBeNull();
+    expect(trustedStateForForwardDemand({ state: 42 }, abbrev)).toBeNull();
+  });
+
+  it('the regeneration path names NO publisher rather than a wrong one', () => {
+    /*
+     * A RECORDED ASYMMETRY, not an oversight. On that path the trusted
+     * geography is resolved in `fetchEnhancedData` while the block is composed
+     * in `buildEnhancedDataContext` — a different function — and the only
+     * `state` reachable there is the NSW-defaulting one. So it passes none and
+     * gets the unknown-jurisdiction wording, which states the limit as this
+     * report's rather than naming a publisher for the wrong jurisdiction.
+     *
+     * Asserted so the day someone threads the trusted state through, they
+     * change this test deliberately instead of discovering the gap.
+     */
+    expect(regenerator).toContain('regionalTrendBlocks(enhancedData)');
+    expect(regenerator).not.toContain('trustedStateForForwardDemand');
+    const unknown = regionalTrendBlocks({});
+    expect(unknown).toMatch(/limit of this report rather than a finding about the area/);
+    for (const j of ['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'ACT', 'NT']) {
+      expect(unknown).not.toContain(FORWARD_DEMAND_PUBLISHERS[j].publisher);
+    }
+  });
+
+  it('a resolved jurisdiction names its own publisher and no other', () => {
+    const vic = regionalTrendBlocks({ state: 'VIC' });
+    expect(vic).toContain(FORWARD_DEMAND_PUBLISHERS.VIC.publisher);
+    expect(vic).toContain('Victoria in Future');
+    expect(vic).not.toContain(FORWARD_DEMAND_PUBLISHERS.NSW.publisher);
   });
 });

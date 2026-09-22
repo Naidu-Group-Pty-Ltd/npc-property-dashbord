@@ -101,7 +101,13 @@ describe('the evidence pack is what the report may state', () => {
   it('carries every retrieved evidence block', () => {
     for (const block of [
       'planningStatBlocks(enhancedData)',
-      'regionalTrendBlocks(enhancedData)',
+      // The open paren, like `reconcileNearestSchool(` below: what this
+      // asserts is that the block is COMPOSED, and the argument shape is
+      // incidental — it now carries the trusted state for the
+      // forward-demand sentence. Pinning a call site's argument is the
+      // defect `headMarker`'s spec had, where the asserted argument was
+      // one 39 masters discard.
+      'regionalTrendBlocks(',
       'macroEconomicBlock(enhancedData)',
       'demographicsStatBlocks(enhancedData)',
       'climateStatBlocks(enhancedData)',

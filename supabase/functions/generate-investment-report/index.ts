@@ -86,6 +86,7 @@ import {
   governedFaultToFlag,
 } from '../_shared/reports/contract/governedNarrativeAuthority.pure.ts';
 import { regionalTrendBlocks } from '../_shared/reports/regionalPromptBlocks.pure.ts';
+import { trustedStateForForwardDemand } from '../_shared/reports/market/openData/forwardDemand.pure.ts';
 import { runQAValidation } from '../_shared/compassQAValidator.ts';
 import { correctUnsupportedEvidenceClaims } from '../_shared/reports/investment/evidenceClaims.pure.ts';
 import { startRun as traceStartRun, recordChunk as traceRecordChunk, finishRun as traceFinishRun, packetKeysAttached as tracePacketKeys } from '../_shared/generation-trace.ts';
@@ -4996,7 +4997,13 @@ Suburb Investment Snapshot: [SUBURB NAME], [STATE]
 
 ${demographicsStatBlocks(enhancedData)}
 
-${regionalTrendBlocks(enhancedData)}
+${regionalTrendBlocks({
+  ...enhancedData,
+  // The TRUSTED geography only. `state` here is `detectedState || 'NSW'`,
+  // so reading it would name the NSW publisher on every property whose
+  // state was never resolved.
+  state: trustedStateForForwardDemand(subjectGeography, abbreviateState),
+})}
 
 # 5. Infrastructure & Amenities
 **Education:**
@@ -6143,7 +6150,13 @@ is available to you.
 
 ${planningStatBlocks(enhancedData)}
 
-${regionalTrendBlocks(enhancedData)}
+${regionalTrendBlocks({
+  ...enhancedData,
+  // The TRUSTED geography only. `state` here is `detectedState || 'NSW'`,
+  // so reading it would name the NSW publisher on every property whose
+  // state was never resolved.
+  state: trustedStateForForwardDemand(subjectGeography, abbreviateState),
+})}
 
 ---
 

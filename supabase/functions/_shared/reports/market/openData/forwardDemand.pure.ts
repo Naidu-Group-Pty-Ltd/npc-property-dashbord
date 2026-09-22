@@ -252,3 +252,28 @@ export function forwardDemandCoverageNote(
         + route;
   }
 }
+
+/**
+ * The only state that may select a forward-demand publisher.
+ *
+ * `crimePostcodeAuthority`'s rule applied to a jurisdiction: only a RESOLVED
+ * geography may select evidence, and where nothing is trusted the reading is
+ * withheld rather than risked.
+ *
+ * It matters here because the generator's own `state` variable is
+ * `detectedState || 'NSW'` — it DEFAULTS to New South Wales — so reading it
+ * would name the NSW publisher on every property whose state was never
+ * resolved. That is a false statement about the jurisdiction, made silently,
+ * on exactly the properties whose evidence is thinnest.
+ *
+ * Named here rather than written at each call site because there are two, and
+ * two copies of one rule is how the two come to disagree.
+ */
+export function trustedStateForForwardDemand(
+  geography: { state?: unknown } | null | undefined,
+  abbreviate: (v: string | null) => string | null,
+): string | null {
+  const raw = geography?.state;
+  if (typeof raw !== 'string' || raw.trim() === '') return null;
+  return abbreviate(raw.trim());
+}
