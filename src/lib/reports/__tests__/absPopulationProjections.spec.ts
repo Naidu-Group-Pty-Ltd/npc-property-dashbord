@@ -30,6 +30,16 @@ import {
   surveyPopulationFlows,
   type ProjectionGrain,
 } from '@/lib/reports/../../../supabase/functions/_shared/reports/market/openData/absPopulationProjections.pure';
+import {
+  ABS_SDMX_CSV_ACCEPT,
+  ABS_SDMX_STRUCTURE_ACCEPT,
+  isOurRequestFault,
+} from '@/lib/reports/../../../supabase/functions/_shared/reports/market/openData/absDataStructure.pure';
+import {
+  FORWARD_DEMAND_PUBLISHERS,
+  assessForwardDemand,
+  forwardDemandCoverageNote,
+} from '@/lib/reports/../../../supabase/functions/_shared/reports/market/openData/forwardDemand.pure';
 import type {
   DataStructure,
   StructureDimension,
@@ -291,5 +301,209 @@ describe('a projection is not a measurement, and the type says so', () => {
       expect(line, line).not.toMatch(/\b(19|20)\d{2}\b/);
       expect(line, line).not.toMatch(/\d+(\.\d+)?\s*%/);
     }
+  });
+});
+
+describe('W3.3’s word is "everywhere"', () => {
+  const JURISDICTIONS = ['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'ACT', 'NT'] as const;
+
+  it('names a publisher and a product for all eight, and reads none of them', () => {
+    /*
+     * The acceptance is that "no forward projection" is replaced EVERYWHERE
+     * rather than in one state. Loading one jurisdiction replaces the sentence
+     * for its properties and leaves it standing for the other seven, which is
+     * the failure the criterion names in advance.
+     */
+    for (const j of JURISDICTIONS) {
+      const pub = FORWARD_DEMAND_PUBLISHERS[j];
+      expect(pub, j).toBeDefined();
+      expect(pub.publisher.length, j).toBeGreaterThan(12);
+      expect(pub.product.length, j).toBeGreaterThan(8);
+      expect(pub.url, j).toMatch(/^https:\/\//);
+      // Truthfully false, all eight. The day one is loaded, the flag and the
+      // sentence change together rather than one being forgotten.
+      expect(pub.ingested, j).toBe(false);
+    }
+    expect(Object.keys(FORWARD_DEMAND_PUBLISHERS).sort()).toEqual([...JURISDICTIONS].sort());
+  });
+
+  it('never says a jurisdiction publishes no projection', () => {
+    for (const j of JURISDICTIONS) {
+      const note = forwardDemandCoverageNote({ kind: 'not_loaded' }, j);
+      expect(note, j).toContain(FORWARD_DEMAND_PUBLISHERS[j].publisher);
+      expect(note, j).toContain(FORWARD_DEMAND_PUBLISHERS[j].url);
+      expect(note, j).not.toMatch(/publishes no|has no (?:forward |population )?projection/i);
+    }
+  });
+
+  it('states no grain for a publisher it cannot reach', () => {
+    /*
+     * An earlier draft carried the finest grain each jurisdiction publishes
+     * at. It was removed rather than softened: nothing in this repository can
+     * reach these publishers to check it, so a grain here would be a claim
+     * about somebody else's product that no gate could verify.
+     */
+    const source = readFileSync(
+      resolve(
+        dirname(fileURLToPath(import.meta.url)),
+        '../../../../supabase/functions/_shared/reports/market/openData/forwardDemand.pure.ts',
+      ),
+      'utf8',
+    );
+    // The table LITERAL alone. A wider slice runs into the availability type,
+    // whose own documentation discusses grain legitimately — and a guard that
+    // reads the wrong span is the `limited certificate` bound again.
+    const opens = source.indexOf('export const FORWARD_DEMAND_PUBLISHERS');
+    const table = source.slice(opens, source.indexOf('\n};', opens));
+    expect(table).toContain('NSW:');
+    expect(table).not.toMatch(/\bsa[234]\b/i);
+    expect(table).not.toMatch(/grain/i);
+    expect(table).not.toMatch(/statistical area/i);
+  });
+});
+
+describe('the five forward-demand readings', () => {
+  const readings = [
+    { kind: 'projected', grain: 'sa2' },
+    { kind: 'coarser_than_area', grain: 'state' },
+    { kind: 'grain_not_published', finest: 'state' },
+    { kind: 'not_loaded' },
+    { kind: 'unavailable', reason: 'HTTP 503' },
+  ] as const;
+
+  it('resolves each from what was actually read', () => {
+    expect(assessForwardDemand({ grainHeld: 'sa2', finestPublished: 'sa2', loaded: true }).kind)
+      .toBe('projected');
+    expect(assessForwardDemand({ grainHeld: 'state', finestPublished: 'state', loaded: true }).kind)
+      .toBe('coarser_than_area');
+    expect(assessForwardDemand({ grainHeld: null, finestPublished: 'state', loaded: true }).kind)
+      .toBe('grain_not_published');
+    expect(assessForwardDemand({ grainHeld: null, finestPublished: null, loaded: false }).kind)
+      .toBe('not_loaded');
+    expect(assessForwardDemand({ grainHeld: 'sa2', finestPublished: 'sa2', loaded: true, failure: 'HTTP 503' }).kind)
+      .toBe('unavailable');
+  });
+
+  it('a failure outranks everything, because a bad read is not a reading', () => {
+    // `grainHeld: 'sa2'` and `loaded: true` beside a failure would otherwise
+    // print a projection from a retrieval that did not complete.
+    const r = assessForwardDemand({ grainHeld: 'sa2', finestPublished: 'sa2', loaded: true, failure: 'timeout' });
+    expect(r.kind).toBe('unavailable');
+    if (r.kind !== 'unavailable') return;
+    expect(r.reason).toBe('timeout');
+  });
+
+  it('writes five distinct sentences', () => {
+    const notes = readings.map((r) => forwardDemandCoverageNote(r, 'NSW'));
+    expect(new Set(notes).size).toBe(5);
+  });
+
+  it('separates a caveat on a printed figure from the absence of one', () => {
+    /*
+     * The two that would otherwise collapse. `coarser_than_area` qualifies a
+     * figure that IS printed; `grain_not_published` says none exists for an
+     * area this size. Collapsing them either drops a real reading or implies
+     * one that was never held.
+     */
+    const coarse = forwardDemandCoverageNote({ kind: 'coarser_than_area', grain: 'state' }, 'NSW');
+    const absent = forwardDemandCoverageNote({ kind: 'grain_not_published', finest: 'state' }, 'NSW');
+    expect(coarse).toMatch(/drawn apart/i);
+    expect(coarse).toMatch(/region this property sits in/i);
+    expect(absent).toMatch(/No population projection is held/i);
+    expect(absent).not.toMatch(/drawn apart/i);
+  });
+
+  it('every reading carries the sentence, or says why there is no figure', () => {
+    for (const r of readings) {
+      const note = forwardDemandCoverageNote(r, 'VIC');
+      const qualifies = note.includes('not a measurement') || /no projected figure|No population projection is held/i.test(note);
+      expect(qualifies, r.kind).toBe(true);
+    }
+  });
+
+  it('rates nothing, in either direction', () => {
+    /*
+     * §9's rule and its mirror: an absence may not be rated, and a presence
+     * may not be either. This module prints no level and no direction — a
+     * projection that "shows strong growth" is a conclusion, not a retrieval.
+     */
+    const forbidden = /\b(strong|weak|low|high|minimal|negligible|favourable|robust|poor|growing|declining|rising|falling)\b/i;
+    for (const j of ['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'ACT', 'NT', 'ZZ']) {
+      for (const r of readings) {
+        expect(forwardDemandCoverageNote(r, j), `${j}/${r.kind}`).not.toMatch(forbidden);
+      }
+    }
+  });
+
+  it('an unknown jurisdiction states the limit as ours', () => {
+    const note = forwardDemandCoverageNote({ kind: 'not_loaded' }, 'ZZ');
+    expect(note).toMatch(/limit of this report rather than a finding about the area/i);
+  });
+
+  it('states no figure, no year and no rate in any branch', () => {
+    for (const j of ['NSW', 'ZZ']) {
+      for (const r of readings) {
+        const note = forwardDemandCoverageNote(r, j);
+        expect(note, r.kind).not.toMatch(/\b(19|20)\d{2}\b/);
+        expect(note, r.kind).not.toMatch(/\d+(\.\d+)?\s*%/);
+      }
+    }
+  });
+});
+
+describe('the instrument must not fail the way its subject fails', () => {
+  it('names one Accept header, because it was typed twice and then wrong', () => {
+    /*
+     * The first run of the projection probe sent
+     * `application/vnd.sdmx.structure+xml;version=1.0` — XML instead of JSON,
+     * with no wildcard fallback — took HTTP 406 on every flow, and printed
+     * "THE PREMISE DOES NOT HOLD" over `flows read 0`. The approvals probe
+     * already carried the working header as a literal, TWICE.
+     */
+    expect(ABS_SDMX_STRUCTURE_ACCEPT).toContain('application/vnd.sdmx.structure+json');
+    expect(ABS_SDMX_STRUCTURE_ACCEPT).toContain('*/*');
+    expect(ABS_SDMX_CSV_ACCEPT).toContain('text/csv');
+
+    const probes = ['abs-projection-liveness.ts', 'abs-approvals-liveness.ts'].map((f) =>
+      readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../../../scripts/market', f), 'utf8'));
+    for (const source of probes) {
+      // No probe may retype either header.
+      expect(source).not.toMatch(/Accept:\s*'application\/vnd\.sdmx/);
+      expect(source).not.toMatch(/Accept:\s*'text\/csv/);
+      expect(source).toContain('ABS_SDMX_STRUCTURE_ACCEPT');
+    }
+  });
+
+  it('classifies content negotiation as OUR fault, not the publisher’s', () => {
+    // 406 is the server saying it cannot serve what we asked for; 415 that it
+    // cannot read what we sent. Both are statements about our request.
+    expect(isOurRequestFault(406)).toBe(true);
+    expect(isOurRequestFault(415)).toBe(true);
+    // Everything else stays theirs.
+    for (const status of [200, 301, 400, 401, 403, 404, 429, 500, 502, 503, 504]) {
+      expect(isOurRequestFault(status), String(status)).toBe(false);
+    }
+  });
+
+  it('the probe cannot print a verdict over zero measurements', () => {
+    /*
+     * The second defect of that run, independent of the header: the verdict
+     * block reached "THE PREMISE DOES NOT HOLD" with `findings.length === 0`.
+     * A conclusion drawn from nothing is worse than no conclusion, so the
+     * guard is asserted in the probe's source — it has no exported surface to
+     * test, and a defect this shape is what a source scan is for.
+     */
+    const probe = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), '../../../../scripts/market/abs-projection-liveness.ts'),
+      'utf8',
+    );
+    const verdict = probe.slice(probe.indexOf("h('3 · What W3.3"));
+    const guard = verdict.indexOf('findings.length === 0');
+    const conclusion = verdict.indexOf('THE PREMISE DOES NOT HOLD');
+    expect(guard).toBeGreaterThan(-1);
+    expect(conclusion).toBeGreaterThan(-1);
+    // The guard has to come FIRST, or it guards nothing.
+    expect(guard).toBeLessThan(conclusion);
+    expect(verdict.slice(guard, guard + 400)).toContain('ours(');
   });
 });

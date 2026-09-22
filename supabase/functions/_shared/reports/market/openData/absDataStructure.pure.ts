@@ -81,6 +81,41 @@ import {
   type DataflowEntry,
 } from './absBuildingApprovals.pure.ts';
 
+/**
+ * The `Accept` the ABS's structure endpoints actually serve.
+ *
+ * Named once because it was typed twice and then a third time wrong. The
+ * projection probe sent `application/vnd.sdmx.structure+xml;version=1.0` —
+ * XML instead of JSON, and with no wildcard fallback — and every structure
+ * request answered **HTTP 406 Not Acceptable**. The probe then printed
+ * *"THE PREMISE DOES NOT HOLD"* over `flows read 0`, which is the
+ * urban-centre register's rule paid again: an instrument that can fail the
+ * way its subject fails is not an instrument.
+ *
+ * The JSON variant leads because it is what the Bureau serves; the XML and
+ * wildcard entries follow because a publisher may change a default and a reader
+ * that can read only the shape somebody assumed reports an outage when the
+ * content type moved.
+ */
+export const ABS_SDMX_STRUCTURE_ACCEPT =
+  'application/vnd.sdmx.structure+json;version=1.0,application/xml,*/*';
+
+/** The `Accept` for a data query. Same rule, same reason. */
+export const ABS_SDMX_CSV_ACCEPT = 'text/csv,*/*';
+
+/**
+ * A non-200 that is a statement about OUR REQUEST rather than the publisher.
+ *
+ * 406 is the server saying it cannot serve what we asked for and 415 that it
+ * cannot read what we sent — both are content negotiation, both are ours, and
+ * laundering either as "the ABS did not answer" is a green build standing over
+ * a check that reached the publisher and asked it wrong. Every other non-200
+ * stays theirs.
+ */
+export function isOurRequestFault(status: number): boolean {
+  return status === 406 || status === 415;
+}
+
 /** The structure request for one flow: the DSD and its codelists. */
 export function absDataStructureUrl(flow: DataflowEntry): string {
   return `https://data.api.abs.gov.au/rest/dataflow/${flow.agency}/${flow.id}/${flow.version}`

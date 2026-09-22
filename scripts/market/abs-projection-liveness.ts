@@ -46,7 +46,9 @@ import {
   type DataflowEntry,
 } from '../../supabase/functions/_shared/reports/market/openData/absBuildingApprovals.pure.ts';
 import {
+  ABS_SDMX_STRUCTURE_ACCEPT,
   absDataStructureUrl,
+  isOurRequestFault,
   parseDataStructure,
 } from '../../supabase/functions/_shared/reports/market/openData/absDataStructure.pure.ts';
 import {
@@ -128,7 +130,7 @@ async function main(): Promise<void> {
   kv('projection rule', String(PROJECTION_NAME_PATTERN));
   kv('refusal rule', String(ESTIMATE_NAME_PATTERN));
 
-  const cat = await getOrTheirs(ABS_BA_DATAFLOW_CATALOGUE_URL, 'application/xml', 'the dataflow catalogue');
+  const cat = await getOrTheirs(ABS_BA_DATAFLOW_CATALOGUE_URL, ABS_SDMX_STRUCTURE_ACCEPT, 'the dataflow catalogue');
   kv('http', `${cat.status} · ${cat.bytes} bytes · ${cat.ms} ms`);
   let entries: DataflowEntry[];
   try {
@@ -170,12 +172,24 @@ async function main(): Promise<void> {
     kv('flow', `${dataflowRef(s.entry)} — ${s.entry.name}`);
     let got: Fetched;
     try {
-      got = await get(url, 'application/vnd.sdmx.structure+xml;version=1.0');
+      got = await get(url, ABS_SDMX_STRUCTURE_ACCEPT);
     } catch (err) {
       kv('structure', `not reached — ${err instanceof Error ? err.message : String(err)}`);
       continue;
     }
     kv('structure http', `${got.status} · ${got.bytes} bytes · ${got.ms} ms`);
+    /*
+     * A 406 is the server saying it cannot serve what we ASKED FOR, which is a
+     * statement about our request. The first run of this probe sent the XML
+     * structure media type with no fallback, took 406 on every flow, and
+     * printed "THE PREMISE DOES NOT HOLD" over it — so this case is ours and
+     * fails the job rather than being skipped past.
+     */
+    if (isOurRequestFault(got.status)) {
+      ours(`requesting the structure of ${dataflowRef(s.entry)}`,
+        `HTTP ${got.status} — the Accept header this probe sent is not one the ABS serves: `
+        + JSON.stringify(got.body.slice(0, 200)));
+    }
     if (got.status !== 200) { kv('skipped', `HTTP ${got.status}`); continue; }
     let reading: ReturnType<typeof readProjectionStructure>;
     try {
@@ -225,6 +239,17 @@ async function main(): Promise<void> {
   const withSa2 = findings.filter((f) => f.sa2 >= GRAIN_PRESENCE_FLOOR);
   const finestAnywhere = PROJECTION_GRAIN_ORDER.find((g) => findings.some((f) => f.finest === g)) ?? null;
   kv('flows read', findings.length);
+  /*
+   * A verdict over nothing is the defect this probe shipped with. The
+   * catalogue answered and named projection flows; if none of their
+   * structures was read, that is a failure of THIS SCRIPT and the premise is
+   * untested — so it must be impossible to print a conclusion here.
+   */
+  if (findings.length === 0) {
+    ours('reading any projection structure',
+      `the catalogue named ${projections.length} projection flow(s) and none of their `
+      + 'structures was read, so nothing about the premise was measured');
+  }
   kv('flows publishing SA2', withSa2.length);
   kv('finest grain anywhere', finestAnywhere ?? '(none)');
 

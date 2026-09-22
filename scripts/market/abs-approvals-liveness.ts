@@ -45,6 +45,8 @@ import {
 } from '../../supabase/functions/_shared/reports/market/openData/absBuildingApprovals.pure.ts';
 import {
   ABS_BA_KEY_RULES,
+  ABS_SDMX_CSV_ACCEPT,
+  ABS_SDMX_STRUCTURE_ACCEPT,
   AREA_DIMENSION,
   absDataStructureUrl,
   composeApprovalsKey,
@@ -118,7 +120,7 @@ async function main(): Promise<void> {
   let catalogue: string;
   try {
     const res = await fetch(ABS_BA_DATAFLOW_CATALOGUE_URL, {
-      headers: { 'User-Agent': UA, Accept: 'application/vnd.sdmx.structure+json;version=1.0,application/xml,*/*' },
+      headers: { 'User-Agent': UA, Accept: ABS_SDMX_STRUCTURE_ACCEPT },
       signal: AbortSignal.timeout(90_000),
     });
     kv('status', res.status);
@@ -249,7 +251,7 @@ async function main(): Promise<void> {
     let bytes = 0;
     try {
       const res = await fetch(url, {
-        headers: { 'User-Agent': UA, Accept: 'text/csv,*/*' },
+        headers: { 'User-Agent': UA, Accept: ABS_SDMX_CSV_ACCEPT },
         signal: AbortSignal.timeout(PROBE_MS + 30_000),
       });
       status = res.status;
@@ -327,7 +329,7 @@ async function main(): Promise<void> {
   async function keyFor(flow: DataflowEntry, verbose: boolean): Promise<FlowKey> {
     try {
       const res = await fetch(absDataStructureUrl(flow), {
-        headers: { 'User-Agent': UA, Accept: 'application/vnd.sdmx.structure+json;version=1.0,application/xml,*/*' },
+        headers: { 'User-Agent': UA, Accept: ABS_SDMX_STRUCTURE_ACCEPT },
         signal: AbortSignal.timeout(90_000),
       });
       const text = await res.text();
@@ -502,7 +504,7 @@ async function main(): Promise<void> {
   let body: string;
   try {
     const res = await fetch(carried.url, {
-      headers: { 'User-Agent': UA, Accept: 'text/csv,*/*' },
+      headers: { 'User-Agent': UA, Accept: ABS_SDMX_CSV_ACCEPT },
       signal: AbortSignal.timeout(EDGE_BUDGET_MS),
     });
     if (!res.ok) theirs('data', `HTTP ${res.status} on a URL that answered 200 moments ago`);

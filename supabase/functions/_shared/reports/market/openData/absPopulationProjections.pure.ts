@@ -311,25 +311,14 @@ export function readProjectionStructure(structure: DataStructure): ProjectionStr
   };
 }
 
-/**
- * What this deployment can say about forward demand, and why.
- *
- * Five readings, and they are five different sentences for the reason
- * `SUPPLY_EVIDENCE.md` and `NATIONAL_PIPELINE_EVIDENCE.md` both record: an
- * absence that cannot say which kind it is sends a reader — or an operator —
- * to the wrong conclusion.
+/*
+ * `ForwardDemandAvailability` deliberately does NOT live here. It is a
+ * statement about what THIS DEPLOYMENT can say, which is policy, and it lives
+ * in `forwardDemand.pure.ts` beside the publishers it names. This module
+ * answers only what the Bureau publishes. Two modules deciding one question
+ * is how they come to disagree — and a first draft of this work had the type
+ * in both files.
  */
-export type ForwardDemandAvailability =
-  /** A projection is held at a grain fine enough to describe this area. */
-  | { kind: 'projected'; grain: ProjectionGrain }
-  /** A projection is held, but only for a geography larger than the area. */
-  | { kind: 'coarser_than_area'; grain: ProjectionGrain }
-  /** The publisher projects, and not at any grain this platform loads. */
-  | { kind: 'grain_not_published'; finest: ProjectionGrain | null }
-  /** The register exists and this deployment has never loaded it. */
-  | { kind: 'not_loaded' }
-  /** The catalogue could not be read. Ours, or theirs — never the area's. */
-  | { kind: 'unavailable'; reason: string };
 
 /**
  * The grain at or below which a projection describes the property's own area
