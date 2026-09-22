@@ -9,6 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   APPROVALS_PAGE_MONTHS,
+  planApprovalsWork,
   approvalsPage,
   monthSpan,
   pagesToCover,
@@ -145,5 +146,118 @@ describe('a run can say what remains', () => {
     // are not taken because an unmeasured edge fails as a nightly 546 that
     // pg_cron reports green.
     expect(APPROVALS_PAGE_MONTHS).toBe(3);
+  });
+});
+
+describe('the walk advances itself, in perpetuity, from the register’s own edges', () => {
+  /*
+   * The defect: `approvalsPage` steps back by `(index - 1)` windows and
+   * nothing ever supplied an index. The cron posts `{"stage":"approvals"}`,
+   * the stage reads `body.page ?? 0`, and page 0 asks FORWARD — so the
+   * register re-read three months for ever and never deepened. It was not a
+   * slow backfill; it was no backfill.
+   */
+  const FLOOR = '2023-01';
+
+  /**
+   * One invocation against a simulated register: whatever window the planner
+   * asks for is "loaded", bounded by what the publisher has. Returns the new
+   * register state so a caller can iterate — because the property under test
+   * is CONVERGENCE, which no single assertion can express.
+   */
+  const run = (
+    reg: { frontier: string | null; oldest: string | null; frontierLoadedAt: string | null },
+    asOf: string,
+    published: string,
+  ) => {
+    const work = planApprovalsWork({ ...reg, asOf, floor: FLOOR });
+    if (work.kind === 'settled') return { reg, work };
+    const end = work.endPeriod! > published ? published : work.endPeriod!;
+    const start = work.startPeriod!;
+    return {
+      work,
+      reg: {
+        frontier: reg.frontier === null || end > reg.frontier ? end : reg.frontier,
+        oldest: reg.oldest === null || start < reg.oldest ? start : reg.oldest,
+        // A frontier read stamps the frontier rows; a backfill does not.
+        frontierLoadedAt: work.kind === 'frontier' ? asOf : reg.frontierLoadedAt,
+      },
+    };
+  };
+
+  it('reaches the floor and then settles, without an index anywhere', () => {
+    let reg = { frontier: null as string | null, oldest: null as string | null, frontierLoadedAt: null as string | null };
+    const kinds: string[] = [];
+    for (let i = 0; i < 40; i++) {
+      const step = run(reg, '2026-09', '2026-07');
+      reg = step.reg;
+      kinds.push(step.work.kind);
+      if (step.work.kind === 'settled') break;
+    }
+    expect(kinds[0]).toBe('frontier');
+    expect(kinds).toContain('backfill');
+    expect(kinds[kinds.length - 1]).toBe('settled');
+    // Complete to the floor and current to what the publisher actually has.
+    expect(reg.oldest! <= FLOOR).toBe(true);
+    expect(reg.frontier).toBe('2026-07');
+    // And it got there in a bounded number of invocations, not a month of them.
+    expect(kinds.length).toBeLessThanOrEqual(1 + Math.ceil(44 / APPROVALS_PAGE_MONTHS) + 1);
+  });
+
+  it('never re-reads the frontier on every run, which the lag would have caused', () => {
+    // `asOf > frontier` is ALWAYS true against a publisher two months in
+    // arrears. A comparison-based currency test starves the backfill for
+    // ever — the first cut of this planner did exactly that.
+    const reg = { frontier: '2026-07', oldest: '2026-05', frontierLoadedAt: '2026-09' };
+    const work = planApprovalsWork({ ...reg, asOf: '2026-09', floor: FLOOR });
+    expect(work.kind).toBe('backfill');
+    expect(work.endPeriod).toBe('2026-04');
+  });
+
+  it('takes the frontier once per calendar month, and that is how a revision lands', () => {
+    const settled = { frontier: '2026-07', oldest: '2023-01', frontierLoadedAt: '2026-09' };
+    expect(planApprovalsWork({ ...settled, asOf: '2026-09', floor: FLOOR }).kind).toBe('settled');
+    // The calendar moves: currency is owed again even though nothing else is.
+    const next = planApprovalsWork({ ...settled, asOf: '2026-10', floor: FLOOR });
+    expect(next.kind).toBe('frontier');
+    expect(next.windowsRemaining).toBe(0);
+  });
+
+  it('asks the publisher nothing once complete and current', () => {
+    const work = planApprovalsWork({
+      frontier: '2026-07', oldest: '2023-01', frontierLoadedAt: '2026-09',
+      asOf: '2026-09', floor: FLOOR,
+    });
+    expect(work.kind).toBe('settled');
+    expect(work.startPeriod).toBeNull();
+    expect(work.endPeriod).toBeNull();
+  });
+
+  it('owes nothing extra once the oldest month IS the floor', () => {
+    const work = planApprovalsWork({
+      frontier: '2026-07', oldest: FLOOR, frontierLoadedAt: '2026-09',
+      asOf: '2026-09', floor: FLOOR,
+    });
+    expect(work.kind).toBe('settled');
+  });
+
+  it('deepens below the oldest month and demands a full window', () => {
+    const work = planApprovalsWork({
+      frontier: '2026-07', oldest: '2026-05', frontierLoadedAt: '2026-09',
+      asOf: '2026-09', floor: FLOOR,
+    });
+    expect(work.endPeriod).toBe('2026-04');
+    expect(monthSpan(work.startPeriod!, work.endPeriod!)).toBe(APPROVALS_PAGE_MONTHS);
+    expect(work.minPeriods).toBe(APPROVALS_PAGE_MONTHS);
+  });
+
+  it('establishes the frontier on an empty register and says what remains', () => {
+    const work = planApprovalsWork({
+      frontier: null, oldest: null, frontierLoadedAt: null, asOf: '2026-09', floor: FLOOR,
+    });
+    expect(work.kind).toBe('frontier');
+    expect(work.minPeriods).toBeNull();
+    expect(work.windowsRemaining).toBeGreaterThan(1);
+    expect(work.because).toMatch(/holds nothing/);
   });
 });

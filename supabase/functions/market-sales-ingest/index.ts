@@ -53,6 +53,7 @@ import {
 import {
   approvalsPage,
   pagesToCover,
+  planApprovalsWork,
 } from '../_shared/reports/market/openData/absApprovalsPaging.pure.ts';
 
 /**
@@ -585,17 +586,72 @@ Deno.serve(async (req) => {
        * full. The loader learns the lag from the publisher instead of
        * carrying a constant nobody here can verify.
        */
-      const pageIndex = Number.isInteger(body.page) ? Number(body.page) : 0;
       const asOf = typeof body.asOf === 'string' ? body.asOf : new Date().toISOString().slice(0, 7);
+      /*
+       * BOTH edges of the register, because the walk derives its own window
+       * from them. `pageIndex` stepped back from the frontier by an index
+       * nobody ever supplied — the cron posts no `page`, so every run asked
+       * page 0, which asks FORWARD, and the register never deepened past one
+       * window. See `planApprovalsWork`.
+       */
       const { data: frontierRow } = await supabase
         .from('market_building_approvals')
-        .select('period')
+        .select('period, loaded_at')
         .eq('area_kind', choice.areaKind)
         .order('period', { ascending: false })
         .limit(1)
         .maybeSingle();
+      const { data: oldestRow } = await supabase
+        .from('market_building_approvals')
+        .select('period')
+        .eq('area_kind', choice.areaKind)
+        .order('period', { ascending: true })
+        .limit(1)
+        .maybeSingle();
       const frontier = typeof frontierRow?.period === 'string' ? frontierRow.period : null;
-      const page = approvalsPage(pageIndex, asOf, frontier);
+      const oldest = typeof oldestRow?.period === 'string' ? oldestRow.period : null;
+      const frontierLoadedAt = typeof frontierRow?.loaded_at === 'string'
+        ? frontierRow.loaded_at.slice(0, 7)
+        : null;
+
+      /*
+       * An operator naming a page keeps the old arithmetic; everything else
+       * — every scheduled run — plans its own work. That is what makes the
+       * register converge on a cadence rather than on somebody's bookkeeping.
+       */
+      const explicitPage = Number.isInteger(body.page) ? Number(body.page) : null;
+      const planned = explicitPage === null
+        ? planApprovalsWork({ frontier, oldest, asOf, floor: REGISTER_FLOOR_PERIOD, frontierLoadedAt })
+        : null;
+      const pageIndex = explicitPage ?? 0;
+      const page = explicitPage === null
+        ? {
+          index: 0,
+          startPeriod: planned!.startPeriod ?? asOf,
+          endPeriod: planned!.endPeriod ?? asOf,
+          minPeriods: planned!.minPeriods,
+        }
+        : approvalsPage(explicitPage, asOf, frontier);
+
+      /*
+       * Nothing owed: current to the frontier and complete to the floor. The
+       * publisher is asked NOTHING — a settled run is one table read, which
+       * is what makes a frequent schedule free rather than wasteful.
+       */
+      if (planned?.kind === 'settled' && typeof body.startPeriod !== 'string') {
+        const detail = {
+          stage,
+          settled: true,
+          flow: dataflowRef(choice.flow),
+          frontier,
+          oldest,
+          register_floor: REGISTER_FLOOR_PERIOD,
+          windows_remaining: 0,
+          because: planned.because,
+        };
+        await supabase.from('market_sales_sync').insert({ detail });
+        return json({ success: true, ...detail });
+      }
 
       // An explicit window from an operator overrides the page arithmetic,
       // and carries no floor: they are asking for exactly what they named.
@@ -665,13 +721,17 @@ Deno.serve(async (req) => {
         // Which page this was, and what a full load still needs — so an
         // operator reads what remains rather than working it out.
         page: pageIndex,
+        // What the register asked itself for, and why — so an operator reads
+        // the decision rather than only its result.
+        work: planned?.kind ?? 'operator_page',
+        because: planned?.because ?? `operator named page ${pageIndex}`,
+        oldest_before: oldest,
         page_window: `${window.startPeriod}→${window.endPeriod ?? 'open'}`,
         page_judged_against: window.minPeriods,
         frontier_before: frontier,
-        pages_remaining: Math.max(
-          0,
-          pagesToCover(parsed.latestPeriod, REGISTER_FLOOR_PERIOD) - (pageIndex + 1),
-        ),
+        pages_remaining: planned
+          ? planned.windowsRemaining
+          : Math.max(0, pagesToCover(parsed.latestPeriod, REGISTER_FLOOR_PERIOD) - (pageIndex + 1)),
         register_floor: REGISTER_FLOOR_PERIOD,
       };
       await supabase.from('market_sales_sync').insert({ detail });
