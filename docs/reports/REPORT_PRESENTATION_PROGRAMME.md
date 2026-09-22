@@ -1427,7 +1427,7 @@ on more code.
 **Everything left in this programme that needs no new infrastructure is
 closed.** W3.1's prohibition and W3.2's coverage statement shipped without
 their registers because the guarantee is worth having before the evidence
-exists; W3.1's register, W3.3's, W3.4's and W3.5's all need a table, a
+exists; W3.1's register, W3.3's and W3.5's all need a table, a
 schedule and a first ingest, and a production egress that can reach the
 publisher. Those are one approval and one probe away, not one more pass over
 the document.
@@ -1437,6 +1437,24 @@ published as a feed at all — measured, not assumed — so there is no table to
 create and no schedule to run, and the acceptance criterion's second branch is
 the true one. W3.6 needed no infrastructure either and is closed with it, since
 both are about what a reading SAYS rather than about what it holds.
+
+**W3.4 turned out to need none of it either, and for a reason worth
+recording.** It was listed above as needing a table, a schedule and an ingest
+because "extend the constraint layers to SA, WA, NT and ACT" reads like an
+ingest. Two of its three halves needed neither. The declared orders are a
+decision about which kinds of register are consulted, which is code. And the
+refinement that reaches the client's page — which amendment of the instrument
+the controls in force belong to — was **already being retrieved**, on the same
+Identify the height and the minimum lot size come from, and handed to
+`console.log`; publishing it took no register, no schedule and no request that
+was not already being made. The third half, a verified parser for SA, WA or
+NT, does still need the ingest, and §5 of its doc says so.
+
+The general lesson, which is this programme's most repeated one wearing a new
+hat: **a requirement phrased as an acquisition is not always an acquisition.**
+Four premises in this area were wrong because nobody had asked the publisher;
+one retrieval was wasted because nobody had asked what the answer already
+carried.
 
 ---
 
