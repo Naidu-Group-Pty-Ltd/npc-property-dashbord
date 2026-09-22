@@ -92,10 +92,36 @@ describe('the shape of a region code is the grain', () => {
     expect(grainOfRegionCode('  1  ')).toBe('state');
   });
 
+  it('places a two-digit code at the capital-city / rest-of-state level', () => {
+    /*
+     * MEASURED, not inferred. The first live read reported 14 codes this rule
+     * could not place; the census was changed to carry their published names
+     * and the next run answered `61 Hobart`, `62 Rest of Tas`, `71 Darwin`,
+     * `72 Rest of NT`. Seven states split two ways plus an unsplit ACT is
+     * exactly the 14 the census counted.
+     */
+    expect(grainOfRegionCode('11')).toBe('gccsa');
+    expect(grainOfRegionCode('62')).toBe('gccsa');
+    expect(grainOfRegionCode('1GSYD')).toBe('gccsa');
+    expect(grainOfRegionCode('RNSW')).toBe('gccsa');
+    // A capital city is still not this property's area.
+    expect(describesTheArea('gccsa')).toBe(false);
+  });
+
+  it('and the label covers BOTH halves of that level', () => {
+    // `Rest of Tas` is not a metropolitan area, so a label saying so would be
+    // wrong for half the codes at this grain.
+    expect(PROJECTION_GRAIN_LABEL.gccsa).toMatch(/capital city/i);
+    expect(PROJECTION_GRAIN_LABEL.gccsa).toMatch(/outside/i);
+    expect(PROJECTION_GRAIN_LABEL.gccsa).not.toMatch(/metropolitan area$/i);
+  });
+
   it('places nothing it does not recognise', () => {
     expect(grainOfRegionCode('TOT')).toBeNull();
     expect(grainOfRegionCode('9')).toBeNull();
-    expect(grainOfRegionCode('12')).toBeNull();
+    // A second digit outside the split.
+    expect(grainOfRegionCode('13')).toBeNull();
+    expect(grainOfRegionCode('99')).toBeNull();
   });
 });
 
@@ -212,6 +238,28 @@ describe('the ABS models assumptions as a CROSS-PRODUCT, measured', () => {
       dim('FREQUENCY', ['A'], { position: 8, names: ['Annual'] }),
       dim('TIME_PERIOD', [], { position: 9, isTime: true }),
     ],
+  });
+
+  it('a default would print the maximum-growth corner of a 72-cell space', () => {
+    /*
+     * The measured choice names are what make this concrete. Taking the first
+     * code from each — the obvious default — yields "High fertility, High
+     * life expectancy, High NOM, Large interstate flows", and one of NOM's
+     * four choices is **Zero NOM**, a sensitivity case nobody would call a
+     * forecast. A single `series` field would have invited exactly this.
+     */
+    const reading = readProjectionStructure(absShaped());
+    const firstOfEach = reading.assumptions.map((a) => a.choices[0].name);
+    expect(firstOfEach).toEqual(['High fertility', 'High life expectancy', 'NOM 1', 'NIM 1']);
+    // Nothing in the module may make that choice.
+    const source = readFileSync(
+      resolve(
+        dirname(fileURLToPath(import.meta.url)),
+        '../../../../supabase/functions/_shared/reports/market/openData/absPopulationProjections.pure.ts',
+      ),
+      'utf8',
+    );
+    expect(source.replace(/\/\*[\s\S]*?\*\//g, '')).not.toMatch(/choices\s*\[\s*0\s*\]/);
   });
 
   it('names every assumption a figure rests on, and counts the combinations', () => {

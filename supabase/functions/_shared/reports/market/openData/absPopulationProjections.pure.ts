@@ -132,7 +132,7 @@ export const PROJECTION_GRAIN_LABEL: Readonly<Record<ProjectionGrain, string>> =
   sa2: 'Statistical Area Level 2 — about the size of a suburb',
   sa3: 'Statistical Area Level 3 — a group of suburbs',
   sa4: 'Statistical Area Level 4 — a large region',
-  gccsa: 'Greater Capital City Statistical Area — a whole metropolitan area',
+  gccsa: 'a whole capital city, or all of a state outside its capital',
   lga: 'local government area',
   state: 'state or territory',
   national: 'Australia',
@@ -156,7 +156,28 @@ export function grainOfRegionCode(code: string, lgaDimension = false): Projectio
   if (/^\d{9}$/.test(c)) return 'sa2';
   if (/^\d{5}$/.test(c)) return lgaDimension ? 'lga' : 'sa3';
   if (/^\d{3}$/.test(c)) return 'sa4';
-  if (/^\d?[A-Z]{3,4}$/i.test(c) && /GCC|^[1-8](GSYD|GMEL|GBRI|GADE|GPER|GHOB|GDAR|ACTE)/i.test(c)) return 'gccsa';
+  /*
+   * A two-digit code is the capital-city / rest-of-state level, and that was
+   * MEASURED rather than inferred. The first live read of the Bureau's
+   * projection structures reported 14 codes this rule could not place, so the
+   * census was changed to carry their published NAMES and the next run
+   * answered:
+   *
+   *     61  Hobart        62  Rest of Tas
+   *     71  Darwin        72  Rest of NT
+   *
+   * Seven states split two ways plus an unsplit ACT is exactly 14, which is
+   * what the census counted. So `11` is Greater Sydney and `12` is Rest of
+   * NSW, and refusing both was understating the finest grain the Bureau
+   * publishes by one level.
+   *
+   * The conclusion is unchanged — neither a capital city nor everything
+   * outside one is this property's area — but an understated grain is an
+   * understated register.
+   */
+  if (/^[1-8][12]$/.test(c)) return 'gccsa';
+  /* The alphanumeric spelling other ASGS editions use for the same level. */
+  if (/^[1-8]?(GSYD|GMEL|GBRI|GADE|GPER|GHOB|GDAR|ACTE|RNSW|RVIC|RQLD|RSAU|RWAU|RTAS|RNTE)$/i.test(c)) return 'gccsa';
   if (/^[1-8]$/.test(c)) return 'state';
   return null;
 }
@@ -199,11 +220,22 @@ export const SERIES_DIMENSION_PATTERN = /^(PROJECTION_SERIES|SERIES|SCENARIO|ASS
  * as "the projection" is asserting a scenario nobody chose — which is what a
  * single `series` field would have invited.
  *
- * **There is no central combination to default to.** The Bureau documents
- * which combinations it publishes as its main projections; a codelist does
- * not say so, and nothing here may guess. So `assumptionDimensions` is
- * REPORTED and a caller that wants a figure must be handed a combination
- * explicitly.
+ * **There is no central combination to default to**, and the measured choice
+ * names show how badly a default would fail. The Bureau publishes:
+ *
+ *     FERTILITY   High fertility · Medium fertility · Low fertility
+ *     MORTALITY   High life expectancy · Medium life expectancy
+ *     NOM         High NOM · Medium NOM · Low NOM · **Zero NOM**
+ *     NIM         Large interstate flows · Medium · Small interstate flows
+ *
+ * `Zero NOM` is a sensitivity case — net overseas migration of nothing at all
+ * — which nobody would call a forecast. And taking `choices[0]` from each,
+ * the obvious default, yields *High fertility, High life expectancy, High
+ * NOM, Large interstate flows*: the maximum-growth corner of a 72-cell space,
+ * printed as "the projection".
+ *
+ * So `assumptions` is REPORTED and a caller that wants a figure must be
+ * handed a combination explicitly. `choices[0]` is forbidden by a spec.
  */
 export const ASSUMPTION_DIMENSIONS = /^(FERTILITY|MORTALITY|NOM|NIM|MIGRATION|LIFE_EXPECTANCY)$/i;
 

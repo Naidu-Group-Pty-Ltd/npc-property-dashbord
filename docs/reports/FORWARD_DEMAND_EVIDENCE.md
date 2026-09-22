@@ -39,14 +39,14 @@ of **23 codes**:
 
 | grain | codes |
 | --- | ---: |
+| capital city / rest of state | **14** |
 | state or territory | **8** |
 | Australia | 1 |
-| unplaced by the shape rules | **14** |
 | **SA2** | **0** |
 
-`finest published grain: state` — including on the flow titled
-**"Population Projections by Region, 2017-2066"**, where *Region* means
-something coarser than a suburb.
+`finest published grain: capital city or rest of state` — including on the
+flow titled **"Population Projections by Region, 2017-2066"**, where *Region*
+means something very much coarser than a suburb.
 
 **The premise does not hold.** There is no ABS projection at SA2, so W3.3's
 national floor can only ever be a fact about a region the property sits in,
@@ -68,36 +68,63 @@ dimension with a `medium` code to match by name, so it reported `UNMATCHED` —
 which reads as a gap in the Bureau's metadata when it was a gap in the model
 of it.
 
+The measured choice names show how badly a default would fail:
+
+    FERTILITY   High fertility · Medium fertility · Low fertility
+    MORTALITY   High life expectancy · Medium life expectancy
+    NOM         High NOM · Medium NOM · Low NOM · Zero NOM
+    NIM         Large interstate flows · Medium · Small interstate flows
+
+**`Zero NOM`** is a sensitivity case — net overseas migration of nothing at
+all — which nobody would call a forecast. And `choices[0]` from each, the
+obvious default, yields *High fertility, High life expectancy, High NOM, Large
+interstate flows*: **the maximum-growth corner of a 72-cell space**, printed
+as "the projection".
+
 Two rules follow. **A reading names every assumption it rests on**, because a
-figure under (medium fertility, NOM 3) is a different figure from the same
-flow under another combination, and printing either as "the projection"
-asserts a scenario nobody chose — which a single `series` field would have
-invited. And **there is no central combination to default to**: the Bureau
-documents which combinations it treats as its main projections and a codelist
-does not, so `assumptions` is reported rather than resolved, with
-`choices[0]` and `centralSeries` both forbidden by a source scan.
+figure under one combination is a different figure under another, and printing
+either as "the projection" asserts a scenario nobody chose — which a single
+`series` field would have invited. And **there is no central combination to
+default to**: the Bureau documents which combinations it treats as its main
+projections and a codelist does not, so `assumptions` is reported rather than
+resolved, with `choices[0]` and `centralSeries` both forbidden by a source
+scan.
 
 `assumptions` is DERIVED — every dimension that is neither the geography, nor
 time, nor a slice of the population (`SEX_ABS`, `AGE`, `FREQUENCY`) — so a
 publisher adding a fifth cannot have it silently fall out of a reading's
 provenance.
 
-### 2.2 · The 14 unplaced codes, and why they are printed
+### 2.2 · The 14 unplaced codes — and how they were settled
 
-`11, 12, 21, 22, 31, 32, 41, 42 …` — two-digit ASGS codes, which is very
-likely a capital-city and rest-of-state split. That would be a grain **finer
-than state**, refused by `grainOfRegionCode` and therefore understating the
-measured answer.
+The first read reported **14 codes the shape rules could not place**:
+`11, 12, 21, 22, 31, 32, 41, 42 …`. Two-digit ASGS codes, which *looked* like
+a capital-city and rest-of-state split — a grain **finer than state**, refused
+and therefore understating the measured answer.
 
-*Very likely* is not a measurement. So `RegionCensus.unplaced` carries each
-code's published **name** and the probe prints it, and the rule will be
-written from what the Bureau calls code `11` rather than from an inference.
-Printing the ids is what made the gap visible; printing the names is what
-closes it.
+*Looked like* is not a measurement. So `RegionCensus.unplaced` was changed to
+carry each code's published **name**, the probe was made to print it, and the
+next run answered:
 
-The conclusion is unaffected either way — a whole metropolitan area is still
-not this property's suburb — but an understated grain is an understated
-register, and the next run decides it rather than a guess.
+    61  Hobart          62  Rest of Tas
+    71  Darwin          72  Rest of NT
+
+Seven states split two ways plus an unsplit ACT is exactly 14, which is what
+the census counted. So `11` is Greater Sydney and `12` is Rest of NSW, the
+rule is `^[1-8][12]$`, and the finest grain the Bureau publishes is
+**capital city or rest of state** — one level finer than the first reading
+said.
+
+**Printing the ids is what made the gap visible; printing the names is what
+closed it.** The conclusion is unchanged, because neither a capital city nor
+everything outside one is this property's area — but an understated grain is
+an understated register, and it was the measurement that decided it rather
+than an inference that happened to be right.
+
+One consequence for the prose: `PROJECTION_GRAIN_LABEL.gccsa` had read *"a
+whole metropolitan area"*, which is wrong for half the codes at that level.
+`Rest of Tas` is not a metropolitan area. It reads *"a whole capital city, or
+all of a state outside its capital"* now, and a spec pins both halves.
 
 ---
 
@@ -304,7 +331,7 @@ the false negative would have buried.
   serve a benchmark rather than an area reading. Whether that benchmark is
   worth a table is a decision for after W3.4, not a consequence of this work.
 - **Nothing reaches the scorer**, by design (§3.1).
-- **The two-digit grain is unresolved** (§2.2), and named as unresolved rather
-  than guessed.
+- **Nothing is inferred about the grain.** §2.2 was resolved by a second
+  measurement rather than by the inference that happened to be right.
 - **The per-jurisdiction registers are not read.** All eight are
   `ingested: false`, truthfully, and the sentence a reader gets says so.

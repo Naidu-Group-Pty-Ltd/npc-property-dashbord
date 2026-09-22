@@ -2240,12 +2240,20 @@ printing that under a forward heading is the worst available failure and an
 allow-list omission would do it silently. And **a region is not an area**:
 only SA2 and SA3 describe the property's own.
 
-**And the 14 unplaced codes are the most valuable line in the log.**
-`11, 12, 21, 22 …` are two-digit ASGS codes — very likely a capital-city and
-rest-of-state split, a grain FINER than state, refused and therefore
-understating the answer. "Very likely" is not a measurement, so `unplaced`
-carries each code's published NAME and the probe prints it: printing the ids
-is what made the gap visible, printing the names is what closes it.
+**And the 14 unplaced codes were the most valuable line in the log.**
+`11, 12, 21, 22 …` looked like a capital-city and rest-of-state split — a
+grain FINER than state, refused and therefore understating the answer. Looked
+like is not a measurement, so `unplaced` was changed to carry each code's
+published NAME and the next run answered `61 Hobart · 62 Rest of Tas ·
+71 Darwin · 72 Rest of NT`: seven states split two ways plus an unsplit ACT
+is exactly 14. The rule is `^[1-8][12]$`, the finest published grain is
+**capital city or rest of state**, and the label stopped saying "a whole
+metropolitan area" because `Rest of Tas` is not one. Printing the ids made
+the gap visible; printing the names closed it — and the conclusion is
+unchanged, since neither a capital nor everything outside it is this
+property's area. Also measured: NOM's four choices include **`Zero NOM`**, so
+`choices[0]` from each dimension would have printed the maximum-growth corner
+of a 72-cell space as "the projection".
 
 **The probe shipped with the defect it exists to catch.** Its first run sent
 the XML structure media type with no wildcard fallback, took **HTTP 406** on
