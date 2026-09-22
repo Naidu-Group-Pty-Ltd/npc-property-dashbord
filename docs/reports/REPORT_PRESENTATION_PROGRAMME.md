@@ -1523,10 +1523,26 @@ on more code.
 **Everything left in this programme that needs no new infrastructure is
 closed.** W3.1's prohibition and W3.2's coverage statement shipped without
 their registers because the guarantee is worth having before the evidence
-exists; W3.1's register, W3.3's and W3.5's all need a table, a
-schedule and a first ingest, and a production egress that can reach the
-publisher. Those are one approval and one probe away, not one more pass over
-the document.
+exists; W3.1's register and W3.3's both need a table, a schedule and a first
+ingest, and a production egress that can reach the publisher. Those are one
+approval and one probe away, not one more pass over the document.
+
+**W3.5 was on that list and is off it, because the probe answered first.**
+It is struck from the sentence above rather than left in it, since a reader
+who trusted that list would ask for a table with nothing to put in it. Its
+discovery probe needed no approval and was the right first step: measured
+22 Sep 2026 from CI, **three of the four jurisdictions publish no sub-state
+count of residential sales at all** — WA's catalogue holds 2,911 datasets of
+which 203 matched and attributed and none carries a count, the NT's 1,075
+matched none of five phrasings, and the ACT's 378 (read through Socrata, after
+its CKAN 404 was kept and printed rather than replaced with another guess)
+matched none either. Only Tasmania is unresolved and the reason is OURS:
+`data.tas.gov.au` does not resolve from this egress. So there is no register
+to create, no schedule to run and no approval to seek, and Demand's national
+gap is a fact about what Australian publishers publish rather than a fact
+about this deployment. **That is a better outcome than the approval would have
+bought** — asking for a table would have produced an empty one and a remedy
+naming a source that does not exist.
 
 **W3.2 needs none of that, and that is the finding.** Its register is not
 published as a feed at all — measured, not assumed — so there is no table to
