@@ -1761,6 +1761,59 @@ feeds the Flutter workspace, no gate covers it, and this session has not read
 that subsystem. An unverifiable change to a subsystem outside this programme
 is the thing this programme exists to stop, so it goes in the list instead.
 
+### The generated artefact nobody checked, and the 301 templates it cost
+
+`mobile/api-surface.json` above is a check wired to nothing. The seeded
+template catalogue is the case one step worse: a generated artefact with **no
+check at all**.
+
+`buildSeedCatalogue.ts` writes a 40 MB migration from the template
+definitions, `CLAUDE.md` says never to hand-edit it, and nothing anywhere
+compared the two — so the generator could be run or not run and the repository
+looked identical either way. Measured on this branch, 22 Sep 2026: seed v19 was
+written at `5d17954`, four commits landed after it, and two of them changed
+what the definitions produce:
+
+* `bcd1bf5` — a bound KPI note budgeted one line and setting two, growing the
+  dashboard grid on page 2 of **142** masters by 8–21pt and moving every block
+  below it down (76 callouts, 59 text blocks, 40 data tables, 31 decision
+  boxes, 18 strengths-watch panels). Before it, the note set over the row
+  beneath.
+* `b842936` — W4.5's cover facts, off a density literal that disagreed with the
+  family's own scale on 22 of 50: **140** masters 11pt → 9pt, **80** 14pt →
+  13pt.
+
+Neither had reached the migration, and **the migration is what a deployment
+applies**. A fix that reaches only the definitions reaches no document at all,
+which is exactly how seed v18 merged without landing — the failure
+`20261212010000`'s `@effect` line catches one layer further down and this is
+the layer above it.
+
+**It is still a v19, not a v20.** The builder's own header conditions a new
+version on the previous one being RECORDED, and the one-query check answers
+that it is not: 1,012 migrations applied, latest `20261211000000`, v19's pair
+unmerged on one branch. So it was regenerated in place rather than stacked on
+top of an unapplied release.
+
+Measured template by template across all 543: **301 differ**, every one a
+design-family master, none of the 43 voice templates, **no page count and no
+block count changed anywhere** — every difference is a size, a height or a
+`y`, and the two changes never touch the same grid. That last part is checked
+rather than asserted, because the first draft of the v19 comment claimed it
+about the placeholder words and was false.
+
+`npm run templates:library:seed:check` is the remedy, in `template-geometry`
+beside the render gate under `always()` so a stale seed and a geometry failure
+are both reported by one run. Three rules. **The comparison is the artefact,
+never a count** — a count absorbs one change arriving as another leaves, which
+is what `check-edge-functions.mjs` paid for when `TS2304` was frozen by number
+and a live `ReferenceError` went with it. **A migration that was never written
+is drift, not a pass.** And **a refusal names the templates**, because a 40 MB
+diff sends nobody to a remedy. Measured both ways before it was trusted: exit
+1 on the stale file with 301 named, exit 0 on the fresh one, and
+`seedIsGenerated.spec.ts` fails when the CI step is taken back out — verified
+by taking it out.
+
 ## 6 · Decisions this plan does not take
 
 - Whether the 21 `market_sources` rows should be seeded — a decision about live

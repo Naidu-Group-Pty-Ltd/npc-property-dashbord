@@ -54,6 +54,36 @@
 -- reviewer to find: it is `ifItFits` doing its job, and it shows an
 -- opportunity the record holds instead of discarding it.
 --
+-- ## v19 also carries two geometry corrections, added 22 Sep 2026
+--
+-- The seed is GENERATED and nothing compared it to the definitions that
+-- generate it, so two commits that landed after v19 was written had never
+-- reached the migration. v19 has not been applied anywhere — 1,012
+-- migrations are recorded and the latest is `20261211000000` — so it was
+-- regenerated in place rather than followed by a v20.
+--
+--   * A bound KPI note was budgeted one line and sets two. The DASHBOARD
+--     grid on page 2 of 142 masters grows 8 to 21pt, and the blocks below it
+--     move down by the same amount (76 callouts, 59 text blocks, 40 data
+--     tables, 31 decision boxes, 18 strengths-watch panels). Before this the
+--     note set over the row beneath it.
+--
+--   * The cover facts took their point size from a density literal that
+--     disagreed with the family's own scale on 22 of 50 masters. `valueSize`
+--     on page 0 is now derived: 140 masters 11pt to 9pt on compact, 80
+--     masters 14pt to 13pt on spacious.
+--
+-- Measured template by template across all 543: **301 differ**, every one a
+-- design-family master and none of the 43 voice templates. **No template's
+-- page count changes and no template's block count changes** — every
+-- difference is a size, a height or a `y`, and the two changes never touch
+-- the same grid. That is checked rather than asserted, for the reason the
+-- section above exists.
+--
+-- Both are corrections to what a reader is shown on a page, so carrying them
+-- to an active master is the same act as carrying the two words: the proof
+-- below decides, not the size of the diff.
+
 -- A row is refreshed only where it is PROVEN an unedited copy of what the
 -- library last published, so a tenant who has adjusted that page
 -- keeps their wording and is recorded as deferred. Idempotent.

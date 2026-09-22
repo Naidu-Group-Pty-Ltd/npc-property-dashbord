@@ -1148,6 +1148,21 @@ jobs:
       - name: Every master renders as a document (geometry and content)
         run: npm run templates:compass:qa
 
+      # The gate above renders the template DEFINITIONS. What a deployment
+      # applies is the seed migration, and nothing compared the two -- so the
+      # generator could be run or not run and the repository looked identical
+      # either way. Measured on this branch: seed v19 was written, then four
+      # commits changed what the definitions produce, and the migration still
+      # carried the old geometry for 301 of 543 templates. A fix that reaches
+      # only the definitions reaches no document at all, which is how seed v18
+      # came to merge without landing.
+      #
+      # `always()` so a stale seed and a geometry failure are both reported by
+      # one run rather than the first hiding the second.
+      - name: The seed migration is what the template definitions produce
+        if: always()
+        run: npm run templates:library:seed:check
+
       # The renders themselves, when it fails: a reviewer should be able to
       # look at the page rather than read a coordinate.
       - name: Upload the renders

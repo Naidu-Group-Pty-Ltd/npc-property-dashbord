@@ -3627,6 +3627,25 @@ generated migration — edit the source and run `npm run templates:library:seed`
 which revalidates every schema against the live Zod contract, the production
 renderer allow-list and the publish gate before writing anything.
 
+**And nothing compared the seed to what generates it.** The generator could be
+run or not run and the tree looked identical either way — so seed v19 was
+written, four commits changed what the definitions produce, and the migration
+still carried the old geometry for **301 of its 543 templates**: a bound KPI
+note that sets two lines where one was budgeted (142 dashboard grids, 8–21pt)
+and the cover facts coming off a density literal (140 at 11→9pt, 80 at
+14→13pt). The migration is what a deployment applies, so a fix that reaches
+only the definitions reaches **no document at all** — the way seed v18 merged
+without landing. `npm run templates:library:seed:check` re-derives the SQL and
+compares the **bytes**, naming the templates that drifted rather than an
+offset, and `ci.yml`'s `template-geometry` job runs it beside the render gate
+under `always()` so a stale seed and a geometry failure are both reported by
+one run. Two rules: **the comparison is the artefact, never a count** (a count
+absorbs one change arriving as another leaves — `check-edge-functions.mjs`'
+lesson), and **a migration that was never written is drift, not a pass**. It is
+`investmentCompassSource.spec.ts`' rule one layer out, and it was measured both
+ways before it was trusted — exit 1 on the stale file, exit 0 on the fresh
+one.
+
 It carries **two authoring systems over one renderer**. The 43 *voice* templates
 come from `scripts/template-library/designSystem.ts` — five voices keyed to the
 catalogue's `style` axis, six accents keyed to subject, all derived from the NPC
