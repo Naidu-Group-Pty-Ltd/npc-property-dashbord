@@ -691,8 +691,36 @@ the publisher's; the scorer prices the grain; coverage travels with the answer.*
 This is `openDataSalesEvidence`'s existing rule — an LGA point scores 55, a
 postcode 80, a suburb 100 — applied to development evidence.
 
-**W3.1 · The national floor: ABS Building Approvals by LGA.** — READER AND
-PROHIBITION SHIPPED; THE REGISTER ITSELF AWAITS APPROVAL.
+**W3.1 · The national floor: ABS Building Approvals by LGA.** — **DONE, AND
+THE REGISTER IS WALKING.** This heading read "the register itself awaits
+approval" until 22 Sep 2026; approval was given, the table was applied, and
+the register is loaded, corrected and deepening itself on an hourly schedule.
+
+**The walk is confirmed by effect, not by configuration.** At 08:59 UTC the
+register held `total=4934`, `periods = 2026-07..2026-07` — one month, which is
+all the ABS publishes ahead of its own two-month arrears. At 09:20 the cron
+fired and `function_logs` recorded the planner's choice before it acted:
+
+```
+[market-sales-ingest] approvals: ABS,BA_SA2,2.0.0 key=1+2.9.TOT.110+150+100...M
+                      page=0 2026-04→2026-06 frontier=2026-07
+```
+
+— the window immediately BELOW `oldest`, which is the thing the old code never
+did once: every run before this asked forward from today, upserted the same
+three months and printed `pagesToCover` into a void. At 09:24 the read-back
+answered `total=19736`, `periods = 2026-04..2026-07`: `oldest` moved by exactly
+`APPROVALS_PAGE_MONTHS`, grains still correct (sa2 codes 9 digits, 2,458
+distinct SA2s, no `lga` bucket), `dwelling_units` null=0 with zero and positive
+both present.
+
+**And the section it feeds is not an empty one**, measured by rendering the
+block against the register as it actually stands rather than against a
+fixture: 46 dwellings and $23,550,000 for the SA2 across Aug 2025 – Jul 2026,
+stated as a **FLOOR** with "4 of the 12 months" named, and the year-on-year
+change explicitly withheld because one of the two windows is short. That
+render is also what found `$NaN` in the money column — see the commit *"A
+supply figure that is not a figure never reaches the page"*.
 
 Monthly, free, authoritative, **every local government area in Australia**;
 dwelling counts and dollar value. One source, national coverage, no key.
