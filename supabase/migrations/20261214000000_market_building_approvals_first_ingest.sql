@@ -1,0 +1,53 @@
+-- Fire the supply register's FIRST ingest, once, rather than waiting a night.
+--
+-- `20261213010000` scheduled `market-sales-refresh-approvals` at 17:45 UTC
+-- daily, and that schedule is what keeps the register current from tomorrow
+-- on. This file exists for the one run before the first scheduled one, and
+-- the reason is not the twelve hours of data.
+--
+-- **The loader has never executed in production.** Three of its steps are
+-- unexercised against the real publisher and each can only fail there: the
+-- dataflow is DISCOVERED from the ABS's own catalogue rather than named (the
+-- version is part of an SDMX identifier and the Bureau reissues it); the
+-- query KEY is composed from the flow's own data structure, and an SDMX key
+-- is POSITIONAL, so one written against the wrong positions returns a
+-- plausible, wrong slice under an HTTP 200; and the download is paged,
+-- because `/all` at SA2 grain measured past 5 GB and one month of LGA data is
+-- 61.8 MB. A register that answers wrongly under a 200 is the failure this
+-- programme exists to catch, and discovering it at 03:45 tomorrow is strictly
+-- worse than discovering it now.
+--
+-- It is safe to apply more than once. `market_sales_refresh` posts one stage
+-- and returns; `market_building_approvals` is keyed on the publisher's own
+-- (area_kind, area_code, period, building_type), so a second run of a month
+-- the ABS has since revised REPLACES it rather than accumulating a second
+-- answer. Nothing here is destructive and nothing is seeded.
+--
+-- ## Why this declares no `@effect` probe
+--
+-- Because it could only declare a false one. `net.http_post` QUEUES the
+-- request and returns an id — the ingest runs afterwards, in the edge
+-- function, against a publisher on the other side of the Pacific. A probe
+-- asserting a `market_building_approvals` row, or a `market_sales_sync` row,
+-- would be asserting something that is not yet true at the instant this file
+-- finishes, and a probe that fails for timing rather than for effect is worse
+-- than none: it teaches a reader to discount the ones that mean something.
+--
+-- `migration-drift.mjs` will therefore count this among its "unverifiable"
+-- files, and that is the honest classification. The effect is real and it is
+-- checked, just not here:
+--
+--   -- did a run deliver, and what did it say?
+--   select created_at, detail from public.market_sales_sync
+--   where detail ->> 'stage' = 'approvals' order by created_at desc limit 5;
+--
+--   -- what did it actually load, and at whose grain?
+--   select area_kind, count(*) rows, count(distinct area) areas,
+--          min(period) first_period, max(period) last_period
+--   from public.market_building_approvals group by area_kind order by 1;
+--
+-- That is this register's own rule — asserted by effect, never by
+-- configuration — and pg_cron's own green tick is not the proof either: it
+-- reports on the SQL that queued the HTTP call, not on the call.
+
+select public.market_sales_refresh('{"stage": "approvals"}'::jsonb);
