@@ -355,3 +355,79 @@ green run proves the download fits the constraint the check can see.
 Until something does, every report reads **Not searched.** and is forbidden
 from stating a figure, which is `CLONE_PROVISIONING_GAPS.md`'s rule applied
 before the gap exists.
+
+## 11 · The register is loaded — and the page bound was measured on the wrong axis
+
+Applied and loaded 22 Sep 2026, and every step of it was verified by effect
+rather than by the success of the thing that performed it.
+
+**The shipping order bit first.** `20261213000000` (the table) and
+`20261213010000` (the 17:45 UTC refresh) applied cleanly, both `@effect`
+probes satisfied — and the first ingest answered **HTTP 400 in five
+milliseconds**, because the deployed `market-sales-ingest` was `main`'s and
+`main`'s copy contained **zero** occurrences of `approvals`. Measured three
+ways: the edge log, `main`'s source, and the live bundle (version 167, zero
+`approvals`). The schema had landed and the loader had not. **A register's
+migration and the function that fills it have a shipping ORDER and it is not
+interchangeable** — `CONTAINER_RELEASE.md` holds the same rule for the
+WeasyPrint image and the render routes. Left to the schedule this would have
+failed at 03:45 nightly while pg_cron reported green, which is
+`SCREENING_EXECUTION.md`'s rule: **a green cron run is not a delivered
+request.**
+
+After the merge, the deploy was checked the same way rather than on its own
+tick — which matters, because that workflow's header records it reporting
+green while shipping nothing, twice: version **167 → 168**, `approvals`
+occurrences **0 → 41**, bundle 222 KB → 311 KB.
+
+**Then the real failure, and it is the interesting one.** The next run got
+past the 400 and died at **546**, the edge worker's resource limit:
+
+```
+approvals: ABS,BA_SA2,2.0.0 key=1+2.9.TOT.110+150+100...M page=0 2026-04→2026-09
+POST | 546
+```
+
+Two of the three steps that had never run against the real publisher
+therefore WORK: the dataflow was **discovered** (`ABS,BA_SA2,2.0.0`, the
+finest grain published, which is what the scorer prices) and the **positional
+key composed** from the flow's own data structure. Those were the two most
+likely to fail silently as a plausible wrong slice under a 200.
+
+The cause was `APPROVALS_PAGE_MONTHS = 6`, set from a CI measurement of the
+Bureau's **bytes** (6 months = 12.2 MB against "a 24 MB budget"). The worker's
+limit is on the resources needed to **process** them, and the stage holds all
+of it live at once — the whole body as one string, then every row as an
+object, then the upsert payload. Re-measured in the worker using the explicit
+operator window the stage already accepts:
+
+| window | rows | answer |
+| --- | ---: | --- |
+| 1 month | 5,814 | 200 |
+| 3 months | 17,442 | 200 |
+| 6 months | ~34,884 | **546** |
+
+5,814 rows a month, dead flat (17,442 is exactly 5,814 × 3), so the cliff lies
+between 17,442 and ~34,884 rows. The constant is **3**, the largest PROVEN
+window; 4 and 5 are deliberately not taken, because an unmeasured edge fails
+as a nightly 546 that pg_cron calls green. A walk of the 33 months the Bureau
+holds is eleven nightly pages.
+
+Three rules come out of it. **A bound must be measured on the quantity that
+binds** — bytes over the wire answered a different question from resources to
+process, and the smaller number was the one measured. **Two points bracket a
+cliff; one point picks a number and calls it a measurement**, which is why the
+bound was probed at 1 and 3 rather than divided by something plausible. And
+**a spec states the rule, not the number**: three assertions had the
+six-month arithmetic written out as literals, so they are derived from
+`APPROVALS_PAGE_MONTHS` now — a spec restating the page size in two places is
+how the two come to disagree.
+
+**What is loaded and what is still unchecked.** `market_building_approvals`
+holds 17,442 rows for 2026-05 → 2026-07 at SA2 grain and
+`market_sales_sync` recorded both deliveries. The distribution across
+`area_kind` is **not** yet confirmed: the ABS download is a hierarchy, each
+row must carry its OWN grain, and filing a national total as a council area
+is the one failure a row count cannot see. That needs a `group by area_kind`,
+which the direct-SQL restriction does not admit, so it is recorded here as
+outstanding rather than assumed good.

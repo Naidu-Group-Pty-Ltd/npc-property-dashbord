@@ -1,7 +1,7 @@
 /**
  * How a register too wide for one invocation is loaded in several.
  *
- * ## The measurement
+ * ## The measurement — and the axis it has to be taken on
  *
  * Measured from CI against the Bureau's own bytes, 21 Sep 2026. At SA2 grain
  * — the finest the scorer prices — with the query narrowed to what this
@@ -11,9 +11,34 @@
  *     12 months    26.0 MB   past the ceiling
  *      6 months    12.2 MB   workable
  *
+ * **Every one of those is a fact about the WIRE, and the wire is not what
+ * binds.** This constant was 6 on the strength of that table, and the first
+ * real run in production answered `546` — the edge worker's resource limit —
+ * on exactly the six-month window it describes. The download was never the
+ * problem: the stage holds the whole body as one string, then every row as an
+ * object, then the upsert payload, all live at once.
+ *
+ * Re-measured 22 Sep 2026 IN THE WORKER, using the explicit operator window
+ * the stage already accepts, at SA2 grain against the deployed function:
+ *
+ *      1 month     5,814 rows   HTTP 200
+ *      3 months   17,442 rows   HTTP 200
+ *      6 months  ~34,884 rows   HTTP 546
+ *
+ * 5,814 rows a month, dead flat (17,442 is 5,814 x 3 exactly), so the cliff
+ * lies between 17,442 and ~34,884 rows. Three is therefore the largest
+ * window PROVEN to fit, and 4 and 5 are deliberately not taken: the failure
+ * mode of sitting at an unmeasured edge is a nightly 546 that pg_cron reports
+ * as green, which is the one shape this register's own header warns about.
+ *
+ * The lesson generalises past this file. **A bound must be measured on the
+ * quantity that binds** — bytes over the wire answered a different question
+ * from resources to process, and the smaller number was the one measured.
+ *
  * So a full load is several requests, and `market-sales-ingest` has been one
  * heavy read per invocation since five DCJ workbooks in one call exhausted an
- * edge worker's compute allowance.
+ * edge worker's compute allowance. At three months a walk of the 33 the
+ * Bureau holds is eleven nightly pages.
  *
  * ## It pages by PERIOD, and that correction is the point
  *
@@ -38,8 +63,13 @@
  * the publisher instead of being told it.
  */
 
-/** Six months: the largest window measured to fit at the finest grain. */
-export const APPROVALS_PAGE_MONTHS = 6;
+/**
+ * Three months: the largest window measured to fit at the finest grain, and
+ * measured in the WORKER rather than on the wire. See the table above — 6
+ * answered HTTP 546 in production on the very window the byte measurement
+ * called workable.
+ */
+export const APPROVALS_PAGE_MONTHS = 3;
 
 export interface ApprovalsPage {
   /** 0 is the frontier page; 1 is the six months before it, and so on. */
