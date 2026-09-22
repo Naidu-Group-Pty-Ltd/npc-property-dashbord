@@ -195,6 +195,27 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           done
 
+      # The half a pull request cannot do.
+      #
+      # `check-applied-body-digests.mjs` runs on every pull request and compares
+      # the repository against a COMMITTED manifest — it has no credential and
+      # cannot reach the ledger. That leaves one way for the manifest to become
+      # fiction: a line written by hand that the ledger cannot back. This step
+      # holds the credential already, so it re-reads every recorded digest
+      # against the live table, and fails the run if one was never applied here.
+      #
+      # It does not fail on a file that now matches and is not yet recorded —
+      # that is the ordinary state one second after a migration applies, and the
+      # remedy is `npm run migrations:body-digests`, which it prints.
+      #
+      # psql route only: the Management API route has no client here, and adding
+      # one would put a second way of reading the same table into this workflow.
+      - name: Re-check the applied-body manifest against the live ledger
+        if: steps.route.outputs.route == 'psql'
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: node scripts/security/build-applied-body-digests.mjs --verify
+
       - name: Apply over the Management API
         if: steps.route.outputs.route == 'api'
         env:

@@ -349,6 +349,35 @@ comment naming a catcher Mission Control never wrote. So before concluding a
 deployment is missing something, check whether the thing is present anywhere:
 a feature absent on every deployment is unbuilt, not unprovisioned.
 
+## A migration that has already run must not change here
+Read [`docs/security/APPLIED_MIGRATION_BODIES.md`](./docs/security/APPLIED_MIGRATION_BODIES.md)
+before touching `scripts/security/appliedBodyIdentity.mjs`,
+`applied-body-digests.txt`, its baseline, or the `--verify` step in
+`apply-migration.yml`. **The guard is keyed on the BYTES, not the version** —
+measured 22 Sep 2026, 1,002 files against 1,019 ledger rows and only **176
+versions in common**, because Lovable stamps the ledger with the moment it
+APPLIED a file rather than the version in the filename (the repo's
+`20250831091525` is the ledger's `…091523`, two seconds apart, byte-identical).
+A version key could speak about 83 files; the byte key speaks about **690**.
+
+Three rungs — the file, `.trimEnd()`, then a leading comment block dropped —
+and **the index of a match IS the rung**, which is why identical rungs are kept
+rather than deduped: deduping made a leading-comment match in a file with no
+trailing whitespace report itself as a whitespace match (0 instances here, and
+removed rather than relied on). Each rung removes only bytes that cannot
+execute, so two bodies colliding anywhere on the ladder have identical
+executable bytes — 9 shared digests, 0 differing.
+
+Three rules bite. **Editing an applied migration does not change this
+database** — it already ran what it ran — it removes the file from what any
+clone can be shown to have run, and `partitionByDependency` treats a withheld
+version as a barrier, so one hole orphans everything behind it. **The manifest
+never shrinks by itself**: a file that stops matching keeps its line and fails
+the check, because a guard you can clear by regenerating is not a guard. And
+**an empty body is never evidence** — a ledger row with no SQL and a file that
+is nothing but comments hash to the same thing, so both sides are excluded by
+name.
+
 ## What the API gateway checks (`verify_jwt`)
 Read [`docs/security/VERIFY_JWT.md`](./docs/security/VERIFY_JWT.md) before
 changing a `verify_jwt` line in `supabase/config.toml`, the deploy workflow's
