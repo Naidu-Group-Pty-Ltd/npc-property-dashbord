@@ -217,16 +217,30 @@ async function main(): Promise<void> {
       console.log(`        ${grain.padEnd(9)} ${String(n).padStart(6)}${enough}`);
     }
     if (reading.region.unplaced.length > 0) {
-      kv('codes the rules could not place', `${reading.region.unplaced.length} — e.g. ${reading.region.unplaced.slice(0, 8).join(', ')}`);
+      /*
+       * WITH THEIR NAMES. The first live run printed bare ids — `11, 12, 21,
+       * 22, 31, 32, 41, 42` — beside `finest grain: state`, and a two-digit
+       * ASGS code is very likely a capital-city and rest-of-state split,
+       * which would be FINER than state and therefore understate the answer.
+       * "Very likely" is not a measurement; the name is. This is the line
+       * that turns the next run into the rule.
+       */
+      kv('codes the rules could not place', reading.region.unplaced.length);
+      for (const c of reading.region.unplaced.slice(0, 20)) {
+        console.log(`        ${c.id.padEnd(12)} ${c.name}`);
+      }
     }
     kv('finest published grain', reading.finestGrain ?? '(none reached the floor)');
     kv('describes the property’s area', reading.finestGrain ? (describesTheArea(reading.finestGrain) ? 'YES' : 'no — a larger region') : 'no');
-    kv('series dimension', reading.seriesDimensionId ?? '(none)');
+    kv('series dimension', reading.seriesDimensionId ?? '(none — the ABS models assumptions as a cross-product)');
     if (reading.seriesNames.length > 0) {
       console.log(`      series the publisher offers: ${reading.seriesNames.join(' · ')}`);
     }
-    kv('central series, matched by name', reading.centralSeries ? `${reading.centralSeries.id} — ${reading.centralSeries.name}` : 'UNMATCHED');
-    kv('publisher offers a spread', reading.hasSpread ? 'yes' : 'no');
+    kv('assumption dimensions', reading.assumptions.map((a) => `${a.id}(${a.choices.length})`).join(' × ') || '(none)');
+    kv('combinations a figure rests on', reading.combinations);
+    for (const a of reading.assumptions) {
+      console.log(`        ${a.id.padEnd(14)} ${a.choices.map((c) => c.name).join(' · ')}`);
+    }
     findings.push({
       ref: dataflowRef(s.entry),
       name: s.entry.name,

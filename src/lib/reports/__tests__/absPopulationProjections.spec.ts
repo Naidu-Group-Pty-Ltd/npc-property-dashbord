@@ -16,7 +16,6 @@ import { describe, expect, it } from 'vitest';
 import {
   A_PROJECTION_IS_NOT_A_MEASUREMENT,
   AREA_GRAINS,
-  CENTRAL_SERIES_PATTERN,
   ESTIMATE_NAME_PATTERN,
   GRAIN_PRESENCE_FLOOR,
   PROJECTION_GRAIN_LABEL,
@@ -104,7 +103,11 @@ describe('the census answers the premise', () => {
     expect(census.counts.sa2).toBe(3);
     expect(census.counts.state).toBe(8);
     expect(census.counts.national).toBe(1);
-    expect(census.unplaced).toEqual(['TOT']);
+    // With their NAMES — the first live run's 14 unplaced ids were the
+    // evidence that the classifier was understating the grain, and a bare id
+    // could not say what it was.
+    expect(census.unplaced.map((c) => c.id)).toEqual(['TOT']);
+    expect(census.unplaced[0].name).toBeTruthy();
     expect(census.dimensionId).toBe('REGION');
   });
 
@@ -180,56 +183,112 @@ describe('an estimate is refused, and named', () => {
   });
 });
 
-describe('the assumption set is the publisher’s, chosen by name', () => {
-  const structure = (series: StructureDimension | null): DataStructure => ({
+describe('the ABS models assumptions as a CROSS-PRODUCT, measured', () => {
+  /*
+   * The five tests that used to sit here asserted a single `SERIES` dimension
+   * with a `medium` code to match by name. Run against the Bureau's own
+   * structures they were pinning MY model rather than the publisher's: all
+   * four projection flows carry no series dimension at all, and instead
+   *
+   *     FERTILITY 3 · MORTALITY 2 · NOM 4 · NIM 3
+   *
+   * which is 72 combinations. `CENTRAL_SERIES_PATTERN` had nothing to match
+   * and reported `UNMATCHED`, which read as a gap in the Bureau's metadata
+   * when it was a gap in mine. Renegotiated against what was measured — the
+   * same lesson the six contract tests in `A_PREMIUM_DOCUMENT.md` §21 taught,
+   * where every one was pinning the defect it asserted.
+   */
+  const absShaped = (): DataStructure => ({
     dimensions: [
       dim('REGION', [...STATES, 'AUS'], { position: 1 }),
-      ...(series ? [series] : []),
+      dim('SEX_ABS', ['1', '2', '3'], { position: 2 }),
+      dim('AGE', Array.from({ length: 194 }, (_, i) => `A${i}`), { position: 3 }),
+      dim('FERTILITY', ['1', '2', '3'], { position: 4, names: ['High fertility', 'Medium fertility', 'Low fertility'] }),
+      dim('MORTALITY', ['1', '2'], { position: 5, names: ['High life expectancy', 'Medium life expectancy'] }),
+      dim('NOM', ['1', '2', '3', '4'], { position: 6, names: ['NOM 1', 'NOM 2', 'NOM 3', 'NOM 4'] }),
+      dim('NIM', ['1', '2', '3'], { position: 7, names: ['NIM 1', 'NIM 2', 'NIM 3'] }),
+      dim('FREQUENCY', ['A'], { position: 8, names: ['Annual'] }),
       dim('TIME_PERIOD', [], { position: 9, isTime: true }),
     ],
   });
 
-  it('matches the central series by its name, never by its position', () => {
+  it('names every assumption a figure rests on, and counts the combinations', () => {
+    const reading = readProjectionStructure(absShaped());
+    expect(reading.seriesDimensionId).toBeNull();
+    expect(reading.assumptions.map((a) => a.id)).toEqual(['FERTILITY', 'MORTALITY', 'NOM', 'NIM']);
+    expect(reading.combinations).toBe(3 * 2 * 4 * 3);
+  });
+
+  it('excludes what SLICES a projection from what ASSUMES about it', () => {
     /*
-     * A codelist's ORDER is not a ranking and its ids are shorthand. Taking
-     * the first code would adopt whichever scenario the Bureau happened to
-     * list first — an assumption set nobody chose.
+     * `SEX_ABS` and `AGE` cut a projection; they are not scenarios. Listing
+     * 194 age codes among the assumptions would drown the four that matter
+     * and would make `combinations` a meaningless number.
      */
-    const reading = readProjectionStructure(structure(dim('PROJECTION_SERIES', ['A', 'B', 'C'], {
-      position: 2,
-      names: ['High series', 'Medium series', 'Low series'],
-    })));
-    expect(reading.centralSeries?.id).toBe('B');
-    expect(reading.hasSpread).toBe(true);
+    const reading = readProjectionStructure(absShaped());
+    expect(reading.assumptions.map((a) => a.id)).not.toContain('AGE');
+    expect(reading.assumptions.map((a) => a.id)).not.toContain('SEX_ABS');
+    expect(reading.assumptions.map((a) => a.id)).not.toContain('FREQUENCY');
+  });
+
+  it('carries the publisher’s own choice names, so a reading can quote them', () => {
+    const reading = readProjectionStructure(absShaped());
+    const fertility = reading.assumptions.find((a) => a.id === 'FERTILITY');
+    expect(fertility?.choices.map((c) => c.name))
+      .toEqual(['High fertility', 'Medium fertility', 'Low fertility']);
+  });
+
+  it('picks no combination — there is none to default to', () => {
+    /*
+     * The Bureau documents which combinations are its main projections; a
+     * codelist does not say so, and nothing here may guess. So the reading
+     * REPORTS the dimensions and a caller wanting a figure is handed a
+     * combination explicitly.
+     */
+    const source = readFileSync(
+      resolve(
+        dirname(fileURLToPath(import.meta.url)),
+        '../../../../supabase/functions/_shared/reports/market/openData/absPopulationProjections.pure.ts',
+      ),
+      'utf8',
+    );
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    // No default, no "first choice", no chosen scenario anywhere.
+    expect(code).not.toMatch(/choices\s*\[\s*0\s*\]/);
+    expect(code).not.toMatch(/\bcentralSeries\b/);
+  });
+
+  it('derives the assumptions rather than listing them, so a fifth is not dropped', () => {
+    // A publisher adding an assumption must not have it silently fall out of
+    // a reading's provenance.
+    const withFifth = absShaped();
+    withFifth.dimensions.splice(7, 0, dim('HOUSEHOLD_FORMATION', ['1', '2'], { position: 8 }));
+    const reading = readProjectionStructure(withFifth);
+    expect(reading.assumptions.map((a) => a.id)).toContain('HOUSEHOLD_FORMATION');
+    expect(reading.combinations).toBe(3 * 2 * 4 * 3 * 2);
+  });
+
+  it('still reads a single series dimension where a publisher models one', () => {
+    // Kept, because another publisher may. It is simply not the ABS's shape.
+    const reading = readProjectionStructure({
+      dimensions: [
+        dim('REGION', [...STATES], { position: 1 }),
+        dim('SERIES', ['A', 'B', 'C'], { position: 2, names: ['High series', 'Medium series', 'Low series'] }),
+        dim('TIME_PERIOD', [], { position: 3, isTime: true }),
+      ],
+    });
+    expect(reading.seriesDimensionId).toBe('SERIES');
     expect(reading.seriesNames).toEqual(['High series', 'Medium series', 'Low series']);
   });
 
-  it('leaves the central series UNMATCHED rather than defaulting to the first code', () => {
-    const reading = readProjectionStructure(structure(dim('SCENARIO', ['X', 'Y'], {
-      position: 2,
-      names: ['Scenario one', 'Scenario two'],
-    })));
-    expect(reading.centralSeries).toBeNull();
-    expect(reading.seriesDimensionId).toBe('SCENARIO');
-  });
-
-  it('a spread needs BOTH ends, not merely more than one series', () => {
-    const reading = readProjectionStructure(structure(dim('SERIES', ['A', 'B'], {
-      position: 2,
-      names: ['High series', 'Medium series'],
-    })));
-    expect(reading.hasSpread).toBe(false);
-  });
-
   it('reads the region census and the finest grain off the same structure', () => {
-    const reading = readProjectionStructure(structure(null));
+    const reading = readProjectionStructure(absShaped());
     expect(reading.region?.dimensionId).toBe('REGION');
     expect(reading.finestGrain).toBe('state');
-    expect(reading.seriesDimensionId).toBeNull();
   });
 
   it('excludes the time dimension from the geography search', () => {
-    const reading = readProjectionStructure(structure(null));
+    const reading = readProjectionStructure(absShaped());
     expect(reading.dimensions.find((d) => d.isTime)?.id).toBe('TIME_PERIOD');
     expect(reading.region?.dimensionId).not.toBe('TIME_PERIOD');
   });
@@ -238,12 +297,7 @@ describe('the assumption set is the publisher’s, chosen by name', () => {
     const reading = readProjectionStructure({ dimensions: [dim('MEASURE', ['1'])] });
     expect(reading.region).toBeNull();
     expect(reading.finestGrain).toBeNull();
-  });
-
-  it('the central pattern accepts the forms a publisher actually writes', () => {
-    for (const name of ['Medium series', 'Series B', 'Central scenario', 'Main projection', 'Principal series']) {
-      expect(CENTRAL_SERIES_PATTERN.test(name), name).toBe(true);
-    }
+    expect(reading.combinations).toBe(1);
   });
 });
 

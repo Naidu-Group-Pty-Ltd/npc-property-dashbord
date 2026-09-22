@@ -165,27 +165,75 @@ export function grainOfRegionCode(code: string, lgaDimension = false): Projectio
 export const REGION_DIMENSION_PATTERN =
   /^(REGION|REGION_TYPE|ASGS_2016|ASGS_2021|ASGS_2026|LGA|SA2|SA3|SA4|STATE|GCCSA|REGION_LGA)$/i;
 
-/** Which dimension carries the publisher's assumption set, if any. */
+/**
+ * Which dimension carries the publisher's assumption set, if any.
+ *
+ * Kept because another publisher may model it that way, and measured to be
+ * the WRONG shape for the ABS — see `ASSUMPTION_DIMENSIONS` below.
+ */
 export const SERIES_DIMENSION_PATTERN = /^(PROJECTION_SERIES|SERIES|SCENARIO|ASSUMPTION|VARIANT)$/i;
 
 /**
- * The publisher's own central assumption set, by NAME.
+ * The ABS's assumption set is a CROSS-PRODUCT, and that was measured.
  *
- * Matched on the name because a codelist's ORDER is not a ranking and its ids
- * are shorthand — the same rule `ABS_BA_KEY_RULES` answers to. A structure
- * whose series cannot be matched here is reported as unmatched rather than
- * defaulted to the first code, because silently adopting an assumption set is
- * the failure this pattern exists to prevent.
+ * Every one of the Bureau's four projection flows carries no series dimension
+ * at all. It carries four independent assumption dimensions instead —
+ * measured 22 Sep 2026 from CI:
+ *
+ *     4. FERTILITY    3 codes
+ *     5. MORTALITY    2 codes
+ *     6. NOM          4 codes   (net overseas migration)
+ *     7. NIM          3 codes   (net interstate migration)
+ *
+ * That is **72 combinations**, not three named series, and it makes the first
+ * draft of this module wrong in SHAPE rather than in pattern:
+ * `CENTRAL_SERIES_PATTERN` had nothing to match and correctly reported
+ * `UNMATCHED`, which read as a gap in the publisher's metadata when it was a
+ * gap in my model of it.
+ *
+ * Two rules follow, and the second is the one that matters.
+ *
+ * **A reading names every assumption it rests on**, not one label. A figure
+ * from (medium fertility, medium mortality, NOM 3, NIM 2) is a different
+ * figure from the same flow under another combination, and printing either
+ * as "the projection" is asserting a scenario nobody chose — which is what a
+ * single `series` field would have invited.
+ *
+ * **There is no central combination to default to.** The Bureau documents
+ * which combinations it publishes as its main projections; a codelist does
+ * not say so, and nothing here may guess. So `assumptionDimensions` is
+ * REPORTED and a caller that wants a figure must be handed a combination
+ * explicitly.
  */
-export const CENTRAL_SERIES_PATTERN = /\b(medium|series\s*b|central|main|principal)\b/i;
-export const HIGH_SERIES_PATTERN = /\b(high|series\s*a)\b/i;
-export const LOW_SERIES_PATTERN = /\b(low|series\s*c)\b/i;
+export const ASSUMPTION_DIMENSIONS = /^(FERTILITY|MORTALITY|NOM|NIM|MIGRATION|LIFE_EXPECTANCY)$/i;
+
+/**
+ * Dimensions that describe the POPULATION rather than the scenario.
+ *
+ * `SEX_ABS` and `AGE` slice a projection; they are not assumptions about the
+ * future. Told apart because a reading has to say which assumptions it rests
+ * on, and listing 194 age codes among them would drown the four that matter.
+ */
+export const SLICE_DIMENSIONS = /^(SEX|SEX_ABS|AGE|AGE_GROUP|MEASURE|FREQUENCY|FREQ|TSEST)$/i;
 
 export interface RegionCensus {
   /** How many codes of each grain the flow's own codelist holds. */
   counts: Readonly<Partial<Record<ProjectionGrain, number>>>;
-  /** Codes the shape rules could not place, so a reader can see them. */
-  unplaced: string[];
+  /**
+   * Codes the shape rules could not place — **with their published names.**
+   *
+   * The names are the point. The first live run reported 14 unplaced codes as
+   * bare ids (`11, 12, 21, 22, 31, 32, 41, 42, …`) and `finest grain: state`,
+   * and two-digit ASGS codes are almost certainly a capital-city and
+   * rest-of-state split — a grain FINER than state, refused and therefore
+   * understating the answer.
+   *
+   * "Almost certainly" is not a measurement, which is why this carries the
+   * name: the next run says what the Bureau calls code `11` and the rule is
+   * written from that rather than from an inference. Printing the ids alone
+   * is what made the gap visible; printing the names is what closes it.
+   */
+  unplaced: StructureCode[];
   /** The dimension the census was taken from. */
   dimensionId: string;
 }
@@ -202,10 +250,10 @@ export function classifyRegionCodes(
 ): RegionCensus {
   const lgaDimension = /LGA/i.test(dimension.id);
   const counts: Partial<Record<ProjectionGrain, number>> = {};
-  const unplaced: string[] = [];
+  const unplaced: StructureCode[] = [];
   for (const code of dimension.codes) {
     const grain = grainOfRegionCode(code.id, lgaDimension);
-    if (grain === null) { unplaced.push(code.id); continue; }
+    if (grain === null) { unplaced.push(code); continue; }
     counts[grain] = (counts[grain] ?? 0) + 1;
   }
   return { counts, unplaced, dimensionId: dimension.id };
@@ -264,16 +312,31 @@ export function surveyPopulationFlows(
   return out;
 }
 
+/** One assumption a projection rests on, and the choices the publisher offers. */
+export interface AssumptionDimension {
+  id: string;
+  /** Every choice, verbatim, so a reading can name the one it used. */
+  choices: StructureCode[];
+}
+
 export interface ProjectionStructureReading {
   region: RegionCensus | null;
   finestGrain: ProjectionGrain | null;
+  /**
+   * A single series dimension, where a publisher models it that way. The ABS
+   * does not — measured — and this is null on all four of its flows.
+   */
   seriesDimensionId: string | null;
-  /** The publisher's own series names, verbatim. */
+  /** The publisher's own series names, verbatim. Empty where there is none. */
   seriesNames: string[];
-  /** The central series, matched by name. Null where none matched. */
-  centralSeries: StructureCode | null;
-  /** Whether the publisher offers a spread around it. */
-  hasSpread: boolean;
+  /**
+   * The assumption dimensions a figure from this flow rests on, and how many
+   * combinations they make. `combinations` is the number a reading has to
+   * choose from, and it is reported rather than resolved: nothing here may
+   * pick a scenario.
+   */
+  assumptions: AssumptionDimension[];
+  combinations: number;
   /** Every dimension, so a log can show what the key would have to cover. */
   dimensions: ReadonlyArray<{ id: string; position: number; codes: number; isTime: boolean }>;
 }
@@ -288,20 +351,27 @@ export function readProjectionStructure(structure: DataStructure): ProjectionStr
   ) ?? null;
   const region = regionDim ? classifyRegionCodes(regionDim) : null;
   const seriesNames = seriesDim ? seriesDim.codes.map((c) => c.name) : [];
-  const centralSeries = seriesDim
-    ? (seriesDim.codes.find((c) => CENTRAL_SERIES_PATTERN.test(c.name)) ?? null)
-    : null;
-  const hasSpread = seriesDim
-    ? seriesDim.codes.some((c) => HIGH_SERIES_PATTERN.test(c.name))
-      && seriesDim.codes.some((c) => LOW_SERIES_PATTERN.test(c.name))
-    : false;
+  /*
+   * Every dimension that is neither the geography, nor time, nor a slice of
+   * the population is an assumption about the future. Derived that way rather
+   * than from a list of names, because a publisher that adds a fifth
+   * assumption must not have it silently dropped from a reading's provenance.
+   */
+  const assumptions: AssumptionDimension[] = structure.dimensions
+    .filter((d) => !d.isTime
+      && d !== regionDim
+      && !REGION_DIMENSION_PATTERN.test(d.id)
+      && !SLICE_DIMENSIONS.test(d.id)
+      && d.codes.length > 0)
+    .map((d) => ({ id: d.id, choices: d.codes }));
+  const combinations = assumptions.reduce((n, a) => n * Math.max(1, a.choices.length), 1);
   return {
     region,
     finestGrain: region ? finestPublishedGrain(region) : null,
     seriesDimensionId: seriesDim?.id ?? null,
     seriesNames,
-    centralSeries,
-    hasSpread,
+    assumptions,
+    combinations,
     dimensions: structure.dimensions.map((d) => ({
       id: d.id,
       position: d.position,
