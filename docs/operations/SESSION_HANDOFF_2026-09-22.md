@@ -165,9 +165,31 @@ Two things are wrong and each on its own is enough:
    named, never a reason to refuse a series*, where one $7,000 cell refused
    444 localities.
 
-Status of the fix: see the commit following this correction. If the walk is
-still stuck when you read this, `oldest` will still be `2025-10` and the
-`APPROVALS_READBACK` periods will read `2025-10..2026-07`.
+#### The fix — written and tested, NOT LIVE
+
+`absBuildingApprovals.pure.ts`: the ceiling is tested on `Math.abs`, so a
+negative amendment is accepted and drift is still caught in either direction;
+and an isolated implausible cell is **dropped and named** (`implausibleCells`
+on the parse) instead of throwing, with the refusal kept for a SYSTEMATIC
+drift past `maxImplausibleShare` (1%) — because drift moves every cell and a
+publisher artefact moves one.
+
+Two existing tests were **renegotiated**, and both were pinning the defect:
+each drifted ONE cell and asserted a throw. Drift is systematic, so their
+fixtures are now systematic, and the single-cell case is asserted directly as
+a drop. `src/lib/reports` 7,607 passing; `check-edge-column-names` passes.
+
+**It is on the branch and not deployed, so the register is still stuck.**
+The owner has not been asked for a merge. Until it ships:
+
+- `oldest` stays `2025-10`; `APPROVALS_READBACK` periods read `2025-10..2026-07`
+  and rows stay at ~34,538 + one window.
+- The register will never reach 12 months (so the Supply block keeps its FLOOR
+  qualification) or 24 (so it never states a year-on-year change).
+- Every hourly tick spends one ABS request and writes nothing.
+
+Nothing else is broken by waiting: the Supply section degrades honestly, which
+is what it was built to do.
 
 ### THE PENDING MEASUREMENT (blocked by the above)
 

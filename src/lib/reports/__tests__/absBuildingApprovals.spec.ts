@@ -275,15 +275,21 @@ describe('a region download is a HIERARCHY, and the grain is the row’s own', (
   });
 
   it('still refuses a figure that is implausible FOR ITS OWN grain', () => {
-    // The bound did not go away; it became the right bound. A council with
-    // 900,000 dwellings approved in a month is unit drift.
-    const mad = [HEADER, ...rollupRows()]
-      .concat(download().split('\n').slice(1))
-      .join('\n')
-      .replace('BA,1,Number of dwelling units,1,Houses,10,Original,10050,Albury (C),M,2024-01,10,0',
-        'BA,1,Number of dwelling units,1,Houses,10,Original,10050,Albury (C),M,2024-01,900000,0');
+    /*
+     * The bound did not go away; it became the right bound. A council with
+     * 900,000 dwellings approved in a month is unit drift.
+     *
+     * RENEGOTIATED 22 Sep 2026: this drifted ONE cell and asserted a throw,
+     * and a single cell must no longer refuse a ~22,000-cell download — that
+     * is the livelock that stalled the production walk for nine consecutive
+     * hourly ticks. Drift is systematic, so the fixture is now systematic,
+     * and the single-cell case is asserted directly below as a DROP.
+     */
+    const mad = download({ units: () => '900000' });
     expect(() => parseAbsBuildingApprovals(mad, 'lga'))
-      .toThrow(/900000 dwelling units, outside 0–100000 for a lga area/);
+      .toThrow(/outside their magnitude ceiling/);
+    expect(() => parseAbsBuildingApprovals(mad, 'lga'))
+      .toThrow(/900000 dwelling units \(\|x\| > 100000, lga\)/);
   });
 });
 
@@ -638,9 +644,56 @@ describe('the refusals', () => {
   });
 
   it('refuses a unit drift rather than writing an implausible count', () => {
-    const drifted = download({ units: (i) => (i === 0 ? '999999' : String(10 + (i % 40))) });
+    // Renegotiated with the one above, and for the same reason: drift moves
+    // EVERY cell, so drifting one and calling it drift was the fixture
+    // encoding the defect.
+    const drifted = download({ units: () => '999999' });
     expect(() => parseAbsBuildingApprovals(drifted, 'lga'))
-      .toThrow(/reads 999999 dwelling units, outside 0–100000/);
+      .toThrow(/outside their magnitude ceiling/);
+  });
+
+  /*
+   * THE STALL, 22 Sep 2026 — nine consecutive hourly ticks, writing nothing:
+   *
+   *   the ABS building-approvals count for Ulverstone 2025-08 reads -5
+   *   dwelling units, outside 0-100000 for a sa2 area (unit or column drift)
+   *   — refused
+   *
+   * `oldest` never moved off 2025-10, and the next tick asked for the same
+   * window again, for ever.
+   */
+  it('accepts a NEGATIVE count, because an amendment is the publisher’s own value', () => {
+    // ABS Building Approvals are net of amendments: a small area records a
+    // negative in a month when a previously approved dwelling is cancelled or
+    // revised down. Refusing it is the filter `ABS_BA_PLAUSIBILITY`'s own
+    // header warns against — "a check that fires on a true figure".
+    const withAmendment = download({ units: (i) => (i === 0 ? '-5' : String(10 + (i % 40))) });
+    const parse = parseAbsBuildingApprovals(withAmendment, 'lga');
+    expect(parse.implausibleCells).toEqual([]);
+    const amended = parse.rows.find((r) => r.area === 'Albury (C)' && r.period === '2024-01'
+      && r.buildingType === 'house');
+    expect(amended?.dwellingUnits).toBe(-5);
+  });
+
+  it('drops ONE implausible cell and names it, rather than refusing the window', () => {
+    const oneBadCell = download({ units: (i) => (i === 0 ? '900000' : String(10 + (i % 40))) });
+    const parse = parseAbsBuildingApprovals(oneBadCell, 'lga');
+    // The download still lands — thousands of rows, not an exception.
+    expect(parse.rows.length).toBeGreaterThan(1000);
+    // The cell is named, so it is a finding rather than a silent omission…
+    expect(parse.implausibleCells).toHaveLength(1);
+    expect(parse.implausibleCells[0]).toMatch(/Albury \(C\) 2024-01 900000 dwelling units/);
+    // …and it is ABSENT rather than written, which is the whole point: an
+    // implausible figure must never reach a client's page as a fact.
+    const dropped = parse.rows.find((r) => r.area === 'Albury (C)' && r.period === '2024-01'
+      && r.buildingType === 'house');
+    expect(dropped?.dwellingUnits).toBeNull();
+  });
+
+  it('holds the boundary between the two at a measured share', () => {
+    // Small on purpose: the refusal is what stops a wrongly-read column
+    // reaching a client, and only ISOLATED cells are bought out of it.
+    expect(ABS_BA_PLAUSIBILITY.maxImplausibleShare).toBe(0.01);
   });
 });
 

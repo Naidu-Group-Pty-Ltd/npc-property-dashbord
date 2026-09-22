@@ -165,6 +165,17 @@ export const ABS_BA_PLAUSIBILITY = {
   maxValuePerAreaMonth: {
     sa2: 20_000_000_000, lga: 20_000_000_000, state: 80_000_000_000, national: 250_000_000_000,
   } as Record<ApprovalsAreaKind, number>,
+  /**
+   * The share of cells that may exceed those ceilings before the download is
+   * refused as drifted rather than having them dropped individually.
+   *
+   * Drift is systematic — a column read in thousands moves EVERY cell — so
+   * one implausible cell in twenty-two thousand is a publisher artefact and
+   * a hundredth of them is a fault in how the column was read. Small on
+   * purpose: the refusal is what stops a wrong column reaching a client's
+   * page, and only isolated cells are bought out of it.
+   */
+  maxImplausibleShare: 0.01,
 } as const;
 
 // ─── The dataflow catalogue ─────────────────────────────────────────────────
@@ -770,6 +781,8 @@ export interface AbsApprovalsParse {
    * fault.
    */
   refusedByGrain: Partial<Record<ApprovalsIntermediateGrain | 'unknown', number>>;
+  /** Cells dropped for magnitude, named. Empty is the ordinary outcome. */
+  implausibleCells: string[];
 }
 
 /**
@@ -826,6 +839,9 @@ export function parseAbsBuildingApprovals(
   // against one grain's floor is a count of the wrong thing.
   const areasByGrain = new Map<ApprovalsAreaKind, Set<string>>();
   const refusedByGrain = new Map<ApprovalsIntermediateGrain | 'unknown', number>();
+  /** Cells outside the magnitude ceiling — dropped individually, named together. */
+  const implausible: string[] = [];
+  let cellsRead = 0;
   const states = new Set<SalesRegisterState>();
   let skipped = 0;
   let sawSeriesType = false;
@@ -891,24 +907,55 @@ export function parseAbsBuildingApprovals(
       if (state) states.add(state);
     }
     if (scaled !== null) {
-      if (isValue) {
-        const ceiling = ABS_BA_PLAUSIBILITY.maxValuePerAreaMonth[rowKind];
-        if (scaled < 0 || scaled > ceiling) {
-          throw new Error(
-            `the ABS building-approvals value for ${area} ${period} reads $${scaled}, `
-            + `outside 0–${ceiling} for a ${rowKind} area (unit or column drift) — refused`,
-          );
-        }
+      cellsRead += 1;
+      /*
+       * The bound is on MAGNITUDE, and one cell never refuses the download.
+       *
+       * This read `scaled < 0 || scaled > ceiling` and THREW, and it stalled
+       * the production walk for nine consecutive hourly ticks on 22 Sep 2026:
+       *
+       *   the ABS building-approvals count for Ulverstone 2025-08 reads -5
+       *   dwelling units, outside 0-100000 for a sa2 area (unit or column
+       *   drift) — refused
+       *
+       * Two faults, either of which alone is enough.
+       *
+       * **A negative is the publisher's own value, not drift.** ABS Building
+       * Approvals are net of AMENDMENTS, so a small area records a negative
+       * in a month when a previously approved dwelling is cancelled or
+       * revised down. Drift — a column read in thousands, a value column read
+       * as a count — is a fault of MAGNITUDE and shows up in either
+       * direction, which is what `Math.abs` tests. `ABS_BA_PLAUSIBILITY`'s own
+       * header already said this: *"a check that fires on a true figure is not
+       * a plausibility check, it is a filter nobody asked for."*
+       *
+       * **And one cell may not refuse a series.** The window is ~22,000 cells
+       * (2,458 areas x 3 months x 3 building types); throwing on any one of
+       * them discarded all of it, and the next tick asked for the same window
+       * again — a livelock, for ever, reported by nothing but a log line. That
+       * is the rule the sibling register already paid for: *a publisher's typo
+       * is nulled and named, never a reason to refuse a series*, where one
+       * $7,000 cell refused 444 localities.
+       *
+       * So an isolated implausible cell is DROPPED and COUNTED, and the
+       * refusal is kept for what it was written for — systematic drift, which
+       * is many cells rather than one. `maxImplausibleShare` is the boundary
+       * between the two, and it is deliberately small: at 1% a genuinely
+       * drifted column still refuses, because drift moves every cell.
+       */
+      const ceiling = isValue
+        ? ABS_BA_PLAUSIBILITY.maxValuePerAreaMonth[rowKind]
+        : ABS_BA_PLAUSIBILITY.maxUnitsPerAreaMonth[rowKind];
+      if (Math.abs(scaled) > ceiling) {
+        implausible.push(
+          isValue
+            ? `${area} ${period} value $${scaled} (|x| > ${ceiling}, ${rowKind})`
+            : `${area} ${period} ${scaled} dwelling units (|x| > ${ceiling}, ${rowKind})`,
+        );
+      } else if (isValue) {
         assertNoCollision(row.value, scaled, 'value of building approved', area, period, buildingType);
         row.value = scaled;
       } else {
-        const ceiling = ABS_BA_PLAUSIBILITY.maxUnitsPerAreaMonth[rowKind];
-        if (scaled < 0 || scaled > ceiling) {
-          throw new Error(
-            `the ABS building-approvals count for ${area} ${period} reads ${scaled} dwelling units, `
-            + `outside 0–${ceiling} for a ${rowKind} area (unit or column drift) — refused`,
-          );
-        }
         assertNoCollision(row.dwellingUnits, scaled, 'dwelling units', area, period, buildingType);
         row.dwellingUnits = scaled;
       }
@@ -917,6 +964,22 @@ export function parseAbsBuildingApprovals(
     let atGrain = areasByGrain.get(rowKind);
     if (!atGrain) { atGrain = new Set<string>(); areasByGrain.set(rowKind, atGrain); }
     atGrain.add(areaCode);
+  }
+
+  /*
+   * Systematic drift still refuses. The share is measured against the cells
+   * the guard actually judged, so a small window and a large one are held to
+   * the same standard, and the message NAMES examples rather than a count —
+   * a bare number sends nobody to a remedy.
+   */
+  if (cellsRead > 0
+    && implausible.length / cellsRead > ABS_BA_PLAUSIBILITY.maxImplausibleShare) {
+    throw new Error(
+      `${implausible.length} of ${cellsRead} ABS building-approvals cells are outside their `
+      + `magnitude ceiling (over ${ABS_BA_PLAUSIBILITY.maxImplausibleShare * 100}%), which is a `
+      + `column read wrongly rather than a publisher amendment — refused. `
+      + `For example: ${implausible.slice(0, 3).join('; ')}`,
+    );
   }
 
   const rows = [...byKey.values()];
@@ -978,6 +1041,7 @@ export function parseAbsBuildingApprovals(
     seriesTypeUnfiltered: !sawSeriesType,
     skipped,
     refusedByGrain: Object.fromEntries(refusedByGrain) as AbsApprovalsParse['refusedByGrain'],
+    implausibleCells: implausible,
   };
 }
 
