@@ -1080,6 +1080,14 @@ jobs:
       - name: Ask the ABS what it publishes, and read it
         run: npx tsx scripts/market/abs-approvals-liveness.ts
 
+      # `always()` so the two registers are independent signals sharing one
+      # install. Without it, a reader bug against the ABS would hide the
+      # national pipeline's measurement entirely, and a skipped probe reads in
+      # the log exactly like a probe that reached nothing.
+      - name: Ask the Commonwealth catalogue for the national pipeline, and read it
+        if: always()
+        run: npx tsx scripts/market/national-pipeline-liveness.ts
+
   template-geometry:
     runs-on: ubuntu-latest
     timeout-minutes: 45
