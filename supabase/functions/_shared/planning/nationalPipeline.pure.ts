@@ -76,6 +76,38 @@
  * package missing because the walk stopped is indistinguishable from one that
  * does not exist.
  *
+ * ── And the enumeration was truncated too, by the same class of fault ────
+ *
+ * The rewritten probe then reported **`publisher_absent` over 25
+ * organisations enumerated, 1 page read** — while its own supplementary
+ * search, in the same run, declared **1,769 packages** matching and named
+ * four publishers (Australian Ocean Data Network, Geoscience Australia Data,
+ * NSW Government, BITRE). Twenty-five is CKAN's default page size:
+ * `organization_list?all_fields=true&limit=1000` was answered with 25, the
+ * `limit` silently ignored, and the walk read a short page as the end of the
+ * list. The same defect, one endpoint along, inside the commit that fixed it.
+ *
+ * So `all_fields=true` may not be the enumeration, and the enumeration is
+ * **corroborated from two endpoints that fail differently**:
+ *
+ * - `organization_list` with no `all_fields` answers plain slugs and is not
+ *   paged, so it is the authority for *which organisations exist*.
+ * - `package_search?rows=0&facet.field=["organization"]&facet.limit=-1`
+ *   answers the organisation FACET, which is the set actually publishing
+ *   packages, computed by the search index rather than by the list endpoint.
+ *
+ * An absence requires BOTH to answer and requires the facet to name nothing
+ * the slug list does not. Either failing refuses, because the whole reason
+ * this file exists is that a truncated question reads exactly like an empty
+ * world. A slug the pattern matches is then resolved through
+ * `organization_show`, whose id comes from the catalogue's own answer and
+ * never from this file.
+ *
+ * One consequence for the pattern: a slug is `infrastructure-australia` and a
+ * title is `Infrastructure Australia`, so the publisher rule matches across
+ * `-`, `_` and whitespace. Written as `\s+` it matched the title and could
+ * never have matched the slug — which is a rule that only ever half worked.
+ *
  * That distinction adds a fourth absence, and it is the one that matters
  * most operationally: **`publisher_absent`** says the catalogue has no such
  * publisher, which sends a person to Infrastructure Australia's own site.
@@ -175,18 +207,6 @@ export function ckanSampleUrl(resourceId: string, limit = 5): string {
 }
 
 /**
- * Every publishing organisation on the catalogue, with its package count.
- *
- * `all_fields` is what makes this usable: without it CKAN returns slugs alone,
- * and a slug is the identifier this module refuses to reason about. With it
- * every organisation carries its own TITLE, which is what a person checking
- * this can read and what the publisher rule is written against.
- */
-export function ckanOrganisationListUrl(limit = 1000, offset = 0): string {
-  return `${CKAN_BASE}/action/organization_list?all_fields=true&limit=${limit}&offset=${offset}`;
-}
-
-/**
  * One publisher's packages, filtered rather than ranked.
  *
  * `fq` is Solr's filter query: it constrains the result set instead of
@@ -213,8 +233,41 @@ export type OrganisationParse =
   | { kind: 'organisations'; organisations: CkanOrganisation[] }
   | { kind: 'refused'; reason: string };
 
-/** Read an `organization_list?all_fields=true` answer. */
-export function parseOrganisationList(text: string): OrganisationParse {
+/**
+ * Every organisation the catalogue holds, as plain slugs.
+ *
+ * No `all_fields`, and that omission is the point: with it, data.gov.au
+ * answered 25 and ignored a `limit` of 1000 — a page read as a list. Without
+ * it CKAN answers the whole set, which is what an absence has to be judged
+ * against.
+ */
+export function ckanOrganisationSlugsUrl(): string {
+  return `${CKAN_BASE}/action/organization_list`;
+}
+
+/**
+ * The organisation FACET of the whole package index.
+ *
+ * A second, independent question: which organisations actually publish
+ * packages, answered by the search index rather than by the list endpoint.
+ * `facet.limit=-1` asks for every bucket and `rows=0` asks for no packages,
+ * so this costs a facet computation and no payload.
+ */
+export function ckanOrganisationFacetUrl(): string {
+  return `${CKAN_BASE}/action/package_search?rows=0&facet.field=${encodeURIComponent('["organization"]')}&facet.limit=-1`;
+}
+
+/** One organisation, by the slug the catalogue itself gave. */
+export function ckanOrganisationShowUrl(slug: string): string {
+  return `${CKAN_BASE}/action/organization_show?id=${encodeURIComponent(slug)}&include_datasets=false`;
+}
+
+export type SlugParse =
+  | { kind: 'slugs'; slugs: string[] }
+  | { kind: 'refused'; reason: string };
+
+/** Read an `organization_list` answer. */
+export function parseOrganisationSlugs(text: string): SlugParse {
   let body: unknown;
   try {
     body = JSON.parse(text);
@@ -229,34 +282,109 @@ export function parseOrganisationList(text: string): OrganisationParse {
     return { kind: 'refused', reason: `the catalogue refused: ${JSON.stringify(envelope.error ?? null)}` };
   }
   if (!Array.isArray(envelope.result)) {
-    return {
-      kind: 'refused',
-      reason: `no result array (${text.length} bytes): ${JSON.stringify(text.slice(0, 220))}`,
-    };
+    return { kind: 'refused', reason: `no result array (${text.length} bytes): ${JSON.stringify(text.slice(0, 220))}` };
   }
-  const organisations: CkanOrganisation[] = [];
+  const slugs: string[] = [];
   for (const raw of envelope.result as unknown[]) {
     /*
-     * `all_fields=false` answers an array of strings. Reading that as zero
-     * organisations would report "the publisher is not on the catalogue" from
-     * a query parameter we got wrong — the exact failure this module was
-     * rewritten to close — so it refuses instead.
+     * Objects here mean `all_fields` was applied when it was not asked for —
+     * the shape that was capped at 25 — so this refuses rather than reading a
+     * page as a list. `ckanOrganisationListUrl` and its reader are DELETED
+     * rather than left unused, because a reader for the endpoint that lied is
+     * one import away from lying again.
      */
-    if (typeof raw === 'string') {
-      return { kind: 'refused', reason: 'the catalogue answered slugs, not organisations: all_fields was not honoured' };
+    if (typeof raw !== 'string') {
+      return { kind: 'refused', reason: 'the catalogue answered organisation objects, not slugs: this endpoint is paged and cannot be read as a list' };
     }
-    const o = raw as Record<string, unknown>;
-    const id = str(o.id);
-    const name = str(o.name);
-    if (!id || !name) continue;
-    organisations.push({
-      id,
-      name,
-      title: str(o.title) ?? name,
-      packageCount: num(o.package_count),
-    });
+    if (raw.trim() !== '') slugs.push(raw.trim());
   }
-  return { kind: 'organisations', organisations };
+  return { kind: 'slugs', slugs };
+}
+
+/** Read the organisation facet of a `package_search` answer. */
+export function parseOrganisationFacet(text: string): SlugParse {
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch (err) {
+    return {
+      kind: 'refused',
+      reason: `not JSON (${text.length} bytes, ${String(err)}): ${JSON.stringify(text.slice(0, 220))}`,
+    };
+  }
+  const envelope = body as { success?: unknown; result?: unknown; error?: unknown };
+  if (envelope.success === false) {
+    return { kind: 'refused', reason: `the catalogue refused: ${JSON.stringify(envelope.error ?? null)}` };
+  }
+  const facets = (envelope.result as { search_facets?: Record<string, unknown> } | undefined)?.search_facets;
+  const organisation = facets?.organization as { items?: unknown } | undefined;
+  if (!organisation || !Array.isArray(organisation.items)) {
+    return {
+      kind: 'refused',
+      reason: `no organisation facet (${text.length} bytes): ${JSON.stringify(text.slice(0, 220))}`,
+    };
+  }
+  const slugs: string[] = [];
+  for (const raw of organisation.items as unknown[]) {
+    const name = str((raw as Record<string, unknown>).name);
+    if (name) slugs.push(name);
+  }
+  return { kind: 'slugs', slugs };
+}
+
+/** Read an `organization_show` answer. */
+export function parseOrganisationShow(text: string): OrganisationParse {
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch (err) {
+    return {
+      kind: 'refused',
+      reason: `not JSON (${text.length} bytes, ${String(err)}): ${JSON.stringify(text.slice(0, 220))}`,
+    };
+  }
+  const envelope = body as { success?: unknown; result?: unknown; error?: unknown };
+  if (envelope.success === false) {
+    return { kind: 'refused', reason: `the catalogue refused: ${JSON.stringify(envelope.error ?? null)}` };
+  }
+  const o = envelope.result as Record<string, unknown> | undefined;
+  const id = str(o?.id);
+  const name = str(o?.name);
+  if (!o || !id || !name) {
+    return { kind: 'refused', reason: `no organisation in the answer: ${JSON.stringify(text.slice(0, 220))}` };
+  }
+  return {
+    kind: 'organisations',
+    organisations: [{ id, name, title: str(o.title) ?? name, packageCount: num(o.package_count) }],
+  };
+}
+
+/**
+ * The corroborated enumeration: which slugs could be the publisher.
+ *
+ * Both readings must answer, and the facet may name nothing the slug list
+ * does not. A facet bucket outside the list means the list is incomplete, and
+ * a list that is incomplete cannot establish that anything is absent from it
+ * — which is this module's whole subject, paid for twice.
+ */
+export type EnumerationReading =
+  | { kind: 'enumerated'; slugs: string[]; matches: string[] }
+  | { kind: 'refused'; reason: string };
+
+export function corroborateOrganisations(list: SlugParse, facet: SlugParse): EnumerationReading {
+  if (list.kind === 'refused') return { kind: 'refused', reason: `organisation list: ${list.reason}` };
+  if (facet.kind === 'refused') return { kind: 'refused', reason: `organisation facet: ${facet.reason}` };
+  const known = new Set(list.slugs);
+  const unlisted = facet.slugs.filter((s) => !known.has(s));
+  if (unlisted.length > 0) {
+    return {
+      kind: 'refused',
+      reason: `the facet names ${unlisted.length} organisation(s) the list does not `
+        + `(${unlisted.slice(0, 5).join(', ')}) — the list is incomplete and cannot establish an absence`,
+    };
+  }
+  const slugs = [...new Set([...list.slugs, ...facet.slugs])].sort();
+  return { kind: 'enumerated', slugs, matches: slugs.filter((s) => NATIONAL_PIPELINE_ORG_PATTERN.test(s)) };
 }
 
 export type PublisherLookup =
@@ -286,6 +414,45 @@ export function findPipelinePublisher(parse: OrganisationParse): PublisherLookup
   }
   const best = [...matches].sort((a, b) => (b.packageCount ?? 0) - (a.packageCount ?? 0))[0];
   return { kind: 'publisher', organisation: best };
+}
+
+/**
+ * The publisher, decided from the corroborated enumeration.
+ *
+ * The enumeration answers *could* there be such an organisation;
+ * `organization_show` answers *what is it called and how much does it hold*.
+ * Splitting them is what keeps a typed identifier out of this file: a slug
+ * only ever arrives from the catalogue's own list.
+ *
+ * `findPipelinePublisher` makes the choice among the resolved organisations,
+ * so there is exactly ONE implementation of "which of these is the
+ * publisher" whichever route reached them.
+ */
+export function publisherFromEnumeration(
+  enumeration: EnumerationReading,
+  resolved: OrganisationParse,
+): PublisherLookup {
+  if (enumeration.kind === 'refused') return { kind: 'refused', reason: enumeration.reason };
+  if (enumeration.matches.length === 0) {
+    return { kind: 'publisher_absent', organisationsSeen: enumeration.slugs.length };
+  }
+  /*
+   * The enumeration matched and the organisation could not be read. That is a
+   * retrieval failure, never an absence: reporting it as one would be the
+   * truncation defect a third time, with the truncation one endpoint further
+   * along again.
+   */
+  if (resolved.kind === 'refused') {
+    return { kind: 'refused', reason: `the enumeration matched ${enumeration.matches.join(', ')} and none could be read: ${resolved.reason}` };
+  }
+  const chosen = findPipelinePublisher(resolved);
+  if (chosen.kind === 'publisher_absent') {
+    return {
+      kind: 'refused',
+      reason: `the enumeration matched ${enumeration.matches.join(', ')} and the resolved organisations do not`,
+    };
+  }
+  return chosen;
 }
 
 /** One distributed file or endpoint of a catalogue package. */
@@ -404,7 +571,7 @@ export function parseCkanSearch(text: string): CkanParse {
  * can verify and it fails exactly like an absent one; a title is what the
  * catalogue prints and what a person checking this can read.
  */
-export const NATIONAL_PIPELINE_ORG_PATTERN = /infrastructure\s+australia/i;
+export const NATIONAL_PIPELINE_ORG_PATTERN = /infrastructure[-_\s]+australia/i;
 
 /**
  * The register, by its own name.

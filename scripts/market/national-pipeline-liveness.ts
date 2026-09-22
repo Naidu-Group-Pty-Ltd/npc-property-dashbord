@@ -28,10 +28,20 @@
  * publisher along.
  *
  * So the ENUMERATION is the authority and the free-text search is a
- * supplement. `organization_list` answers whether the publisher is on the
- * catalogue at all as the yes-or-no question it is; `fq=owner_org:<id>` is a
- * filter rather than a ranking, walked to its own declared count; and only
- * then is the register's name rule applied, to a complete set.
+ * supplement. `fq=owner_org:<id>` is a filter rather than a ranking, walked
+ * to its own declared count, and only then is the register's name rule
+ * applied, to a complete set.
+ *
+ * ## The enumeration was truncated too, by the same class of fault
+ *
+ * The rewrite then reported `publisher_absent` over **25 organisations, 1
+ * page read** — while its own supplementary search, in the same run, declared
+ * 1,769 matching packages and named four publishers. Twenty-five is CKAN's
+ * default page size: `organization_list?all_fields=true&limit=1000` was
+ * answered with 25 and the `limit` was silently ignored. So the enumeration
+ * is now CORROBORATED from two endpoints that fail differently — the plain
+ * slug list and the package index's own organisation facet — and an absence
+ * requires both to answer and to agree. Either failing refuses.
  *
  * ## The exit code is the whole design
  *
@@ -58,17 +68,23 @@ import {
   assessPipelineAvailability,
   catalogueWalkIsComplete,
   ckanFieldsUrl,
-  ckanOrganisationListUrl,
+  ckanOrganisationFacetUrl,
   ckanOrganisationPackagesUrl,
+  ckanOrganisationShowUrl,
+  ckanOrganisationSlugsUrl,
   ckanSampleUrl,
   ckanSearchUrl,
-  findPipelinePublisher,
+  corroborateOrganisations,
   mergeCatalogueReads,
   parseCkanSearch,
-  parseOrganisationList,
+  parseOrganisationFacet,
+  parseOrganisationShow,
+  parseOrganisationSlugs,
+  publisherFromEnumeration,
   pipelineCoverageNote,
   rankPipelineResources,
   surveyPipelinePackages,
+  type CkanOrganisation,
   type CkanPackage,
   type CkanParse,
   type PipelineCandidate,
@@ -77,9 +93,6 @@ import {
 
 const UA = 'npc-property-dashboard/1.0 (+https://github.com/Naidu-Group-Pty-Ltd)';
 const FETCH_MS = 45_000;
-/** The catalogue holds thousands of organisations; the walk is bounded, not trusted. */
-const ORG_PAGE = 1000;
-const ORG_PAGES_MAX = 20;
 const PKG_PAGE = 100;
 const PKG_PAGES_MAX = 40;
 
@@ -154,34 +167,59 @@ async function findPublisher(): Promise<PublisherLookup> {
   h(`1 · Does the catalogue list ${NATIONAL_PIPELINE_PUBLISHER} as a publisher?`);
   kv('catalogue', CKAN_BASE);
   kv('publisher rule', String(NATIONAL_PIPELINE_ORG_PATTERN));
-  let seen = 0;
-  for (let page = 0; page < ORG_PAGES_MAX; page += 1) {
-    const url = ckanOrganisationListUrl(ORG_PAGE, page * ORG_PAGE);
-    const got = await getOrTheirs(url, `organisation list page ${page + 1}`);
-    const parse = parseOrganisationList(got.body);
-    if (parse.kind === 'refused') ours(`reading organisation list page ${page + 1}`, parse.reason);
-    seen += parse.organisations.length;
-    const found = findPipelinePublisher(parse);
-    if (found.kind === 'publisher') {
-      kv('pages read', page + 1);
-      kv('organisations seen', seen);
-      kv('publisher', `${found.organisation.title} (${found.organisation.name})`);
-      kv('packages it holds', found.organisation.packageCount ?? '(unstated)');
-      return found;
-    }
-    if (parse.organisations.length < ORG_PAGE) {
-      /* The walk reached the end of the list. The absence is now a measurement. */
-      kv('pages read', page + 1);
-      kv('organisations enumerated', seen);
-      return { kind: 'publisher_absent', organisationsSeen: seen };
-    }
+
+  /*
+   * Two endpoints that fail differently. The list endpoint is the authority
+   * for which organisations exist; the facet is the set actually publishing
+   * packages, computed by the search index. An absence needs both, because a
+   * single truncated question reads exactly like an empty world — which this
+   * probe has now demonstrated twice.
+   */
+  const listGot = await getOrTheirs(ckanOrganisationSlugsUrl(), 'organisation list');
+  const facetGot = await getOrTheirs(ckanOrganisationFacetUrl(), 'organisation facet');
+  const list = parseOrganisationSlugs(listGot.body);
+  const facet = parseOrganisationFacet(facetGot.body);
+  const enumeration = corroborateOrganisations(list, facet);
+  kv('list endpoint', list.kind === 'slugs' ? `${list.slugs.length} organisations` : `refused — ${list.reason}`);
+  kv('index facet', facet.kind === 'slugs' ? `${facet.slugs.length} publishing organisations` : `refused — ${facet.reason}`);
+  if (enumeration.kind === 'refused') {
+    /*
+     * A disagreement between the two is OURS to explain, not an absence and
+     * not an outage: it means the question this probe asks cannot settle the
+     * matter, and reporting it as either would be the defect again.
+     */
+    ours('corroborating the enumeration', enumeration.reason);
+  }
+  kv('corroborated', `${enumeration.slugs.length} organisations`);
+  kv('slugs matching the rule', enumeration.matches.join(', ') || '(none)');
+
+  const resolved: CkanOrganisation[] = [];
+  let showRefusal = '';
+  for (const slug of enumeration.matches) {
+    const got = await getOrTheirs(ckanOrganisationShowUrl(slug), `organization_show ${slug}`);
+    const parse = parseOrganisationShow(got.body);
+    if (parse.kind === 'refused') { showRefusal = parse.reason; continue; }
+    resolved.push(...parse.organisations);
+  }
+  const publisher = publisherFromEnumeration(
+    enumeration,
+    resolved.length > 0
+      ? { kind: 'organisations', organisations: resolved }
+      : { kind: 'refused', reason: showRefusal || 'no organisation was resolved' },
+  );
+  if (publisher.kind === 'publisher') {
+    kv('publisher', `${publisher.organisation.title} (${publisher.organisation.name})`);
+    kv('packages it holds', publisher.organisation.packageCount ?? '(unstated)');
   }
   /*
-   * The page bound was hit without reaching the end. That is not an absence —
-   * it is a walk this script did not finish, and reporting it as "the
-   * publisher is not there" would be the truncated-download failure again.
+   * Every network failure above has already exited 0 through `theirs`, so a
+   * refusal reaching here is this repository failing to read an answer it
+   * received. Letting it fall through to `catalogue_unavailable` would file
+   * our own parse failure as somebody else's outage — the placebo this
+   * probe's header refuses.
    */
-  ours('enumerating organisations', `${ORG_PAGES_MAX} pages of ${ORG_PAGE} did not reach the end of the list (${seen} seen)`);
+  if (publisher.kind === 'refused') ours('resolving the publisher', publisher.reason);
+  return publisher;
 }
 
 /** Stage 2 — every package that publisher holds, walked to its declared count. */

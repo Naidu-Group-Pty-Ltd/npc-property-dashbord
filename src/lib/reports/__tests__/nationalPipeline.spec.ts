@@ -17,20 +17,27 @@ import { describe, expect, it } from 'vitest';
 
 import {
   MACHINE_READABLE_FORMATS,
+  NATIONAL_PIPELINE_ORG_PATTERN,
   NATIONAL_PIPELINE_PUBLISHER,
   NATIONAL_PIPELINE_QUERIES,
   NATIONAL_PIPELINE_REGISTER,
   assessPipelineAvailability,
   catalogueWalkIsComplete,
   ckanFieldsUrl,
-  ckanOrganisationListUrl,
+  ckanOrganisationFacetUrl,
   ckanOrganisationPackagesUrl,
+  ckanOrganisationShowUrl,
+  ckanOrganisationSlugsUrl,
+  corroborateOrganisations,
   ckanSampleUrl,
   ckanSearchUrl,
   findPipelinePublisher,
   mergeCatalogueReads,
   parseCkanSearch,
-  parseOrganisationList,
+  parseOrganisationFacet,
+  parseOrganisationShow,
+  parseOrganisationSlugs,
+  publisherFromEnumeration,
   pipelineCoverageNote,
   rankPipelineResources,
   surveyPipelinePackages,
@@ -96,6 +103,26 @@ const FOUND: PublisherLookup = {
 
 function orgs(list: { id: string; name: string; title: string; package_count?: number }[]): string {
   return JSON.stringify({ success: true, result: list });
+}
+
+function show(o: { id: string; name: string; title: string; package_count?: number }): string {
+  return JSON.stringify({ success: true, result: o });
+}
+
+function slugList(slugs: string[]): string {
+  return JSON.stringify({ success: true, result: slugs });
+}
+
+function facet(slugs: string[]): string {
+  return JSON.stringify({
+    success: true,
+    result: { count: 0, results: [], search_facets: { organization: { items: slugs.map((name) => ({ name, count: 1 })) } } },
+  });
+}
+
+/** Every organisation reading the enumeration tests go through. */
+function enumerate(list: string[], published: string[] = list) {
+  return corroborateOrganisations(parseOrganisationSlugs(slugList(list)), parseOrganisationFacet(facet(published)));
 }
 
 function catalogueOf(text: string): CkanPackage[] {
@@ -412,11 +439,23 @@ describe('the readings are five different sentences', () => {
 });
 
 describe('an absence is only an absence if the question could have found it', () => {
-  it('finds the publisher by its own title among the catalogue’s organisations', () => {
-    const lookup = findPipelinePublisher(parseOrganisationList(orgs([
-      { id: 'o1', name: 'geoscience-australia', title: 'Geoscience Australia' },
-      { id: 'o2', name: 'infrastructure-australia', title: 'Infrastructure Australia', package_count: 12 },
-    ])));
+  it('matches the publisher across a slug’s hyphen as well as a title’s space', () => {
+    /*
+     * Written `/infrastructure\s+australia/i` the rule matched the TITLE and
+     * could never have matched the slug `infrastructure-australia` — a rule
+     * that only ever half worked, found when the enumeration moved to slugs.
+     */
+    expect(NATIONAL_PIPELINE_ORG_PATTERN.test('infrastructure-australia')).toBe(true);
+    expect(NATIONAL_PIPELINE_ORG_PATTERN.test('infrastructure_australia')).toBe(true);
+    expect(NATIONAL_PIPELINE_ORG_PATTERN.test('Infrastructure Australia')).toBe(true);
+    expect(NATIONAL_PIPELINE_ORG_PATTERN.test('infrastructure-nsw')).toBe(false);
+  });
+
+  it('finds the publisher from the corroborated slugs and its own show record', () => {
+    const lookup = publisherFromEnumeration(
+      enumerate(['geoscience-australia', 'infrastructure-australia', 'bitre']),
+      parseOrganisationShow(show({ id: 'o2', name: 'infrastructure-australia', title: IA, package_count: 12 })),
+    );
     expect(lookup.kind).toBe('publisher');
     if (lookup.kind !== 'publisher') return;
     expect(lookup.organisation.id).toBe('o2');
@@ -424,41 +463,80 @@ describe('an absence is only an absence if the question could have found it', ()
   });
 
   it('prefers the duplicate holding the most packages, never the list order', () => {
-    const lookup = findPipelinePublisher(parseOrganisationList(orgs([
-      { id: 'empty', name: 'infrastructure-australia-old', title: 'Infrastructure Australia', package_count: 0 },
-      { id: 'live', name: 'infrastructure-australia', title: 'Infrastructure Australia', package_count: 9 },
-    ])));
+    const lookup = findPipelinePublisher({
+      kind: 'organisations',
+      organisations: [
+        { id: 'empty', name: 'infrastructure-australia-old', title: IA, packageCount: 0 },
+        { id: 'live', name: 'infrastructure-australia', title: IA, packageCount: 9 },
+      ],
+    });
     expect(lookup.kind === 'publisher' && lookup.organisation.id).toBe('live');
   });
 
   it('reports a genuine absence with the size of the enumeration behind it', () => {
-    const lookup = findPipelinePublisher(parseOrganisationList(orgs([
-      { id: 'o1', name: 'bitre', title: 'Bureau of Infrastructure and Transport Research Economics' },
-      { id: 'o2', name: 'nsw', title: 'NSW Government' },
-    ])));
+    const lookup = publisherFromEnumeration(
+      enumerate(['bitre', 'nsw-government', 'geoscience-australia']),
+      { kind: 'refused', reason: 'nothing to resolve' },
+    );
     expect(lookup.kind).toBe('publisher_absent');
     if (lookup.kind !== 'publisher_absent') return;
-    expect(lookup.organisationsSeen).toBe(2);
+    expect(lookup.organisationsSeen).toBe(3);
   });
 
-  it('refuses slugs rather than reading them as zero organisations', () => {
+  it('a matched slug that cannot be resolved is a refusal, never an absence', () => {
+    const lookup = publisherFromEnumeration(
+      enumerate(['infrastructure-australia']),
+      { kind: 'refused', reason: 'HTTP 500' },
+    );
+    expect(lookup.kind).toBe('refused');
+    if (lookup.kind !== 'refused') return;
+    expect(lookup.reason).toContain('infrastructure-australia');
+  });
+
+  it('refuses organisation OBJECTS from the slug endpoint rather than reading a page as a list', () => {
     /*
-     * `all_fields=false` answers an array of strings. Reading that as an empty
-     * enumeration would report "the publisher is not on the catalogue" from a
-     * query parameter we got wrong — which is this module's whole lesson.
+     * The measured defect: `organization_list?all_fields=true&limit=1000` was
+     * answered with 25 — CKAN's default page size, the `limit` ignored — and
+     * the walk read a short page as the end of the list. The reader for that
+     * endpoint is deleted; this is the guard that stops it coming back.
      */
-    const parse = parseOrganisationList(JSON.stringify({ success: true, result: ['a', 'b'] }));
+    const parse = parseOrganisationSlugs(orgs([{ id: 'o1', name: 'a', title: 'A' }]));
     expect(parse.kind).toBe('refused');
     if (parse.kind !== 'refused') return;
-    expect(parse.reason).toContain('all_fields');
-    expect(findPipelinePublisher(parse).kind).toBe('refused');
+    expect(parse.reason).toContain('paged');
+  });
+
+  it('refuses when the facet names an organisation the list does not', () => {
+    // A facet bucket outside the list means the list is incomplete, and an
+    // incomplete list cannot establish that anything is absent from it.
+    const reading = enumerate(['bitre'], ['bitre', 'infrastructure-australia']);
+    expect(reading.kind).toBe('refused');
+    if (reading.kind !== 'refused') return;
+    expect(reading.reason).toContain('infrastructure-australia');
+    expect(reading.reason).toContain('cannot establish an absence');
+  });
+
+  it('needs both endpoints — either refusing refuses the enumeration', () => {
+    expect(corroborateOrganisations({ kind: 'refused', reason: 'HTTP 502' }, parseOrganisationFacet(facet(['a']))).kind)
+      .toBe('refused');
+    expect(corroborateOrganisations(parseOrganisationSlugs(slugList(['a'])), { kind: 'refused', reason: 'HTTP 502' }).kind)
+      .toBe('refused');
   });
 
   it('refuses a body that is not an organisation list, naming what it got', () => {
-    const parse = parseOrganisationList('<html>503</html>');
+    const slugs = parseOrganisationSlugs('<html>503</html>');
+    expect(slugs.kind).toBe('refused');
+    if (slugs.kind !== 'refused') return;
+    expect(slugs.reason).toContain('html');
+    const f = parseOrganisationFacet(JSON.stringify({ success: true, result: { count: 0, results: [] } }));
+    expect(f.kind).toBe('refused');
+    if (f.kind !== 'refused') return;
+    expect(f.reason).toContain('no organisation facet');
+  });
+
+  it('refuses an organization_show answer that carries no organisation', () => {
+    const parse = parseOrganisationShow(JSON.stringify({ success: true, result: {} }));
     expect(parse.kind).toBe('refused');
-    if (parse.kind !== 'refused') return;
-    expect(parse.reason).toContain('html');
   });
 
   it('an incomplete walk is a retrieval failure, never a smaller register', () => {
@@ -508,9 +586,13 @@ describe('an absence is only an absence if the question could have found it', ()
     expect(url).toContain('rows=100&start=200');
   });
 
-  it('asks the organisation list for fields rather than slugs, and pages it', () => {
-    expect(ckanOrganisationListUrl(1000, 2000)).toContain('all_fields=true');
-    expect(ckanOrganisationListUrl(1000, 2000)).toContain('limit=1000&offset=2000');
+  it('asks the organisation list plainly, and the facet for every bucket', () => {
+    // `all_fields` is what got capped. Its absence is the design.
+    expect(ckanOrganisationSlugsUrl()).not.toContain('all_fields');
+    expect(ckanOrganisationSlugsUrl()).not.toContain('limit');
+    expect(ckanOrganisationFacetUrl()).toContain('rows=0');
+    expect(ckanOrganisationFacetUrl()).toContain('facet.limit=-1');
+    expect(ckanOrganisationShowUrl('a/b')).toContain('id=a%2Fb');
   });
 });
 
