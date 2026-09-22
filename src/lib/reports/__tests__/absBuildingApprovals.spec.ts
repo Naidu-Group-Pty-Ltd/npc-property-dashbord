@@ -29,6 +29,8 @@ import {
   ABS_CONSTRUCTION_SURVEY,
   currentEdition,
   flowEdition,
+  grainOfAreaCode,
+  isStorableGrain,
 } from '../../../../supabase/functions/_shared/reports/market/openData/absBuildingApprovals.pure.ts';
 
 // ─── Catalogues ─────────────────────────────────────────────────────────────
@@ -282,6 +284,89 @@ describe('a region download is a HIERARCHY, and the grain is the row’s own', (
         'BA,1,Number of dwelling units,1,Houses,10,Original,10050,Albury (C),M,2024-01,900000,0');
     expect(() => parseAbsBuildingApprovals(mad, 'lga'))
       .toThrow(/900000 dwelling units, outside 0–100000 for a lga area/);
+  });
+});
+
+describe('the SA2 hierarchy has five levels and `area_kind` has four', () => {
+  /*
+   * Found by reading the loaded register back, 22 Sep 2026, after the first
+   * production load of 17,442 rows:
+   *
+   *     by_kind=[lga=2064, national=6, sa2=15324, state=48]
+   *     samples=[lga code=10102 area=Queanbeyan | sa2 code=101 area=Capital Region]
+   *
+   * `10102 Queanbeyan` is an SA3 and was filed `lga`. `101 Capital Region` is
+   * an SA4 and was filed `sa2` — a 250,000-person region written as a suburb,
+   * which the read path would serve as that suburb's approved supply.
+   *
+   * The cause was `return requested` for a code in no known shape. It called
+   * itself the conservative side and was its opposite: the requested grain is
+   * the FINEST grain in the download, so an unreadable code defaulted to the
+   * strongest claim available.
+   */
+  it('reads the real production codes at their own level', () => {
+    expect(grainOfAreaCode('101021007', 'sa2')).toBe('sa2');   // 9 digits
+    expect(grainOfAreaCode('10102', 'sa2')).toBe('sa3');       // Queanbeyan
+    expect(grainOfAreaCode('101', 'sa2')).toBe('sa4');         // Capital Region
+    expect(grainOfAreaCode('1', 'sa2')).toBe('state');
+    expect(grainOfAreaCode('AUS', 'sa2')).toBe('national');
+  });
+
+  it('settles the five-digit collision by the DOWNLOAD, not by the code', () => {
+    // An ABS LGA code is five digits and so is an SA3. The hierarchies do not
+    // overlap: an LGA download is LGA -> state -> AUS and carries no SA3, an
+    // SA2 download carries no LGA. So the request disambiguates exactly this
+    // one case, which is the only legitimate use it has here.
+    expect(grainOfAreaCode('10050', 'lga')).toBe('lga');
+    expect(grainOfAreaCode('10050', 'sa2')).toBe('sa3');
+  });
+
+  it('never resolves an unreadable code to the requested grain', () => {
+    // The defect, stated as the defect. Guessing downward puts a coarse
+    // figure on a page as a fine one; guessing upward only loses a row.
+    for (const requested of ['sa2', 'lga', 'state', 'national'] as const) {
+      expect(grainOfAreaCode('ZZZZ', requested)).toBe('unknown');
+      expect(grainOfAreaCode('', requested)).toBe('unknown');
+      expect(grainOfAreaCode('1234567', requested)).toBe('unknown');
+    }
+  });
+
+  it('knows which grains the column can actually hold', () => {
+    expect(isStorableGrain('sa2')).toBe(true);
+    expect(isStorableGrain('lga')).toBe(true);
+    expect(isStorableGrain('state')).toBe(true);
+    expect(isStorableGrain('national')).toBe(true);
+    expect(isStorableGrain('sa3')).toBe(false);
+    expect(isStorableGrain('sa4')).toBe(false);
+    expect(isStorableGrain('unknown')).toBe(false);
+  });
+
+  it('refuses an SA4 rather than bending it into a grain that fits', () => {
+    // An SA4 rode in with a real LGA download. It must be counted and
+    // declined, not written as an `lga` (or, as before, as the requested
+    // grain). The LGA rows still satisfy the floor, so this exercises the
+    // refusal on a body the parse otherwise accepts.
+    const body = [download(), ...rollupRows(),
+      'BA,1,Number of dwelling units,1,Houses,10,Original,101,Capital Region,M,2024-01,90,0',
+    ].join('\n');
+    const parsed = parseAbsBuildingApprovals(body, 'lga');
+    expect(parsed.refusedByGrain).toMatchObject({ sa4: 1 });
+    expect(parsed.rows.some((r) => r.areaCode === '101')).toBe(false);
+    // The rest of the download is untouched by the refusal.
+    expect(parsed.areasByGrain).toMatchObject({ lga: 205, state: 2, national: 1 });
+  });
+
+  it('says a body was all hierarchy rather than all unreadable', () => {
+    // Before the refusal existed these two were WRITTEN, as `lga` and `sa2`.
+    // Now they are declined — and the message has to say which, or it sends
+    // an operator hunting a parse fault over a body that read perfectly.
+    const body = [
+      HEADER,
+      'BA,1,Number of dwelling units,1,Houses,10,Original,10102,Queanbeyan,M,2024-01,40,0',
+      'BA,1,Number of dwelling units,1,Houses,10,Original,101,Capital Region,M,2024-01,90,0',
+    ].join('\n');
+    expect(() => parseAbsBuildingApprovals(body, 'sa2', { minPeriods: 1 }))
+      .toThrow(/refused for want of a column: 1 sa3, 1 sa4/);
   });
 });
 

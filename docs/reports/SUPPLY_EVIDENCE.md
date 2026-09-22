@@ -431,3 +431,82 @@ row must carry its OWN grain, and filing a national total as a council area
 is the one failure a row count cannot see. That needs a `group by area_kind`,
 which the direct-SQL restriction does not admit, so it is recorded here as
 outstanding rather than assumed good.
+
+## 12 · The grain was read back, and two levels of the hierarchy were mislabelled
+
+§11 closed with the `area_kind` distribution recorded as unverified, because a
+`group by` is arbitrary database access and this deployment's standing
+restriction does not admit it. It is verified now, through the route that is
+admitted: the read travels as a migration through the reviewed workflow and
+the answer comes back as a `raise warning` in `postgres_logs`, which is logged
+at Supabase's default level where `notice` is not. That file writes nothing.
+
+```
+APPROVALS_READBACK total=17442
+  by_kind=[lga=2064, national=6, sa2=15324, state=48]
+  distinct_areas=[lga:344, national:1, sa2:2554, state:8]
+  periods=[all four kinds 2026-05..2026-07]
+  dwelling_units=[null=0 zero=4893 positive=12549]
+  samples=[lga code=10102 len=5 area=Queanbeyan | national code=AUS area=Australia
+           sa2 code=101 len=3 area=Capital Region | state code=1 area=New South Wales]
+```
+
+**The half that works.** The hierarchy IS stamped per row rather than per
+request — four grains present, `AUS` correctly under `national`, eight states
+under `state`. The catastrophic version this section was written to prevent, a
+national total filed as a council area, did not happen. The row arithmetic is
+exactly consistent too: 2,554 × 3 months × 2 measures = 15,324, and the same
+for every kind, so nothing is double-counted or half-written.
+
+**The half that does not.** An ASGS SA2 code is nine digits. `101 / Capital
+Region` is an **SA4** and was filed `sa2`; `10102 / Queanbeyan` is an **SA3**
+and was filed `lga`. The SA2 hierarchy has five levels — SA2 (9 digits), SA3
+(5), SA4 (3), state (1), `AUS` — and `area_kind` has four values, so two
+levels had nowhere correct to go:
+
+```ts
+if (/^\d{5}$/.test(trimmed)) return 'lga';   // catches every SA3
+if (/^\d{9}$/.test(trimmed)) return 'sa2';
+return requested;                            // catches every SA4
+```
+
+**`return requested` called itself the conservative side and is its
+opposite.** The requested grain is the FINEST grain in the download, so an
+unreadable code defaulted to the strongest claim available — a
+250,000-person SA4 served as one suburb's approved supply. Three rules come
+out of it.
+
+**A fallback to the request is a fallback to the strongest claim.** In a
+hierarchy download the requested grain is the finest, so "when in doubt, use
+what was asked for" resolves every ambiguity in the least conservative
+direction available. An unreadable code is `unknown` now and is refused.
+
+**A collision is settled by the download, not by the code.** An ABS LGA code
+is five digits and so is an SA3 — genuinely ambiguous from the code alone. The
+hierarchies do not overlap, though: an LGA download is LGA → state → `AUS` and
+carries no SA3, an SA2 download carries no LGA. So `requested` disambiguates
+exactly that one case, which is the only legitimate use it has here.
+
+**A plausibility ceiling written for unit drift cannot police grain.**
+`ABS_BA_PLAUSIBILITY` says so in its own comment — the bounds detect unit
+drift "rather than ranking areas" — so an SA4's figure sits far inside an
+SA2's 20-billion-dollar ceiling and the guard passed it without complaint.
+It was never the wrong guard; it was the wrong question to ask of it.
+
+A grain with no column is **counted and declined** rather than bent into one
+that fits (`refusedByGrain`), and a body that is all hierarchy now says so:
+*"refused for want of a column: 1 sa3, 1 sa4"*. Before this it would have read
+*"no row this loader recognises (0 skipped)"*, which sends an operator hunting
+a parse fault over a body that read perfectly.
+
+**The cleanup deletes by SOURCE, not by rule.** `20261215030000` removes every
+row the SA2 flow wrote — not the rows a restated grain predicate would
+select — because a DELETE whose WHERE clause re-implements
+`grainOfAreaCode` is the two-ends-drift defect this programme records against
+`riskRegisterInstruction` and `strategySectionRules`. The register is a pure
+projection of a public download, so clearing and reloading costs nothing but a
+reload, and the empty interval is the designed degradation: `Not searched`,
+with every report forbidden from stating a figure. **It must not be applied
+before the corrected parser is deployed** — against the old one the nightly
+reload rewrites exactly what it deleted, and the register ends where it
+started while looking repaired.

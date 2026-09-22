@@ -620,6 +620,21 @@ export const ABS_BA_STATE_OF_CODE: Readonly<Record<string, SalesRegisterState>> 
 };
 
 /**
+ * A grain the ASGS publishes in the same download and this register has no
+ * column for. `area_kind`'s CHECK admits four values; the SA2 hierarchy has
+ * five levels.
+ */
+export type ApprovalsIntermediateGrain = 'sa3' | 'sa4';
+
+/** What one row's area code turns out to describe. */
+export type ApprovalsRowGrain = ApprovalsAreaKind | ApprovalsIntermediateGrain | 'unknown';
+
+/** The four `area_kind` accepts. Anything else is read and then refused. */
+export function isStorableGrain(grain: ApprovalsRowGrain): grain is ApprovalsAreaKind {
+  return grain === 'sa2' || grain === 'lga' || grain === 'state' || grain === 'national';
+}
+
+/**
  * The grain of one row, read from the publisher's own area code.
  *
  * An ABS region download is a HIERARCHY, not a list: *"Building Approvals by
@@ -629,19 +644,51 @@ export const ABS_BA_STATE_OF_CODE: Readonly<Record<string, SalesRegisterState>> 
  * total as a council area, which is what the read path would then serve as a
  * suburb's supply.
  *
- * The scheme is the ASGS's and is stable across editions: `AUS` is Australia,
- * one digit is a state or territory, five digits an LGA, nine an SA2. A code
- * in no known shape takes the download's requested grain, which is the
- * behaviour that shipped — unreadable is not a licence to guess upward, and
- * the tightest ceiling is the conservative side.
+ * ## What the first production load found, 22 Sep 2026
+ *
+ * The rule above was right and the code under it was wrong, in two places,
+ * and a read-back of the loaded register is what showed it:
+ *
+ *     by_kind=[lga=2064, national=6, sa2=15324, state=48]
+ *     samples=[lga code=10102 area=Queanbeyan | sa2 code=101 area=Capital Region]
+ *
+ * `10102 Queanbeyan` is **SA3** and was filed `lga`; `101 Capital Region` is
+ * **SA4** and was filed `sa2`. The SA2 hierarchy is SA2 (9 digits), SA3 (5),
+ * SA4 (3), state (1), `AUS` — so the five-digit rule caught SA3s, and SA4s
+ * matched nothing and fell through to `return requested`, which was `sa2`.
+ *
+ * **That fallback called itself the conservative side and was the opposite of
+ * it.** Defaulting an unreadable code to the grain that was ASKED FOR means
+ * defaulting it to the FINEST grain in the download, so a 250,000-person SA4
+ * is served as a suburb's approved supply. `ABS_BA_PLAUSIBILITY` cannot catch
+ * it either, and says so in its own comment — the ceilings detect unit drift
+ * "rather than ranking areas", so an SA4's figure sits far inside an SA2's
+ * 20-billion-dollar ceiling.
+ *
+ * ## The scheme, and how the five-digit collision is settled
+ *
+ * ASGS codes are stable across editions: `AUS` Australia, one digit a state
+ * or territory, three an SA4, five an SA3, nine an SA2 — and an ABS **LGA**
+ * code is also five digits. That collision is real and it is settled by the
+ * download rather than by the code, which is the one legitimate use of
+ * `requested` here: an LGA-grain download's hierarchy is LGA → state → AUS
+ * and contains no SA3, while an SA2-grain download's contains no LGA. So five
+ * digits is an LGA in the first and an SA3 in the second.
+ *
+ * An unreadable code is **`unknown`** and is refused rather than guessed.
+ * Guessing upward and guessing downward are both wrong; the difference is
+ * that guessing downward puts a coarse figure on a client's page as a fine
+ * one, and guessing upward merely loses a row. Neither is taken.
  */
-export function grainOfAreaCode(code: string, requested: ApprovalsAreaKind): ApprovalsAreaKind {
+export function grainOfAreaCode(code: string, requested: ApprovalsAreaKind): ApprovalsRowGrain {
   const trimmed = code.trim();
   if (/^AUS$/i.test(trimmed) || trimmed === '0') return 'national';
   if (/^[1-8]$/.test(trimmed)) return 'state';
-  if (/^\d{5}$/.test(trimmed)) return 'lga';
   if (/^\d{9}$/.test(trimmed)) return 'sa2';
-  return requested;
+  if (/^\d{3}$/.test(trimmed)) return 'sa4';
+  // Five digits is an LGA in an LGA download and an SA3 in an SA2 one.
+  if (/^\d{5}$/.test(trimmed)) return requested === 'lga' ? 'lga' : 'sa3';
+  return 'unknown';
 }
 
 /** An LGA/SA2 code's leading digit is its state, under every ASGS edition. */
@@ -712,6 +759,17 @@ export interface AbsApprovalsParse {
   seriesTypeUnfiltered: boolean;
   /** Rows the parse skipped because nothing it recognises named them. */
   skipped: number;
+  /**
+   * Rows READ correctly and then refused, because their grain is real and
+   * `area_kind` has no value for it — the SA2 hierarchy's SA3 and SA4 levels,
+   * and any code in no ASGS shape at all.
+   *
+   * Counted and carried rather than silently dropped: these used to be
+   * written as `lga` and `sa2`, which is how an SA4 came to be filed as a
+   * suburb. A number here is the download's hierarchy being declined, not a
+   * fault.
+   */
+  refusedByGrain: Partial<Record<ApprovalsIntermediateGrain | 'unknown', number>>;
 }
 
 /**
@@ -767,6 +825,7 @@ export function parseAbsBuildingApprovals(
   // states and Australia together, so one undifferentiated count judged
   // against one grain's floor is a count of the wrong thing.
   const areasByGrain = new Map<ApprovalsAreaKind, Set<string>>();
+  const refusedByGrain = new Map<ApprovalsIntermediateGrain | 'unknown', number>();
   const states = new Set<SalesRegisterState>();
   let skipped = 0;
   let sawSeriesType = false;
@@ -799,8 +858,20 @@ export function parseAbsBuildingApprovals(
     const mult = hasUnitMult ? Number(rec.UNIT_MULT) : 0;
     const scaled = raw === null ? null : Math.round(raw * 10 ** (Number.isInteger(mult) ? mult : 0));
 
-    // The row's OWN grain, not the request's. See `grainOfAreaCode`.
-    const rowKind = grainOfAreaCode(areaCode, areaKind);
+    /*
+     * The row's OWN grain, not the request's. See `grainOfAreaCode`.
+     *
+     * A grain the register has no column for is REFUSED here rather than
+     * bent into one that fits. Before this, an SA3 was written `lga` and an
+     * SA4 `sa2`, so the read path would have served a 250,000-person region
+     * as one suburb's approved supply.
+     */
+    const grain = grainOfAreaCode(areaCode, areaKind);
+    if (!isStorableGrain(grain)) {
+      refusedByGrain.set(grain, (refusedByGrain.get(grain) ?? 0) + 1);
+      continue;
+    }
+    const rowKind = grain;
     const key = `${areaCode}|${period}|${buildingType}`;
     let row = byKey.get(key);
     if (!row) {
@@ -850,9 +921,21 @@ export function parseAbsBuildingApprovals(
 
   const rows = [...byKey.values()];
   if (rows.length === 0) {
+    /*
+     * The refusals are NAMED here, because they are a different finding from
+     * a body nothing could read. A download that is all SA3 and SA4 was read
+     * perfectly and declined for want of a column, and reporting it as
+     * "no row this loader recognises (0 skipped)" sends an operator looking
+     * for a parse fault that does not exist.
+     */
+    const refused = [...refusedByGrain.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([grain, n]) => `${n} ${grain}`)
+      .join(', ');
     throw new Error(
       'the ABS building-approvals download carries no row this loader recognises '
-      + `(${records.length} records read, ${skipped} skipped) — refused`,
+      + `(${records.length} records read, ${skipped} skipped`
+      + `${refused === '' ? '' : `, refused for want of a column: ${refused}`}) — refused`,
     );
   }
   /*
@@ -894,6 +977,7 @@ export function parseAbsBuildingApprovals(
     columns,
     seriesTypeUnfiltered: !sawSeriesType,
     skipped,
+    refusedByGrain: Object.fromEntries(refusedByGrain) as AbsApprovalsParse['refusedByGrain'],
   };
 }
 
