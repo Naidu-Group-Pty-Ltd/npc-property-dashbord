@@ -1092,6 +1092,10 @@ jobs:
         if: always()
         run: npx tsx scripts/market/abs-projection-liveness.ts
 
+      - name: Ask SA, WA, NT and ACT what they publish, and under what licence
+        if: always()
+        run: npx tsx scripts/market/jurisdiction-layer-liveness.ts
+
   template-geometry:
     runs-on: ubuntu-latest
     timeout-minutes: 45
