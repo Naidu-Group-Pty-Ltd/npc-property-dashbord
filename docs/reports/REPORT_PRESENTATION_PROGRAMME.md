@@ -1523,9 +1523,29 @@ on more code.
 **Everything left in this programme that needs no new infrastructure is
 closed.** W3.1's prohibition and W3.2's coverage statement shipped without
 their registers because the guarantee is worth having before the evidence
-exists; W3.1's register and W3.3's both need a table, a schedule and a first
-ingest, and a production egress that can reach the publisher. Those are one
-approval and one probe away, not one more pass over the document.
+exists. **Neither W3.1 nor W3.3 is waiting on an approval, and this sentence
+used to say both were.**
+
+W3.1's table, its refresh schedule and the `approvals` stage that fills it
+were **approved 21 Sep 2026 and are committed** (`6ba3a5e`:
+`20261213000000_market_building_approvals.sql`,
+`20261213010000_market_building_approvals_refresh.sql`, plus 130 lines in
+`market-sales-ingest`). Both migrations carry an `@effect:` probe — the table
+must exist in `pg_class`, the job in `cron.job` — because this register is
+asserted by effect and never by configuration. What remains is APPLICATION and
+a first ingest, which is a deploy rather than authorship: nothing further can
+be written here to advance it, and `20261213000000` is absent from the applied
+ledger (1,012 versions, latest `20261211000000`).
+
+W3.3 needs no register at all, for the reason its own entry gives: there is no
+ABS projection at SA2 to load. The Bureau publishes four projection flows over
+one `REGION` dimension of 23 codes — 8 states, 1 national, 14 capital-city or
+rest-of-state, **zero SA2** — so a national projection register would hold
+nothing describing a property's own area, and `forwardDemand.pure.ts` already
+forbids a projection from being an `EvidencePoint`. Forward demand at the
+property's own area is a per-jurisdiction register, and
+`FORWARD_DEMAND_PUBLISHERS` names all eight publishers with `ingested: false`
+truthfully because nothing here can reach them to check one.
 
 **W3.5 was on that list and is off it, because the probe answered first.**
 It is struck from the sentence above rather than left in it, since a reader
