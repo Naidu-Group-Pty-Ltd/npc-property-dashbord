@@ -533,6 +533,13 @@ jobs:
       # from the prime while the ledger said their version had run.
       - name: A migration version names exactly one file
         run: node scripts/security/check-migration-version-collisions.mjs
+      # A migration this deployment has already RUN must not change here. Mission
+      # Control decides what a clone may be sent by asking whether the prime's
+      # ledger holds the file's BYTES — 690 of 1,002 files clear that way against
+      # 83 a version key reaches — so editing an applied migration withholds it
+      # from the whole fleet, and everything the dependency order puts behind it.
+      - name: An applied migration still carries the SQL that ran
+        run: node scripts/security/check-applied-body-digests.mjs
       # A version is the order a migration RUNS in, and this tree's versions run
       # months ahead of the wall clock — so today's timestamp lands in the middle
       # of applied history. A file numbered 20260917110000 altered a table created
