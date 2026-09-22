@@ -1035,7 +1035,17 @@ export function cover(opts: CoverOptions): PageDef {
     labelFont: 'token:mono',
     labelSize: c.scale.kpiLabel,
     labelTracking: TRACKING.label,
-    valueSize: c.density === 'spacious' ? 14 : 11,
+    /*
+     * `c.scale.coverFact`, not a density branch of its own.
+     *
+     * This read `c.density === 'spacious' ? 14 : 11` and was the only element
+     * on the cover not routed through `scaleFor` — so it carried a SECOND
+     * density behaviour and disagreed with the family's own on 22 of the 50
+     * master/variant combinations. The compact half is what showed: every
+     * other element on a compact cover shrinks 18% and this did not, so the
+     * facts grew against their surroundings. See `COVER_FACT_BASE`.
+     */
+    valueSize: c.scale.coverFact,
     valueColor: bodyInk,
     labelColor: mutedInk,
     ruleColor: onField ? 'token:line' : 'token:line',

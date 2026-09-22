@@ -1300,6 +1300,53 @@ than promised.
 
 **W4.5 · Cover** — the verdict block at 11pt against a 41pt address.
 
+> **Closed 22 Sep 2026, and the defect is not the one the statement names.**
+>
+> The 11pt is the cover's **facts strip value**, and it was drawn as
+> `c.density === 'spacious' ? 14 : 11` — a hand-written two-way branch, and
+> **the only element on the cover not routed through `scaleFor`**. Every
+> sibling on that page (the title, the eyebrow, the standfirst, the locations
+> line, even the facts LABEL) takes the family's own density factor from
+> `DENSITY_FACTORS`. So the block carried a SECOND density behaviour, and the
+> two disagreed.
+>
+> Measured over the 50 master/variant combinations the catalogue declares:
+>
+> | density | variants | drawn | the display factor gives |
+> | --- | ---: | ---: | ---: |
+> | compact | **14** | 11pt | **9pt** |
+> | spacious | **8** | 14pt | **13pt** |
+> | balanced | 28 | 11pt | 11pt — agree |
+>
+> **22 of 50 drew a size that disagreed with their own density.** The compact
+> half is what showed on paper: every other element on a compact cover
+> shrinks — the title by 18%, the standfirst by 18%, the KPI value by 18% —
+> and the facts did not, so they *grew* against their surroundings. At its
+> worst, Institutional Research's `Exhibit Dense` and `Coverage Note` drew an
+> 11pt facts value against an **11.5pt** cover title: **96%**, which is no
+> hierarchy at all. The statement's own case — Private Banking, 11pt against
+> 41pt — is 27%, which is an ordinary title-page hierarchy and was never the
+> problem.
+>
+> **The 21%-to-79% spread across the ten families is deliberately NOT
+> "fixed".** One literal serving display sizes that span 3.7× produces that
+> spread, and making it per-family would mean inventing ten numbers: the
+> approved catalogue source carries **no point sizes at all**, only preset
+> names (`typography_preset`, `spacing_scale`, `density`). That is W1.4's
+> rule — *any number picked would be invented, and it would reclassify
+> approved designs*. `BASE_SCALES` is each family's *measured* scale and this
+> slot has no measurement, so `COVER_FACT_BASE` is named, uniform, and
+> documented as not being one. `MeasuredTypeScale` is `Omit<TypeScale,
+> 'coverFact'>` so the constant cannot be given the shape of a per-family
+> reading.
+>
+> Routing it through `scaleFor` reproduces `balanced` exactly, so **28 of the
+> 50 are byte-identical** and only the 22 that disagreed with themselves move.
+> `coverFactScale.spec.ts` asserts the movement as a RATIO against the
+> family's own title rather than against a typed number, because a typed
+> number would be a second statement of the factor — the two-ends-drift fault
+> the spec exists to close.
+
 **W4.6 · Debris** — the four empty bullets are **done**; the stray "1" is
 **unattributed and deliberately not fixed**.
 
