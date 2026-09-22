@@ -21,16 +21,22 @@ import {
   NATIONAL_PIPELINE_QUERIES,
   NATIONAL_PIPELINE_REGISTER,
   assessPipelineAvailability,
+  catalogueWalkIsComplete,
   ckanFieldsUrl,
+  ckanOrganisationListUrl,
+  ckanOrganisationPackagesUrl,
   ckanSampleUrl,
   ckanSearchUrl,
+  findPipelinePublisher,
   mergeCatalogueReads,
   parseCkanSearch,
+  parseOrganisationList,
   pipelineCoverageNote,
   rankPipelineResources,
   surveyPipelinePackages,
   type CkanPackage,
   type CkanParse,
+  type PublisherLookup,
 } from '@/lib/reports/../../../supabase/functions/_shared/planning/nationalPipeline.pure';
 
 interface ResourceSeed {
@@ -81,6 +87,16 @@ function ckan(
 }
 
 const IA = 'Infrastructure Australia';
+
+/** The publisher, found. Every availability reading below needs one. */
+const FOUND: PublisherLookup = {
+  kind: 'publisher',
+  organisation: { id: 'org', name: 'infrastructure-australia', title: IA, packageCount: 3 },
+};
+
+function orgs(list: { id: string; name: string; title: string; package_count?: number }[]): string {
+  return JSON.stringify({ success: true, result: list });
+}
 
 function catalogueOf(text: string): CkanPackage[] {
   const parse = parseCkanSearch(text);
@@ -247,7 +263,7 @@ describe('which resource is tried first', () => {
       ]),
     );
     expect(rankPipelineResources(packages)).toHaveLength(0);
-    const availability = assessPipelineAvailability(parseCkanSearch(
+    const availability = assessPipelineAvailability(FOUND, parseCkanSearch(
       ckan([
         {
           id: 'a',
@@ -308,8 +324,9 @@ describe('merging several searches', () => {
   });
 });
 
-describe('the four absences are four different sentences', () => {
-  const readings: CkanParse[] = [
+describe('the readings are five different sentences', () => {
+  const ABSENT: PublisherLookup = { kind: 'publisher_absent', organisationsSeen: 1873 };
+  const catalogues: CkanParse[] = [
     parseCkanSearch(ckan([{
       id: 'a', name: 'ipl', title: 'Infrastructure Priority List', org: IA,
       resources: [{ id: 'live', format: 'CSV', datastore_active: true }],
@@ -322,18 +339,43 @@ describe('the four absences are four different sentences', () => {
     { kind: 'refused', reason: 'HTTP 503' },
   ];
 
+  /** Every reading, with the publisher lookup that produces it. */
+  const readings = [
+    ...catalogues.map((c) => assessPipelineAvailability(FOUND, c)),
+    // The fifth: the catalogue names no such publisher. A different remedy.
+    assessPipelineAvailability(ABSENT, catalogues[0]),
+  ];
+
   it('names a distinct availability for each', () => {
-    expect(readings.map((r) => assessPipelineAvailability(r).kind)).toEqual([
+    expect(readings.map((r) => r.kind)).toEqual([
       'readable',
       'published_as_documents',
       'not_in_catalogue',
       'catalogue_unavailable',
+      'publisher_absent',
     ]);
   });
 
-  it('writes four distinct notes, each naming the register that was asked', () => {
-    const notes = readings.map((r) => pipelineCoverageNote(assessPipelineAvailability(r)));
-    expect(new Set(notes).size).toBe(4);
+  it('a missing publisher outranks whatever the packages say', () => {
+    /*
+     * `catalogues[0]` is the readable one. If the publisher lookup were
+     * consulted second, a stale package set would report a register this
+     * catalogue does not distribute.
+     */
+    const reading = assessPipelineAvailability(ABSENT, catalogues[0]);
+    expect(reading.kind).toBe('publisher_absent');
+    if (reading.kind !== 'publisher_absent') return;
+    expect(reading.organisationsSeen).toBe(1873);
+  });
+
+  it('a publisher lookup that failed is a retrieval failure, never an absence', () => {
+    const reading = assessPipelineAvailability({ kind: 'refused', reason: 'HTTP 502' }, catalogues[0]);
+    expect(reading.kind).toBe('catalogue_unavailable');
+  });
+
+  it('writes five distinct notes, each naming the register that was asked', () => {
+    const notes = readings.map((r) => pipelineCoverageNote(r));
+    expect(new Set(notes).size).toBe(5);
     for (const note of notes) {
       expect(note).toContain(NATIONAL_PIPELINE_PUBLISHER);
       expect(note).toContain(NATIONAL_PIPELINE_REGISTER);
@@ -345,15 +387,130 @@ describe('the four absences are four different sentences', () => {
     // and never as a strength either.
     const forbidden = /\b(low|minimal|limited|negligible|favourable|favorable|strong|weak|poor|good)\b/i;
     for (const reading of readings) {
-      expect(pipelineCoverageNote(assessPipelineAvailability(reading))).not.toMatch(forbidden);
+      expect(pipelineCoverageNote(reading)).not.toMatch(forbidden);
     }
   });
 
   it('never states that the area has no planned infrastructure', () => {
     const forbidden = /\bno (?:planned |named |major )?(?:infrastructure|projects?|works)\b/i;
     for (const reading of readings) {
-      expect(pipelineCoverageNote(assessPipelineAvailability(reading))).not.toMatch(forbidden);
+      expect(pipelineCoverageNote(reading)).not.toMatch(forbidden);
     }
+  });
+
+  it('every note says what its absence is a statement ABOUT', () => {
+    /*
+     * The whole point of five readings rather than one: a reader must be able
+     * to tell "the publisher distributes this elsewhere" from "we could not
+     * reach the catalogue today", because the two send a person to opposite
+     * remedies. A note that does not name its own subject collapses them.
+     */
+    for (const reading of readings.slice(1)) {
+      expect(pipelineCoverageNote(reading)).toMatch(/statement about|not as a machine-readable register/i);
+    }
+  });
+});
+
+describe('an absence is only an absence if the question could have found it', () => {
+  it('finds the publisher by its own title among the catalogue’s organisations', () => {
+    const lookup = findPipelinePublisher(parseOrganisationList(orgs([
+      { id: 'o1', name: 'geoscience-australia', title: 'Geoscience Australia' },
+      { id: 'o2', name: 'infrastructure-australia', title: 'Infrastructure Australia', package_count: 12 },
+    ])));
+    expect(lookup.kind).toBe('publisher');
+    if (lookup.kind !== 'publisher') return;
+    expect(lookup.organisation.id).toBe('o2');
+    expect(lookup.organisation.packageCount).toBe(12);
+  });
+
+  it('prefers the duplicate holding the most packages, never the list order', () => {
+    const lookup = findPipelinePublisher(parseOrganisationList(orgs([
+      { id: 'empty', name: 'infrastructure-australia-old', title: 'Infrastructure Australia', package_count: 0 },
+      { id: 'live', name: 'infrastructure-australia', title: 'Infrastructure Australia', package_count: 9 },
+    ])));
+    expect(lookup.kind === 'publisher' && lookup.organisation.id).toBe('live');
+  });
+
+  it('reports a genuine absence with the size of the enumeration behind it', () => {
+    const lookup = findPipelinePublisher(parseOrganisationList(orgs([
+      { id: 'o1', name: 'bitre', title: 'Bureau of Infrastructure and Transport Research Economics' },
+      { id: 'o2', name: 'nsw', title: 'NSW Government' },
+    ])));
+    expect(lookup.kind).toBe('publisher_absent');
+    if (lookup.kind !== 'publisher_absent') return;
+    expect(lookup.organisationsSeen).toBe(2);
+  });
+
+  it('refuses slugs rather than reading them as zero organisations', () => {
+    /*
+     * `all_fields=false` answers an array of strings. Reading that as an empty
+     * enumeration would report "the publisher is not on the catalogue" from a
+     * query parameter we got wrong — which is this module's whole lesson.
+     */
+    const parse = parseOrganisationList(JSON.stringify({ success: true, result: ['a', 'b'] }));
+    expect(parse.kind).toBe('refused');
+    if (parse.kind !== 'refused') return;
+    expect(parse.reason).toContain('all_fields');
+    expect(findPipelinePublisher(parse).kind).toBe('refused');
+  });
+
+  it('refuses a body that is not an organisation list, naming what it got', () => {
+    const parse = parseOrganisationList('<html>503</html>');
+    expect(parse.kind).toBe('refused');
+    if (parse.kind !== 'refused') return;
+    expect(parse.reason).toContain('html');
+  });
+
+  it('an incomplete walk is a retrieval failure, never a smaller register', () => {
+    // A package missing because the walk stopped is indistinguishable from one
+    // that does not exist. The urban-centre register's rule, one register along.
+    const partial = parseCkanSearch(ckan([
+      { id: 'a', name: 'x', title: 'Australian Infrastructure Audit', org: IA },
+    ], 40));
+    expect(catalogueWalkIsComplete(partial)).toBe(false);
+    const reading = assessPipelineAvailability(FOUND, partial);
+    expect(reading.kind).toBe('catalogue_unavailable');
+    if (reading.kind !== 'catalogue_unavailable') return;
+    expect(reading.reason).toContain('1 of 40');
+  });
+
+  it('a complete walk with nothing matching IS an absence', () => {
+    const complete = parseCkanSearch(ckan([
+      { id: 'a', name: 'x', title: 'Australian Infrastructure Audit', org: IA },
+      { id: 'b', name: 'y', title: 'Infrastructure Reform Report', org: IA },
+    ]));
+    expect(catalogueWalkIsComplete(complete)).toBe(true);
+    const reading = assessPipelineAvailability(FOUND, complete);
+    expect(reading.kind).toBe('not_in_catalogue');
+    if (reading.kind !== 'not_in_catalogue') return;
+    expect(reading.searched).toBe(2);
+  });
+
+  it('a refused read is never a complete walk', () => {
+    expect(catalogueWalkIsComplete({ kind: 'refused', reason: 'HTTP 500' })).toBe(false);
+  });
+
+  it('filters the publisher’s packages rather than ranking them', () => {
+    /*
+     * `fq` constrains the result set; `q` scores it. That difference is the
+     * whole reason the first version of this probe reported an absence over 53
+     * packages of marine-park research, so it is asserted rather than assumed.
+     */
+    const url = ckanOrganisationPackagesUrl('o-1', 100, 200);
+    /*
+     * The colon stays unencoded: it is Solr's field separator, and percent-
+     * encoding it turns `owner_org:"o-1"` into a search TERM — which would be
+     * the loose query all over again, wearing the filter's name. The value is
+     * encoded, quotes and all, because that is where a caller's id goes.
+     */
+    expect(url).toContain('fq=owner_org:%22o-1%22');
+    expect(url).not.toMatch(/[?&]q=/);
+    expect(url).toContain('rows=100&start=200');
+  });
+
+  it('asks the organisation list for fields rather than slugs, and pages it', () => {
+    expect(ckanOrganisationListUrl(1000, 2000)).toContain('all_fields=true');
+    expect(ckanOrganisationListUrl(1000, 2000)).toContain('limit=1000&offset=2000');
   });
 });
 

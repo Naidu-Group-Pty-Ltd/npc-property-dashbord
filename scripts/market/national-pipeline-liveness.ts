@@ -17,6 +17,22 @@
  * deployed or scheduled, and it writes nothing anywhere: no database, no
  * Supabase, no credential.
  *
+ * ## An absence is only an absence if the question could have found it
+ *
+ * The first run of this probe reported `not_in_catalogue` over **53 packages
+ * and 0 survivors** — NESP marine park projects, Geoscience Australia
+ * shoreline modelling, and the *Rail Infrastructure Corporation Annual Report
+ * 2003-04*. That reading was worthless: CKAN's `q=` is relevance-ranked full
+ * text, so a ranked list of noisy hits establishes that the QUERY was loose
+ * and never that the register is absent. It is the `layers=all` defect one
+ * publisher along.
+ *
+ * So the ENUMERATION is the authority and the free-text search is a
+ * supplement. `organization_list` answers whether the publisher is on the
+ * catalogue at all as the yes-or-no question it is; `fq=owner_org:<id>` is a
+ * filter rather than a ranking, walked to its own declared count; and only
+ * then is the register's name rule applied, to a complete set.
+ *
  * ## The exit code is the whole design
  *
  * This is `abs-approvals-liveness.ts`'s rule, and it is the same rule for the
@@ -40,20 +56,32 @@ import {
   NATIONAL_PIPELINE_REGISTER,
   PRIORITY_LIST_PATTERN,
   assessPipelineAvailability,
+  catalogueWalkIsComplete,
   ckanFieldsUrl,
+  ckanOrganisationListUrl,
+  ckanOrganisationPackagesUrl,
   ckanSampleUrl,
   ckanSearchUrl,
+  findPipelinePublisher,
   mergeCatalogueReads,
   parseCkanSearch,
+  parseOrganisationList,
   pipelineCoverageNote,
   rankPipelineResources,
   surveyPipelinePackages,
+  type CkanPackage,
   type CkanParse,
   type PipelineCandidate,
+  type PublisherLookup,
 } from '../../supabase/functions/_shared/planning/nationalPipeline.pure.ts';
 
 const UA = 'npc-property-dashboard/1.0 (+https://github.com/Naidu-Group-Pty-Ltd)';
 const FETCH_MS = 45_000;
+/** The catalogue holds thousands of organisations; the walk is bounded, not trusted. */
+const ORG_PAGE = 1000;
+const ORG_PAGES_MAX = 20;
+const PKG_PAGE = 100;
+const PKG_PAGES_MAX = 40;
 
 /*
  * Everything prints on ONE stream. A heading on stdout and a verdict on
@@ -63,7 +91,7 @@ const FETCH_MS = 45_000;
  * for a person, and a garbled verdict is harder to trust.
  */
 const h = (s: string) => { console.log(`\n${s}`); console.log('─'.repeat(s.length)); };
-const kv = (k: string, v: unknown) => console.log(`  ${k.padEnd(24)} ${String(v)}`);
+const kv = (k: string, v: unknown) => console.log(`  ${k.padEnd(26)} ${String(v)}`);
 
 /**
  * Their side. Reported, never failed on.
@@ -110,51 +138,151 @@ async function get(url: string): Promise<Fetched> {
   return { status: res.status, body, bytes: body.length, ms: Date.now() - began };
 }
 
-async function main(): Promise<void> {
-  h(`1 · ${NATIONAL_PIPELINE_PUBLISHER} in the Commonwealth’s catalogue`);
-  kv('catalogue', CKAN_BASE);
-  kv('organisation rule', String(NATIONAL_PIPELINE_ORG_PATTERN));
-  kv('register rule', String(PRIORITY_LIST_PATTERN));
+async function getOrTheirs(url: string, stage: string): Promise<Fetched> {
+  let got: Fetched;
+  try {
+    got = await get(url);
+  } catch (err) {
+    theirs(stage, err instanceof Error ? err.message : String(err));
+  }
+  if (got.status !== 200) theirs(stage, `HTTP ${got.status}`, got.body);
+  return got;
+}
 
-  const parses: CkanParse[] = [];
-  for (const query of NATIONAL_PIPELINE_QUERIES) {
-    const url = ckanSearchUrl(query);
-    let got: Fetched;
-    try {
-      got = await get(url);
-    } catch (err) {
-      theirs(`search ${JSON.stringify(query)}`, err instanceof Error ? err.message : String(err));
+/** Stage 1 — is the publisher on the catalogue at all? */
+async function findPublisher(): Promise<PublisherLookup> {
+  h(`1 · Does the catalogue list ${NATIONAL_PIPELINE_PUBLISHER} as a publisher?`);
+  kv('catalogue', CKAN_BASE);
+  kv('publisher rule', String(NATIONAL_PIPELINE_ORG_PATTERN));
+  let seen = 0;
+  for (let page = 0; page < ORG_PAGES_MAX; page += 1) {
+    const url = ckanOrganisationListUrl(ORG_PAGE, page * ORG_PAGE);
+    const got = await getOrTheirs(url, `organisation list page ${page + 1}`);
+    const parse = parseOrganisationList(got.body);
+    if (parse.kind === 'refused') ours(`reading organisation list page ${page + 1}`, parse.reason);
+    seen += parse.organisations.length;
+    const found = findPipelinePublisher(parse);
+    if (found.kind === 'publisher') {
+      kv('pages read', page + 1);
+      kv('organisations seen', seen);
+      kv('publisher', `${found.organisation.title} (${found.organisation.name})`);
+      kv('packages it holds', found.organisation.packageCount ?? '(unstated)');
+      return found;
     }
-    console.log('');
-    kv('query', query);
-    kv('http', `${got.status} · ${got.bytes} bytes · ${got.ms} ms`);
-    if (got.status !== 200) theirs(`search ${JSON.stringify(query)}`, `HTTP ${got.status}`, got.body);
+    if (parse.organisations.length < ORG_PAGE) {
+      /* The walk reached the end of the list. The absence is now a measurement. */
+      kv('pages read', page + 1);
+      kv('organisations enumerated', seen);
+      return { kind: 'publisher_absent', organisationsSeen: seen };
+    }
+  }
+  /*
+   * The page bound was hit without reaching the end. That is not an absence —
+   * it is a walk this script did not finish, and reporting it as "the
+   * publisher is not there" would be the truncated-download failure again.
+   */
+  ours('enumerating organisations', `${ORG_PAGES_MAX} pages of ${ORG_PAGE} did not reach the end of the list (${seen} seen)`);
+}
+
+/** Stage 2 — every package that publisher holds, walked to its declared count. */
+async function walkPublisherPackages(orgId: string): Promise<CkanParse> {
+  h('2 · That publisher’s packages, filtered rather than ranked');
+  const pages: CkanParse[] = [];
+  let declared: number | null = null;
+  let read = 0;
+  for (let page = 0; page < PKG_PAGES_MAX; page += 1) {
+    const url = ckanOrganisationPackagesUrl(orgId, PKG_PAGE, page * PKG_PAGE);
+    const got = await getOrTheirs(url, `package page ${page + 1}`);
+    const parse = parseCkanSearch(got.body);
+    if (parse.kind === 'refused') ours(`reading package page ${page + 1}`, parse.reason);
+    declared ??= parse.total;
+    read += parse.packages.length;
+    pages.push(parse);
+    if (parse.packages.length === 0 || read >= parse.total) break;
+  }
+  kv('packages declared', declared ?? '(unstated)');
+  kv('packages read', read);
+  const merged = mergeCatalogueReads(pages);
+  if (merged.kind === 'refused') ours('merging the package walk', merged.reason);
+  /*
+   * The urban-centre register's rule: a load is judged by its effect, and the
+   * walk must account for every declared entry. Reported here so a person
+   * reading the log sees the arithmetic rather than trusting the verdict.
+   */
+  kv('walk complete', catalogueWalkIsComplete(merged) ? 'yes' : 'NO — an incomplete walk is not a smaller register');
+  return merged;
+}
+
+/**
+ * Stage 3 — the free-text searches, as a supplement and never as the authority.
+ *
+ * A package published under a department rather than the agency is invisible
+ * to the enumeration, so the searches stay. What they may never do again is
+ * decide an absence, which is why they are read after the enumeration and
+ * reported as an addition to it.
+ */
+async function supplementarySearch(): Promise<CkanPackage[]> {
+  h('3 · Free-text searches — a supplement, never the authority for an absence');
+  const found: CkanPackage[] = [];
+  for (const query of NATIONAL_PIPELINE_QUERIES) {
+    const got = await getOrTheirs(ckanSearchUrl(query), `search ${JSON.stringify(query)}`);
     const parse = parseCkanSearch(got.body);
     if (parse.kind === 'refused') ours(`reading the answer to ${JSON.stringify(query)}`, parse.reason);
-    kv('catalogue total', parse.total);
-    kv('packages returned', parse.packages.length);
-    parses.push(parse);
+    const survivors = surveyPipelinePackages(parse.packages);
+    console.log('');
+    kv('query', query);
+    kv('ranked hits', `${parse.packages.length} of ${parse.total} declared`);
+    kv('survive both tests', survivors.length);
+    for (const p of survivors) {
+      console.log(`      ✔ ${p.title}  ·  org=${p.organisation ?? '(none)'}`);
+    }
+    found.push(...survivors);
+  }
+  return found;
+}
+
+async function main(): Promise<void> {
+  const publisher = await findPublisher();
+
+  let packages: CkanParse = { kind: 'catalogue', total: 0, packages: [] };
+  if (publisher.kind === 'publisher') {
+    packages = await walkPublisherPackages(publisher.organisation.id);
+    const survivors = publisher.kind === 'publisher' && packages.kind === 'catalogue'
+      ? surveyPipelinePackages(packages.packages)
+      : [];
+    console.log('');
+    kv('register rule', String(PRIORITY_LIST_PATTERN));
+    kv('packages that are the register', survivors.length);
+    for (const p of survivors) {
+      console.log(`      ✔ ${p.title}`);
+      console.log(`        modified=${p.metadataModified ?? '(none)'} · licence=${p.licence ?? '(none)'}`);
+      console.log(`        resources: ${p.resources.map((r) => `${r.format || '?'}${r.datastoreActive ? '/datastore' : ''}`).join(', ') || '(none)'}`);
+    }
+    if (survivors.length === 0 && packages.kind === 'catalogue') {
+      /*
+       * Print what the publisher DOES hold. "Enumerated in full and none of
+       * them is this register" is a claim, and a claim a log cannot be checked
+       * against is a claim nobody can audit.
+       */
+      console.log('\n      Everything this publisher holds, so the absence can be checked:');
+      for (const p of packages.packages) {
+        console.log(`      · ${p.title}  [${p.resources.map((r) => r.format || '?').join(', ') || 'no resource'}]`);
+      }
+    }
   }
 
-  const merged = mergeCatalogueReads(parses);
-  if (merged.kind === 'refused') ours('merging the searches', merged.reason);
-
-  h('2 · What the searches returned, and what survives both tests');
-  kv('distinct packages', merged.packages.length);
-  for (const p of merged.packages) {
-    const orgOk = p.organisation !== null && NATIONAL_PIPELINE_ORG_PATTERN.test(p.organisation);
-    const nameOk = PRIORITY_LIST_PATTERN.test(p.title) || PRIORITY_LIST_PATTERN.test(p.name);
-    const mark = orgOk && nameOk ? '✔' : orgOk ? 'org only' : nameOk ? 'name only' : '·';
-    console.log(`  ${String(mark).padEnd(9)} ${p.title}`);
-    console.log(`  ${' '.repeat(9)} org=${p.organisation ?? '(none)'} · modified=${p.metadataModified ?? '(none)'} · licence=${p.licence ?? '(none)'}`);
-    console.log(`  ${' '.repeat(9)} resources: ${p.resources.map((r) => `${r.format || '?'}${r.datastoreActive ? '/datastore' : ''}`).join(', ') || '(none)'}`);
+  const supplementary = await supplementarySearch();
+  if (supplementary.length > 0 && packages.kind === 'catalogue') {
+    const seen = new Set(packages.packages.map((p) => p.id));
+    const extra = supplementary.filter((p) => !seen.has(p.id));
+    if (extra.length > 0) {
+      console.log(`\n  The search found ${extra.length} the enumeration did not. Folding them in.`);
+      packages = { kind: 'catalogue', total: packages.total + extra.length, packages: [...packages.packages, ...extra] };
+    }
   }
 
-  const survivors = surveyPipelinePackages(merged.packages);
-  kv('survivors', survivors.length);
-
-  h('3 · The resources this repository would try, best first');
-  const ranked = rankPipelineResources(merged.packages);
+  h('4 · The resources this repository would try, best first');
+  const ranked = packages.kind === 'catalogue' ? rankPipelineResources(packages.packages) : [];
   if (ranked.length === 0) console.log('  (none)');
   ranked.forEach((c, i) => {
     console.log(`  ${String(i + 1).padStart(2)}. ${c.access.padEnd(9)} ${c.resource.format.padEnd(7)} ${c.resource.name}`);
@@ -163,8 +291,14 @@ async function main(): Promise<void> {
     console.log(`      ${c.resource.url}`);
   });
 
-  const availability = assessPipelineAvailability(merged);
-  h('4 · The reading a report would carry');
+  /*
+   * The publisher lookup is re-stated as `publisher` for the assessment even
+   * where the supplement found something, because a package the enumeration
+   * missed is still that publisher's: what the supplement can change is the
+   * PACKAGE set, never whether the publisher exists.
+   */
+  const availability = assessPipelineAvailability(publisher, packages);
+  h('5 · The reading a report would carry');
   kv('availability', availability.kind);
   console.log(`\n  ${pipelineCoverageNote(availability)}`);
 
@@ -176,19 +310,21 @@ async function main(): Promise<void> {
       console.log('  document travels through publishedProjectRegister.pure.ts, labelled');
       console.log('  “recorded from an official publication”, and never as a retrieval.');
     }
-    if (availability.kind === 'not_in_catalogue') {
-      kv('packages searched', availability.searched);
+    if (availability.kind === 'not_in_catalogue') kv('packages enumerated', availability.searched);
+    if (availability.kind === 'publisher_absent') {
+      kv('organisations enumerated', availability.organisationsSeen);
+      console.log('\n  The catalogue lists no such publishing organisation. The remedy is not');
+      console.log('  another query here — it is the publisher’s own site, which is a');
+      console.log('  publication and travels under publishedProjectRegister’s label.');
     }
-    if (availability.kind === 'catalogue_unavailable') {
-      kv('reason', availability.reason);
-    }
+    if (availability.kind === 'catalogue_unavailable') kv('reason', availability.reason);
     console.log('\n  Exiting 0. Nothing here is a defect: this is the measurement that');
     console.log('  settles which of W3.2’s two acceptance branches can be true, and a');
     console.log('  build must not go red over another party’s distribution choices.');
     process.exit(0);
   }
 
-  h('5 · What the chosen resource DECLARES');
+  h('6 · What the chosen resource DECLARES');
   let chosen: PipelineCandidate | null = null;
   for (const candidate of availability.candidates) {
     if (candidate.access !== 'queryable') {
@@ -197,10 +333,9 @@ async function main(): Promise<void> {
       console.log('  reported and not opened here. A later stage may measure the download.');
       continue;
     }
-    const url = ckanFieldsUrl(candidate.resource.id);
     let got: Fetched;
     try {
-      got = await get(url);
+      got = await get(ckanFieldsUrl(candidate.resource.id));
     } catch (err) {
       console.log(`\n  ${candidate.resource.name}: ${err instanceof Error ? err.message : String(err)}`);
       continue;
@@ -242,15 +377,9 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  h('6 · A sample of the register’s own rows, verbatim');
-  let sample: Fetched;
-  try {
-    sample = await get(ckanSampleUrl(chosen.resource.id, 5));
-  } catch (err) {
-    theirs('sampling the chosen resource', err instanceof Error ? err.message : String(err));
-  }
+  h('7 · A sample of the register’s own rows, verbatim');
+  const sample = await getOrTheirs(ckanSampleUrl(chosen.resource.id, 5), 'sampling the chosen resource');
   kv('http', `${sample.status} · ${sample.bytes} bytes · ${sample.ms} ms`);
-  if (sample.status !== 200) theirs('sampling the chosen resource', `HTTP ${sample.status}`, sample.body);
   let rows: { result?: { records?: Record<string, unknown>[] } };
   try {
     rows = JSON.parse(sample.body);
@@ -261,9 +390,7 @@ async function main(): Promise<void> {
   kv('records', records.length);
   records.forEach((r, i) => {
     console.log(`\n  — record ${i + 1} —`);
-    for (const [k, v] of Object.entries(r)) {
-      console.log(`      ${k.padEnd(34)} ${JSON.stringify(v)}`);
-    }
+    for (const [k, v] of Object.entries(r)) console.log(`      ${k.padEnd(34)} ${JSON.stringify(v)}`);
   });
 
   h('READ');

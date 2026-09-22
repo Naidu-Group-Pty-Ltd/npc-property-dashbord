@@ -40,6 +40,49 @@
  * the coverage statement stands — with the form the register IS published in
  * named, which it never was.
  *
+ * ── An absence is only an absence if the question could have found it ────
+ *
+ * The first version of this module asked the catalogue two free-text queries
+ * and read "no match" as "not published". Run against the real catalogue from
+ * CI on 22 Sep 2026 it returned **53 packages and 0 survivors** — NESP marine
+ * park projects, Geoscience Australia shoreline modelling, and the *Rail
+ * Infrastructure Corporation Annual Report 2003-04* — and reported
+ * `not_in_catalogue`.
+ *
+ * That reading was worthless. CKAN's `q=` is relevance-ranked full text: a
+ * quoted phrase is a hint rather than a filter, `Infrastructure Australia
+ * priority` matches anything carrying the word *infrastructure*, and a
+ * ranked list of 50 noisy hits establishes that the QUERY was loose, never
+ * that the register is absent. It is the `layers=all` defect exactly —
+ * *"an empty answer to a question nobody asked, which reads as a property
+ * with no bushfire and no flood"* — one publisher along.
+ *
+ * So the authority for an absence is an **exhaustive, filtered enumeration**,
+ * and a relevance search is only ever a supplement to it:
+ *
+ * 1. `organization_list` names every publishing organisation on the
+ *    catalogue. Whether Infrastructure Australia publishes there at all is a
+ *    yes-or-no question, and it is asked as one.
+ * 2. `package_search?fq=owner_org:<id>` is a FILTER, not a ranking: it
+ *    returns that publisher's packages and nothing else. Walked to its own
+ *    declared `count`, it is the complete set.
+ * 3. The register's name rule is then applied to a complete set rather than
+ *    to a relevance ranking.
+ *
+ * And the walk is judged by whether it accounts for every package the
+ * catalogue declared — the urban-centre register's rule (*a load is judged by
+ * its effect*, and a short walk is a truncated download by another route). An
+ * incomplete walk REFUSES rather than reporting a smaller register, because a
+ * package missing because the walk stopped is indistinguishable from one that
+ * does not exist.
+ *
+ * That distinction adds a fourth absence, and it is the one that matters
+ * most operationally: **`publisher_absent`** says the catalogue has no such
+ * publisher, which sends a person to Infrastructure Australia's own site.
+ * `not_in_catalogue` says the publisher is there and holds no such package,
+ * which sends them to look under another name. The two remedies are
+ * different, so the two sentences are different.
+ *
  * ── Nothing here is an identifier somebody typed ──────────────────────────
  *
  * `absBuildingApprovals.pure.ts` pays for this rule already: *an identifier
@@ -129,6 +172,120 @@ export function ckanFieldsUrl(resourceId: string): string {
 /** A bounded sample of a DataStore resource's rows. */
 export function ckanSampleUrl(resourceId: string, limit = 5): string {
   return `${CKAN_BASE}/action/datastore_search?resource_id=${encodeURIComponent(resourceId)}&limit=${limit}`;
+}
+
+/**
+ * Every publishing organisation on the catalogue, with its package count.
+ *
+ * `all_fields` is what makes this usable: without it CKAN returns slugs alone,
+ * and a slug is the identifier this module refuses to reason about. With it
+ * every organisation carries its own TITLE, which is what a person checking
+ * this can read and what the publisher rule is written against.
+ */
+export function ckanOrganisationListUrl(limit = 1000, offset = 0): string {
+  return `${CKAN_BASE}/action/organization_list?all_fields=true&limit=${limit}&offset=${offset}`;
+}
+
+/**
+ * One publisher's packages, filtered rather than ranked.
+ *
+ * `fq` is Solr's filter query: it constrains the result set instead of
+ * scoring it, so this returns that organisation's packages and nothing else.
+ * That is the whole difference between this and the free-text search, and it
+ * is why only this may be read as an absence.
+ */
+export function ckanOrganisationPackagesUrl(orgId: string, rows = 100, start = 0): string {
+  return `${CKAN_BASE}/action/package_search?fq=owner_org:${encodeURIComponent(`"${orgId}"`)}&rows=${rows}&start=${start}`;
+}
+
+/** A publishing organisation, as the catalogue describes itself. */
+export interface CkanOrganisation {
+  id: string;
+  /** The URL slug. */
+  name: string;
+  /** The organisation's own title. The publisher rule is written against this. */
+  title: string;
+  /** How many packages the catalogue says it holds. */
+  packageCount: number | null;
+}
+
+export type OrganisationParse =
+  | { kind: 'organisations'; organisations: CkanOrganisation[] }
+  | { kind: 'refused'; reason: string };
+
+/** Read an `organization_list?all_fields=true` answer. */
+export function parseOrganisationList(text: string): OrganisationParse {
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch (err) {
+    return {
+      kind: 'refused',
+      reason: `not JSON (${text.length} bytes, ${String(err)}): ${JSON.stringify(text.slice(0, 220))}`,
+    };
+  }
+  const envelope = body as { success?: unknown; result?: unknown; error?: unknown };
+  if (envelope.success === false) {
+    return { kind: 'refused', reason: `the catalogue refused: ${JSON.stringify(envelope.error ?? null)}` };
+  }
+  if (!Array.isArray(envelope.result)) {
+    return {
+      kind: 'refused',
+      reason: `no result array (${text.length} bytes): ${JSON.stringify(text.slice(0, 220))}`,
+    };
+  }
+  const organisations: CkanOrganisation[] = [];
+  for (const raw of envelope.result as unknown[]) {
+    /*
+     * `all_fields=false` answers an array of strings. Reading that as zero
+     * organisations would report "the publisher is not on the catalogue" from
+     * a query parameter we got wrong — the exact failure this module was
+     * rewritten to close — so it refuses instead.
+     */
+    if (typeof raw === 'string') {
+      return { kind: 'refused', reason: 'the catalogue answered slugs, not organisations: all_fields was not honoured' };
+    }
+    const o = raw as Record<string, unknown>;
+    const id = str(o.id);
+    const name = str(o.name);
+    if (!id || !name) continue;
+    organisations.push({
+      id,
+      name,
+      title: str(o.title) ?? name,
+      packageCount: num(o.package_count),
+    });
+  }
+  return { kind: 'organisations', organisations };
+}
+
+export type PublisherLookup =
+  /** The catalogue names this publisher. */
+  | { kind: 'publisher'; organisation: CkanOrganisation }
+  /** The catalogue was enumerated and names no such publisher. */
+  | { kind: 'publisher_absent'; organisationsSeen: number }
+  | { kind: 'refused'; reason: string };
+
+/**
+ * Find the publisher among the catalogue's own organisations.
+ *
+ * Matched on the TITLE first and the slug second, because a title is what the
+ * catalogue prints; the slug is accepted as well only so a rename of one
+ * cannot hide the publisher behind the other. Where more than one matches,
+ * the one holding the most packages wins — a publisher's live organisation
+ * outranks a historical or empty duplicate, and choosing by list order would
+ * be choosing by nothing.
+ */
+export function findPipelinePublisher(parse: OrganisationParse): PublisherLookup {
+  if (parse.kind === 'refused') return { kind: 'refused', reason: parse.reason };
+  const matches = parse.organisations.filter(
+    (o) => NATIONAL_PIPELINE_ORG_PATTERN.test(o.title) || NATIONAL_PIPELINE_ORG_PATTERN.test(o.name),
+  );
+  if (matches.length === 0) {
+    return { kind: 'publisher_absent', organisationsSeen: parse.organisations.length };
+  }
+  const best = [...matches].sort((a, b) => (b.packageCount ?? 0) - (a.packageCount ?? 0))[0];
+  return { kind: 'publisher', organisation: best };
 }
 
 /** One distributed file or endpoint of a catalogue package. */
@@ -370,10 +527,26 @@ export type PipelineAvailability =
   | { kind: 'readable'; candidates: PipelineCandidate[] }
   /** The publisher's packages were found and none is a feed. */
   | { kind: 'published_as_documents'; packages: CkanPackage[]; formats: string[] }
-  /** The catalogue holds nothing under this publisher and this name. */
+  /** The publisher publishes here and holds no package under this name. */
   | { kind: 'not_in_catalogue'; searched: number }
+  /** The catalogue names no such publisher at all. A different remedy. */
+  | { kind: 'publisher_absent'; organisationsSeen: number }
   /** The catalogue itself could not be read. Ours, or theirs — never the area's. */
   | { kind: 'catalogue_unavailable'; reason: string };
+
+/**
+ * Did the walk account for every package the catalogue declared?
+ *
+ * A short walk is a truncated download by another route, and a register read
+ * from part of itself is `SUPPLY_EVIDENCE.md`'s floor rather than the
+ * register. Anything reading an absence must check this first, because a
+ * package missing because the walk stopped is indistinguishable from one that
+ * does not exist.
+ */
+export function catalogueWalkIsComplete(parse: CkanParse): boolean {
+  if (parse.kind !== 'catalogue') return false;
+  return parse.packages.length >= parse.total;
+}
 
 /**
  * Judge the catalogue's answer.
@@ -387,8 +560,25 @@ export type PipelineAvailability =
  * Australia publishes no pipeline", which is the class of error this whole
  * programme keeps paying for.
  */
-export function assessPipelineAvailability(parse: CkanParse): PipelineAvailability {
+export function assessPipelineAvailability(
+  publisher: PublisherLookup,
+  parse: CkanParse,
+): PipelineAvailability {
+  if (publisher.kind === 'refused') return { kind: 'catalogue_unavailable', reason: publisher.reason };
+  if (publisher.kind === 'publisher_absent') {
+    return { kind: 'publisher_absent', organisationsSeen: publisher.organisationsSeen };
+  }
   if (parse.kind === 'refused') return { kind: 'catalogue_unavailable', reason: parse.reason };
+  /*
+   * An incomplete walk is never read as a smaller register. It is reported as
+   * a retrieval this deployment could not finish, which is what it is.
+   */
+  if (!catalogueWalkIsComplete(parse)) {
+    return {
+      kind: 'catalogue_unavailable',
+      reason: `the walk read ${parse.packages.length} of ${parse.total} declared packages`,
+    };
+  }
   const candidates = rankPipelineResources(parse.packages);
   if (candidates.length > 0) return { kind: 'readable', candidates };
   const packages = surveyPipelinePackages(parse.packages);
@@ -460,8 +650,15 @@ export function pipelineCoverageNote(availability: PipelineAvailability): string
     }
     case 'not_in_catalogue':
       return `${reg} was asked for in the Commonwealth's open data catalogue `
-        + `(data.gov.au) and the catalogue holds no machine-readable edition of it. `
-        + `That is a statement about the catalogue, not about the national pipeline.`;
+        + `(data.gov.au): the publisher's own catalogue entries were enumerated in `
+        + `full and none of them is this register. That is a statement about the `
+        + `catalogue, not about the national pipeline.`;
+    case 'publisher_absent':
+      return `${reg} was asked for in the Commonwealth's open data catalogue `
+        + `(data.gov.au), which does not list ${NATIONAL_PIPELINE_PUBLISHER} among its `
+        + `publishing organisations — so the register is not distributed there and is `
+        + `read from the publisher's own site instead. That is a statement about where `
+        + `the register is published, not about the national pipeline.`;
     case 'catalogue_unavailable':
       return `${reg} could not be asked for: the Commonwealth's open data catalogue `
         + `did not answer. This deployment holds no reading of the national pipeline `
