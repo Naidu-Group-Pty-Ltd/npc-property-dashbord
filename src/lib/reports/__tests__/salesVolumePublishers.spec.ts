@@ -757,27 +757,65 @@ describe('the measured readings', () => {
     expect(Object.keys(MEASURED_VOLUME_COVERAGE).sort()).toEqual([...VOLUME_GAP_STATES].sort());
   });
 
-  /* WA and the NT were established; ACT and TAS are ours. */
+  /*
+   * WA, the NT and the ACT were established; Tasmania is ours. The ACT moved
+   * from `catalogue_unavailable` once the Socrata reader existed — which is
+   * the whole reason its CKAN 404 was kept and printed rather than replaced
+   * with another guess.
+   */
   it('separates what was established from what this platform could not reach', () => {
     expect(MEASURED_VOLUME_COVERAGE.WA.kind).toBe('medians_only');
     expect(MEASURED_VOLUME_COVERAGE.NT.kind).toBe('no_count_published');
+    expect(MEASURED_VOLUME_COVERAGE.ACT.kind).toBe('no_count_published');
     expect(MEASURED_VOLUME_COVERAGE.TAS.kind).toBe('catalogue_unavailable');
-    expect(MEASURED_VOLUME_COVERAGE.ACT.kind).toBe('catalogue_unavailable');
+  });
+
+  /*
+   * Each established reading carries the size of the index it was taken
+   * from. A bare zero would say the same thing as looking at nothing.
+   */
+  it('carries the index size behind each established reading', () => {
+    for (const s of VOLUME_GAP_STATES) {
+      const c = MEASURED_VOLUME_COVERAGE[s];
+      if (c.kind === 'catalogue_unavailable') continue;
+      if (c.kind !== 'medians_only' && c.kind !== 'no_count_published') continue;
+      expect(c.inventory, s).toBeGreaterThan(0);
+    }
   });
 
   /*
    * Never a bare zero. An absence found by searching 434 of 2,911 datasets
    * means something a bare "0 examined" does not.
    */
-  it('states the size of the question where the index stated it', () => {
+  it('states the size of the question the index was asked', () => {
     const wa = measuredVolumeNote('WA') as string;
-    expect(wa).toContain('434');
+    expect(wa).toContain('203');
     expect(wa).toContain('2,911');
-    expect(wa).not.toMatch(/\b0 datasets\b/);
-    /* And omits it cleanly where the index did not say. */
+    const act = measuredVolumeNote('ACT') as string;
+    expect(act).toContain('378');
     const nt = measuredVolumeNote('NT') as string;
-    expect(nt).not.toMatch(/published index of/);
-    expect(nt).toMatch(/matched a sales query/);
+    expect(nt).toContain('1,075');
+  });
+
+  /*
+   * `searched` is the number the INSTRUMENT printed, not one query's declared
+   * total. The first version recorded 434 — what `property sales` alone
+   * declared — while the probe's own sentence said 203.
+   */
+  it('records the number the probe reported, not a single query’s total', () => {
+    const wa = MEASURED_VOLUME_COVERAGE.WA;
+    expect(wa.kind).toBe('medians_only');
+    if (wa.kind !== 'medians_only') return;
+    expect(wa.searched).toBe(203);
+    expect(wa.searched).not.toBe(434);
+  });
+
+  /* A zero matched is stated as such, beside the index it was asked of. */
+  it('never prints a bare zero for an index that answered', () => {
+    for (const s of ['NT', 'ACT'] as VolumeGapState[]) {
+      const note = measuredVolumeNote(s) as string;
+      expect(note, s).toMatch(/0 datasets matched a sales query out of a published index of/);
+    }
   });
 
   /*
@@ -800,10 +838,17 @@ describe('the measured readings', () => {
    * effect* trap, so the distinction is asserted rather than promised.
    */
   it('names which readings the current instrument has taken', () => {
-    expect(VOLUME_READING_IS_CURRENT.WA).toBe(true);
-    expect(VOLUME_READING_IS_CURRENT.NT).toBe(true);
-    expect(VOLUME_READING_IS_CURRENT.TAS).toBe(false);
-    expect(VOLUME_READING_IS_CURRENT.ACT).toBe(false);
+    /*
+     * All four, as of the run that added the Socrata reader and the
+     * find/absence asymmetry. Nothing is `false` today and the flag is kept
+     * anyway, because the point is to have somewhere for the NEXT instrument
+     * change to be declared — the assertion below is a ratchet rather than a
+     * live measurement of anything, and saying so is better than letting it
+     * look like one.
+     */
+    for (const s of VOLUME_GAP_STATES) {
+      expect(VOLUME_READING_IS_CURRENT[s], s).toBe(true);
+    }
   });
 
   /*

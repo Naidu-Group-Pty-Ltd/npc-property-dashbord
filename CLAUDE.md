@@ -2404,12 +2404,24 @@ grain and every one publishes something called "property sales", so finding a
 sales dataset and reporting the gap closed changes nothing while looking
 exactly like a fix — `COUNT_PATTERN` asks whether the PUBLISHER says a count
 is in it, and `medians_only` / `state_grain_only` are readings rather than
-finds. Measured 22 Sep 2026 from CI: **WA's catalogue holds 2,911 datasets,
-434 match "property sales", and not one of the 202 examined carries a count**;
-the NT's index answered and matched none of five phrasings; `data.tas.gov.au`
-does not resolve; and the ACT portal 404s a CKAN 3 path because it is
-**Socrata**. Two are a real limit of what is published, two are OURS, and
-keeping them apart is the point. Three rules were each paid for again here.
+finds. Measured 22 Sep 2026 from CI: **WA's catalogue holds 2,911 datasets, 203
+matched and attributed, and not one carries a count**; the NT's index holds
+1,075 and matched none of five phrasings; the ACT's holds **378 read through
+SOCRATA** and matched none; only `data.tas.gov.au` does not resolve. **Three
+of the four are settled and the answer is that no sub-state count of
+residential sales is published**; one is OURS, and keeping them apart is the
+point. The ACT got there only because its CKAN 404 was KEPT AND PRINTED
+rather than replaced with another guess — that 404's own body
+(`{"code":"not_found"}`, a JSON API that does not speak CKAN) is what bought
+the Socrata reader, which projects onto the same `VolumeDataset` shape so one
+judgement serves both dialects. **Corroboration gates an ABSENCE, not a
+FIND**: the first cut gated both and discarded Tasmania's one attributed
+dataset because a second index had not answered — requiring a second witness
+to a thing you are holding is discarding evidence. And
+`VOLUME_READING_IS_CURRENT` declares which readings the CURRENT instrument
+took, because the ACT's moved the moment the instrument changed and a reading
+stored against a replaced one is the *asserted by configuration rather than
+by effect* trap. Three rules were each paid for again here.
 **A harvest hit is not a statement about a jurisdiction** — the probe's own
 first run read `countable` for the NT over "datasets examined 0" and named a
 VICTORIAN department, because the harvest catalogue's datasets were merged in

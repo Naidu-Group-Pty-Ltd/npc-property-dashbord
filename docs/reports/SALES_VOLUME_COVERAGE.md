@@ -210,26 +210,30 @@ two are gaps in this repository, and **keeping those apart is the point**.
 
 | | its index says it holds | matched a sales query | carrying a count | reading |
 | --- | ---: | ---: | ---: | --- |
-| **WA** | **2,911** | 434 (`property sales`) | **0** | `medians_only` |
-| **NT** | answered | **0** of five phrasings | 0 | `no_count_published` |
-| TAS | — | — | — | `catalogue_unavailable` |
-| ACT | — | — | — | `catalogue_unavailable` |
+| **WA** | **2,911** | 203 | **0** | `medians_only` |
+| **NT** | **1,075** | **0** of five phrasings | 0 | `no_count_published` |
+| **ACT** | **378** (via Socrata) | **0** of five phrasings | 0 | `no_count_published` |
+| TAS | — (host does not resolve) | 1, from the harvest, no count | 0 | `catalogue_unavailable` |
 
 **Western Australia's catalogue answers, holds 2,911 datasets, matches 434
-for "property sales" and 2,883 for "land sales" — and not one of the 202
-examined carries a number of sales.** That is the measurement W3.5 was for,
-and it is corroborated: the jurisdiction's own catalogue and the Commonwealth
-catalogue both answered and both agree.
+for "property sales" and 2,883 for "land sales" — and not one of the 203
+matched and attributed carries a number of sales.** The Northern Territory's
+index holds 1,075 and matched none of the five phrasings; the ACT's holds 378
+and matched none. All three corroborated: the jurisdiction's own catalogue
+and the Commonwealth catalogue both answered and both agree.
 
-The Northern Territory's index answered and matched none of the five
-phrasings. The other two are **ours**:
+**So three of the four are settled, and the answer is that no sub-state count
+of residential sales is published.** That is the measurement W3.5 was for.
 
-- **Tasmania** — `data.tas.gov.au` does not resolve from this egress.
-- **The ACT** — the portal answers a CKAN 3 path with
-  `404 {"code":"not_found","message":"No service found for this URL."}`. It
-  is **Socrata**, not CKAN, so reaching it needs a second reader. That 404
-  body is the specific evidence the next increment needs, which is why the
-  wrong root is kept and printed rather than replaced with another guess.
+One remains **ours**: **Tasmania** — `data.tas.gov.au` does not resolve from
+this egress, and its one harvest-attributed dataset carries no count, so
+nothing was established either way.
+
+The ACT reached this answer only because of §3.4. For one revision it read
+`catalogue_unavailable`, correctly, because its CKAN root 404'd; the Socrata
+reader that 404's own body bought moved it to a real reading over an index of
+378. **That is the return on keeping a failure and printing it** rather than
+swapping in another guess.
 
 ### 4.1 An absence carries the size of the question that found it
 
@@ -245,27 +249,28 @@ clause omits it cleanly rather than printing a zero. An absence is only
 believable beside the size of the question that found it — the rule the
 sanctions register and the PEP index both answer to.
 
-### 4.2 Two of those readings are awaiting a re-measurement
+### 4.2 A reading stored against a replaced instrument is not a reading
 
-The ACT's and Tasmania's `catalogue_unavailable` were correct for the probe
-as it stood — the ACT's CKAN root 404'd and Tasmania's did not resolve. The
-probe has since changed in two ways that reach exactly those two:
+The ACT is the worked example. It read `catalogue_unavailable` for one
+revision, which was correct for the probe as it stood, and moved to
+`no_count_published` the moment the Socrata reader existed. Tasmania was
+re-measured by the same run and did not move, because its host still does not
+resolve.
 
-- a **Socrata** reader now asks the ACT's real portal; and
-- **corroboration no longer gates a find**, so Tasmania's one
-  harvest-attributed dataset can produce one.
+That is the *asserted by configuration rather than by effect* trap the
+retention purge and the verification self-test both answer to — and it is the
+kind of staleness nobody notices, because the constant still reads plausibly.
 
-So those two entries are a measurement taken with an instrument that has
-since been replaced — the *asserted by configuration rather than by effect*
-trap the retention purge and the verification self-test both answer to.
+`VOLUME_READING_IS_CURRENT` declares which entries the current instrument has
+taken. All four are current today, and the flag is **kept anyway**, because
+the point is to have somewhere for the next instrument change to be declared.
+Its spec is a ratchet rather than a live measurement of anything, and saying
+so is better than letting it look like one.
 
-They stay `catalogue_unavailable` deliberately. That is the conservative
-reading, it says only that this platform could not establish the answer, and
-it is true of every deployment until the next probe run is read. It is **not
-an absence claimed about either jurisdiction**.
-`VOLUME_READING_IS_CURRENT` names which entries are still awaiting that run,
-and a spec asserts that an un-re-measured entry may say nothing stronger —
-so this is a stated limitation rather than a stale constant nobody noticed.
+One more correction from the same run: `searched` for WA was recorded as
+**434** — what `property sales` alone declared — while the probe's own
+sentence said **203**, the number matched and attributed. A constant
+recording a measurement records the number the instrument printed.
 
 ### 4.3 What a client's page says now
 
@@ -329,11 +334,15 @@ another schema — a typed host being wrong, printed and green).
   catalogue states a format and a size; how many quarters are inside the file
   is a question for the loader, and four are needed. No candidate survived to
   need it.
-- **Tasmania and the ACT are not established either way.** Neither has been
-  shown to publish a count, and neither has been shown not to. Reaching the
-  ACT needs a Socrata reader; Tasmania needs a host this repository does not
-  have. Both are named in the readings rather than folded into WA's and the
-  NT's answer.
+- **Tasmania is not established either way.** It has not been shown to
+  publish a count and has not been shown not to. It needs a host this
+  repository does not have, and it is named in the readings rather than
+  folded into the other three's answer. The ACT was in this state until the
+  Socrata reader reached it.
+- **Whether a count exists somewhere other than these catalogues** is not
+  established. A valuer-general's own website, a paid feed or a report series
+  behind a form would each be invisible here, and the reading says only that
+  none was found published in the two catalogues asked.
 - **No migration is requested.** W3.5's original shape — load counts for four
   jurisdictions — is answered for two of them by *there is nothing to load*,
   and blocked for the other two by our own endpoints rather than by an

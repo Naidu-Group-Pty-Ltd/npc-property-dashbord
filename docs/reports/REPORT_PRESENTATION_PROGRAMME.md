@@ -991,20 +991,29 @@ measure this deployment is entitled to, and it needs four counted periods.
 > asking the publishers is not, so the read-only discovery went first and it
 > answered the question well enough that **there is nothing to ask for yet**.
 >
-> Measured from CI: **Western Australia's catalogue holds 2,911 datasets, 434
-> match "property sales" and 2,883 match "land sales" — and not one of the
-> 202 examined carries a number of sales.** The Northern Territory's index
-> answered and matched none of five phrasings. Both corroborated across the
-> jurisdiction's own catalogue and the Commonwealth catalogue. The other two
-> are OURS: `data.tas.gov.au` does not resolve, and the ACT portal 404s a
-> CKAN 3 path because it is **Socrata** — reaching it needs a second reader,
-> and that 404 body is the evidence the next increment needs, which is why
-> the wrong root is kept and printed rather than replaced with a guess.
+> Measured from CI, and corroborated across each jurisdiction's own catalogue
+> and the Commonwealth catalogue: **Western Australia's catalogue holds 2,911
+> datasets, 434 match "property sales" and 2,883 match "land sales" — and not
+> one of the 203 matched and attributed carries a number of sales.** The
+> Northern Territory's index holds 1,075 and matched none of five phrasings;
+> the **ACT's holds 378, read through Socrata**, and matched none. Only
+> Tasmania is unresolved, and it is OURS — `data.tas.gov.au` does not
+> resolve.
 >
-> So W3.5's original shape — load counts for four jurisdictions — is answered
-> for two of them by *there is nothing to load*, and blocked for the other
-> two by our own endpoints rather than by an approval. **That is a better
-> outcome than asking for a table to put nothing in.**
+> **Three of the four are settled, and the answer is that no sub-state count
+> of residential sales is published.** So W3.5's original shape — load counts
+> for four jurisdictions — is answered for three of them by *there is nothing
+> to load*, and blocked for the fourth by our own host rather than by an
+> approval. **That is a better outcome than asking for a table to put nothing
+> in.**
+>
+> The ACT reached that answer only because its CKAN 404 was **kept and
+> printed** rather than swapped for another guess: the body
+> (`{"code":"not_found"}` — a JSON API that does not speak CKAN) is what
+> bought the Socrata reader, which projects onto the same `VolumeDataset`
+> shape so one judgement serves both dialects. And **corroboration gates an
+> absence, not a find** — the first cut gated both and discarded Tasmania's
+> one attributed dataset because a second index had not answered.
 >
 > Three rules were each paid for again, and the first one caught its own
 > author. **A harvest hit is not a statement about a jurisdiction**: the

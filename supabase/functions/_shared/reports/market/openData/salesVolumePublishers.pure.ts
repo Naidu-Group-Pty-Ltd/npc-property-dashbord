@@ -838,49 +838,53 @@ export function volumeRemedyClause(state: string | null | undefined): string | n
  * learn a fact that changes on the scale of months, and the probe in
  * `scripts/market/sales-volume-liveness.ts` is the instrument that flips it.
  *
- *   WA   `medians_only`          the index states **2,911 datasets**, 434
- *                                matched "property sales", 202 examined
- *                                after attribution, and **none carries a
- *                                count of sales**
- *   NT   `no_count_published`    its index answered and matched none of the
- *                                five phrasings
- *   TAS  `catalogue_unavailable` `data.tas.gov.au` does not resolve — ours
- *   ACT  `catalogue_unavailable` the portal is Socrata and 404s a CKAN 3
- *                                path — ours
+ *   WA   `medians_only`          index of **2,911**, 203 matched a sales
+ *                                query, and **none carries a count of
+ *                                sales** — corroborated
+ *   NT   `no_count_published`    index of **1,075**, none of the five
+ *                                phrasings matched — corroborated
+ *   ACT  `no_count_published`    index of **378** read through SOCRATA,
+ *                                none of the five matched — corroborated
+ *   TAS  `catalogue_unavailable` `data.tas.gov.au` does not resolve, and
+ *                                its one harvest-attributed dataset carries
+ *                                no count — OURS
  *
- * Two of the four are therefore a real limit of what is published, and two
- * are gaps in this repository. Keeping them apart is the whole point: a
+ * Three of the four are therefore a real limit of what is published, and one
+ * is a gap in this repository. Keeping them apart is the whole point: a
  * reader is told *"no count is published"* only where that was established,
  * and *"this could not be established"* where the failure is ours.
  *
- * ── The ACT and TAS readings were taken with an older instrument ─────────
+ * ── The ACT's reading changed when the instrument did ────────────────────
  *
- * Both read `catalogue_unavailable`, and that was correct for the probe as
- * it stood: the ACT's CKAN root 404'd and Tasmania's did not resolve. The
- * probe has since changed in two ways that can reach exactly those two:
- * a **Socrata** reader now asks the ACT's real portal, and corroboration no
- * longer gates a FIND, so Tasmania's one harvest-attributed dataset can
- * produce one.
+ * It read `catalogue_unavailable` for one revision, and that was correct for
+ * the probe as it stood: its CKAN root 404'd. Adding the **Socrata** reader
+ * — which that 404's own body is what bought — moved it to
+ * `no_count_published` over an index of 378. Tasmania was re-measured by the
+ * same run and did not move, because its host still does not resolve.
  *
- * So these two entries are a measurement taken with an instrument that has
- * since been replaced, which is the *asserted by configuration rather than
- * by effect* trap the retention purge and the verification self-test both
- * answer to. They stay `catalogue_unavailable` deliberately — that is the
- * conservative reading, it says only that this platform could not establish
- * the answer, and it is TRUE of every deployment until the next probe run
- * is read. They are not an absence claimed about either jurisdiction.
- *
- * `measuredVolumeCoverageIsCurrent` names which entries are still awaiting
- * that run, so this is a stated limitation rather than a stale constant
- * nobody noticed.
+ * That is why `VOLUME_READING_IS_CURRENT` exists: a reading stored against
+ * an instrument that has since been replaced is the *asserted by
+ * configuration rather than by effect* trap the retention purge and the
+ * verification self-test both answer to, and it is the kind of staleness
+ * nobody notices because the constant still reads plausibly. All four
+ * entries are current as of this run; the flag is kept so the next
+ * instrument change has somewhere to be declared.
  */
 export const MEASURED_VOLUME_COVERAGE: Readonly<Record<VolumeGapState, VolumeCoverage>> = {
-  WA: { kind: 'medians_only', searched: 434, inventory: 2911 },
-  NT: { kind: 'no_count_published', searched: 0, inventory: null },
-  TAS: { kind: 'catalogue_unavailable', reason: 'data.tas.gov.au does not resolve from this egress' },
-  ACT: {
+  /*
+   * `searched` is what the probe REPORTS as matched-and-attributed, not one
+   * query's declared total. The first version recorded 434 — the count
+   * `property sales` alone declared — while the probe's own sentence said
+   * 203. A constant recording a measurement must record the number the
+   * instrument printed.
+   */
+  WA: { kind: 'medians_only', searched: 203, inventory: 2911 },
+  NT: { kind: 'no_count_published', searched: 0, inventory: 1075 },
+  ACT: { kind: 'no_count_published', searched: 0, inventory: 378 },
+  TAS: {
     kind: 'catalogue_unavailable',
-    reason: 'the ACT portal answers a CKAN 3 path with 404 "No service found for this URL" — it is Socrata',
+    reason: 'data.tas.gov.au does not resolve from this egress, and its one harvest-attributed '
+      + 'dataset carries no count',
   },
 };
 
@@ -1046,18 +1050,20 @@ export function parseSocrataCatalogue(text: string): VolumeCatalogueParse {
 /**
  * Which measured readings were taken with the CURRENT instrument.
  *
- * WA and the NT were measured by the CKAN path, which is unchanged. The ACT
- * and Tasmania were measured before the Socrata reader existed and before
- * corroboration stopped gating a find, so their readings are conservative
- * placeholders awaiting the next probe run rather than established answers.
+ * All four, as of 22 Sep 2026: the run that added the Socrata reader and the
+ * find/absence asymmetry re-measured every jurisdiction, and the ACT moved
+ * from `catalogue_unavailable` to `no_count_published` as a result.
  *
- * Exported so a spec can assert the distinction instead of a comment
- * promising it — the rule this repository applies to every other
- * measurement it stores.
+ * Kept although nothing is `false` today, because the point is to have
+ * somewhere for the NEXT instrument change to be declared. A reading stored
+ * against a replaced instrument is the *asserted by configuration rather
+ * than by effect* trap, and it is invisible precisely because the constant
+ * still reads plausibly — so the flag is the ratchet, and the spec over it
+ * is a ratchet too rather than a live measurement of anything.
  */
 export const VOLUME_READING_IS_CURRENT: Readonly<Record<VolumeGapState, boolean>> = {
   WA: true,
   NT: true,
-  TAS: false,
-  ACT: false,
+  ACT: true,
+  TAS: true,
 };
