@@ -31,6 +31,7 @@ import {
   judgeCatalogueReach,
   MEASURED_VOLUME_COVERAGE,
   SOCRATA_PORTALS,
+  VOLUME_READING_IS_CURRENT,
   judgeVolumeDataset,
   parseSocrataCatalogue,
   socrataInventoryUrl,
@@ -788,6 +789,34 @@ describe('the measured readings', () => {
       expect(measuredVolumeNote(s), String(s)).toBeNull();
     }
     expect(measuredVolumeNote(' tas ')).toBeTruthy();
+  });
+
+  /*
+   * The ACT's and Tasmania's readings were taken before the Socrata reader
+   * existed and before corroboration stopped gating a find, so they are
+   * conservative placeholders awaiting the next probe run rather than
+   * established answers. A measurement stored against an instrument that has
+   * since been replaced is the *asserted by configuration rather than by
+   * effect* trap, so the distinction is asserted rather than promised.
+   */
+  it('names which readings the current instrument has taken', () => {
+    expect(VOLUME_READING_IS_CURRENT.WA).toBe(true);
+    expect(VOLUME_READING_IS_CURRENT.NT).toBe(true);
+    expect(VOLUME_READING_IS_CURRENT.TAS).toBe(false);
+    expect(VOLUME_READING_IS_CURRENT.ACT).toBe(false);
+  });
+
+  /*
+   * And an un-re-measured entry may only be the conservative reading. It must
+   * never claim an absence about a jurisdiction on the strength of a probe
+   * that could not reach it.
+   */
+  it('lets an un-re-measured entry say only that it could not be established', () => {
+    for (const s of VOLUME_GAP_STATES) {
+      if (VOLUME_READING_IS_CURRENT[s]) continue;
+      expect(MEASURED_VOLUME_COVERAGE[s].kind, s).toBe('catalogue_unavailable');
+      expect(measuredVolumeNote(s), s).toMatch(/could not be established/i);
+    }
   });
 
   /* Read by the demand gap's client sentence — not merely exported. */

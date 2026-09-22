@@ -192,7 +192,29 @@ clause omits it cleanly rather than printing a zero. An absence is only
 believable beside the size of the question that found it — the rule the
 sanctions register and the PEP index both answer to.
 
-### 4.2 What a client's page says now
+### 4.2 Two of those readings are awaiting a re-measurement
+
+The ACT's and Tasmania's `catalogue_unavailable` were correct for the probe
+as it stood — the ACT's CKAN root 404'd and Tasmania's did not resolve. The
+probe has since changed in two ways that reach exactly those two:
+
+- a **Socrata** reader now asks the ACT's real portal; and
+- **corroboration no longer gates a find**, so Tasmania's one
+  harvest-attributed dataset can produce one.
+
+So those two entries are a measurement taken with an instrument that has
+since been replaced — the *asserted by configuration rather than by effect*
+trap the retention purge and the verification self-test both answer to.
+
+They stay `catalogue_unavailable` deliberately. That is the conservative
+reading, it says only that this platform could not establish the answer, and
+it is true of every deployment until the next probe run is read. It is **not
+an absence claimed about either jurisdiction**.
+`VOLUME_READING_IS_CURRENT` names which entries are still awaiting that run,
+and a spec asserts that an un-re-measured entry may say nothing stronger —
+so this is a stated limitation rather than a stale constant nobody noticed.
+
+### 4.3 What a client's page says now
 
 `MEASURED_VOLUME_COVERAGE` records the four readings as a constant, not a
 live lookup — `amenity_register`'s and `nationalPipeline`'s reason: a
@@ -237,6 +259,7 @@ another schema — a typed host being wrong, printed and green).
 | the reader and the policy | `supabase/functions/_shared/reports/market/openData/salesVolumePublishers.pure.ts` |
 | the demand remedy's clause | `volumeRemedyClause`, read by `describeGaps` in `scoringV2Production.pure.ts` |
 | the client-facing sentence | `measuredVolumeNote`, the demand gap's `reasonOverride` |
+| the second catalogue dialect | `parseSocrataCatalogue` / `SOCRATA_PORTALS` — the ACT portal is Socrata |
 | the CI probe | `scripts/market/sales-volume-liveness.ts` |
 | the spec | `src/lib/reports/__tests__/salesVolumePublishers.spec.ts` |
 
