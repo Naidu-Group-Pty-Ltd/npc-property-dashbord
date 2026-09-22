@@ -588,12 +588,55 @@ old inline blocks could carry four dead field names while that file passed.
 (`documentPlacement.pure.ts`, 11 specs). Composed blocks land at their registry
 order; the document closes on its disclaimer.
 
-**W2.2 · Un-merge `infrastructure` and `supplyPipeline` for the Compass.**
-Give each a declared section, order and word budget. **This is the precondition
-for W3**: a national register with nowhere to be explained is a paragraph inside
-Location.
-*Accept:* `sectionsForTier('compass')` returns both; the contents page lists
-them; `documentPlacement` seats them at their declared order.
+**W2.2 · Un-merge `infrastructure` and `supplyPipeline` for the Compass** —
+**done** (22 Sep 2026, `compassUnmergedSections.spec.ts`, 11 specs).
+`Infrastructure and Growth Context` is ordinal 5 at 2 pages / 500 words,
+directly after the location case; `Competitive Landscape and Supply Pipeline`
+is ordinal 12 at 2 pages / 500 words, directly after Market Positioning. The
+two carriers gave back what they had been writing for them (900→650 and
+600→450), so the document goes from 8,410 words across 35 pages to 9,010
+across 37 — inside the declared 30–38 band.
+
+**The stated acceptance was satisfiable without the generator writing a
+word**, and that is the finding worth keeping. All three criteria — 
+`sectionsForTier('compass')`, the contents page, `documentPlacement` — are
+statements about `sectionRegistry.pure.ts`. The generator does not read that
+file: `generate-investment-report` builds its section list, its per-section
+prompt and its `total_sections` from `compassSectionRegistry.ts`. The only
+thing holding the two together was `sectionRegistry.spec.ts`'s *every Compass
+section is a registry placement on the compass tier*, which asserts
+`compassSections() ⊆ sectionsForTier('compass')` and says nothing about the
+other direction. A one-file W2.2 would have turned every suite green, listed
+two sections on the contents page, and authored neither. The converse pin is
+the half that was missing; it is asserted on the SET and on the ORDER, because
+two registries that agree on which sections exist and disagree on where they
+go produce a document whose contents page is a different document.
+
+Four things the move then found, each pre-existing:
+
+- **`Supply & Development Pipeline` was claimed twice** — a sourceHeading of
+  the Compass's DEMAND DRIVERS and an alias of `infrastructure` at the same
+  time. `buildRoutingTable` upserts, so the last writer wins and the first
+  claim disappears with nothing said. It belongs to `supplyPipeline`.
+- **Four sections declared `sectionPriority: 'Protected'` and were missing
+  from `PROTECTED_SECTION_IDS`**, which is the list `compassPostProcessor`
+  actually reads — among them `compass.planningConstraints`, the largest
+  section in the document and the one the owner's 17 Sep review named, whose
+  eleven-row overlay register `capListsToTop5` was free to cut to five
+  bullets. The set is DERIVED from the field now: *a rule written at both ends
+  is how the two ends drift*.
+- **`theCountThatDecidesCompletion.spec.ts` restated a number the product
+  derives** (`compassSections().length < 15`, where 15 was the array's length
+  when it was written) — in the file named for exactly that defect. It is a
+  relation now.
+- **The fork's *merges each one exactly where the Compass merges it*** was a
+  stronger claim than its own rationale needed. The rule is that the Due
+  Diligence document cannot carry a section NOTHING can fill, and a merge
+  never declares a heading. The strategic tier keeps both merges, because its
+  carriers are routed headings that NAME them — `Position Within the Locality
+  & Infrastructure Context` and `Market Position, Competitive Landscape &
+  Supply Pipeline` — and that is now what is asserted, which the equality
+  never checked.
 
 **W2.3 · Rebuild page 5 and page 37.**
 p5 either carries a real risk register or is removed and its dashboard given the
