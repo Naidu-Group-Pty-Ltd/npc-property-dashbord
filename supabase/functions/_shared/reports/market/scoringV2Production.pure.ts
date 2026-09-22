@@ -121,6 +121,7 @@ import {
 } from './scoringInputPolicy.pure.ts';
 import { dwellingTypeFor } from './domainEvidence.pure.ts';
 import { riskRemedyFor } from '../risk/propertyRiskSchema.pure.ts';
+import { volumeRemedyClause } from './openData/salesVolumePublishers.pure.ts';
 import {
   MIN_VALID_DIMENSIONS_TO_PUBLISH,
   PUBLICATION_DIMENSIONS,
@@ -706,11 +707,27 @@ export function describeGaps(
          * needs four periods carrying one to be measured against this
          * market's trailing rate.
          */
-        remedy = 'A PRIMARY demand measure — the population series alone is a driver and cannot carry '
+        /*
+         * The jurisdiction clause is COMPOSED, and the first version of it was
+         * wrong about two states. It read "NSW and QLD carry one on every row,
+         * VIC and SA one per load": South Australia's sheet names two counted
+         * quarters per release rather than one, and Victoria's four periods
+         * have been recovered from the archived workbooks since 21 Sep 2026.
+         * Worse, it could not draw the distinction that matters most to a
+         * reader in ACT, NT, TAS or WA — a register that needs more loads and
+         * one that has no count publisher at all are different remedies, and
+         * telling an operator to run more loads where no loader exists is a
+         * remedy that cannot discharge its reason (`refreshRemedy`'s rule).
+         *
+         * `volumeRemedyClause` reads `VOLUME_COUNT_SOURCE`, which a spec
+         * checks against the loaders themselves — so this sentence cannot
+         * drift from what the code does.
+         */
+        remedy = ['A PRIMARY demand measure — the population series alone is a driver and cannot carry '
           + 'the dimension. Either four periods of the open sales register\'s own transaction counts '
-          + 'for this market (market-sales-ingest; NSW and QLD carry one on every row, VIC and SA one '
-          + 'per load), or Domain days-on-market, vendor discount, auction clearance or listing counts '
-          + 'for the suburb.';
+          + 'for this market (market-sales-ingest), or Domain days-on-market, vendor discount, '
+          + 'auction clearance or listing counts for the suburb.',
+        volumeRemedyClause(input.subject.state)].filter((p): p is string => p !== null).join(' ');
         break;
       case 'yield':
         detail = input.property.weeklyRent === null || input.property.weeklyRent <= 0

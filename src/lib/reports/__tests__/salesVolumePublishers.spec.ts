@@ -31,6 +31,8 @@ import {
   parseVolumeCatalogue,
   rankVolumeCandidates,
   volumeCoverageNote,
+  VOLUME_COUNT_SOURCE,
+  volumeRemedyClause,
   volumeSearchUrl,
   type VolumeCoverage,
   type VolumeDataset,
@@ -455,5 +457,107 @@ describe('the probe writes nothing', () => {
     /* A refusal from the publisher exits 0 — asserted as the absence of a
      * second failure path rather than as prose. */
     expect(probe.match(/process\.exit\(1\)/g) ?? []).toHaveLength(1);
+  });
+});
+
+
+/**
+ * How each jurisdiction's counts arrive, and the remedy that reads it.
+ *
+ * The demand remedy a client's report prints was already wrong about two
+ * states — it said *"NSW and QLD carry one on every row, VIC and SA one per
+ * load"*. South Australia publishes TWO counted quarters per release, and
+ * Victoria's four periods have been recovered from the archived workbooks
+ * since 21 Sep 2026. So the record is asserted against the loaders rather
+ * than trusted, and the sentence is composed from the record.
+ */
+describe('how each jurisdiction’s counts arrive', () => {
+  it('agrees with the loaders about which states carry a count', () => {
+    for (const state of VOLUME_SCORED_STATES) {
+      expect(VOLUME_COUNT_SOURCE[state], state).not.toBe('unwired');
+    }
+    for (const state of VOLUME_GAP_STATES) {
+      expect(VOLUME_COUNT_SOURCE[state], state).toBe('unwired');
+    }
+  });
+
+  /*
+   * South Australia looks its count column up PER PERIOD. A shared figure
+   * would be worse than a null: four identical counts make
+   * `scoreTransactionVolume`'s ratio exactly 1.0 and print "in line with the
+   * 3-period average" off one quarter's data.
+   */
+  it('reads South Australia as accumulating, with its count inside the period loop', () => {
+    expect(VOLUME_COUNT_SOURCE.SA).toBe('accumulates');
+    const src = readFileSync(
+      'supabase/functions/_shared/reports/market/openData/saLsgStats.pure.ts', 'utf8');
+    const loop = src.indexOf('for (const period of periods)');
+    const lookup = src.indexOf("cols.find((c) => c.kind === 'sales'");
+    expect(loop, 'the period loop').toBeGreaterThan(-1);
+    expect(lookup, 'the sales column lookup').toBeGreaterThan(loop);
+  });
+
+  it('reads Victoria as backfilled rather than one-per-load', () => {
+    expect(VOLUME_COUNT_SOURCE.VIC).toBe('backfilled');
+  });
+
+  /* The national series is the ABS mean price and carries no count at all. */
+  it('gives the national series no clause of its own', () => {
+    expect(VOLUME_COUNT_SOURCE.AU).toBe('unwired');
+    expect(volumeRemedyClause('AU')).toBeNull();
+  });
+
+  /*
+   * The distinction the old remedy could not draw: more loads will close one
+   * of these and cannot close the other. A remedy that cannot discharge its
+   * reason is never offered as the next step — `refreshRemedy`'s rule.
+   */
+  it('does not tell an operator to run more loads where no loader exists', () => {
+    for (const s of VOLUME_GAP_STATES) {
+      const clause = volumeRemedyClause(s) as string;
+      expect(clause, s).toContain(s);
+      expect(clause, s).toMatch(/no transaction-count publisher is wired/i);
+      expect(clause, s).toMatch(/cannot close it/i);
+      expect(clause, s).not.toMatch(/successive loads|completed load|completed backfill/i);
+    }
+    expect(volumeRemedyClause('NSW')).toMatch(/every period/i);
+    expect(volumeRemedyClause('SA')).toMatch(/accumulate/i);
+    expect(volumeRemedyClause('VIC')).toMatch(/backfill/i);
+  });
+
+  it('names no jurisdiction it cannot establish', () => {
+    for (const bad of [null, undefined, '', '   ', 'Queensland', 'XYZ']) {
+      expect(volumeRemedyClause(bad), String(bad)).toBeNull();
+    }
+    /* Case and padding are tolerated, because a subject's state is free text. */
+    expect(volumeRemedyClause(' nsw ')).toMatch(/NSW/);
+  });
+
+  /*
+   * A module with no call site is not shipped — the Builder Portal's rule,
+   * paid for twice there. The clause has to reach the remedy a report prints.
+   */
+  it('is read by the demand grade gap rather than merely exported', () => {
+    const src = readFileSync(
+      'supabase/functions/_shared/reports/market/scoringV2Production.pure.ts', 'utf8');
+    expect(src).toContain("from './openData/salesVolumePublishers.pure.ts'");
+    expect(src).toContain('volumeRemedyClause(input.subject.state)');
+    /*
+     * And the wrong parenthetical is gone rather than reworded around — but
+     * asserted so that the COMMENT recording it survives.
+     *
+     * This is the third time in one sitting that a guard written as a bare
+     * phrase flagged the sentence documenting the defect it forbids (the
+     * infrastructure rating scan, the module's own "no EvidencePoint is
+     * constructed", and this). The generalised rule: **a guard on a defect's
+     * own wording has to distinguish the RECORD of the defect from the
+     * defect.** Here that is a line test — a comment line may carry the old
+     * words, a code line may not — which is checkable rather than a promise.
+     */
+    const offending = src
+      .split('\n')
+      .filter((line) => /VIC and SA one/.test(line))
+      .filter((line) => !/^\s*(?:\*|\/\/|\/\*)/.test(line));
+    expect(offending, 'the old parenthetical survives in code, not just in a comment').toEqual([]);
   });
 });

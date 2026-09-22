@@ -503,3 +503,92 @@ export function volumeCoverageNote(coverage: VolumeCoverage, state: VolumeGapSta
         + 'retrieval rather than about the market.';
   }
 }
+
+// ---------------------------------------------------------------------------
+// How each jurisdiction's counts arrive — and what a remedy may therefore say
+// ---------------------------------------------------------------------------
+
+/**
+ * How a transaction count reaches the register, per jurisdiction.
+ *
+ * Read from the loaders on 22 Sep 2026 rather than remembered, and asserted
+ * against them by spec, because the demand remedy a client's report prints
+ * was already wrong about two of them. It said *"NSW and QLD carry one on
+ * every row, VIC and SA one per load"*, and:
+ *
+ *  - **South Australia's sheet names exactly TWO periods** — the quarter and
+ *    its year-earlier comparison — and `parseSaLsgStats` looks its count
+ *    column up PER PERIOD, so one load yields two counted periods rather
+ *    than one. (Checked by reading it: the `salesCol` lookup is inside the
+ *    period loop, so the two periods do not share a figure. A shared figure
+ *    would have been worse than a null — four identical counts make
+ *    `scoreTransactionVolume`'s ratio exactly 1.0 and print *"in line with
+ *    the 3-period average"* off one quarter's data.)
+ *  - **Victoria's four counted periods are recovered**, from the archived
+ *    per-quarter workbooks, by `vicVolumeBackfill.pure.ts` — so describing
+ *    it as one-per-load names a gap that was closed on 21 Sep.
+ *
+ * The distinction the remedy could not draw at all is the one that matters
+ * most to a reader in the other four: `accumulates` is a register that will
+ * answer once enough loads have run, and `unwired` is one with no count
+ * publisher reaching this deployment in any form. Telling an operator to run
+ * more loads where no loader exists is a remedy that cannot discharge its
+ * reason — `refreshRemedy`'s rule.
+ */
+export type CountArrival =
+  /** Every published period carries its own count. Scores on one load. */
+  | 'every_period'
+  /** A load carries some periods' counts; enough loads reach four. */
+  | 'accumulates'
+  /** The counts exist and are recovered from an archive by a backfill. */
+  | 'backfilled'
+  /** No count publisher reaches this deployment. Only a price, at state grain. */
+  | 'unwired';
+
+export const VOLUME_COUNT_SOURCE: Readonly<Record<SalesRegisterState, CountArrival>> = {
+  NSW: 'every_period',
+  QLD: 'every_period',
+  SA: 'accumulates',
+  VIC: 'backfilled',
+  WA: 'unwired',
+  TAS: 'unwired',
+  NT: 'unwired',
+  ACT: 'unwired',
+  // The national series is the ABS mean price and carries no count at all.
+  AU: 'unwired',
+};
+
+/**
+ * The demand remedy's jurisdiction clause.
+ *
+ * Composed rather than typed, so the sentence a client's report prints cannot
+ * disagree with `VOLUME_COUNT_SOURCE` — and that record cannot disagree with
+ * the loaders, because a spec reads them. Two copies of "which states carry a
+ * count" is how the first version came to understate two of them.
+ *
+ * `null` where the state is unknown: a remedy that names a jurisdiction it
+ * cannot establish is worse than a general one, and the generic sentence
+ * beside this already says what a primary measure is.
+ */
+export function volumeRemedyClause(state: string | null | undefined): string | null {
+  if (typeof state !== 'string') return null;
+  const key = state.trim().toUpperCase() as SalesRegisterState;
+  const arrival = VOLUME_COUNT_SOURCE[key];
+  if (!arrival || key === 'AU') return null;
+  switch (arrival) {
+    case 'every_period':
+      return `${key}'s open sales register carries a count with every period it publishes, so a `
+        + 'completed load of it measures this dimension.';
+    case 'accumulates':
+      return `${key}'s open sales register publishes two counted quarters per release, so four `
+        + 'periods accumulate over successive loads rather than arriving in one.';
+    case 'backfilled':
+      return `${key}'s register publishes one counted quarter per workbook and the earlier `
+        + 'quarters are recovered from the archived releases, so the four periods come from a '
+        + 'completed backfill rather than from the latest file.';
+    case 'unwired':
+      return `No transaction-count publisher is wired for ${key} — its only sales reading here is `
+        + 'a price at whole-of-jurisdiction grain, which cannot measure this. More loads of what '
+        + 'is already wired cannot close it; a register has to be identified and read first.';
+  }
+}
