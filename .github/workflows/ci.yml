@@ -1096,6 +1096,10 @@ jobs:
         if: always()
         run: npx tsx scripts/market/jurisdiction-layer-liveness.ts
 
+      - name: Ask ACT, NT, TAS and WA whether they count residential sales
+        if: always()
+        run: npx tsx scripts/market/sales-volume-liveness.ts
+
   template-geometry:
     runs-on: ubuntu-latest
     timeout-minutes: 45
