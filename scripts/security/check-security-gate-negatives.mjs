@@ -130,6 +130,17 @@ const CASES = [
     replace: '"version": "20261112999999"',
   },
   {
+    gate: 'check-migration-version-collisions.mjs',
+    file: 'supabase/migrations/MIGRATION_VERSION_COLLISIONS.json',
+    what: 'a version that is fourteen digits but not a moment any calendar holds',
+    // Ten files here carry one — minute 96 of an hour, hours 24 to 30 — and
+    // Postgres accepts every one, because `version` is text. Dropping the freeze
+    // must turn the gate red, or the inventory is a place to hide the eleventh
+    // rather than a record of the ten.
+    find: '"20260730240000",',
+    replace: '',
+  },
+  {
     gate: 'check-migration-security.mjs',
     file: 'supabase/migrations/20261119150000_revoke_public_execute_trigger_bodies.sql',
     what: 'a revoke names anon and authenticated but not PUBLIC, so it removes nothing',

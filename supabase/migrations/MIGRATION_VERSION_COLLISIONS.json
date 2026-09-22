@@ -3,6 +3,19 @@
   "not_a_migration": [
     "TEMPLATE_RLS_POLICY.sql"
   ],
+  "$not_an_instant_note": "Frozen inventory of versions that are fourteen digits but not a moment any calendar holds: 20260725096000 is minute 96 of an hour, and 20260730240000 through 300000 are hours 24 to 30. Postgres stores `version` as text and accepts them, which is why nothing ever refused them \u2014 and every reading that treats the version as a time then answers 'unknown' about these files for ever, including Mission Control's migrationEpochSeconds, which returns null rather than guessing. Frozen rather than renamed: a rename is a fleet-wide file move that would also touch seven CI check scripts, seven test files, MIGRATION_SECURITY_KEEPLIST.json, the AML rehearsal order list, five documents and two APPLIED migrations that name 20260725096000 in a comment \u2014 and an applied migration's bytes are not something to edit for a comment. Shrinking this list is the goal; the gate exists to stop the eleventh.",
+  "not_an_instant": [
+    "20260725096000",
+    "20260725097000",
+    "20260725098000",
+    "20260730240000",
+    "20260730250000",
+    "20260730260000",
+    "20260730270000",
+    "20260730280000",
+    "20260730290000",
+    "20260730300000"
+  ],
   "collisions": [
     {
       "version": "20260717000000",
