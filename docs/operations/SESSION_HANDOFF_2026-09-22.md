@@ -118,16 +118,62 @@ Subsequent planner choices, from `function_logs`:
 12:20:04  page=0 2025-07→2025-09  frontier=2026-07
 ```
 
-So `oldest` was **2025-07** after the 12:20 tick, moving back exactly
-`APPROVALS_PAGE_MONTHS` (3) per hour, and the frontier is **not** re-read —
-that is the cadence rule working (one frontier read per calendar month).
+### !! CORRECTION, 20:25 UTC — THE WALK IS STALLED, AND THIS DOCUMENT SAID OTHERWISE
 
-### THE ONE PENDING MEASUREMENT
+**Everything above this line about the walk still advancing is wrong**, and
+the way it is wrong is the point.
 
-The floor is `REGISTER_FLOOR_PERIOD = '2023-01'`. From `2025-07` that is **30
-months = 10 more ticks**, so the walk should reach the floor at about
-**22:20 UTC on 22 Sep** and the *next* tick (~23:20) should report
-**`settled`** — writing a `market_sales_sync` row and asking the ABS nothing.
+It has been stuck since **12:20 UTC**, nine consecutive ticks, every one
+asking for the *same* window and writing nothing:
+
+```
+12:20 … 20:20   page=0 2025-07→2025-09  frontier=2026-07     (x9, identical)
+[market-sales-ingest] approvals refused/failed: the ABS building-approvals
+  count for Ulverstone 2025-08 reads -5 dwelling units, outside 0-100000
+  for a sa2 area (unit or column drift) — refused
+```
+
+`oldest` is still **2025-10**. It never reached 2025-07 and it will not reach
+the floor on its own.
+
+**I wrote the section above at 13:05 while the register had already been stuck
+for 45 minutes.** I read the planner's REQUEST line and inferred progress from
+it instead of reading the register's EFFECT. That is *a green cron run is not
+a delivered request* — the rule this programme is built on — broken inside the
+document that states it. **Read the outcome, never the intent**: the planner
+line proves only what was asked for.
+
+#### The defect
+
+`ABS_BA_PLAUSIBILITY` guards each cell with `scaled < 0 || scaled > ceiling`
+and **throws**, discarding the whole download. One cell of roughly 22,000
+(2,458 areas x 3 months x 3 building types) refuses the entire window, and the
+next tick asks for it again — a livelock, for ever, reported by nothing but
+this log line.
+
+Two things are wrong and each on its own is enough:
+
+1. **A negative count is a publisher value, not drift.** ABS Building
+   Approvals are net of amendments, so a small area records a negative in a
+   month when a previously approved project is cancelled or revised down.
+   Drift is a MAGNITUDE fault, and the bound should be on magnitude.
+   `absBuildingApprovals.pure.ts`' own header says it: *"a check that fires on
+   a true figure is not a plausibility check, it is a filter nobody asked
+   for."*
+2. **One cell must never refuse a series.** This repository already paid for
+   that rule in the sibling register — *a publisher's typo is nulled and
+   named, never a reason to refuse a series*, where one $7,000 cell refused
+   444 localities.
+
+Status of the fix: see the commit following this correction. If the walk is
+still stuck when you read this, `oldest` will still be `2025-10` and the
+`APPROVALS_READBACK` periods will read `2025-10..2026-07`.
+
+### THE PENDING MEASUREMENT (blocked by the above)
+
+The floor is `REGISTER_FLOOR_PERIOD = '2023-01'`. **This cannot happen until
+the stall above is cleared**, and the ETA this document originally gave
+(~22:20 UTC) was computed from a walk that had already stopped.
 
 **That `settled` verdict has never been observed.** It is the other end of the
 guarantee and the only part of this register still unverified. To check it:
