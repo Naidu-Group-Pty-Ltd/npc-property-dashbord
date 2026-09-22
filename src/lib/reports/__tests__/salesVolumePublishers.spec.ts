@@ -28,6 +28,7 @@ import {
   assessVolumeCoverage,
   attributableTo,
   catalogueAnswered,
+  judgeCatalogueReach,
   judgeVolumeDataset,
   mergeVolumeReads,
   parseVolumeCatalogue,
@@ -35,6 +36,7 @@ import {
   volumeCoverageNote,
   VOLUME_COUNT_SOURCE,
   volumeRemedyClause,
+  volumeInventoryUrl,
   volumeSearchUrl,
   type VolumeCoverage,
   type VolumeDataset,
@@ -630,15 +632,48 @@ describe('a harvest hit is not a statement about a jurisdiction', () => {
   });
 
   /*
-   * `200 · 0 declared` on every query is not an empty catalogue — measured,
-   * `data.nt.gov.au/api/3` answered exactly that five times, which is
-   * indistinguishable from a wrong endpoint. An absence claimed off one is the
-   * `publisher_absent`-over-25-organisations fault one publisher along.
+   * `200 · 0 declared` on every query conflates two cases the queries cannot
+   * tell apart — a populated catalogue matching nothing, and an endpoint that
+   * is not this jurisdiction's index. The first version called both
+   * unavailable: conservative, and an answer to nothing.
+   *
+   * The distinction is one question away, and it is this programme's own
+   * rule — corroborate from a second endpoint that fails differently. Here
+   * that endpoint is the same catalogue asked its own size.
    */
-  it('does not count a zero-declaring index as having answered', () => {
-    expect(catalogueAnswered({ kind: 'catalogue', total: 0, datasets: [] })).toBe(false);
-    expect(catalogueAnswered({ kind: 'catalogue', total: 12, datasets: [] })).toBe(true);
-    expect(catalogueAnswered({ kind: 'refused', reason: 'x' })).toBe(false);
+  const reach = (inventory: number | null, matched: number) => judgeCatalogueReach(
+    { kind: 'catalogue', total: matched, datasets: [] }, { inventory, matched });
+
+  it('asks a catalogue its own size with the cheapest question it takes', () => {
+    expect(volumeInventoryUrl('https://h/api/3')).toBe('https://h/api/3/action/package_search?rows=0');
+    expect(volumeInventoryUrl('https://h/api/3/')).toBe('https://h/api/3/action/package_search?rows=0');
+  });
+
+  it('tells a populated catalogue matching nothing from a wrong endpoint', () => {
+    /* 3,000 datasets and none matching five sales phrasings: an ANSWER. */
+    expect(reach(3000, 0).kind).toBe('answered_empty_handed');
+    /* It says it holds nothing at all: not this index. */
+    expect(reach(0, 0).kind).toBe('not_this_index');
+    /* It could not say: not this index either. */
+    expect(reach(null, 0).kind).toBe('not_this_index');
+    expect(reach(3000, 12).kind).toBe('answered');
+  });
+
+  /*
+   * An absence from a populated index IS an answer. Treating it as a failure
+   * is what made the first version silent about the one jurisdiction it had
+   * actually measured.
+   */
+  it('counts an empty-handed answer as an answer', () => {
+    expect(catalogueAnswered(reach(3000, 0))).toBe(true);
+    expect(catalogueAnswered(reach(3000, 5))).toBe(true);
+    expect(catalogueAnswered(reach(0, 0))).toBe(false);
+    expect(catalogueAnswered(reach(null, 0))).toBe(false);
+  });
+
+  it('never reads a refused parse as an index', () => {
+    expect(judgeCatalogueReach({ kind: 'refused', reason: 'HTTP 503' }, { inventory: 9, matched: 0 }).kind)
+      .toBe('not_this_index');
   });
 
   /*
@@ -650,7 +685,9 @@ describe('a harvest hit is not a statement about a jurisdiction', () => {
     const probe = readFileSync('scripts/market/sales-volume-liveness.ts', 'utf8');
     expect(probe).toMatch(/attributableTo\(d, state, 'own'\)/);
     expect(probe).toMatch(/attributableTo\(d, state, 'harvest'\)/);
-    expect(probe).toMatch(/catalogueAnswered\(ownParse\)\s*&&\s*catalogueAnswered\(harvest\)/);
+    expect(probe).toMatch(/catalogueAnswered\(ownRead\.verdict\)\s*&&\s*catalogueAnswered\(harvestRead\.verdict\)/);
+    /* And the index's own size is asked, not inferred from the queries. */
+    expect(probe).toMatch(/volumeInventoryUrl\(c\.api\)/);
     /*
      * And the harvest's datasets no longer reach the assessment unfiltered.
      * Asserted as the absence of the old merge, by line so the comment

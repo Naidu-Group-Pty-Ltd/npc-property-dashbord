@@ -451,20 +451,77 @@ export function attributableTo(
 }
 
 /**
- * Has a catalogue actually answered the question?
+ * How many datasets a catalogue holds AT ALL.
  *
- * `200 · 0 declared` on EVERY query is not an empty catalogue — measured on
- * the first run, `data.nt.gov.au/api/3` answered exactly that five times.
- * A CKAN index holding no dataset matching "land sales" is possible; one
- * holding none for any of five different phrasings is far more likely a
- * wrong endpoint, and the two are indistinguishable from here.
- *
- * So it reads as unavailable rather than as an absence, which is the
- * conservative side: an absence claimed off a wrong endpoint is the
- * `publisher_absent`-over-25-organisations fault one publisher along.
+ * A search with no `q` and `rows=0` — CKAN answers its whole index's count
+ * and no rows, which is the cheapest question it takes.
  */
-export function catalogueAnswered(parse: VolumeCatalogueParse): boolean {
-  return parse.kind === 'catalogue' && parse.total > 0;
+export function volumeInventoryUrl(api: string): string {
+  return `${api.replace(/\/+$/, '')}/action/package_search?rows=0`;
+}
+
+/**
+ * Has a catalogue actually answered the question, or is it the wrong endpoint?
+ *
+ * ── The two cases `200 · 0 declared` conflates ───────────────────────────
+ *
+ * Measured on the first run, `data.nt.gov.au/api/3` answered `200 · 0
+ * declared` to all five queries. Read as an absence that says the Territory
+ * publishes no sales count; read as a fault it says nothing at all. Both are
+ * possible and the QUERIES cannot tell them apart:
+ *
+ *   · a real, populated catalogue that holds nothing matching, or
+ *   · an endpoint that is not this jurisdiction's index.
+ *
+ * The first version refused to choose and called both `catalogue_unavailable`
+ * — the conservative side, and a reading that answers nothing. The
+ * distinction is one question away, and it is the rule this programme has
+ * already paid for twice: **corroborate from a second endpoint that fails
+ * differently.** Here the second endpoint is the SAME catalogue asked how
+ * big it is. A catalogue that says it holds 3,000 datasets and matches none
+ * of five sales phrasings has answered; one that says it holds none, or
+ * cannot say, has not.
+ *
+ * `inventory` is the whole-index count where the catalogue stated one.
+ */
+export interface CatalogueReach {
+  /** Datasets the catalogue says it holds in total, or null where it did not say. */
+  inventory: number | null;
+  /** Datasets matched by the sales queries. */
+  matched: number;
+}
+
+export type CatalogueVerdict =
+  /** It answered: it is populated, and the matches are a real measurement. */
+  | { kind: 'answered'; inventory: number; matched: number }
+  /** It is populated and matched nothing. Still an answer — a real absence. */
+  | { kind: 'answered_empty_handed'; inventory: number }
+  /** It could not say how big it is, or says it is empty. Not this index. */
+  | { kind: 'not_this_index'; detail: string };
+
+export function judgeCatalogueReach(parse: VolumeCatalogueParse, reach: CatalogueReach): CatalogueVerdict {
+  if (parse.kind === 'refused') return { kind: 'not_this_index', detail: parse.reason };
+  if (reach.inventory === null) {
+    return { kind: 'not_this_index', detail: 'the catalogue did not state how many datasets it holds' };
+  }
+  if (reach.inventory <= 0) {
+    return { kind: 'not_this_index', detail: 'the catalogue states it holds no datasets at all' };
+  }
+  return reach.matched > 0
+    ? { kind: 'answered', inventory: reach.inventory, matched: reach.matched }
+    : { kind: 'answered_empty_handed', inventory: reach.inventory };
+}
+
+/**
+ * Did this catalogue answer, either way?
+ *
+ * Both `answered` and `answered_empty_handed` count — an absence from a
+ * populated index IS an answer, and treating it as a failure is what made
+ * the first version silent about the one jurisdiction it had actually
+ * measured.
+ */
+export function catalogueAnswered(verdict: CatalogueVerdict): boolean {
+  return verdict.kind !== 'not_this_index';
 }
 
 /** Merge several catalogue reads. A refusal anywhere is carried, never smoothed. */

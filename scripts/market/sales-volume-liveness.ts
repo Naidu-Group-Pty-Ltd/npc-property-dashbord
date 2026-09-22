@@ -56,11 +56,14 @@ import {
   assessVolumeCoverage,
   attributableTo,
   catalogueAnswered,
+  judgeCatalogueReach,
   mergeVolumeReads,
   parseVolumeCatalogue,
   rankVolumeCandidates,
   volumeCoverageNote,
+  volumeInventoryUrl,
   volumeSearchUrl,
+  type CatalogueVerdict,
   type VolumeCatalogue,
   type VolumeCatalogueParse,
   type VolumeCoverage,
@@ -113,9 +116,31 @@ async function ask(url: string): Promise<Fetched> {
  * The merge de-duplicates by dataset id, so a dataset five queries all find is
  * counted once.
  */
-async function askCatalogue(c: VolumeCatalogue): Promise<VolumeCatalogueParse> {
+interface CatalogueRead { parse: VolumeCatalogueParse; verdict: CatalogueVerdict }
+
+async function askCatalogue(c: VolumeCatalogue): Promise<CatalogueRead> {
   console.log(`\n  · ${c.state} — ${c.publisher} (${c.kind})`);
   kv('api', c.api);
+
+  /*
+   * How big is this index at all?
+   *
+   * The second endpoint that fails differently, and it is the same catalogue
+   * asked its own size. `200 · 0 declared` to five sales phrasings is either
+   * a populated catalogue matching nothing (an answer) or an endpoint that is
+   * not this jurisdiction's index (not an answer) — and the queries cannot
+   * tell them apart. This question can.
+   */
+  let inventory: number | null = null;
+  const inv = await ask(volumeInventoryUrl(c.api));
+  if (inv.networkError === null && inv.status === 200) {
+    const p = parseVolumeCatalogue(inv.body);
+    if (p.kind === 'catalogue') inventory = p.total;
+  }
+  kv('the index says it holds', inventory === null
+    ? `(it did not say — ${inv.networkError ?? `HTTP ${inv.status}`})`
+    : `${inventory.toLocaleString('en-AU')} datasets`);
+
   const parses: VolumeCatalogueParse[] = [];
   let answered = false;
   for (const q of VOLUME_QUERIES) {
@@ -154,10 +179,17 @@ async function askCatalogue(c: VolumeCatalogue): Promise<VolumeCatalogueParse> {
     console.log(`      ${q.padEnd(30)} 200 · ${parse.total} declared · ${parse.datasets.length} read · ${got.ms} ms`);
     parses.push(parse);
   }
-  if (!answered) {
-    return { kind: 'refused', reason: `no query reached ${c.api} as a CKAN index` };
-  }
-  return mergeVolumeReads(parses);
+  const parse: VolumeCatalogueParse = answered
+    ? mergeVolumeReads(parses)
+    : { kind: 'refused', reason: `no query reached ${c.api} as a CKAN index` };
+  const verdict = judgeCatalogueReach(parse, {
+    inventory,
+    matched: parse.kind === 'catalogue' ? parse.datasets.length : 0,
+  });
+  kv('verdict', verdict.kind === 'not_this_index'
+    ? `not this index — ${verdict.detail}`
+    : verdict.kind);
+  return { parse, verdict };
 }
 
 function printCandidates(parse: VolumeCatalogueParse): void {
@@ -195,9 +227,9 @@ async function main(): Promise<void> {
   const harvestEntry = VOLUME_CATALOGUES.find((c) => c.kind === 'harvest');
   if (!harvestEntry) ours('configuration', 'no harvest catalogue declared — an absence could not be corroborated');
   h('The Commonwealth catalogue, which harvests the states');
-  const harvest = await askCatalogue(harvestEntry);
+  const harvestRead = await askCatalogue(harvestEntry);
+  const harvest = harvestRead.parse;
   printCandidates(harvest);
-  kv('answered', catalogueAnswered(harvest) ? 'yes' : 'NO — nothing declared for any query');
 
   const readings: { state: string; coverage: VolumeCoverage; note: string }[] = [];
 
@@ -205,7 +237,8 @@ async function main(): Promise<void> {
     const own = VOLUME_CATALOGUES.find((c) => c.state === state && c.kind === 'own');
     h(`${state}`);
     if (!own) ours(`${state} configuration`, 'no own catalogue declared');
-    const ownParse = await askCatalogue(own);
+    const ownRead = await askCatalogue(own);
+    const ownParse = ownRead.parse;
     printCandidates(ownParse);
 
     /*
@@ -239,7 +272,7 @@ async function main(): Promise<void> {
      * query is not an answer — measured, `data.nt.gov.au` did exactly that
      * five times, which is indistinguishable from a wrong endpoint.
      */
-    const corroborated = catalogueAnswered(ownParse) && catalogueAnswered(harvest);
+    const corroborated = catalogueAnswered(ownRead.verdict) && catalogueAnswered(harvestRead.verdict);
     const merged = mergeVolumeReads([{
       kind: 'catalogue',
       total: attributed.length,
