@@ -53,6 +53,10 @@ import {
   narrowedApprovalsUrl,
   parseDataStructure,
 } from '../../supabase/functions/_shared/reports/market/openData/absDataStructure.pure.ts';
+import {
+  APPROVALS_PAGE_MONTHS,
+  shiftMonth,
+} from '../../supabase/functions/_shared/reports/market/openData/absApprovalsPaging.pure.ts';
 
 const UA = 'npc-property-dashboard/1.0 (+https://github.com/Naidu-Group-Pty-Ltd)';
 /** Three years: past the parser's 24-month floor with room to spare. */
@@ -544,6 +548,82 @@ async function main(): Promise<void> {
     console.log(`  ${error instanceof Error ? error.message : String(error)}`);
     console.log('\n  The ABS answered and this reader would not take it. That is ours,');
     console.log('  and it is exactly what no synthetic fixture could have told us.');
+    process.exit(1);
+  }
+
+  /*
+   * ── 6 · Would the backfill STALL at the register's floor? ───────────────
+   *
+   * `planApprovalsWork` deepens the register one window at a time until it
+   * reaches `REGISTER_FLOOR_PERIOD`. A backfill window carries
+   * `minPeriods: APPROVALS_PAGE_MONTHS`, and the parser THROWS on a window
+   * that returns fewer months than it asked for — correctly, because for a
+   * window wholly in the past a short body is a truncated body.
+   *
+   * At the publisher's own series START that reasoning inverts. The window
+   * straddling it is short for a reason that is not truncation, the parse
+   * refuses, `oldest` does not move, and the next invocation plans THE SAME
+   * WINDOW. Hourly, for ever: a permanent stall and refused requests at the
+   * Bureau's door every hour of every day.
+   *
+   * Nothing could reach that before the walk advanced itself, because nothing
+   * ever deepened the register — `pageIndex` was 0 on every scheduled run.
+   * The walk is what makes it reachable, so the walk owes this check.
+   *
+   * It is exactly this probe's existing exit-1 condition — *the ABS answered
+   * and our reader refused what it sent* — asked at the one window where the
+   * refusal would be permanent rather than transient. Failing the BUILD is
+   * the cheapest possible version of this; a stall discovered in production
+   * is the most expensive, and it would be invisible behind a green pg_cron.
+   */
+  h(`6 · Would a backfill stall at the floor (${START_PERIOD})?`);
+  const floorEnd = shiftMonth(START_PERIOD, APPROVALS_PAGE_MONTHS - 1);
+  kv('window', `${START_PERIOD} → ${floorEnd}`);
+  kv('a backfill demands', `${APPROVALS_PAGE_MONTHS} months`);
+  try {
+    // `chosenKey` is the key composed from the CHOSEN flow's own structure
+    // in stage 4a — the same key production narrows with, not a copy.
+    const floorUrl = chosenKey.key === 'all'
+      ? absBuildingApprovalsUrl(choice.flow, START_PERIOD)
+      : narrowedApprovalsUrl(choice.flow, START_PERIOD, chosenKey.key, floorEnd);
+    const res = await fetch(floorUrl, { headers: { 'User-Agent': UA, Accept: ABS_SDMX_CSV_ACCEPT } });
+    if (!res.ok) {
+      kv('answered', res.status);
+      console.log('\n  Not ours: the Bureau did not serve the floor window. Exiting 0.');
+      return;
+    }
+    const body = await res.text();
+
+    // What the publisher actually HOLDS there — asked with the floor off, so
+    // the answer is a measurement rather than a refusal.
+    const held = parseAbsBuildingApprovals(body, choice.areaKind, { minPeriods: 0 });
+    kv('months the ABS holds', held.periods.length);
+    kv('range', `${held.periods[0]} → ${held.latestPeriod}`);
+
+    if (held.periods.length >= APPROVALS_PAGE_MONTHS) {
+      h('THE FLOOR IS INSIDE THE SERIES — THE WALK TERMINATES');
+      console.log(`  ${held.periods.length} months at ${START_PERIOD}, so a backfill window there`);
+      console.log('  is satisfied and the walk reaches the floor and settles.');
+      return;
+    }
+
+    // Short, and the ABS answered cleanly. That is the publisher's series
+    // start, and a backfill-shaped read of it would refuse for ever.
+    h('THE BACKFILL WOULD STALL AT THE FLOOR');
+    console.log(`  The ABS holds ${held.periods.length} month(s) at ${START_PERIOD}, and a backfill`);
+    console.log(`  window demands ${APPROVALS_PAGE_MONTHS}. \`planApprovalsWork\` would ask for this`);
+    console.log('  window, the parse would refuse it, `oldest` would not move, and the');
+    console.log('  next run would ask for the same window. Hourly, indefinitely.');
+    console.log('');
+    console.log(`  REGISTER_FLOOR_PERIOD is below the publisher's own start. Either move`);
+    console.log(`  the floor to ${held.periods[0]} or later, or teach the walk to LEARN the`);
+    console.log('  floor from a short-but-well-formed answer instead of being told it.');
+    process.exit(1);
+  } catch (error) {
+    h('THE FLOOR WINDOW REFUSED');
+    console.log(`  ${error instanceof Error ? error.message : String(error)}`);
+    console.log('\n  The ABS answered the floor window and this reader would not take it.');
+    console.log('  That is the stall this stage exists to catch, before it is hourly.');
     process.exit(1);
   }
 }
