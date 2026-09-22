@@ -1088,6 +1088,10 @@ jobs:
         if: always()
         run: npx tsx scripts/market/national-pipeline-liveness.ts
 
+      - name: Ask the ABS what it projects, and at what grain
+        if: always()
+        run: npx tsx scripts/market/abs-projection-liveness.ts
+
   template-geometry:
     runs-on: ubuntu-latest
     timeout-minutes: 45
