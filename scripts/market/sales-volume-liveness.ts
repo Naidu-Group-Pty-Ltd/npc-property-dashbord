@@ -54,6 +54,8 @@ import {
   VOLUME_QUERIES,
   VOLUME_SCORED_STATES,
   assessVolumeCoverage,
+  attributableTo,
+  catalogueAnswered,
   mergeVolumeReads,
   parseVolumeCatalogue,
   rankVolumeCandidates,
@@ -62,6 +64,7 @@ import {
   type VolumeCatalogue,
   type VolumeCatalogueParse,
   type VolumeCoverage,
+  type VolumeDataset,
 } from '../../supabase/functions/_shared/reports/market/openData/salesVolumePublishers.pure.ts';
 
 const FETCH_MS = 30_000;
@@ -194,6 +197,7 @@ async function main(): Promise<void> {
   h('The Commonwealth catalogue, which harvests the states');
   const harvest = await askCatalogue(harvestEntry);
   printCandidates(harvest);
+  kv('answered', catalogueAnswered(harvest) ? 'yes' : 'NO — nothing declared for any query');
 
   const readings: { state: string; coverage: VolumeCoverage; note: string }[] = [];
 
@@ -205,12 +209,42 @@ async function main(): Promise<void> {
     printCandidates(ownParse);
 
     /*
-     * Corroboration: BOTH must have answered. One catalogue's silence is a
-     * statement about that catalogue, which is the fault this probe's two
-     * predecessors each committed once.
+     * ── Attribution, then corroboration ─────────────────────────────────
+     *
+     * The first live run read `countable` for the Northern Territory over
+     * "datasets examined 0" and named a VICTORIAN department, because the
+     * harvest catalogue's datasets were folded in and then ranked. A harvest
+     * indexes every publisher in the country, so a hit in it is a statement
+     * about the harvest.
+     *
+     * So each dataset is attributed to this jurisdiction FIRST — trivially
+     * for the jurisdiction's own catalogue, by the publisher's own name for
+     * the harvest — and only attributed datasets can become a candidate.
      */
-    const corroborated = ownParse.kind === 'catalogue' && harvest.kind === 'catalogue';
-    const merged = mergeVolumeReads([ownParse, harvest].filter((p) => p.kind === 'catalogue'));
+    const attributed: VolumeDataset[] = [
+      ...(ownParse.kind === 'catalogue'
+        ? ownParse.datasets.filter((d) => attributableTo(d, state, 'own'))
+        : []),
+      ...(harvest.kind === 'catalogue'
+        ? harvest.datasets.filter((d) => attributableTo(d, state, 'harvest'))
+        : []),
+    ];
+    const fromHarvest = harvest.kind === 'catalogue'
+      ? harvest.datasets.filter((d) => attributableTo(d, state, 'harvest')).length
+      : 0;
+    kv('attributable to ' + state, `${attributed.length} (${fromHarvest} from the harvest)`);
+
+    /*
+     * Corroboration: BOTH must have ANSWERED, and `200 · 0 declared` on every
+     * query is not an answer — measured, `data.nt.gov.au` did exactly that
+     * five times, which is indistinguishable from a wrong endpoint.
+     */
+    const corroborated = catalogueAnswered(ownParse) && catalogueAnswered(harvest);
+    const merged = mergeVolumeReads([{
+      kind: 'catalogue',
+      total: attributed.length,
+      datasets: attributed,
+    }]);
     const coverage = assessVolumeCoverage(
       corroborated ? merged : (ownParse.kind === 'refused' ? ownParse : merged),
       corroborated,

@@ -26,6 +26,8 @@ import {
   VOLUME_QUERIES,
   VOLUME_SCORED_STATES,
   assessVolumeCoverage,
+  attributableTo,
+  catalogueAnswered,
   judgeVolumeDataset,
   mergeVolumeReads,
   parseVolumeCatalogue,
@@ -559,5 +561,104 @@ describe('how each jurisdiction’s counts arrive', () => {
       .filter((line) => /VIC and SA one/.test(line))
       .filter((line) => !/^\s*(?:\*|\/\/|\/\*)/.test(line));
     expect(offending, 'the old parenthetical survives in code, not just in a comment').toEqual([]);
+  });
+});
+
+
+/**
+ * The defect the probe's own first run produced, and the two rules that close it.
+ *
+ * It read **`countable` for the Northern Territory over "datasets examined
+ * 0"** and composed a sentence naming *"Guide to Property Values, from
+ * Department of Energy, Environment and Climate Action"* — a **Victorian**
+ * department. Western Australia read the same over 201 datasets of which 0
+ * carried a count. The harvest catalogue's datasets had been folded into the
+ * jurisdiction's own and then ranked.
+ *
+ * The log is what exposed it, because it prints both numbers: the counts came
+ * from the jurisdiction's own read and the verdict from the merged one, so the
+ * output contradicted itself on one screen. *A load is judged by its effect.*
+ */
+describe('a harvest hit is not a statement about a jurisdiction', () => {
+  const vicDept = dataset({
+    title: 'Guide to Property Values',
+    notes: 'number of sales by suburb',
+    organisation: 'Department of Energy, Environment and Climate Action',
+    resources: [{ id: 'r', name: 'x.xls', format: 'XLS', url: 'https://h/x', datastoreActive: false, size: null }],
+  });
+
+  it('refuses the exact dataset that produced the defect', () => {
+    for (const s of VOLUME_GAP_STATES) {
+      expect(attributableTo(vicDept, s, 'harvest'), s).toBe(false);
+    }
+  });
+
+  /*
+   * The bare abbreviation is deliberately not accepted from a harvest: "ACT"
+   * is inside "Climate Action", which is the very organisation name that
+   * produced this.
+   */
+  it('does not attribute on a bare abbreviation', () => {
+    expect(attributableTo(dataset({ organisation: 'Climate Action Directorate' }), 'ACT', 'harvest')).toBe(false);
+    expect(attributableTo(dataset({ organisation: 'Water Authority' }), 'WA', 'harvest')).toBe(false);
+  });
+
+  it('attributes a harvest hit whose publisher names the jurisdiction in full', () => {
+    expect(attributableTo(dataset({ organisation: 'Northern Territory Government' }), 'NT', 'harvest')).toBe(true);
+    expect(attributableTo(dataset({ organisation: 'Landgate, Government of Western Australia' }), 'WA', 'harvest')).toBe(true);
+    expect(attributableTo(dataset({ organisation: 'Tasmanian Planning Commission' }), 'TAS', 'harvest')).toBe(true);
+    expect(attributableTo(dataset({ organisation: 'ACT Revenue Office' }), 'ACT', 'harvest')).toBe(true);
+  });
+
+  /*
+   * Judged on the ORGANISATION alone. A dataset titled for a jurisdiction and
+   * published by another is that other's at best, and the conservative reading
+   * of an unattributable one is that it is not this jurisdiction's.
+   */
+  it('judges the publisher and never the title', () => {
+    const titled = dataset({
+      title: 'Property sales, Northern Territory',
+      organisation: 'Department of Energy, Environment and Climate Action',
+    });
+    expect(attributableTo(titled, 'NT', 'harvest')).toBe(false);
+    expect(attributableTo(dataset({ organisation: null }), 'NT', 'harvest')).toBe(false);
+  });
+
+  /* Everything in a jurisdiction's own catalogue is its own by construction. */
+  it('needs no attribution for a jurisdiction’s own catalogue', () => {
+    expect(attributableTo(vicDept, 'NT', 'own')).toBe(true);
+  });
+
+  /*
+   * `200 · 0 declared` on every query is not an empty catalogue — measured,
+   * `data.nt.gov.au/api/3` answered exactly that five times, which is
+   * indistinguishable from a wrong endpoint. An absence claimed off one is the
+   * `publisher_absent`-over-25-organisations fault one publisher along.
+   */
+  it('does not count a zero-declaring index as having answered', () => {
+    expect(catalogueAnswered({ kind: 'catalogue', total: 0, datasets: [] })).toBe(false);
+    expect(catalogueAnswered({ kind: 'catalogue', total: 12, datasets: [] })).toBe(true);
+    expect(catalogueAnswered({ kind: 'refused', reason: 'x' })).toBe(false);
+  });
+
+  /*
+   * The call site is what filters, because a parse does not carry which
+   * catalogue each dataset came from — so passing an unattributed parse would
+   * silently reintroduce this. A source assertion, not a promise.
+   */
+  it('is applied by the probe before it assesses', () => {
+    const probe = readFileSync('scripts/market/sales-volume-liveness.ts', 'utf8');
+    expect(probe).toMatch(/attributableTo\(d, state, 'own'\)/);
+    expect(probe).toMatch(/attributableTo\(d, state, 'harvest'\)/);
+    expect(probe).toMatch(/catalogueAnswered\(ownParse\)\s*&&\s*catalogueAnswered\(harvest\)/);
+    /*
+     * And the harvest's datasets no longer reach the assessment unfiltered.
+     * Asserted as the absence of the old merge, by line so the comment
+     * recording the defect survives — the rule this sitting wrote down.
+     */
+    const offending = probe.split('\n')
+      .filter((line) => /mergeVolumeReads\(\[ownParse, harvest\]/.test(line))
+      .filter((line) => !/^\s*(?:\*|\/\/|\/\*)/.test(line));
+    expect(offending, 'the harvest is merged in unfiltered again').toEqual([]);
   });
 });

@@ -118,6 +118,26 @@ export interface VolumeCatalogue {
   kind: 'own' | 'harvest';
 }
 
+/*
+ * ── What the first live run measured, 22 Sep 2026, from CI ───────────────
+ *
+ *   WA   catalogue.data.wa.gov.au   200 · 434 declared for "property sales",
+ *                                   201 datasets examined, **0 carrying a
+ *                                   count**
+ *   NT   data.nt.gov.au             200 · **0 declared for all five
+ *                                   queries** — an answer that is
+ *                                   indistinguishable from a wrong endpoint
+ *   TAS  data.tas.gov.au            DNS does not resolve
+ *   ACT  www.data.act.gov.au/api/3  404 `{"code":"not_found","message":"No
+ *                                   service found for this URL."}` — the ACT
+ *                                   portal is Socrata, not CKAN 3
+ *
+ * The ACT and TAS roots are kept, wrong, and PRINTED as ours rather than
+ * silently replaced with another guess. That is W3.4's rule: a candidate's
+ * failure is the output this probe exists to produce, and the ACT's 404 body
+ * is the specific evidence that its portal speaks a different API — which is
+ * what the next increment needs in order to reach it.
+ */
 export const VOLUME_CATALOGUES: readonly VolumeCatalogue[] = [
   { state: 'WA', publisher: 'Government of Western Australia', api: 'https://catalogue.data.wa.gov.au/api/3', kind: 'own' },
   { state: 'NT', publisher: 'Northern Territory Government', api: 'https://data.nt.gov.au/api/3', kind: 'own' },
@@ -360,6 +380,93 @@ export function rankVolumeCandidates(datasets: readonly VolumeDataset[]): Volume
       || Number(b.machineReadable?.datastoreActive ?? false) - Number(a.machineReadable?.datastoreActive ?? false));
 }
 
+/**
+ * Who published a dataset, and whether that is this jurisdiction.
+ *
+ * ── The defect this exists to close, measured on its own first run ───────
+ *
+ * The first live run read **`countable` for the Northern Territory over
+ * "datasets examined 0"**, and the sentence it composed named *"Guide to
+ * Property Values, from **Department of Energy, Environment and Climate
+ * Action**"* — which is a VICTORIAN department. Western Australia read
+ * `countable` the same way over 201 datasets of which 0 carried a count, and
+ * named the same Victorian dataset.
+ *
+ * The cause: `mergeVolumeReads` folded the HARVEST catalogue's datasets into
+ * the jurisdiction's own and the assessment then ranked whatever it found.
+ * A harvest indexes every publisher in the country, so a hit inside it is a
+ * statement about the harvest and not about the jurisdiction — which this
+ * module's own header said in those words while the code did the opposite.
+ *
+ * The log is what made it visible, and only because it prints both numbers:
+ * the counts came from the jurisdiction's own read and the verdict came from
+ * the merged one, so the output contradicted itself on the same screen.
+ * *A load is judged by its effect* — the fourth time in this programme.
+ *
+ * ── The rule ─────────────────────────────────────────────────────────────
+ *
+ * **A candidate must be attributable to the jurisdiction it is offered for.**
+ * Discarding the harvest entirely would be wrong the other way: `data.gov.au`
+ * genuinely harvests the states, and for ACT and TAS — whose own API roots
+ * this repository does not have right — it is the only route that answers.
+ * What makes a harvest hit usable is that the dataset names its publisher,
+ * so attribution is checkable rather than assumed.
+ *
+ * Judged on the ORGANISATION alone, never on the title or the notes. A
+ * dataset called "Property sales, Northern Territory" published by a
+ * Victorian department is a Victorian dataset about the Territory at best,
+ * and the conservative reading of an unattributable dataset is that it is
+ * not this jurisdiction's.
+ */
+const JURISDICTION_NAMES: Readonly<Record<VolumeGapState, readonly string[]>> = {
+  ACT: ['australian capital territory', 'act government', 'act revenue', 'canberra'],
+  NT: ['northern territory', 'nt government'],
+  TAS: ['tasmania', 'tasmanian'],
+  WA: ['western australia', 'westralia'],
+};
+
+/**
+ * Is this dataset attributable to this jurisdiction?
+ *
+ * An `own` catalogue needs no attribution — everything in it is that
+ * jurisdiction's by construction, which is what makes it the authority.
+ * A harvest hit needs its publisher to name the jurisdiction.
+ */
+export function attributableTo(
+  dataset: VolumeDataset,
+  state: VolumeGapState,
+  source: VolumeCatalogue['kind'],
+): boolean {
+  if (source === 'own') return true;
+  const org = (dataset.organisation ?? '').toLowerCase();
+  if (org === '') return false;
+  /*
+   * The bare abbreviation is deliberately NOT accepted from a harvest. "ACT"
+   * appears inside "Climate Action", which is the very organisation name that
+   * produced this defect, and "WA" inside dozens of ordinary words. A
+   * jurisdiction that cannot be named in full by its own publisher is one
+   * this reader declines to attribute.
+   */
+  return JURISDICTION_NAMES[state].some((n) => org.includes(n));
+}
+
+/**
+ * Has a catalogue actually answered the question?
+ *
+ * `200 · 0 declared` on EVERY query is not an empty catalogue — measured on
+ * the first run, `data.nt.gov.au/api/3` answered exactly that five times.
+ * A CKAN index holding no dataset matching "land sales" is possible; one
+ * holding none for any of five different phrasings is far more likely a
+ * wrong endpoint, and the two are indistinguishable from here.
+ *
+ * So it reads as unavailable rather than as an absence, which is the
+ * conservative side: an absence claimed off a wrong endpoint is the
+ * `publisher_absent`-over-25-organisations fault one publisher along.
+ */
+export function catalogueAnswered(parse: VolumeCatalogueParse): boolean {
+  return parse.kind === 'catalogue' && parse.total > 0;
+}
+
 /** Merge several catalogue reads. A refusal anywhere is carried, never smoothed. */
 export function mergeVolumeReads(parses: readonly VolumeCatalogueParse[]): VolumeCatalogueParse {
   const refusals = parses.filter((p): p is Extract<VolumeCatalogueParse, { kind: 'refused' }> => p.kind === 'refused');
@@ -427,6 +534,14 @@ export function assessVolumeCoverage(
       reason: 'only one catalogue answered, and one catalogue’s silence is a statement about that catalogue',
     };
   }
+  /*
+   * Every dataset reaching here is already attributed to this jurisdiction by
+   * the caller (`attributableTo`). That filtering is deliberately NOT done
+   * inside this function: it needs to know WHICH catalogue each dataset came
+   * from, and a parse does not carry that — so passing an unattributed parse
+   * would silently reintroduce the Victorian-department defect. The spec
+   * asserts the call site filters.
+   */
   const ranked = rankVolumeCandidates(parse.datasets);
   const best = ranked[0];
   if (best && best.subState && best.machineReadable) {
