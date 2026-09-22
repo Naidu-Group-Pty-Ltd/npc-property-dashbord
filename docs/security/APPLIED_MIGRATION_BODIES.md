@@ -212,3 +212,66 @@ whitespace match. Measured the day it was found: **0 files affected in this
 corpus**, because every leading-comment match here also carries trailing
 whitespace. Right by coincidence. Identical rungs are kept now, in both
 repositories, and `index === rung` for every input.
+
+## What giving the colliding migrations their own versions revealed
+
+Not part of this guard, and the most consequential thing found while building it.
+
+`MIGRATION_VERSION_COLLISIONS.json` has said since it was written that a
+colliding version "can only ever record ONE of its files by name — anything
+that reads the ledger to decide whether a file has been applied gets a false
+positive for every other file sharing that version". Nine files were given a
+version of their own on 22 September 2026, which ended the false positive and
+asked the question for the first time.
+
+**Six of the nine have not taken effect on the prime**, and every one of them is
+a security migration. Measured against the database rather than the ledger:
+
+| migration | probe | state |
+| --- | --- | --- |
+| `20260717000001_add_builder_invoice_current_payment` | column on `client_deals` | present |
+| `20260724030001_activate_existing_webauthn_mfa` | rows the UPDATE would still change | 0 |
+| `20260725000001_restrict_api_health_log_select` | policy *Anyone can view API health logs* | gone |
+| `20260726000001_scope_template_render_jobs_to_requester` | `render_jobs_select_self` / `…_auth` | **absent / still present** |
+| `20260726120001_restrict_report_template_resolver` | EXECUTE held by PUBLIC, anon, authenticated | **3 grants** |
+| `20260726120002_revoke_mass_escalated_finance_permissions` | rows the UPDATE would still change | **1** |
+| `20260726180001_preserve_template_import_ownership` | `template_finalize_v2` body preserves the owner | **no** |
+| `20260726210001_bind_template_component_ownership` | `created_by` default + scoped INSERT policy | **neither** |
+| `20260729000001_secure_finance_portal_reminder_cron` | cron command carries `x-cron-secret` | **no** |
+
+So on the prime today: `template_render_jobs` is readable by any authenticated
+user rather than only its requester; `resolve_report_template` is executable by
+`PUBLIC`; one finance-portal default-permissions row still grants edit and
+delete on every section; template imports lose their owner; `template_components`
+accepts an insert claiming any `created_by`; and the finance-portal reminder
+cron posts without its shared secret.
+
+**None of this was caused by the rename.** The rename is what made it askable —
+every one of these files had a sibling whose version the ledger recorded, so
+every reader, including Mission Control, reported them as applied.
+
+### Why they are not applied here
+
+Applying SQL to the prime is a decision a person makes, and `apply-migration.yml`
+is dispatched by hand for exactly that reason — its own header says deciding
+which file to apply "is a human judgement made before dispatch, not a thing this
+workflow infers".
+
+What can be said in advance is that re-running them is safe. All nine were put
+through the same judge the `/prime` remedy uses, and all nine answer
+`nothing_to_do` — no repair needed, no refusal raised. They are already written
+to be re-runnable: `20260725000001` is a lone `DROP POLICY IF EXISTS`,
+`20260726120002` is an UPDATE whose WHERE clause matches only the
+over-permissive shape it replaces, and the rest guard themselves the same way.
+
+### What it costs the fleet until they are applied
+
+`partitionByDependency` treats a version that is withheld at the prime AND
+absent from the clone as a hole, and orphans every runnable migration after it.
+These nine are withheld (the prime never ran them) and absent from every clone
+(their versions are new), so they are holes on all four clones. The earliest,
+`20260717000001`, sits at corpus position 541 of 1,002 — so 283 runnable files
+behind it are orphaned until the prime runs it.
+
+That is the honest cost of telling the truth here: the cascade carried more
+before, by counting nine files as delivered that no database had ever run.
