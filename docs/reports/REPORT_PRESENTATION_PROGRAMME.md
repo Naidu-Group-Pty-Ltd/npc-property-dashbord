@@ -868,6 +868,29 @@ a coverage statement that names the register asked.
 **W3.3 · National forward demand: ABS population projections by SA2.**
 Replaces "no forward projection" everywhere rather than in one state.
 
+> **The premise is wrong, measured 22 Sep 2026 — and the requirement is
+> met anyway.** Four ABS projection flows, each carrying one `REGION`
+> dimension of 23 codes: **8 states, 1 national, 14 unplaced, ZERO SA2**,
+> including the flow titled *"Population Projections by Region"*. There is no
+> ABS projection at SA2, so the national floor can only be a fact about a
+> region the property sits IN; forward demand at its own area is a
+> per-jurisdiction register and belongs to W3.4.
+>
+> What "everywhere" required is delivered without it.
+> `FORWARD_DEMAND_PUBLISHERS` names the publishing body and product for all
+> eight jurisdictions (`ingested: false`, truthfully) and one composed
+> sentence replaces "no forward projection" for a property anywhere, naming a
+> publisher a reader can reach. The Bureau's assumption set also turned out
+> to be a **cross-product** — no series dimension, and instead
+> `FERTILITY × MORTALITY × NOM × NIM` = 72 combinations — so a reading names
+> every assumption it rests on and there is none to default to.
+>
+> The most consequential piece needed no register: the prompt block already
+> FORBADE the model to state a population projection while the section
+> validator REQUIRES it to write about population, and a prohibition with no
+> permitted form is one a model routes around. Full record:
+> `FORWARD_DEMAND_EVIDENCE.md`.
+
 **W3.4 · Per-jurisdiction refinement behind a declared order.**
 `DEVELOPMENT_PROVIDERS` / `PLANNING_PROVIDERS`, mirroring `AMENITY_PROVIDERS`
 and `GEOCODER_PROVIDERS`. Extend the existing NSW/VIC/QLD/TAS constraint layers

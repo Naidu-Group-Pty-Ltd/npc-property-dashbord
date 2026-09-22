@@ -2205,6 +2205,80 @@ the thing it prohibits, so the guard is written as ASSERTED forms — a sentence
 forbidding a rating is the guarantee working, and rewording it to satisfy a
 regex would delete the guarantee to keep the guard.
 
+**Forward demand is a different claim from measured growth, and the premise
+was wrong.** Read
+[`FORWARD_DEMAND_EVIDENCE.md`](./docs/reports/FORWARD_DEMAND_EVIDENCE.md)
+before touching `_shared/reports/market/openData/absPopulationProjections.pure.ts`,
+`forwardDemand.pure.ts`, `regionalPromptBlocks.pure.ts` or
+`abs-projection-liveness.ts`. W3.3 is written as *"ABS population projections
+**by SA2**"*, and that premise had never been checked — the fourth in this
+programme to be wrong for that reason, and the first caught before anything
+was built on it. Measured 22 Sep 2026 from CI: four projection flows, each
+one `REGION` dimension of **23 codes — 8 states, 1 national, 14 unplaced,
+ZERO SA2** — including the flow titled *"Population Projections by Region"*.
+So the national floor can only be a fact about a region the property sits IN,
+and forward demand at its own area is a per-jurisdiction register (W3.4).
+
+**The assumption set is a CROSS-PRODUCT, not a series**: no series dimension
+at all, and instead `FERTILITY 3 · MORTALITY 2 · NOM 4 · NIM 3` — **72
+combinations**. So a reading names EVERY assumption it rests on (a figure
+under medium fertility and NOM 3 is a different figure), there is no central
+combination to default to, and `choices[0]` / `centralSeries` are forbidden by
+a source scan. `assumptions` is DERIVED — anything that is not the geography,
+time or a slice — so a fifth cannot silently fall out of a reading's
+provenance. Five specs that pinned the old series model were renegotiated:
+they were pinning MY shape rather than the publisher's.
+
+Three rules stop a forecast becoming a fact. **A projection is not an
+`EvidencePoint`**, asserted by source scan — that type's own documentation is
+"the measurement", every consumer feeds the scorer, and so **nothing here
+scores**: a projection is weaker than `populationDriver`, which
+`demandScoring` already caps as unable to carry the dimension. **An estimate
+is refused and NAMED** — this platform already holds 61,335 rows of ABS
+resident population and turns it into a CAGR called "Population growth", so
+printing that under a forward heading is the worst available failure and an
+allow-list omission would do it silently. And **a region is not an area**:
+only SA2 and SA3 describe the property's own.
+
+**And the 14 unplaced codes are the most valuable line in the log.**
+`11, 12, 21, 22 …` are two-digit ASGS codes — very likely a capital-city and
+rest-of-state split, a grain FINER than state, refused and therefore
+understating the answer. "Very likely" is not a measurement, so `unplaced`
+carries each code's published NAME and the probe prints it: printing the ids
+is what made the gap visible, printing the names is what closes it.
+
+**The probe shipped with the defect it exists to catch.** Its first run sent
+the XML structure media type with no wildcard fallback, took **HTTP 406** on
+every flow, and printed "THE PREMISE DOES NOT HOLD" over `flows read 0`. A
+406 is the server saying it cannot serve what we ASKED FOR, so
+`isOurRequestFault` names 406/415 as ours and the probe FAILS on them; and a
+verdict is now impossible to print over zero measurements. The working header
+was already a literal in the approvals probe **twice**, so it was typed twice
+then a third time wrong — `ABS_SDMX_STRUCTURE_ACCEPT` is named once and a spec
+forbids retyping it.
+
+**The half worth the most needed no register at all.**
+`regionalPromptBlocks` already forbade the model to state "a population
+projection" while the section validator REQUIRES the words population, income
+and employment — so the model was obliged to write about demand, told one
+thing it may not say, and offered nothing to say instead. *A prohibition with
+no demonstration of the permitted form is one a model routes around*, and the
+planning block's own bracketed-pointer prohibition was ignored by nine of ten
+delivered documents. The absence gets a sentence now, naming a publisher a
+reader can reach, plus an explicit statement that the measured table is
+**BACKWARD-looking** — a five-year CAGR labelled "Population growth" beside a
+demand discussion is read forward by a reader never told otherwise. Two
+bounds: the model may not present that publisher as a source this report
+consulted, and the default availability is `not_loaded`, because any other
+default announces a reading nobody has. `FORWARD_DEMAND_PUBLISHERS` names all
+eight jurisdictions with `ingested: false` truthfully, because "everywhere" is
+what makes loading one state wrong; the table states **no grain**, since
+nothing here can reach those publishers to check one. And the state it names
+is the TRUSTED geography's — the generator's own `state` is
+`detectedState || 'NSW'`, so reading it would name the NSW publisher on every
+unresolved property. The regeneration path names NO publisher, a recorded
+asymmetry asserted by a test rather than an oversight.
+
 **W3.6 — an absence belongs to a jurisdiction, and one had been forgotten.**
 The five absences and the per-jurisdiction sentences already existed; what did
 not exist was anything that could tell you a jurisdiction was MISSING.
