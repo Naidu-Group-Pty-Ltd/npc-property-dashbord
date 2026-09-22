@@ -28,6 +28,8 @@ import {
   scaleFor,
   type Density,
 } from '../../../../scripts/template-library/investmentCompass/family';
+import { CONTRAST_FLOOR } from '../../../../supabase/functions/_shared/reportDesign/tokens.pure';
+import { INK_LEGALITY } from '../../../../supabase/functions/_shared/reportDesign/roles.pure';
 
 const DENSITIES: Density[] = ['compact', 'balanced', 'spacious'];
 
@@ -108,5 +110,62 @@ describe('the cover facts value moves with density', () => {
     expect(11 / ir.coverTitle).toBeGreaterThan(0.9);
     /* And the derived value restores a hierarchy. */
     expect(ir.coverFact / ir.coverTitle).toBeLessThan(0.85);
+  });
+});
+
+
+/**
+ * Does shrinking this move it into a stricter contrast regime?
+ *
+ * `REPORT_RULES.md` §2 sets the contrast floor by SIZE BAND — `≥14pt` /
+ * `10–13pt` / `<10pt` — while `auditPaletteContrast` judges each ink against
+ * the floor declared for its ROLE in `INK_LEGALITY`. Nothing connects the
+ * size an element is drawn at to the floor it is audited against, so the
+ * audit cannot see a size change: that is the *the thing checked was not the
+ * thing the page draws* shape, and it is the reason to check this by hand
+ * rather than trust the gate.
+ *
+ * The change moves the cover facts' value across both boundaries:
+ *
+ *   compact   11pt →  9pt   `body` (10–13) → `micro` (<10)
+ *   spacious  14pt → 13pt   `display` (≥14) → `body` (10–13)
+ *
+ * It is safe, and for a recorded reason rather than by luck. `body` and
+ * `micro` are **both 7** — unified by earlier work in this programme, which
+ * found the code holding them at 4.5 while §2 set them at 7 — so the compact
+ * step changes nothing. And the spacious step raises the requirement from
+ * 4.5 to 7 against an ink whose DECLARED floor is already `body` = 7, which
+ * `auditPaletteContrast` enforces on all three grounds and
+ * `printContrast.spec.ts` asserts.
+ *
+ * Asserted here rather than reasoned about in a comment, so a future change
+ * to either floor fails this instead of quietly making a cover illegible.
+ */
+describe('shrinking it cannot move it into a floor its ink does not clear', () => {
+  /** §2's bands, as `CONTRAST_FLOOR` names them. */
+  const floorForSize = (pt: number): keyof typeof CONTRAST_FLOOR =>
+    pt >= 14 ? 'display' : pt >= 10 ? 'body' : 'micro';
+
+  it('draws the facts value in bodyInk, whose declared floor covers every band it can land in', () => {
+    /* The role the cover facts' value is set in. */
+    const declared = CONTRAST_FLOOR[INK_LEGALITY.bodyInk.floor];
+    for (const family of Object.keys(BASE_SCALES)) {
+      for (const density of ['compact', 'balanced', 'spacious'] as Density[]) {
+        const size = scaleFor(family, density).coverFact;
+        const required = CONTRAST_FLOOR[floorForSize(size)];
+        expect(required, `${family}/${density} at ${size}pt`).toBeLessThanOrEqual(declared);
+      }
+    }
+  });
+
+  /*
+   * The two facts the safety rests on. If either changes, the assertion above
+   * is what should fail — but these name WHY, so the failure is legible.
+   */
+  it('rests on body and micro being the same floor, and on bodyInk declaring it', () => {
+    expect(CONTRAST_FLOOR.body).toBe(CONTRAST_FLOOR.micro);
+    expect(INK_LEGALITY.bodyInk.floor).toBe('body');
+    /* And the stricter of the two bands the change crosses into is the one it declares. */
+    expect(CONTRAST_FLOOR.body).toBeGreaterThan(CONTRAST_FLOOR.display);
   });
 });
