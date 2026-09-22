@@ -45,7 +45,15 @@ describe('the frontier is measured, never assumed', () => {
      * constant nobody here can verify and the Bureau can change silently.
      */
     const page = approvalsPage(0, '2026-09', null);
-    expect(page).toEqual({ index: 0, startPeriod: '2026-04', endPeriod: '2026-09', minPeriods: null });
+    // DERIVED from the constant, not restated: the window is whatever
+    // `APPROVALS_PAGE_MONTHS` says, and pinning a literal here is how a spec
+    // comes to assert the page size in two places that can disagree.
+    expect(page).toEqual({
+      index: 0,
+      startPeriod: shiftMonth('2026-09', -(APPROVALS_PAGE_MONTHS - 1)),
+      endPeriod: '2026-09',
+      minPeriods: null,
+    });
   });
 
   it('treats a first run with no frontier as the frontier whatever the index', () => {
@@ -59,10 +67,25 @@ describe('every page after the frontier lies wholly in the past', () => {
   const FRONTIER = '2026-07';
 
   it('steps back a whole window and demands a full one', () => {
-    expect(approvalsPage(1, '2026-09', FRONTIER))
-      .toEqual({ index: 1, startPeriod: '2026-01', endPeriod: '2026-06', minPeriods: 6 });
-    expect(approvalsPage(2, '2026-09', FRONTIER))
-      .toEqual({ index: 2, startPeriod: '2025-07', endPeriod: '2025-12', minPeriods: 6 });
+    // Derived from `APPROVALS_PAGE_MONTHS` rather than written out: page 1
+    // ends the month before the frontier and spans one whole window, page 2
+    // ends the month before page 1, and both demand a full window because
+    // they lie wholly in the past.
+    const n = APPROVALS_PAGE_MONTHS;
+    const firstEnd = shiftMonth(FRONTIER, -1);
+    expect(approvalsPage(1, '2026-09', FRONTIER)).toEqual({
+      index: 1,
+      startPeriod: shiftMonth(firstEnd, -(n - 1)),
+      endPeriod: firstEnd,
+      minPeriods: n,
+    });
+    const secondEnd = shiftMonth(firstEnd, -n);
+    expect(approvalsPage(2, '2026-09', FRONTIER)).toEqual({
+      index: 2,
+      startPeriod: shiftMonth(secondEnd, -(n - 1)),
+      endPeriod: secondEnd,
+      minPeriods: n,
+    });
   });
 
   it('never overlaps the frontier page, so no month is fetched twice', () => {
@@ -92,9 +115,15 @@ describe('every page after the frontier lies wholly in the past', () => {
 
 describe('a run can say what remains', () => {
   it('counts the pages between a frontier and a floor', () => {
-    // 2023-01 to 2026-07 is 43 months: eight six-month pages.
-    expect(pagesToCover('2026-07', '2023-01')).toBe(8);
-    expect(pagesToCover('2026-07', '2026-02')).toBe(1);
+    // Derived, because the answer is a function of the window: 2023-01 to
+    // 2026-07 is 43 months, so it is however many whole windows that takes.
+    const span = monthSpan('2023-01', '2026-07');
+    expect(span).toBe(43);
+    expect(pagesToCover('2026-07', '2023-01'))
+      .toBe(Math.ceil(span / APPROVALS_PAGE_MONTHS));
+    const shortSpan = monthSpan('2026-02', '2026-07');
+    expect(pagesToCover('2026-07', '2026-02'))
+      .toBe(Math.ceil(shortSpan / APPROVALS_PAGE_MONTHS));
   });
 
   it('never answers zero, because the frontier page always runs', () => {
@@ -102,8 +131,19 @@ describe('a run can say what remains', () => {
     expect(pagesToCover('2026-07', '2027-01')).toBe(1);
   });
 
-  it('is the page size the measurement supports', () => {
-    // 12 months measured 26.0 MB against a 24 MB ceiling; 6 measured 12.2.
-    expect(APPROVALS_PAGE_MONTHS).toBe(6);
+  it('is the page size the measurement supports — measured in the worker', () => {
+    // This assertion used to pin 6, on a CI measurement of the Bureau's
+    // BYTES: 12 months = 26.0 MB against a 24 MB ceiling, 6 months = 12.2.
+    // Every one of those is a fact about the wire, and the first production
+    // run answered HTTP 546 — the worker's RESOURCE limit — on that exact
+    // six-month window, because the stage holds the body, the parsed rows and
+    // the upsert payload live at once.
+    //
+    // Re-measured in the worker against the deployed function, 22 Sep 2026,
+    // at SA2 grain: 1 month = 5,814 rows / 200, 3 months = 17,442 / 200,
+    // 6 months = ~34,884 / 546. Three is the largest PROVEN window; 4 and 5
+    // are not taken because an unmeasured edge fails as a nightly 546 that
+    // pg_cron reports green.
+    expect(APPROVALS_PAGE_MONTHS).toBe(3);
   });
 });

@@ -355,3 +355,158 @@ green run proves the download fits the constraint the check can see.
 Until something does, every report reads **Not searched.** and is forbidden
 from stating a figure, which is `CLONE_PROVISIONING_GAPS.md`'s rule applied
 before the gap exists.
+
+## 11 · The register is loaded — and the page bound was measured on the wrong axis
+
+Applied and loaded 22 Sep 2026, and every step of it was verified by effect
+rather than by the success of the thing that performed it.
+
+**The shipping order bit first.** `20261213000000` (the table) and
+`20261213010000` (the 17:45 UTC refresh) applied cleanly, both `@effect`
+probes satisfied — and the first ingest answered **HTTP 400 in five
+milliseconds**, because the deployed `market-sales-ingest` was `main`'s and
+`main`'s copy contained **zero** occurrences of `approvals`. Measured three
+ways: the edge log, `main`'s source, and the live bundle (version 167, zero
+`approvals`). The schema had landed and the loader had not. **A register's
+migration and the function that fills it have a shipping ORDER and it is not
+interchangeable** — `CONTAINER_RELEASE.md` holds the same rule for the
+WeasyPrint image and the render routes. Left to the schedule this would have
+failed at 03:45 nightly while pg_cron reported green, which is
+`SCREENING_EXECUTION.md`'s rule: **a green cron run is not a delivered
+request.**
+
+After the merge, the deploy was checked the same way rather than on its own
+tick — which matters, because that workflow's header records it reporting
+green while shipping nothing, twice: version **167 → 168**, `approvals`
+occurrences **0 → 41**, bundle 222 KB → 311 KB.
+
+**Then the real failure, and it is the interesting one.** The next run got
+past the 400 and died at **546**, the edge worker's resource limit:
+
+```
+approvals: ABS,BA_SA2,2.0.0 key=1+2.9.TOT.110+150+100...M page=0 2026-04→2026-09
+POST | 546
+```
+
+Two of the three steps that had never run against the real publisher
+therefore WORK: the dataflow was **discovered** (`ABS,BA_SA2,2.0.0`, the
+finest grain published, which is what the scorer prices) and the **positional
+key composed** from the flow's own data structure. Those were the two most
+likely to fail silently as a plausible wrong slice under a 200.
+
+The cause was `APPROVALS_PAGE_MONTHS = 6`, set from a CI measurement of the
+Bureau's **bytes** (6 months = 12.2 MB against "a 24 MB budget"). The worker's
+limit is on the resources needed to **process** them, and the stage holds all
+of it live at once — the whole body as one string, then every row as an
+object, then the upsert payload. Re-measured in the worker using the explicit
+operator window the stage already accepts:
+
+| window | rows | answer |
+| --- | ---: | --- |
+| 1 month | 5,814 | 200 |
+| 3 months | 17,442 | 200 |
+| 6 months | ~34,884 | **546** |
+
+5,814 rows a month, dead flat (17,442 is exactly 5,814 × 3), so the cliff lies
+between 17,442 and ~34,884 rows. The constant is **3**, the largest PROVEN
+window; 4 and 5 are deliberately not taken, because an unmeasured edge fails
+as a nightly 546 that pg_cron calls green. A walk of the 33 months the Bureau
+holds is eleven nightly pages.
+
+Three rules come out of it. **A bound must be measured on the quantity that
+binds** — bytes over the wire answered a different question from resources to
+process, and the smaller number was the one measured. **Two points bracket a
+cliff; one point picks a number and calls it a measurement**, which is why the
+bound was probed at 1 and 3 rather than divided by something plausible. And
+**a spec states the rule, not the number**: three assertions had the
+six-month arithmetic written out as literals, so they are derived from
+`APPROVALS_PAGE_MONTHS` now — a spec restating the page size in two places is
+how the two come to disagree.
+
+**What is loaded and what is still unchecked.** `market_building_approvals`
+holds 17,442 rows for 2026-05 → 2026-07 at SA2 grain and
+`market_sales_sync` recorded both deliveries. The distribution across
+`area_kind` is **not** yet confirmed: the ABS download is a hierarchy, each
+row must carry its OWN grain, and filing a national total as a council area
+is the one failure a row count cannot see. That needs a `group by area_kind`,
+which the direct-SQL restriction does not admit, so it is recorded here as
+outstanding rather than assumed good.
+
+## 12 · The grain was read back, and two levels of the hierarchy were mislabelled
+
+§11 closed with the `area_kind` distribution recorded as unverified, because a
+`group by` is arbitrary database access and this deployment's standing
+restriction does not admit it. It is verified now, through the route that is
+admitted: the read travels as a migration through the reviewed workflow and
+the answer comes back as a `raise warning` in `postgres_logs`, which is logged
+at Supabase's default level where `notice` is not. That file writes nothing.
+
+```
+APPROVALS_READBACK total=17442
+  by_kind=[lga=2064, national=6, sa2=15324, state=48]
+  distinct_areas=[lga:344, national:1, sa2:2554, state:8]
+  periods=[all four kinds 2026-05..2026-07]
+  dwelling_units=[null=0 zero=4893 positive=12549]
+  samples=[lga code=10102 len=5 area=Queanbeyan | national code=AUS area=Australia
+           sa2 code=101 len=3 area=Capital Region | state code=1 area=New South Wales]
+```
+
+**The half that works.** The hierarchy IS stamped per row rather than per
+request — four grains present, `AUS` correctly under `national`, eight states
+under `state`. The catastrophic version this section was written to prevent, a
+national total filed as a council area, did not happen. The row arithmetic is
+exactly consistent too: 2,554 × 3 months × 2 measures = 15,324, and the same
+for every kind, so nothing is double-counted or half-written.
+
+**The half that does not.** An ASGS SA2 code is nine digits. `101 / Capital
+Region` is an **SA4** and was filed `sa2`; `10102 / Queanbeyan` is an **SA3**
+and was filed `lga`. The SA2 hierarchy has five levels — SA2 (9 digits), SA3
+(5), SA4 (3), state (1), `AUS` — and `area_kind` has four values, so two
+levels had nowhere correct to go:
+
+```ts
+if (/^\d{5}$/.test(trimmed)) return 'lga';   // catches every SA3
+if (/^\d{9}$/.test(trimmed)) return 'sa2';
+return requested;                            // catches every SA4
+```
+
+**`return requested` called itself the conservative side and is its
+opposite.** The requested grain is the FINEST grain in the download, so an
+unreadable code defaulted to the strongest claim available — a
+250,000-person SA4 served as one suburb's approved supply. Three rules come
+out of it.
+
+**A fallback to the request is a fallback to the strongest claim.** In a
+hierarchy download the requested grain is the finest, so "when in doubt, use
+what was asked for" resolves every ambiguity in the least conservative
+direction available. An unreadable code is `unknown` now and is refused.
+
+**A collision is settled by the download, not by the code.** An ABS LGA code
+is five digits and so is an SA3 — genuinely ambiguous from the code alone. The
+hierarchies do not overlap, though: an LGA download is LGA → state → `AUS` and
+carries no SA3, an SA2 download carries no LGA. So `requested` disambiguates
+exactly that one case, which is the only legitimate use it has here.
+
+**A plausibility ceiling written for unit drift cannot police grain.**
+`ABS_BA_PLAUSIBILITY` says so in its own comment — the bounds detect unit
+drift "rather than ranking areas" — so an SA4's figure sits far inside an
+SA2's 20-billion-dollar ceiling and the guard passed it without complaint.
+It was never the wrong guard; it was the wrong question to ask of it.
+
+A grain with no column is **counted and declined** rather than bent into one
+that fits (`refusedByGrain`), and a body that is all hierarchy now says so:
+*"refused for want of a column: 1 sa3, 1 sa4"*. Before this it would have read
+*"no row this loader recognises (0 skipped)"*, which sends an operator hunting
+a parse fault over a body that read perfectly.
+
+**The cleanup deletes by SOURCE, not by rule.** `20261215030000` removes every
+row the SA2 flow wrote — not the rows a restated grain predicate would
+select — because a DELETE whose WHERE clause re-implements
+`grainOfAreaCode` is the two-ends-drift defect this programme records against
+`riskRegisterInstruction` and `strategySectionRules`. The register is a pure
+projection of a public download, so clearing and reloading costs nothing but a
+reload, and the empty interval is the designed degradation: `Not searched`,
+with every report forbidden from stating a figure. **It must not be applied
+before the corrected parser is deployed** — against the old one the nightly
+reload rewrites exactly what it deleted, and the register ends where it
+started while looking repaired.
