@@ -433,7 +433,7 @@ because the enforcement that protects revenue is Mission Control's own 402 on
 forwarded vendor keys), while the failure this screen could cause is locking
 out somebody who has paid. And **a top-up does not activate a workspace** —
 `seat_plan` and `setup_package` settle the gate, so a $50 credit pack cannot
-open a $2,015/month plan.
+open a $2,549/month plan.
 
 **The pay button is decided by what is OWED, never by a reason word.** An
 operator locked a clone by hand and asked where its Stripe button had gone; it
@@ -453,8 +453,8 @@ module's own comment calls it "always a real URL when gated … because a locked
 screen with no way out is worse than no screen". And **paying twice was one
 click away**, because the only guard is Mission Control's `paid_at` and the
 Stripe webhook writes it after the redirect. On Mission Control's side the gate
-quoted `tier.monthlyInclGstCents` — the price WITHOUT the AML module, $2,015
-against Scale's $2,210 headline — which `seatPlanForTier` refuses as a
+quoted `tier.monthlyInclGstCents` — the price WITHOUT the AML module, $2,549
+against Scale's $2,699 headline — which `seatPlanForTier` refuses as a
 `price_mismatch`, so every newly armed gate's button would have died; the
 checkout route did not refuse an `operator_locked` gate; and the operator page
 had no way to send a customer to Stripe at all. **Payment Gates offers a
