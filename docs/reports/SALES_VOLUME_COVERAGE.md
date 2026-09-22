@@ -148,6 +148,59 @@ none, or cannot say, has not.
 `catalogueAnswered` counts **both** `answered` and `answered_empty_handed`,
 because an absence from a populated index is an answer.
 
+### 3.3 …but corroboration gates an absence, not a find
+
+The first version required corroboration before it would rank anything, and
+**Tasmania then read `catalogue_unavailable` while the Commonwealth catalogue
+held one dataset attributed to Tasmania** — a dataset that had answered, from
+an index that had answered, discarded because a *second* index had not.
+
+The two directions are not symmetric, and conflating them is a different
+error each way:
+
+- **An absence needs two endpoints that agree.** One catalogue's silence is a
+  statement about that catalogue.
+- **A find needs one endpoint that answered.** A dataset that exists, is
+  attributed to this jurisdiction and says it carries a count is a find
+  whatever a second index says. Requiring a second witness to a thing you are
+  holding is not conservatism — it is discarding evidence.
+
+So the ranking runs first, and the corroboration requirement applies only
+where it produced nothing.
+
+### 3.4 The ACT portal is not CKAN, and its 404 is what bought the reader
+
+The ACT answered a CKAN 3 path with
+`404 {"code":"not_found","error":true,"message":"No service found for this
+URL."}` — a JSON API that exists and does not speak CKAN.
+
+That body is the evidence, and it is precisely why the wrong root was **kept
+and printed** rather than replaced with another guess: a 404 with a body
+tells you what the host *is*, and a replacement guess throws that away.
+`www.data.act.gov.au` runs **Socrata**.
+
+`parseSocrataCatalogue` projects onto the **same** `VolumeDataset` shape, so
+`judgeVolumeDataset`, `rankVolumeCandidates`, `attributableTo` and
+`assessVolumeCoverage` are written once and cannot disagree between
+dialects — two readers and one judgement, never two judgements.
+
+Three things are specific to Socrata and worth knowing:
+
+- its catalog API is **domain-scoped**, so it cannot return another
+  jurisdiction's dataset and §3.1's defect cannot recur through this route
+  *by construction* — `attributableTo` is still applied, because a guarantee
+  worth having is worth asserting;
+- **`columns_name` is the publisher's own list of the dataset's columns**,
+  which is exactly what `COUNT_PATTERN` needs and what a CKAN `notes` field
+  only sometimes carries, so it is folded into `notes`;
+- a Socrata dataset is **queryable by construction** — that is the API it
+  serves — so the resource is JSON and `datastoreActive`, which is a fact
+  about Socrata rather than an assumption about a row.
+
+The probe reaches for it only where the CKAN root did not answer, and prints
+both, because hiding the 404 would leave the next reader wondering why a
+second dialect exists.
+
 ---
 
 ## 4. What the publishers answered, 22 September 2026
