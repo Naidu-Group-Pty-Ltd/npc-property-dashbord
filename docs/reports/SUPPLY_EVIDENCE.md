@@ -538,13 +538,16 @@ nothing.
 The refresh moved from `45 17 * * *` to `20 * * * *` at 08:58 UTC on
 22 Sep 2026, and nothing else changed.
 
-| | 08:59 | 09:24 (one tick later) |
-| --- | --- | --- |
-| rows | 4,934 | **19,736** |
-| periods | `2026-07..2026-07` | **`2026-04..2026-07`** |
-| distinct SA2s | 2,458 | 2,458 |
-| `dwelling_units` | null=0 · zero=1,606 · positive=3,328 | null=0 · zero=6,377 · positive=13,359 |
-| grain samples | `sa2` len 9 · `state` len 1 · `AUS` | unchanged, no `lga` bucket |
+| | 08:59 | 09:24 (tick 1) | 10:24 (tick 2) |
+| --- | --- | --- | --- |
+| rows | 4,934 | **19,736** | **34,538** |
+| periods | `2026-07..2026-07` | **`2026-04..2026-07`** | **`2026-01..2026-07`** |
+| distinct SA2s | 2,458 | 2,458 | 2,458 |
+| `dwelling_units` | null=0 · zero=1,606 · positive=3,328 | null=0 · zero=6,377 · positive=13,359 | null=0 · zero=11,588 · positive=22,950 |
+| grain samples | `sa2` len 9 · `state` len 1 · `AUS` | unchanged, no `lga` bucket | unchanged, no `lga` bucket |
+
+`oldest` moves back **exactly `APPROVALS_PAGE_MONTHS` per tick**, twice, with
+row growth linear (+14,802 each time) and the grain distribution unmoved.
 
 And the planner said what it was doing **before** it did it, in
 `function_logs` at 09:20:03:
@@ -557,6 +560,36 @@ And the planner said what it was doing **before** it did it, in
 `2026-04→2026-06` is the window immediately below `oldest`, against a frontier
 of `2026-07`. `oldest` moved by exactly `APPROVALS_PAGE_MONTHS`. **This is the
 first time this register has ever deepened.**
+
+### The second tick proved the half the first could not
+
+At 10:20:03 the planner chose `2026-01→2026-03`, still against
+`frontier=2026-07`:
+
+```
+[market-sales-ingest] approvals: ABS,BA_SA2,2.0.0 key=1+2.9.TOT.110+150+100...M
+                      page=0 2026-01→2026-03 frontier=2026-07
+```
+
+Two things are asserted by that line and neither is assertable from one tick.
+**The walk is not a one-off**: a second consecutive run took the window below
+the new `oldest` rather than repeating the first. And **it did not re-read the
+frontier**, which is the rule that nearly went in backwards.
+
+The first version of `planApprovalsWork` tested currency as
+`asOf > frontier` — always true against a publisher two months in arrears, so
+every run would have spent itself re-reading the same three months at the top
+and the backfill would never have executed. That is the defect this module
+exists to remove, rebuilt inside the fix for it. Currency is a **cadence**
+instead: `frontierLoadedAt` is the newest row's own `loaded_at` truncated to
+its calendar month, so the frontier is read once a month and every other tick
+is depth. Two ticks in one hour, one frontier read between them, is that rule
+working.
+
+Twelve more ticks reach the `2023-01` floor, at which point `planApprovalsWork`
+answers **`settled`**, writes a `market_sales_sync` row and asks the ABS
+nothing — which is the other end of the guarantee and the next thing worth
+reading back.
 
 Two things that reading is deliberately NOT:
 
