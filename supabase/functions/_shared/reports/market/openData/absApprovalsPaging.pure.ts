@@ -149,3 +149,172 @@ export function pagesToCover(
   if (span <= 0) return 1;
   return Math.max(1, Math.ceil(span / months));
 }
+
+/**
+ * What ONE invocation should ask for, derived from the register's own edges.
+ *
+ * ## The defect this replaces
+ *
+ * `approvalsPage` steps back from the frontier by `(index - 1)` windows, so
+ * the walk is driven entirely by an `index` somebody has to supply. Nothing
+ * ever did. The nightly job posts `{"stage": "approvals"}` with no `page`, the
+ * stage reads `Number.isInteger(body.page) ? … : 0`, and page 0 asks FORWARD
+ * from today — so every run re-read the same three months and the register
+ * could never deepen past one window. `pagesToCover` computed what remained
+ * and its answer was printed into a sync row and acted on by nothing.
+ *
+ * That is the unmounted-mechanism defect this repository has now paid for in
+ * a component, a CSS class, four CI gates and `verdict.pricingUrl`: the walk
+ * existed, and nothing walked it. It is not a slow backfill — **it is no
+ * backfill**, in perpetuity, and a year-on-year reading was unreachable
+ * rather than delayed.
+ *
+ * ## The rule
+ *
+ * A register that must stay complete and current forever cannot depend on a
+ * caller's bookkeeping. It has two edges of its own and they are enough:
+ *
+ *   * `frontier` — the newest month it holds. Currency.
+ *   * `oldest`   — the oldest month it holds. Depth.
+ *
+ * So each invocation asks itself what is owed, in this order, and the order
+ * is what makes it converge:
+ *
+ *   1. **Nothing held** → the frontier window. Establishes the edge and lets
+ *      the publisher's own lag define it, which is `approvalsPage`'s rule.
+ *   2. **A month may have been published** (`asOf` past `frontier`) → the
+ *      frontier window again. This also re-reads the recent months, which is
+ *      how a Bureau REVISION reaches the register at all — the upsert
+ *      replaces on the publisher's own key.
+ *   3. **Current, and shallower than the floor** → the window immediately
+ *      below `oldest`. One window deeper per invocation, self-advancing, no
+ *      index anywhere.
+ *   4. **Current and deep enough** → `settled`: nothing is owed and NO
+ *      request is made. A settled run costs one table read.
+ *
+ * Step 4 is what makes frequency free. Convergence is bounded by cadence
+ * rather than by nights — hourly reaches 24 months in eight hours and then
+ * no-ops — and a clone with an empty register walks itself up with nobody
+ * scheduling anything, which is `urban-centre-register-ingest`'s rule that
+ * the rows a migration INSERTs do not travel.
+ *
+ * Step 2 before step 3 is deliberate: **currency outranks depth.** A register
+ * missing last month is wrong about now, and a register missing 2023 is
+ * merely shallow — and the section this feeds may state a level from a short
+ * register but may not state a CHANGE, which is a rule about what the page
+ * says rather than about what the loader does.
+ */
+export type ApprovalsWorkKind = 'frontier' | 'backfill' | 'settled';
+
+export interface ApprovalsWork {
+  kind: ApprovalsWorkKind;
+  /** Absent on `settled`, because a settled run asks the publisher nothing. */
+  startPeriod: string | null;
+  endPeriod: string | null;
+  /** Null at the frontier (the publisher's lag decides), a count below it. */
+  minPeriods: number | null;
+  /** Windows of DEPTH still owed after this one, so a run says what remains. */
+  windowsRemaining: number;
+  /** Why this window, in one word an operator can read in a sync row. */
+  because: string;
+}
+
+/**
+ * ## Why currency is a CADENCE and not a comparison
+ *
+ * The first cut of this tested `asOf > frontier` for "a month may have been
+ * published". That is wrong in a way that reproduces the very defect it
+ * replaces, and the publisher's own behaviour is why: the ABS releases
+ * building approvals about two months in arrears, so `asOf` is ALWAYS ahead
+ * of the frontier. The test would pass on every invocation, the frontier
+ * window would be re-read forever, and the backfill step below would never
+ * execute — a walk that never walks, which is precisely what
+ * `pageIndex = 0` was already doing.
+ *
+ * The register cannot tell "a new month exists" from "the publisher still
+ * lags" without asking. So it does not try. The ABS publishes monthly, so
+ * **one frontier read per calendar month** is sufficient for currency and is
+ * also how a Bureau REVISION to a recent month reaches the register at all.
+ * `frontierLoadedAt` is when those rows were last written, which is when the
+ * frontier window was last asked — a fact the register already holds in
+ * `loaded_at` rather than a counter anyone maintains.
+ *
+ * Everything else deepens. Depth is therefore the default rather than the
+ * leftover, which is what makes convergence bounded by cadence: hourly
+ * reaches a 24-month register in eight hours and then settles.
+ */
+export function planApprovalsWork(args: {
+  /** Newest month held, or null on a register with no rows. */
+  frontier: string | null;
+  /** Oldest month held, or null on a register with no rows. */
+  oldest: string | null;
+  /** `YYYY-MM` the run is asking from — the frontier is asked forward to it. */
+  asOf: string;
+  /** `YYYY-MM` the register is owed back to. */
+  floor: string;
+  /** `YYYY-MM` the frontier rows were last written, or null if never. */
+  frontierLoadedAt: string | null;
+  months?: number;
+}): ApprovalsWork {
+  const months = args.months ?? APPROVALS_PAGE_MONTHS;
+  if (months < 1) throw new Error(`a window must be at least one month, not ${months} — refused`);
+
+  const frontierWindow = (because: string, windowsRemaining: number): ApprovalsWork => {
+    const page = approvalsPage(0, args.asOf, null, months);
+    return {
+      kind: 'frontier',
+      startPeriod: page.startPeriod,
+      endPeriod: page.endPeriod,
+      minPeriods: null,
+      windowsRemaining,
+      because,
+    };
+  };
+
+  // 1 — nothing held, or an edge the register cannot state.
+  if (args.frontier === null || args.oldest === null) {
+    return frontierWindow('the register holds nothing; establishing the frontier',
+      pagesToCover(args.asOf, args.floor, months));
+  }
+
+  /*
+   * Months still owed BELOW the oldest month held. `monthSpan` is inclusive,
+   * so a register whose oldest month IS the floor owes zero.
+   */
+  const monthsBelow = Math.max(0, monthSpan(args.floor, args.oldest) - 1);
+  const depthOwed = Math.ceil(monthsBelow / months);
+
+  // 2 — currency, once per calendar month. See the note above for why this is
+  //     a cadence rather than `asOf > frontier`.
+  if (args.frontierLoadedAt === null || args.frontierLoadedAt < args.asOf) {
+    return frontierWindow(
+      args.frontierLoadedAt === null
+        ? 'the frontier has never been read'
+        : `the frontier was last read in ${args.frontierLoadedAt}, and it is now ${args.asOf}`,
+      depthOwed,
+    );
+  }
+
+  // 3 — deepen by exactly one window, immediately below the oldest held.
+  if (depthOwed > 0) {
+    const end = shiftMonth(args.oldest, -1);
+    return {
+      kind: 'backfill',
+      startPeriod: shiftMonth(end, -(months - 1)),
+      endPeriod: end,
+      minPeriods: months,
+      windowsRemaining: depthOwed - 1,
+      because: `the register reaches back to ${args.oldest} and is owed ${args.floor}`,
+    };
+  }
+
+  // 4 — complete and current. Ask the publisher nothing.
+  return {
+    kind: 'settled',
+    startPeriod: null,
+    endPeriod: null,
+    minPeriods: null,
+    windowsRemaining: 0,
+    because: `current to ${args.frontier} and complete to ${args.oldest}`,
+  };
+}
