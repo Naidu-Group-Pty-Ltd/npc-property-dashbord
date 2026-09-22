@@ -1816,6 +1816,52 @@ three exist), against the two contradicting prompt blocks, and against
 reader reaches first.** A superseded paragraph is kept for its reasoning and
 must say that it is superseded.
 
+### W3.1 applied — and the schema landed while the loader did not
+
+Applied 22 Sep 2026 through `apply-migration.yml`, the reviewed workflow, in
+dependency order and each verified by effect rather than by its own success:
+`20261213000000` (the table) and `20261213010000` (the 17:45 UTC refresh job)
+are absent from `migration-drift`'s NOT APPLIED list, which is that report
+saying both `@effect` probes are satisfied — the table in `pg_class`, the job
+in `cron.job` — and `list_tables` shows `market_building_approvals` present,
+RLS on, **0 rows**, which is correct because nothing is seeded.
+
+**Then the first ingest was fired deliberately rather than waiting for the
+schedule, and it answered HTTP 400 in five milliseconds.** That was the point
+of firing it: the loader had never executed in production, and three of its
+steps can only fail against the real publisher.
+
+The cause is not in any of the three. `function_logs` shows authentication
+SUCCEEDING (`Valid INTERNAL_EDGE_SECRET`) and the function refusing at stage
+dispatch before doing any work, because **the deployed `market-sales-ingest`
+is `main`'s, and `main`'s copy contains zero occurrences of the word
+`approvals`** — its refusal message enumerates the eight stages it does know
+and that is not among them. The stage was added in `6ba3a5e`, on this branch,
+unmerged and therefore undeployed.
+
+**The rule, which neither migration stated:** a register's migration and the
+function that fills it have a shipping ORDER, and it is not interchangeable.
+`CONTAINER_RELEASE.md` already holds exactly this for the WeasyPrint image and
+the render routes — *"the order the container and the render routes have to
+ship in, which is not interchangeable"* — and this is its instance for an
+ingest.
+
+Applying the table early is harmless: an empty register reads `Not searched`
+and every report is forbidden from stating a figure, which is the designed
+degradation and the reason the prohibition shipped before the register.
+Applying it early and ASSUMING it fills is not harmless, because the nightly
+job takes this same 400 while pg_cron reports success — the trap
+`SCREENING_EXECUTION.md` named once already: **a green cron run is not a
+delivered request.** Had the first run been left to the schedule, the register
+would have sat empty behind a green tick until somebody read the sync rows.
+
+Two things follow. The trigger migration is **re-applied once
+`market-sales-ingest` ships**, which it is written to survive. And the
+distinction that makes this reportable rather than embarrassing is that the
+failure was found by asking the database what happened rather than by trusting
+that a migration's success meant a register's readiness — §7's rule, paid
+again: read the production logs before modelling the production behaviour.
+
 ### The generated artefact nobody checked, and the 301 templates it cost
 
 `mobile/api-surface.json` above is a check wired to nothing. The seeded

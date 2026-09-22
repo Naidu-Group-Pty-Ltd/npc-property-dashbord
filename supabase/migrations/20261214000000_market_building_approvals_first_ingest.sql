@@ -49,5 +49,35 @@
 -- That is this register's own rule — asserted by effect, never by
 -- configuration — and pg_cron's own green tick is not the proof either: it
 -- reports on the SQL that queued the HTTP call, not on the call.
+--
+-- ## What the first run actually found, 22 Sep 2026 — and the ordering rule
+--
+-- It answered **HTTP 400 in five milliseconds**, and the reason is the whole
+-- value of running it early. `function_logs` shows auth SUCCEEDING
+-- (`[verifyAuth] Valid INTERNAL_EDGE_SECRET`) and the function refusing at
+-- stage dispatch before doing any work — because the DEPLOYED
+-- `market-sales-ingest` is `main`'s, and `main`'s copy contains zero
+-- occurrences of the word `approvals`. Its refusal message says so in full:
+-- *stage must be "qld", "nsw", "abs", "vic", "vic_volume", "vic_discover",
+-- "sa" or "probe"*.
+--
+-- So **the schema landed and the loader did not**. The table is in
+-- `pg_class`, the job is in `cron.job`, and the code that knows what to put
+-- in them is on an unmerged branch.
+--
+-- The rule this establishes, which nothing in the pair above stated:
+-- **a register's migration and the function that fills it have a shipping
+-- ORDER, and it is not interchangeable.** `CONTAINER_RELEASE.md` already
+-- holds the same rule for the WeasyPrint image and the render routes; this is
+-- it for an ingest. Applying the table early is harmless — an empty register
+-- reads `Not searched` and every report is forbidden from stating a figure,
+-- which is the designed degradation. Applying it early and ASSUMING it fills
+-- is not harmless, because the nightly job will take this same 400 while
+-- pg_cron reports success, and that is the documented trap the sync rows
+-- exist to defeat: a green cron run is not a delivered request.
+--
+-- **This file is therefore re-applied once `market-sales-ingest` ships.** It
+-- is safe to run again for the reason given above, and until then the 17:45
+-- job refuses nightly at no cost beyond one failed request.
 
 select public.market_sales_refresh('{"stage": "approvals"}'::jsonb);
