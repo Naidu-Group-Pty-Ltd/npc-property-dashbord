@@ -2287,6 +2287,61 @@ is the TRUSTED geography's — the generator's own `state` is
 unresolved property. The regeneration path names NO publisher, a recorded
 asymmetry asserted by a test rather than an oversight.
 
+**A jurisdiction's registers are asked behind a declared order, and the
+licences were never read.** Read
+[`JURISDICTION_PLANNING_COVERAGE.md`](./docs/reports/JURISDICTION_PLANNING_COVERAGE.md)
+before touching `_shared/planning/planningProviders.pure.ts`,
+`jurisdictionLayerProbe.pure.ts`, `SA_NOTE` / `NT_NOTE` / `WA_LICENCE_NOTE`,
+`instrumentCurrencyLine` or the `providers` block in
+`planning-data-service`. `PLANNING_PROVIDERS` / `DEVELOPMENT_PROVIDERS`
+mirror `AMENITY_PROVIDERS`' SHAPE and deliberately not its semantics: those
+are first-that-answers chains where the second answer REPLACES the first,
+while a state overlay layer and a council amendment register are different
+facts about the same lot — so these are **floor plus refinements**, the floor
+is PREPENDED wherever configuration omits it (else
+`PLANNING_PROVIDERS=amendment_register` prints a draft control as the control
+in force), and the operator override is deliberately NOT a provider because a
+variable able to drop it would silently overrule a recorded correction. The
+order is a configuration; **what a report may state turns on what ANSWERED**,
+so `refinementsThatAnswered` returns nothing where the floor did not.
+**The amendment was being read and thrown away**: `parseNswInstrument` reads
+the LEP's amendment number and commencement date off layer 8 of the SAME
+Identify the height and minimum lot size come from and handed both to
+`console.log`, while `parseNswZoning` publishes `EPI_NAME` and carries no
+amendment at all — so the register said *"The Hills Local Environmental Plan
+2019"* over a record that knew it was Amendment 12. Four premises were then
+asked of the publishers from CI (22 Sep 2026) and four came back wrong.
+**`SA_NT_NOTE` was false for South Australia** — its *"every candidate host
+refused this platform's scripted egress"* was measured on the DEVELOPMENT
+egress, and `dpti.geohub.sa.gov.au` answers 200 with 131 services across 30
+folders, two named `PlanSA` and `ePlanning`; it is two notes now and the old
+constant is DELETED rather than aliased, because an alias serves SA's
+sentence to the NT. **A bot-protection challenge is not a refusal** — NTLIS
+answered 403 with Cloudflare's interstitial and the note sent an operator to
+write to the Territory about a decision nobody there made, so `challenged` is
+its own failure, recognised by the PAGE and never the digit (the same
+challenge arrives under 403, 429 and 503), and `bad_request` covers WA's 400
+`ArcGIS Server Error`, which is our parameters. **A catalogue outranks an
+unstated licence** — the ACT's verified organisation lists 391 services while
+its Territory Plan service answers a `copyrightText` of `"TP"`, and ranked
+the other way the note read *"nothing from it is republished here"* about the
+jurisdiction whose zone this product publishes on every ACT report; the
+principle is that a licence read from ONE service does not describe a
+catalogue of 391, while a stated RESTRICTION stays above it. And **a
+directory listing folders and no services has not answered** — the probe
+walks the publisher's own folder names now, to a ceiling that clears SA's
+thirty and reports PARTIAL past it. **Five jurisdictions' layers are already
+republished into commercial client PDFs under a licence typed into a source
+file and none had ever been read from the publisher**: the verdict is
+three-valued and `silent` is load-bearing, because a three-character
+`copyrightText` is silence about terms rather than a denial of them, and
+nothing here rewrites a constant either way. **All five answered `silent`
+and none contradicted** — Queensland's *"this is an open data map service"*
+describes a service rather than granting terms, and Tasmania names the
+statute the mapping was made under — so nothing is wrong, and what five
+silences together say is that every one of those claims rests on something
+this repository does not record.
+
 **W3.6 — an absence belongs to a jurisdiction, and one had been forgotten.**
 The five absences and the per-jurisdiction sentences already existed; what did
 not exist was anything that could tell you a jurisdiction was MISSING.

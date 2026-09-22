@@ -898,6 +898,88 @@ to **SA, WA, NT and ACT**, and add each jurisdiction's amendments and
 major-project registers as refinements *above* the floor — never as the only
 answer.
 
+> **Closed 22 Sep 2026** —
+> [`JURISDICTION_PLANNING_COVERAGE.md`](./JURISDICTION_PLANNING_COVERAGE.md).
+> Two halves, and the second one needed no new register at all.
+>
+> **The orders mirror `AMENITY_PROVIDERS`' shape and deliberately not its
+> semantics.** Those chains are first-that-answers: a second provider is
+> consulted because the first could not answer, and its answer REPLACES what
+> the first would have given. A state overlay layer and a council amendment
+> register are not two attempts at one answer — they are different facts
+> about the same lot, and a draft amendment does not supersede the control in
+> force. So these are **floor plus refinements**, with the floor PREPENDED
+> wherever configuration omits it, because `PLANNING_PROVIDERS=amendment_register`
+> would otherwise print a draft control as the control in force. The operator
+> override is deliberately not a provider: a variable able to drop it would
+> silently overrule a person who had recorded a correction. And the order is a
+> configuration while **what a report may state turns on what ANSWERED**, so
+> the answer publishes both and `refinementsThatAnswered` returns nothing
+> where the floor did not.
+>
+> **The amendment was being read and thrown away.** `parseNswInstrument`
+> reads the LEP's amendment number and commencement date off layer 8 of the
+> *same* Identify the height and the minimum lot size come from, and handed
+> both to `console.log` — while `parseNswZoning` publishes `EPI_NAME` and
+> carries no amendment at all. So the register's Instrument column read *"The
+> Hills Local Environmental Plan 2019"* over a record that knew it was
+> Amendment 12, which is the first question a town planner asks. It is the
+> `instrument_currency` provider now: a fact about the DOCUMENT, stating no
+> control and admitting no use, with an absent amendment omitted rather than
+> worded, drawn only beside a register that returned something.
+>
+> **Four premises were asked of the publishers and four came back wrong.**
+> `SA_NT_NOTE` — *"every candidate host refused this platform's scripted
+> egress"* — was measured on the DEVELOPMENT egress, the one that 403s
+> CONNECT for `data.gov.au` and every ABS host. South Australia's state
+> spatial service answers HTTP 200 with **131 services across 30 folders, two
+> named `PlanSA` and `ePlanning`**. It is two notes now, and the old constant
+> is DELETED rather than aliased, because an alias would have served SA's
+> sentence to the NT. A **bot-protection challenge is not a refusal**: NTLIS
+> answered 403 with Cloudflare's interstitial, and read as `refused` the note
+> sent an operator to write to the Territory about a decision nobody there
+> made — `challenged` is recognised by the PAGE and never the digit. **A
+> catalogue outranks an unstated licence**: the ACT's verified organisation
+> lists 391 services while its Territory Plan service answers a
+> `copyrightText` of `"TP"`, so the reading said *"nothing from it is
+> republished here"* about the jurisdiction whose zone this product publishes
+> on every ACT report. And **a directory listing folders and no services has
+> not answered** — WA's root lists five folders and zero services, and the
+> note read *"lists 0 services"*, a sentence about our walk wearing the shape
+> of a finding about Landgate.
+>
+> **Stage 2 is the mirror and the half that matters more.** Five
+> jurisdictions' layers are already republished into commercial client PDFs
+> under a licence typed into a source file, and **none had ever been read
+> from the publisher**. A wrong restriction costs a report a row; a wrong
+> permission puts somebody else's data in a document that has been emailed.
+> The verdict is three-valued and `silent` is load-bearing — nothing rewrites
+> a constant, because a three-character `copyrightText` is silence about
+> terms rather than a denial of them. **All five came back `silent` and none
+> contradicted** (NSW says nothing at all; Queensland says *"this is an open
+> data map service"*, which describes a service rather than granting terms;
+> Tasmania names the statute the mapping was made under; the ACT says `TP`).
+> So nothing is wrong and nothing is fixed by editing a constant — but five
+> silences together say that every one of those claims rests on something
+> this repository does not record, and the remedy is a line beside each
+> constant naming where the grant comes from. Deliberately not a build
+> failure: a job that went red over somebody else's `copyrightText` is a job
+> people learn to ignore.
+>
+> **Three of the four stage-1 readings changed between the first run and the
+> second, on the same day** — WA from *"lists 0 services"* to a walked
+> catalogue, NT from `refused_us` to `challenged`, ACT from
+> `licence_unverified` to a catalogue of 391 — which is why the probe was run
+> twice rather than shipped on its first answer. Two of those three are the
+> difference between a sentence about a publisher and a sentence about us.
+>
+> **What is not claimed:** no SA/WA/NT/ACT overlay layer is read (reachable
+> is not read, and `OVERLAY_COVERAGE` still says `not_read` for all four);
+> `WA_LICENCE_NOTE` is unchanged and still unverified, because WA's root
+> answered folders-only and softening a restriction on no evidence is the one
+> direction that could breach a licence; `amendment_register` is integrated
+> nowhere and says so rather than being omitted.
+
 **W3.5 · Close the Demand scoring gap.**
 Sales counts for ACT, NT, TAS and WA, so Demand can score nationally rather than
 in four states. Today `scoreTransactionVolume` is the only primary demand

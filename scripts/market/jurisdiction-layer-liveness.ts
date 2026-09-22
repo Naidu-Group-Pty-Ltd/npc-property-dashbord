@@ -331,6 +331,27 @@ async function main(): Promise<void> {
     console.log('    publisher\'s terms of use and decide whether the layer may be drawn.');
   }
 
+  /*
+   * Five silences together are a different statement from five separate
+   * ones, and the summary has to make it rather than leaving a reader to
+   * count rows. Not a defect and not a build failure — a publisher is under
+   * no obligation to put its licence in a metadata field — but it means
+   * every one of these claims rests on something nobody wrote down, and the
+   * remedy is to record WHERE each claim comes from beside the constant.
+   */
+  const silent = verdicts.filter((v) => v.verdict.kind === 'silent');
+  if (silent.length === verdicts.length && verdicts.length > 0) {
+    console.log('');
+    console.log('  EVERY LICENCE CLAIM IS SILENT AT THE SERVICE.');
+    console.log('  None is contradicted, so nothing here is a defect and nothing is fixed by');
+    console.log('  editing a constant. What it does mean is that all '
+      + `${verdicts.length} claims rest on`);
+    console.log('  something this repository does not record. The remedy is a line beside');
+    console.log('  each constant naming where its licence is granted — the publisher\'s');
+    console.log('  terms of use or its open-data catalogue entry — not a change to the');
+    console.log('  value.');
+  }
+
   console.log('\n  What this settles, and what it does not:');
   console.log('');
   const restricted = readings.filter((r) => r.kind === 'licence_restricted');
