@@ -17,6 +17,7 @@
  * narrower rule this work exists for: a 404 against a host this repository
  * typed may never render as a jurisdiction publishing nothing.
  */
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_DEVELOPMENT_PROVIDERS,
@@ -31,7 +32,9 @@ import {
   refinementsThatAnswered,
 } from '../../../../supabase/functions/_shared/planning/planningProviders.pure';
 import {
+  FOLDER_WALK_CEILING,
   LAYER_CANDIDATES,
+  LICENCE_CLAIMS,
   OPEN_LICENCE_PATTERN,
   RESTRICTED_LICENCE_PATTERN,
   UNREAD_JURISDICTIONS,
@@ -42,12 +45,23 @@ import {
   layerMetadataUrl,
   parseArcgisAnswer,
   parseWfsCapabilities,
+  bodyLooksChallenged,
+  claimNeedsAttention,
+  folderRootFor,
+  folderWalkIsComplete,
+  licenceMetadataUrl,
   readLicenceEvidence,
+  verifyLicenceClaim,
   type CandidateOutcome,
   type JurisdictionLayerReading,
   type LayerCandidate,
 } from '../../../../supabase/functions/_shared/planning/jurisdictionLayerProbe.pure';
 import { buildActZoningQuery } from '../../../../supabase/functions/_shared/planning/planningSources.pure';
+import {
+  buildPlanningFacts,
+  instrumentCurrencyLine,
+  renderConstraintRegister,
+} from '../../../../supabase/functions/_shared/planning/planningFacts.pure';
 
 const env = (vars: Record<string, string>) => (k: string): string | undefined => vars[k];
 
@@ -396,14 +410,211 @@ describe('the candidates', () => {
     }
   });
 
+  /*
+   * Asserted on a constructed candidate rather than by finding one of each
+   * kind in the list: which kinds the list happens to hold is data that the
+   * measurements change, and a spec pinning it fails for the wrong reason.
+   * Both composers are production paths — the WFS one serves Victoria's
+   * licence claim.
+   */
   it('composes its own metadata request from the root', () => {
-    const arc = LAYER_CANDIDATES.find((c) => c.kind === 'arcgis');
-    const wfs = LAYER_CANDIDATES.find((c) => c.kind === 'wfs');
-    expect(arc).toBeDefined();
-    expect(wfs).toBeDefined();
-    expect(layerMetadataUrl(arc as LayerCandidate)).toMatch(/\?f=json$/);
-    expect(layerMetadataUrl(wfs as LayerCandidate)).toMatch(/\?service=WFS&request=GetCapabilities$/);
-    expect(layerMetadataUrl({ ...(arc as LayerCandidate), root: 'https://h/x///' })).toBe('https://h/x?f=json');
+    const base: LayerCandidate = {
+      jurisdiction: 'SA', publisher: 'p', service: 's', kind: 'arcgis', root: 'https://h/x',
+    };
+    expect(layerMetadataUrl(base)).toBe('https://h/x?f=json');
+    expect(layerMetadataUrl({ ...base, kind: 'wfs' }))
+      .toBe('https://h/x?service=WFS&request=GetCapabilities');
+    expect(layerMetadataUrl({ ...base, root: 'https://h/x///' })).toBe('https://h/x?f=json');
+  });
+
+  /* A folder is a candidate composed from the PUBLISHER'S own folder name. */
+  it('composes a folder candidate without typing a path', () => {
+    const root = candidatesFor('WA')[0];
+    const folder = folderRootFor(root, 'SLIP_Public_Services');
+    expect(folder.root).toBe(`${root.root}/SLIP_Public_Services`);
+    expect(folder.jurisdiction).toBe('WA');
+    expect(folder.service).toContain('SLIP_Public_Services');
+    expect(layerMetadataUrl(folder)).toMatch(/\?f=json$/);
+  });
+
+  /*
+   * `catalogueWalkIsComplete`'s rule one level down. The ceiling has to clear
+   * SA's measured thirty folders, or the walk truncates and an absence read
+   * from it is the `limit=1000` answered with 25 fault again.
+   */
+  it('can walk every folder either measured jurisdiction published', () => {
+    expect(FOLDER_WALK_CEILING).toBeGreaterThanOrEqual(30);
+    expect(folderWalkIsComplete(Array.from({ length: 30 }, (_, i) => `f${i}`))).toBe(true);
+    expect(folderWalkIsComplete(Array.from({ length: FOLDER_WALK_CEILING + 1 }, (_, i) => `f${i}`)))
+      .toBe(false);
+  });
+});
+
+/**
+ * The bot-protection interstitial, and why it is not a refusal.
+ *
+ * Measured 22 Sep 2026: `www.ntlis.nt.gov.au` answered **403** with
+ * `<title>Just a moment...</title>`. Read as `refused`, the note said *"NT's
+ * planning service declined this platform's requests"* — which sends an
+ * operator to write to the Northern Territory about a decision nobody there
+ * made. The remedy is ours.
+ */
+describe('a challenge page is not a decision the publisher made', () => {
+  const CHALLENGE = '<!DOCTYPE html><html lang="en-US"><head><title>Just a moment...</title>'
+    + '<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">';
+
+  it('recognises the interstitial NT actually served', () => {
+    expect(bodyLooksChallenged(CHALLENGE)).toBe(true);
+    expect(classifyCandidateFailure(403, false, CHALLENGE)).toBe('challenged');
+  });
+
+  /*
+   * Matched on the page and never on the digit, because the same challenge is
+   * served under 403, 429 and 503 depending on the edge's mood — and the same
+   * 403 is how a service genuinely declines.
+   */
+  it('is decided by the page rather than the status', () => {
+    expect(classifyCandidateFailure(503, false, CHALLENGE)).toBe('challenged');
+    expect(classifyCandidateFailure(429, false, CHALLENGE)).toBe('challenged');
+    expect(classifyCandidateFailure(403, false, '{"error":{"code":403,"message":"Access denied"}}'))
+      .toBe('refused');
+  });
+
+  it('does not read an ordinary refusal as a challenge', () => {
+    expect(bodyLooksChallenged('You are not authorised to access this service.')).toBe(false);
+    expect(bodyLooksChallenged('')).toBe(false);
+  });
+
+  /* A 400 is the request, not the address — and both are ours. */
+  it('blames us for a 400 as well as a 404', () => {
+    expect(classifyCandidateFailure(400, false, '<title>ArcGIS Server Error</title>')).toBe('bad_request');
+    expect(classifyCandidateFailure(405, false)).toBe('bad_request');
+    const outcomes = [
+      { candidate: { jurisdiction: 'WA', publisher: 'p', service: 'a', kind: 'arcgis', root: 'https://h' } as LayerCandidate,
+        outcome: { kind: 'failed', failure: 'bad_request', status: 400, detail: '400' } as CandidateOutcome },
+      { candidate: { jurisdiction: 'WA', publisher: 'p', service: 'b', kind: 'arcgis', root: 'https://h' } as LayerCandidate,
+        outcome: { kind: 'failed', failure: 'no_such_service', status: 404, detail: '404' } as CandidateOutcome },
+    ];
+    expect(assessJurisdictionLayers(outcomes).kind).toBe('no_candidate_resolved');
+  });
+
+  it('names a challenge ahead of everything else it could be confused with', () => {
+    const c = { jurisdiction: 'NT', publisher: 'p', service: 's', kind: 'arcgis', root: 'https://h' } as LayerCandidate;
+    const r = assessJurisdictionLayers([
+      { candidate: c, outcome: { kind: 'failed', failure: 'challenged', status: 403, detail: 'x' } },
+      { candidate: c, outcome: { kind: 'failed', failure: 'unreachable', status: null, detail: 'dns' } },
+    ]);
+    expect(r.kind).toBe('challenged');
+    const note = jurisdictionLayerNote(r, 'NT');
+    expect(note).toMatch(/bot-protection challenge/i);
+    expect(note).toMatch(/rather than a decision NT made/i);
+    expect(note).not.toMatch(/declined/i);
+  });
+});
+
+/**
+ * A catalogue outranks an unstated licence.
+ *
+ * Measured: the ACT's verified organisation answers **391 services** while
+ * its one Territory Plan service answers a `copyrightText` of `"TP"`. Ranked
+ * the other way the note read *"nothing from it is republished here"* about
+ * a jurisdiction whose zone this product publishes on every ACT report.
+ */
+describe('the reading order the first live run settled', () => {
+  const c = (service: string): LayerCandidate =>
+    ({ jurisdiction: 'ACT', publisher: 'p', service, kind: 'arcgis', root: 'https://h' });
+
+  it('prefers a catalogue of 391 to one service saying "TP"', () => {
+    const r = assessJurisdictionLayers([
+      { candidate: c('org directory'), outcome: { kind: 'directory', services: Array.from({ length: 391 }, (_, i) => `s${i}`), folders: [], bytes: 1 } },
+      { candidate: c('TP FeatureServer'), outcome: { kind: 'answered', layers: ['Territory Plan Land Use Zones'], licence: { kind: 'unverified', evidence: 'TP' }, bytes: 1 } },
+    ]);
+    expect(r.kind).toBe('catalogue_readable');
+    if (r.kind === 'catalogue_readable') expect(r.services).toBe(391);
+  });
+
+  /* A stated RESTRICTION still outranks a catalogue: it is a prohibition. */
+  it('keeps a stated restriction above a catalogue', () => {
+    const r = assessJurisdictionLayers([
+      { candidate: c('dir'), outcome: { kind: 'directory', services: ['a', 'b'], folders: [], bytes: 1 } },
+      { candidate: c('svc'), outcome: { kind: 'answered', layers: [], licence: { kind: 'restricted', evidence: 'non-commercial' }, bytes: 1 } },
+    ]);
+    expect(r.kind).toBe('licence_restricted');
+  });
+
+  /*
+   * Folders and no services: WA's measured answer. A catalogue that lists
+   * zero services has not answered the question, and saying it "lists 0
+   * services" is a sentence about our walk wearing the shape of a finding
+   * about Landgate.
+   */
+  it('does not call a folders-only directory a catalogue of nothing', () => {
+    const r = assessJurisdictionLayers([
+      { candidate: c('SLIP root'), outcome: { kind: 'directory', services: [], folders: ['SLIP_Public_Services', 'Utilities'], bytes: 1 } },
+    ]);
+    expect(r.kind).toBe('catalogue_folders_only');
+    const note = jurisdictionLayerNote(r, 'WA');
+    expect(note).toMatch(/2 folders and no service/);
+    expect(note).toMatch(/outstanding work here/);
+    expect(note).not.toMatch(/\b0 services\b/);
+  });
+});
+
+/**
+ * The licence claims this product already republishes under.
+ *
+ * The mirror of `WA_LICENCE_NOTE`: there a restriction is asserted and
+ * nothing is fetched, here a permission is asserted and everything is. A
+ * wrong restriction costs a report a row; a wrong permission puts somebody
+ * else's data in a document that has already been emailed.
+ */
+describe('the licence claims, checked against the publisher', () => {
+  it('names a claim for every jurisdiction whose layers are read', () => {
+    expect([...new Set(LICENCE_CLAIMS.map((c) => c.jurisdiction))].sort())
+      .toEqual(['ACT', 'NSW', 'QLD', 'TAS', 'VIC']);
+  });
+
+  /* Each claim names the constant it comes from, so a reader can check it. */
+  it('names where each claim is made', () => {
+    for (const c of LICENCE_CLAIMS) {
+      expect(c.claimedIn, c.jurisdiction).toMatch(/\.pure\.ts — [A-Z_]+$/);
+      expect(c.root, c.jurisdiction).toMatch(/^https:\/\//);
+      expect(c.root, c.jurisdiction).not.toContain('?');
+      expect(licenceMetadataUrl(c), c.jurisdiction).toContain(c.root);
+    }
+  });
+
+  /*
+   * Three-valued on purpose, and `silent` is the load-bearing one. A
+   * three-character `copyrightText` is silence about terms, not a denial of
+   * them — downgrading a real CC BY 4.0 grant on the strength of it is the
+   * same error as upgrading an unstated licence to permission.
+   */
+  it('reads silence as silence and only a stated restriction as a contradiction', () => {
+    expect(verifyLicenceClaim({ kind: 'unverified', evidence: 'TP' }).kind).toBe('silent');
+    expect(verifyLicenceClaim({ kind: 'unverified', evidence: null }).kind).toBe('silent');
+    expect(verifyLicenceClaim({ kind: 'open', evidence: 'CC BY 4.0' }).kind).toBe('corroborated');
+    expect(verifyLicenceClaim({ kind: 'restricted', evidence: 'non-commercial' }).kind).toBe('contradicted');
+    expect(verifyLicenceClaim(null, 'HTTP 503').kind).toBe('unasked');
+  });
+
+  it('asks for attention only where the publisher states a restriction', () => {
+    expect(claimNeedsAttention({ kind: 'contradicted', evidence: 'x' })).toBe(true);
+    expect(claimNeedsAttention({ kind: 'silent', evidence: 'TP' })).toBe(false);
+    expect(claimNeedsAttention({ kind: 'unasked', detail: 'x' })).toBe(false);
+    expect(claimNeedsAttention({ kind: 'corroborated', evidence: 'CC BY' })).toBe(false);
+  });
+
+  /*
+   * `corroborated` means the publisher names AN open licence, not THIS one.
+   * Matching the exact string would report `CC BY 3.0 AU` against a service
+   * saying `CC BY 4.0` as a contradiction of a claim that is substantively
+   * right — and what matters for a commercial report is whether
+   * republication is permitted at all.
+   */
+  it('does not demand the publisher name the same version', () => {
+    expect(verifyLicenceClaim({ kind: 'open', evidence: 'Creative Commons Attribution 4.0' }).kind)
+      .toBe('corroborated');
   });
 
   /*
@@ -418,5 +629,133 @@ describe('the candidates', () => {
     expect(org, 'the ACT zone query no longer names an AGOL organisation').not.toBeNull();
     const act = candidatesFor('ACT');
     expect(act.every((c) => c.root.includes((org as RegExpExecArray)[1]))).toBe(true);
+  });
+});
+
+
+/**
+ * The refinement that was already being read and thrown away.
+ *
+ * `parseNswInstrument` reads the LEP's amendment number and commencement date
+ * off layer 8 of the same Identify the height and the minimum lot size come
+ * from, and handed both to `console.log`. So the register's Instrument column
+ * named *The Hills Local Environmental Plan 2019* over a record that knew
+ * which amendment of it was in force.
+ */
+describe('instrument currency — the amendment the controls come from', () => {
+  const factsWith = (instrumentCurrency: unknown, constraints: unknown[] = []) => buildPlanningFacts({
+    planningData: {
+      jurisdiction: 'NSW',
+      fetchedAt: '2026-09-22T00:00:00.000Z',
+      zoning: { status: 'ok', zoneCode: 'R2', zoneLabel: 'Low Density Residential' },
+      constraints,
+      constraintsAsked: [],
+      constraintRegisters: { answered: ['NSW principal'], unavailable: [] },
+      instrumentCurrency,
+    },
+  });
+
+  it('names the instrument and the amendment in force, with its commencement', () => {
+    const line = instrumentCurrencyLine(factsWith({
+      name: 'The Hills Local Environmental Plan 2019',
+      amendment: '12',
+      commenced: '2026-03-03',
+      lga: 'THE HILLS SHIRE',
+    }));
+    expect(line).toContain('The Hills Local Environmental Plan 2019');
+    expect(line).toContain('Amendment 12');
+    expect(line).toContain('3 Mar 2026');
+  });
+
+  it('does not say "Amendment Amendment 12"', () => {
+    const line = instrumentCurrencyLine(factsWith({ name: 'X LEP 2019', amendment: 'Amendment 12' }));
+    expect(line).toContain('Amendment 12');
+    expect(line).not.toMatch(/Amendment\s+Amendment/i);
+  });
+
+  /*
+   * `stripPlaceholderRows`' rule: an absence is omitted, never worded. There
+   * is nothing a reader can do with "the amendment in force was not
+   * published", and the sentence still carries the instrument.
+   */
+  it('omits an absent amendment rather than wording it', () => {
+    const line = instrumentCurrencyLine(factsWith({ name: 'X LEP 2019', amendment: null }));
+    expect(line).toBe('The controls above are read from *X LEP 2019*.');
+    expect(line).not.toMatch(/not (?:published|available|stated)/i);
+  });
+
+  it('is absent entirely for a jurisdiction that answers none, and on a legacy enrichment', () => {
+    expect(instrumentCurrencyLine(factsWith(null))).toBeNull();
+    expect(instrumentCurrencyLine(factsWith(undefined))).toBeNull();
+    /* A reading with no instrument name is no reading, not a partial one. */
+    expect(instrumentCurrencyLine(factsWith({ amendment: '12' }))).toBeNull();
+  });
+
+  /*
+   * Drawn only beside a register that returned something: "the controls above"
+   * refers to nothing otherwise, which is the `verdict.pricingUrl` defect —
+   * a value computed and never rendered — inverted into a value rendered
+   * where its subject does not exist.
+   */
+  it('reaches the register only where the register returned something', () => {
+    const currency = { name: 'X LEP 2019', amendment: '12', commenced: '2026-03-03', lga: 'L' };
+    const empty = renderConstraintRegister(factsWith(currency));
+    expect(empty).not.toContain('X LEP 2019');
+
+    const withRow = renderConstraintRegister(factsWith(currency, [{
+      family: 'heritage', kind: 'overlay', label: 'Heritage Conservation Area',
+      instrument: 'X LEP 2019', clause: '5.10', currencyDate: '2026-03-03',
+      source: 'NSW principal', licence: 'CC BY 4.0',
+    }]));
+    expect(withRow).toContain('X LEP 2019');
+    expect(withRow).toContain('Amendment 12');
+  });
+
+  /*
+   * It states no control and admits no use — it is a fact about the DOCUMENT.
+   * The same rule `planningControlGuide`'s spec enforces for the guide: a
+   * sentence written in advance may carry no measurement.
+   */
+  it('states no control, no measurement and no permission', () => {
+    const line = instrumentCurrencyLine(factsWith({
+      name: 'X LEP 2019', amendment: '12', commenced: '2026-03-03', lga: 'L',
+    })) as string;
+    expect(line).not.toMatch(/\d+(?:\.\d+)?\s?(?:m|m²|sqm|metres|%)\b/);
+    expect(line).not.toMatch(/\bpermit(?:ted|s)?\b|\bmay be built\b|\bapprov/i);
+  });
+});
+
+/**
+ * A module with no call site is not shipped.
+ *
+ * The Builder Portal paid for this rule twice — three components written,
+ * documented, merged and deployed with nothing rendering them, then 28 CSS
+ * classes nothing wore. An unused export typechecks, lints and builds, so the
+ * only thing that catches it is an assertion that something calls it.
+ */
+describe('the declared orders are actually consulted', () => {
+  const service = readFileSync('supabase/functions/planning-data-service/index.ts', 'utf8');
+
+  it('is read by planning-data-service, not merely exported', () => {
+    expect(service).toContain("planningProviders.pure.ts");
+    expect(service).toContain('planningProviderOrder(');
+    expect(service).toContain('developmentProviderOrder(');
+    expect(service).toContain('refinementsThatAnswered(');
+  });
+
+  /*
+   * The order is a configuration; what a report may state turns on what
+   * ANSWERED. Publishing only the order would let a coverage sentence claim a
+   * refinement that contributed nothing.
+   */
+  it('publishes what answered beside what was configured', () => {
+    expect(service).toMatch(/floorAnswered:\s*floorAnswered\(/);
+    expect(service).toMatch(/refinementsAnswered:\s*refinementsThatAnswered\(/);
+  });
+
+  /* The amendment is published now, not logged. */
+  it('publishes the NSW instrument reading rather than logging it', () => {
+    expect(service).toContain('instrumentCurrency = parseNswInstrument(');
+    expect(service).not.toMatch(/console\.log\([^)]*NSW instrument/);
   });
 });

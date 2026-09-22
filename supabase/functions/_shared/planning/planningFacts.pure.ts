@@ -193,6 +193,17 @@ export interface PlanningFacts {
    * resolved at all.
    */
   overlayCoverage: OverlayCoverage | null;
+  /**
+   * Which instrument the controls in force belong to, and which amendment of
+   * it. The `instrument_currency` provider's reading — a fact about the
+   * DOCUMENT and never about the property, which is what lets it be stated
+   * with no caveat about what may be built on the land.
+   *
+   * Null on every jurisdiction but NSW, and on every enrichment stored before
+   * W3.4. That is the ordinary state of a refinement that cannot answer: the
+   * floor's reading stands exactly as it did and nothing is drawn.
+   */
+  instrumentCurrency: InstrumentCurrency | null;
   /** State development instruments the point sits inside. */
   instruments: PlanningCell;
   instrumentList: PlanningInstrumentFact[];
@@ -319,6 +330,22 @@ function operatorCell(label: string, value: string, retrievedAt: string | null):
  * Nothing here fetches, and nothing here invents: every cell either carries a
  * value with its provenance or names which absence it is.
  */
+/**
+ * The instrument a control in force belongs to, in the publisher's own terms.
+ *
+ * `amendment` is the instrument's own amendment identifier — NSW answers
+ * `Amendment 12` on layer 8 of the same Identify the height and lot size come
+ * from. It is deliberately NOT a draft: an amendment IN FORCE and a draft
+ * amendment on exhibition are opposite statements about what binds this lot,
+ * and `PlanningProvider` keeps them as two providers for that reason.
+ */
+export interface InstrumentCurrency {
+  name: string;
+  amendment: string | null;
+  commenced: string | null;
+  lga: string | null;
+}
+
 export function buildPlanningFacts(input: PlanningFactsInput): PlanningFacts {
   const data = isRecord(input.planningData) ? input.planningData : null;
   const o = input.overrides ?? {};
@@ -638,6 +665,7 @@ export function buildPlanningFacts(input: PlanningFactsInput): PlanningFacts {
     constraintsAsked,
     constraintRegisters,
     overlayCoverage: jurisdiction ? OVERLAY_COVERAGE[jurisdiction] : null,
+    instrumentCurrency: readInstrumentCurrency(data?.instrumentCurrency),
     controls,
     instruments,
     instrumentList,
@@ -752,6 +780,57 @@ export function checkedAndNotMapped(facts: PlanningFacts): string[] {
     .map((f) => CONSTRAINT_FAMILY_LABEL[f] ?? f);
 }
 
+/**
+ * Read the instrument-currency reading, refusing anything without a name.
+ *
+ * A name is the one field the sentence cannot be written without, so a
+ * reading missing it is no reading at all rather than a partial one — the
+ * rule `parseNswInstrument` already applies at its own end.
+ */
+function readInstrumentCurrency(raw: unknown): InstrumentCurrency | null {
+  if (!isRecord(raw)) return null;
+  const name = str(raw.name);
+  if (!name) return null;
+  return {
+    name,
+    amendment: str(raw.amendment),
+    commenced: str(raw.commenced),
+    lga: str(raw.lga),
+  };
+}
+
+/**
+ * Which document the controls above come from, and how current it is.
+ *
+ * The register's Instrument column has always named the instrument — *The
+ * Hills Local Environmental Plan 2019* — and never which AMENDMENT of it is
+ * in force, which is the first question a town planner asks of a height or a
+ * minimum lot size. NSW answers it on layer 8 of the very Identify the
+ * controls are read from, and until W3.4 the answer went to a `console.log`.
+ *
+ * Three bounds. The sentence is about the DOCUMENT and never about the
+ * property, so it states no control and admits no use. An absent amendment
+ * is OMITTED rather than worded — `stripPlaceholderRows`' rule, and there is
+ * nothing a reader could do with *"the amendment in force was not
+ * published"*. And it is drawn only beside a register that returned
+ * something, because *"the controls above"* refers to nothing otherwise.
+ */
+export function instrumentCurrencyLine(facts: PlanningFacts): string | null {
+  const c = facts.instrumentCurrency;
+  if (!c) return null;
+  const amended = c.amendment === null
+    ? null
+    : /^amendment\b/i.test(c.amendment) ? c.amendment : `Amendment ${c.amendment}`;
+  const commenced = auDate(c.commenced);
+  if (!amended) {
+    return `The controls above are read from *${c.name}*.`;
+  }
+  return `The controls above are read from *${c.name}*, as amended by ${amended}`
+    + `${commenced ? `, which commenced ${commenced}` : ''}. `
+    + 'That is the instrument in force as this report reads it; a later amendment, and any draft '
+    + 'amendment on exhibition, are published by the council rather than on the layers read here.';
+}
+
 export function renderConstraintRegister(facts: PlanningFacts): string {
   const lines: string[] = [];
   const readings = facts.constraints;
@@ -805,6 +884,9 @@ export function renderConstraintRegister(facts: PlanningFacts): string {
       lines.push(`*Before you proceed:* ${guide.verify}`);
       lines.push('');
     }
+
+    const currency = instrumentCurrencyLine(facts);
+    if (currency) lines.push(currency, '');
 
     const sources = [...new Set(readings.map((c) => `${c.source}${c.licence ? ` (${c.licence})` : ''}`))];
     lines.push(`Retrieved from ${sources.join('; ')}${facts.retrievedAt ? ` on ${auDate(facts.retrievedAt)}` : ''}.`, '');

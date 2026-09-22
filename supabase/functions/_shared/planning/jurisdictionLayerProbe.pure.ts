@@ -72,8 +72,12 @@
  * every jurisdiction carries MORE THAN ONE candidate and the probe prints
  * every outcome.
  *
- * Deno-compatible: no imports.
+ * Deno-compatible: one type-only import, and deliberately only that. The
+ * jurisdiction union is `planningSources.pure.ts`' — re-declaring it here
+ * would be the two-ends-drift fault this module's own ACT spec exists to
+ * stop.
  */
+import type { PlanningJurisdiction } from './planningSources.pure.ts';
 
 export type LayerServiceKind = 'arcgis' | 'wfs';
 
@@ -151,20 +155,79 @@ export function readLicenceEvidence(fields: ReadonlyArray<string | null | undefi
   return { kind: 'unverified', evidence: joined.slice(0, 400) };
 }
 
-/** Why a candidate produced no reading. Three answers, three remedies. */
-export type CandidateFailure = 'no_such_service' | 'refused' | 'unreachable';
+/**
+ * Why a candidate produced no reading. Five answers, five remedies.
+ *
+ * `challenged` was added by the first live run and it is the measurement that
+ * justifies this whole classification. `www.ntlis.nt.gov.au` answered **403
+ * with `<title>Just a moment...</title>`** — a bot-protection interstitial,
+ * not the Northern Territory declining to publish. Read as `refused`, the
+ * note said *"NT's planning service declined this platform's requests"*,
+ * which sends an operator to write to the NT Government about a decision
+ * nobody there made. The remedy is a browser-shaped client or an
+ * agreed-upon path, and it is OURS.
+ *
+ * `bad_request` is the other half of the same lesson. WA's WFS root answered
+ * **400 with `<title>ArcGIS Server Error</title>`**: the service exists and
+ * our parameters were wrong. A 400 filed as `unreachable` reads as somebody
+ * else's outage.
+ */
+export type CandidateFailure =
+  /** 404/410 — the address is ours to fix. */
+  | 'no_such_service'
+  /** 400/405/415/501 — the request is ours to fix. */
+  | 'bad_request'
+  /** A bot-protection interstitial stood in front of the service. Ours. */
+  | 'challenged'
+  /** 401/403 from the service itself. Theirs, and a real finding. */
+  | 'refused'
+  /** A timeout, a DNS failure or a 5xx. Nobody's. */
+  | 'unreachable';
+
+/** Which failures are ours rather than the publisher's. */
+export const OUR_FAILURES: readonly CandidateFailure[] = ['no_such_service', 'bad_request', 'challenged'];
+
+/**
+ * A bot-protection interstitial, recognised by its own page.
+ *
+ * Deliberately matched on the challenge page's own title and markers rather
+ * than on the status code, because the same 403 is how a service genuinely
+ * declines. Getting this wrong in either direction is a mistake: reading a
+ * real refusal as a challenge understates a finding about the publisher, and
+ * reading a challenge as a refusal invents one.
+ */
+export function bodyLooksChallenged(body: string): boolean {
+  const head = body.slice(0, 4000);
+  return /just a moment\.\.\.|cf[-_]?chl|__cf_chl|challenge-platform|checking your browser|enable javascript and cookies to continue|attention required!\s*\|\s*cloudflare/i
+    .test(head);
+}
 
 /**
  * Classify a failure by what it says about WHOSE problem it is.
  *
- * A 404 is ours: a service root we typed wrong. A 403 is theirs, and a real
- * finding. A 5xx or a timeout is nobody's. Reporting the first as the second
- * is what turned a typed URL into a statement about a jurisdiction.
+ * A 404 is ours: a service root we typed wrong. A 400 is ours too: the
+ * service answered and our parameters were wrong. A challenge page is ours,
+ * whatever digit it wears. A 403 from the service itself is theirs, and a
+ * real finding. A 5xx or a timeout is nobody's.
+ *
+ * Reporting the first four as each other is what turned a typed URL into a
+ * statement about a jurisdiction.
  */
-export function classifyCandidateFailure(status: number | null, networkError: boolean): CandidateFailure {
+export function classifyCandidateFailure(
+  status: number | null,
+  networkError: boolean,
+  body = '',
+): CandidateFailure {
+  /*
+   * The challenge test comes FIRST and is asked of any answer carrying one,
+   * because a challenge is served under 403, 429 and 503 alike depending on
+   * the edge's mood — so the digit cannot decide it.
+   */
+  if (!networkError && body !== '' && bodyLooksChallenged(body)) return 'challenged';
   if (networkError) return 'unreachable';
   if (status === null) return 'unreachable';
   if (status === 404 || status === 410) return 'no_such_service';
+  if (status === 400 || status === 405 || status === 415 || status === 501) return 'bad_request';
   if (status === 401 || status === 403) return 'refused';
   return 'unreachable';
 }
@@ -205,9 +268,21 @@ export type JurisdictionLayerReading =
    * and none of them has been read yet. Reachable, integration outstanding.
    */
   | { kind: 'catalogue_readable'; service: string; services: number; folders: number }
+  /**
+   * A catalogue answered with FOLDERS and no services. It has not answered
+   * the question: a folder is where services live, so this reading means the
+   * walk stopped one level short — which is measured, WA answering
+   * `0 services across 5 folders`.
+   */
+  | { kind: 'catalogue_folders_only'; service: string; folders: string[] }
   /** Every candidate refused us. A finding about the publisher. */
   | { kind: 'refused_us'; asked: number }
-  /** Every candidate 404'd. A finding about OUR URLs. */
+  /**
+   * A bot-protection interstitial stood in front of every candidate. OURS,
+   * and emphatically not a decision the publisher made.
+   */
+  | { kind: 'challenged'; asked: number }
+  /** Every candidate answered with our own mistake. A finding about OUR URLs. */
   | { kind: 'no_candidate_resolved'; asked: number }
   /** Nothing answered and not because of a refusal. Worth a retry. */
   | { kind: 'unreachable'; asked: number };
@@ -249,23 +324,42 @@ export function assessJurisdictionLayers(
       return { kind: 'licence_restricted', service: o.candidate.service, evidence: o.answer.licence.evidence };
     }
   }
-  for (const o of answered) {
-    return { kind: 'licence_unverified', service: o.candidate.service, layers: o.answer.layers.length };
-  }
   /*
-   * A catalogue that answered outranks every failure. It is the finding that
-   * settles `SA_NT_NOTE`: a directory answering from this egress means the
-   * host is reachable and the note's "every candidate host refused" is a
-   * statement about a past egress rather than about the publisher.
+   * A CATALOGUE outranks an unstated licence, and the first live run is what
+   * settled the order. The ACT's verified organisation answered with **391
+   * services** while its one Territory Plan service answered a
+   * `copyrightText` of `"TP"` — three characters, which reads as
+   * `unverified`. Ranked the other way, the note read *"nothing from it is
+   * republished here"* about a jurisdiction whose zone this product publishes
+   * on every ACT report.
+   *
+   * The principle, not the data: **a licence read from ONE service does not
+   * describe a catalogue of 391.** A stated RESTRICTION is different and
+   * stays above this, because a publisher's blanket non-commercial terms are
+   * a prohibition worth surfacing whatever else answered.
    */
   for (const o of outcomes) {
     if (o.outcome.kind !== 'directory') continue;
+    if (o.outcome.services.length === 0) continue;
     return {
       kind: 'catalogue_readable',
       service: o.candidate.service,
       services: o.outcome.services.length,
       folders: o.outcome.folders.length,
     };
+  }
+  for (const o of answered) {
+    return { kind: 'licence_unverified', service: o.candidate.service, layers: o.answer.layers.length };
+  }
+  /*
+   * Folders and no services: the walk stopped one level short. Ranked below
+   * every real answer and above every failure, because the host IS reachable
+   * and the remedy is to ask the folders.
+   */
+  for (const o of outcomes) {
+    if (o.outcome.kind !== 'directory') continue;
+    if (o.outcome.folders.length === 0) continue;
+    return { kind: 'catalogue_folders_only', service: o.candidate.service, folders: o.outcome.folders };
   }
   const failures = outcomes
     .map((o) => (o.outcome.kind === 'failed' ? o.outcome.failure : null))
@@ -276,7 +370,13 @@ export function assessJurisdictionLayers(
    * that this repository has no working URL for the jurisdiction — never
    * that the jurisdiction publishes nothing.
    */
-  if (failures.every((f) => f === 'no_such_service')) {
+  /*
+   * A challenge is read before a refusal, because the two arrive under the
+   * same digit and send an operator to opposite remedies — and only one of
+   * them is a decision the publisher made.
+   */
+  if (failures.some((f) => f === 'challenged')) return { kind: 'challenged', asked: outcomes.length };
+  if (failures.every((f) => OUR_FAILURES.includes(f))) {
     return { kind: 'no_candidate_resolved', asked: outcomes.length };
   }
   if (failures.some((f) => f === 'refused')) return { kind: 'refused_us', asked: outcomes.length };
@@ -313,9 +413,19 @@ export function jurisdictionLayerNote(reading: JurisdictionLayerReading, jurisdi
         + `(${reading.service}). No layer from it is read into this report yet, so nothing here says `
         + 'whether a control applies — that is outstanding integration work rather than a limitation '
         + 'of the source.';
+    case 'catalogue_folders_only':
+      return `This platform reached ${jurisdiction}'s own spatial catalogue, which answered with `
+        + `${reading.folders.length} folder${reading.folders.length === 1 ? '' : 's'} and no service at its `
+        + `root (${reading.service}). Reading it is outstanding work here — the folders were not asked — `
+        + 'and nothing in this report says whether a control applies.';
     case 'refused_us':
       return `${jurisdiction}'s planning service declined this platform's requests, so no layer was `
         + 'read. That is a statement about the retrieval rather than about the area.';
+    case 'challenged':
+      return `A bot-protection challenge stood in front of ${jurisdiction}'s planning service on every `
+        + 'address this platform asked, so no layer was read. That is a property of automated access '
+        + `rather than a decision ${jurisdiction} made about publishing, and nothing here says whether `
+        + 'a control applies.';
     case 'no_candidate_resolved':
       return `This platform holds no working endpoint for ${jurisdiction}'s planning layers — every `
         + 'address it asked resolved to nothing. That is a gap in this report, not a statement that '
@@ -497,6 +607,28 @@ export function parseWfsCapabilities(text: string): ArcgisAnswer {
  * two spellings together, because a literal at each end is how two ends
  * drift.
  */
+/*
+ * ── What the first live run measured, 22 Sep 2026, from CI ───────────────
+ *
+ *   SA   PlanSA spatial directory    200 · 131 services · 30 folders,
+ *                                    including `PlanSA` and `ePlanning`
+ *   WA   SLIP public directory       200 ·   0 services ·  5 folders,
+ *                                    including `SLIP_Public_Services`
+ *   NT   NTLIS directory             403 · `Just a moment...` (a challenge)
+ *   ACT  ACTmapi organisation        200 · 391 services
+ *
+ * Two candidates were removed because their failure was measured and is not
+ * informative to repeat: `location.sa.gov.au/geoserver/wfs` (404) and
+ * `services.slip.wa.gov.au/.../WFSServer` (400, `ArcGIS Server Error` — our
+ * parameters). One was added from the publisher's OWN answer rather than
+ * from a guess: WA's `SLIP_Public_Services` folder is a name Landgate
+ * printed, which is why naming it here is still discovery.
+ *
+ * `spatial.nt.gov.au` stays although its DNS does not resolve. The rule is
+ * that a candidate's failure is PRINTED rather than hidden, and NT's other
+ * address is behind a challenge — so removing it would leave one candidate,
+ * and one 404 may never stand for a jurisdiction publishing nothing.
+ */
 export const LAYER_CANDIDATES: readonly LayerCandidate[] = [
   // ── ACT ── the organisation the verified Territory Plan zone query uses.
   {
@@ -524,9 +656,9 @@ export const LAYER_CANDIDATES: readonly LayerCandidate[] = [
   {
     jurisdiction: 'SA',
     publisher: 'Government of South Australia (Location SA)',
-    service: 'Location SA GeoServer WFS',
-    kind: 'wfs',
-    root: 'https://location.sa.gov.au/geoserver/wfs',
+    service: 'Location SA ArcGIS Server directory',
+    kind: 'arcgis',
+    root: 'https://location.sa.gov.au/server/rest/services',
   },
   {
     jurisdiction: 'SA',
@@ -544,18 +676,14 @@ export const LAYER_CANDIDATES: readonly LayerCandidate[] = [
     root: 'https://services.slip.wa.gov.au/public/rest/services',
   },
   {
+    // The folder name is LANDGATE'S OWN, printed by the root directory above
+    // on 22 Sep 2026. Naming it here is reading the publisher's answer, not
+    // typing a path — and it is where the planning services sit.
     jurisdiction: 'WA',
     publisher: 'Landgate (SLIP)',
-    service: 'SLIP public WFS',
-    kind: 'wfs',
-    root: 'https://services.slip.wa.gov.au/public/services/SLIP_Public_Services/Planning/MapServer/WFSServer',
-  },
-  {
-    jurisdiction: 'WA',
-    publisher: 'Government of Western Australia',
-    service: 'WA whole-of-government ArcGIS service directory',
+    service: 'SLIP public services — SLIP_Public_Services folder',
     kind: 'arcgis',
-    root: 'https://geo.wa.gov.au/arcgis/rest/services',
+    root: 'https://services.slip.wa.gov.au/public/rest/services/SLIP_Public_Services',
   },
   // ── NT ── NTLIS is the territory's published land-information platform.
   {
@@ -575,6 +703,50 @@ export const LAYER_CANDIDATES: readonly LayerCandidate[] = [
 ];
 
 /**
+ * A folder inside a service directory, as a candidate of its own.
+ *
+ * ArcGIS nests: `/rest/services` may list folders and no services, and the
+ * services are one level down. Measured on the first live run, WA answered
+ * **0 services across 5 folders** (`Land_Monitor`, `Landgate_Public_Imagery`,
+ * `Landgate_Public_Maps`, `SLIP_Public_Services`, `Utilities`) — a catalogue
+ * that is plainly reachable and had told us nothing, because the walk stopped
+ * at the root. SA answered 131 services across 30 folders, two of them named
+ * `PlanSA` and `ePlanning`.
+ *
+ * The folder NAMES come from the publisher, so this is still discovery: no
+ * folder path is typed anywhere in this repository.
+ */
+export function folderRootFor(candidate: LayerCandidate, folder: string): LayerCandidate {
+  return {
+    ...candidate,
+    service: `${candidate.service} › ${folder}`,
+    root: `${candidate.root.replace(/\/+$/, '')}/${folder}`,
+  };
+}
+
+/**
+ * How many folders one directory's walk may ask.
+ *
+ * Generous on purpose. **An absence is only an absence if the question could
+ * have found it** — the rule this programme has now paid for four times — so
+ * a ceiling that truncates SA's thirty folders would produce exactly the
+ * `organization_list?limit=1000` answered-with-25 fault one publisher along.
+ * Where a directory holds more folders than this, the walk is PARTIAL and
+ * says so rather than reporting what it happened to reach.
+ */
+export const FOLDER_WALK_CEILING = 48;
+
+/**
+ * Was every folder asked?
+ *
+ * `catalogueWalkIsComplete`'s rule, applied to a nested directory: a reading
+ * assembled from part of a catalogue may not be presented as the catalogue.
+ */
+export function folderWalkIsComplete(folders: readonly string[]): boolean {
+  return folders.length <= FOLDER_WALK_CEILING;
+}
+
+/**
  * The candidates for one jurisdiction.
  *
  * Asserted non-empty by spec for all four, because a jurisdiction with no
@@ -588,3 +760,154 @@ export function candidatesFor(jurisdiction: LayerCandidate['jurisdiction']): Lay
 
 /** The four this module exists for. */
 export const UNREAD_JURISDICTIONS: readonly LayerCandidate['jurisdiction'][] = ['SA', 'WA', 'NT', 'ACT'];
+
+// ---------------------------------------------------------------------------
+// The licence claims this product ALREADY republishes under
+// ---------------------------------------------------------------------------
+
+/**
+ * Every licence this repository asserts for a planning layer it republishes
+ * into a client's commercial PDF — and none of them had ever been read from
+ * the publisher.
+ *
+ * That gap is the mirror image of `WA_LICENCE_NOTE`. There, a restriction is
+ * asserted and nothing is fetched; here, a permission is asserted and
+ * everything is. The second is the more consequential of the two, because a
+ * wrong restriction costs a report a row and a wrong permission puts somebody
+ * else's data in a document that has already been emailed.
+ *
+ * The first live run found one worth looking at immediately: the ACT
+ * Territory Plan service's own `copyrightText` is the three characters
+ * **`TP`**, while this repository states `CC BY 4.0` for it.
+ *
+ * ── What a contradiction may and may not do ──────────────────────────────
+ *
+ * It may **report**. It may not rewrite the constant, and nothing here
+ * does — for a reason that is the whole discipline of this module read
+ * backwards. `copyrightText` is one field on one service; a licence is
+ * granted by the publisher's terms of use, its open-data catalogue entry or
+ * its AGOL item, and a three-character attribution string is silence about
+ * terms rather than a denial of them. Downgrading a real CC BY 4.0 grant on
+ * the strength of it would be the same error as upgrading an unstated
+ * licence to permission — the conservative direction is not "always assume
+ * less", it is "never conclude from a field that does not answer the
+ * question".
+ *
+ * So the reading is three-valued and `silent` is its own answer, separate
+ * from `contradicted`.
+ */
+export interface LicenceClaim {
+  jurisdiction: PlanningJurisdiction;
+  /** What this repository asserts, and where. */
+  claim: string;
+  claimedIn: string;
+  /** The service the claim is made ABOUT, as a root this module composes from. */
+  service: string;
+  kind: LayerServiceKind;
+  root: string;
+}
+
+/**
+ * The claims, each naming the constant it comes from.
+ *
+ * The roots are the service ROOTS of the queries already in production — the
+ * same hosts, one path segment shorter — so this asks the publisher about the
+ * very service the report's rows come from rather than about a neighbour.
+ */
+export const LICENCE_CLAIMS: readonly LicenceClaim[] = [
+  {
+    jurisdiction: 'NSW',
+    claim: 'CC BY 4.0',
+    claimedIn: 'planningConstraints.pure.ts — NSW_LICENCE',
+    service: 'NSW Planning Portal — Principal Planning Layers',
+    kind: 'arcgis',
+    root: 'https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/ePlanning/Planning_Portal_Principal_Planning/MapServer',
+  },
+  {
+    jurisdiction: 'VIC',
+    claim: 'CC BY 4.0',
+    claimedIn: 'planningConstraints.pure.ts — VIC_OVERLAY_LICENCE',
+    service: 'Vicmap Planning — plan_overlay (WFS)',
+    kind: 'wfs',
+    root: 'https://opendata.maps.vic.gov.au/geoserver/wfs',
+  },
+  {
+    jurisdiction: 'QLD',
+    claim: 'CC BY 4.0',
+    claimedIn: 'planningConstraints.pure.ts — QLD_LICENCE',
+    service: 'Queensland StatePlanning',
+    kind: 'arcgis',
+    root: 'https://spatial-gis.information.qld.gov.au/arcgis/rest/services/PlanningCadastre/StatePlanning/MapServer',
+  },
+  {
+    jurisdiction: 'TAS',
+    claim: 'CC BY 3.0 AU',
+    claimedIn: 'planningConstraints.pure.ts — TAS_OVERLAY_LICENCE',
+    service: 'theLIST — PlanningOnline',
+    kind: 'arcgis',
+    root: 'https://services.thelist.tas.gov.au/arcgis/rest/services/Public/PlanningOnline/MapServer',
+  },
+  {
+    jurisdiction: 'ACT',
+    claim: 'CC BY 4.0',
+    claimedIn: 'planningSources.pure.ts — ACT_ZONING_LICENCE',
+    service: 'ACTmapi — Territory Plan Land Use Zones',
+    kind: 'arcgis',
+    root: 'https://services1.arcgis.com/E5n4f1VY84i0xSjy/arcgis/rest/services/ACTGOV_TP_LAND_USE_ZONE/FeatureServer',
+  },
+];
+
+/**
+ * The metadata request for a claim.
+ *
+ * Its own composer rather than a `LayerCandidate` cast into shape: a claim
+ * and a candidate carry different questions and coercing one into the other
+ * is how a probe comes to ask the wrong service.
+ */
+export function licenceMetadataUrl(claim: LicenceClaim): string {
+  const root = claim.root.replace(/\/+$/, '');
+  return claim.kind === 'arcgis'
+    ? `${root}?f=json`
+    : `${root}?service=WFS&request=GetCapabilities`;
+}
+
+/** What the publisher's own metadata says about a claim this repo makes. */
+export type ClaimVerdict =
+  /** The publisher names a licence, and it is an open one. */
+  | { kind: 'corroborated'; evidence: string }
+  /** The publisher names terms that are NOT open. A real finding. */
+  | { kind: 'contradicted'; evidence: string }
+  /** The publisher says nothing a reader could rely on. Not a denial. */
+  | { kind: 'silent'; evidence: string | null }
+  /** The service could not be asked. Says nothing either way. */
+  | { kind: 'unasked'; detail: string };
+
+/**
+ * Judge a claim against the publisher's own words.
+ *
+ * `corroborated` is deliberately weaker than it sounds: it means the
+ * publisher names AN open licence, not that it names THIS one. Version
+ * strings drift (`CC BY 3.0 AU` to `CC BY 4.0`), the field often carries an
+ * attribution statement rather than a licence name, and asserting a match on
+ * the exact string would report every jurisdiction as contradicting a claim
+ * that is substantively right. What matters for a commercial report is
+ * whether republication is permitted at all.
+ */
+export function verifyLicenceClaim(reading: LicenceReading | null, detail?: string): ClaimVerdict {
+  if (!reading) return { kind: 'unasked', detail: detail ?? 'the service was not asked' };
+  if (reading.kind === 'open') return { kind: 'corroborated', evidence: reading.evidence };
+  if (reading.kind === 'restricted') return { kind: 'contradicted', evidence: reading.evidence };
+  return { kind: 'silent', evidence: reading.evidence };
+}
+
+/**
+ * What a claim verdict obliges.
+ *
+ * Only `contradicted` is a defect, and it is a serious one — a restriction
+ * the publisher states while this product republishes. `silent` is the
+ * ordinary state of an ArcGIS `copyrightText` and obliges a person to check
+ * the publisher's terms of use once, not a build to go red every morning.
+ */
+export function claimNeedsAttention(verdict: ClaimVerdict): boolean {
+  return verdict.kind === 'contradicted';
+}

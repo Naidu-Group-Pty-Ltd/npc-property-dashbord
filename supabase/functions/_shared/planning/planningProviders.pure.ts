@@ -61,13 +61,34 @@
  * (NSW/VIC/QLD/TAS today; SA/WA/NT/ACT are W3.4's extension). This is the
  * FLOOR: it is what makes a reading a retrieval rather than a guess.
  *
- * `amendment_register` — draft and proposed instruments, where a
- * jurisdiction publishes them separately from the layers in force. A
- * refinement, and never the answer on its own: a draft is labelled `draft`
- * and a control in force is labelled `adopted`, and printing the first as
- * the second is a statement about what may be built that nobody made.
+ * `instrument_currency` — WHICH instrument a control in force belongs to and
+ * WHICH amendment of it applies. A refinement in the exact sense this file
+ * means: it adds no control at all, it says which document the floor's
+ * control came from and how current that document is — `planningControlGuide`'s
+ * rule that *a value carries its unit, its instrument and its clause*. On its
+ * own it is an instrument name with nothing under it.
+ *
+ * NSW answers it today, in the same response the floor is read from, and
+ * until W3.4 the answer went to a `console.log`: `parseNswZoning` publishes
+ * `EPI_NAME` while `parseNswInstrument` reads the amendment number and the
+ * commencement date off layer 8 and threw both away. So the report printed
+ * *"Muswellbrook Local Environmental Plan 2009"* over a record that knew it
+ * was Amendment 12 — the first question a town planner asks, discarded one
+ * line from where it was parsed.
+ *
+ * `amendment_register` — DRAFT and proposed instruments, where a
+ * jurisdiction publishes them separately from the layers in force. Declared
+ * and integrated nowhere yet. A refinement, and never the answer on its own:
+ * a draft is labelled `draft` and a control in force is labelled `adopted`,
+ * and printing the first as the second is a statement about what may be
+ * built that nobody made.
+ *
+ * The two are deliberately NOT one provider. *"Amendment 12 of the LEP is in
+ * force"* and *"a draft amendment is on exhibition"* are opposite statements
+ * about what binds this lot, and one name for both is how the second comes to
+ * be printed as the first.
  */
-export type PlanningProvider = 'state_layer' | 'amendment_register';
+export type PlanningProvider = 'state_layer' | 'instrument_currency' | 'amendment_register';
 
 /**
  * The development-activity registers.
@@ -90,21 +111,23 @@ export const DEVELOPMENT_PROVIDERS_ENV = 'DEVELOPMENT_PROVIDERS';
 /**
  * The defaults, floor first.
  *
- * Both refinements are listed although neither is integrated for any
- * jurisdiction yet, and that is the same decision `AMENITY_PROVIDERS` made
- * for `google`: *"a register that has not had its first ingest … must degrade
+ * Every refinement is listed although only `instrument_currency` is
+ * integrated (NSW alone), and that is the same decision `AMENITY_PROVIDERS`
+ * made for `google`: *"a register that has not had its first ingest … must degrade
  * to yesterday's behaviour, not to nulls."* A provider that cannot answer
  * contributes nothing and the floor's answer stands, so listing it costs
  * nothing today and needs no configuration change on the day it can.
  */
-export const DEFAULT_PLANNING_PROVIDERS: PlanningProvider[] = ['state_layer', 'amendment_register'];
+export const DEFAULT_PLANNING_PROVIDERS: PlanningProvider[] = [
+  'state_layer', 'instrument_currency', 'amendment_register',
+];
 export const DEFAULT_DEVELOPMENT_PROVIDERS: DevelopmentProvider[] = ['da_register', 'major_projects'];
 
 /** The provider that may never be configured away. */
 export const PLANNING_FLOOR: PlanningProvider = 'state_layer';
 export const DEVELOPMENT_FLOOR: DevelopmentProvider = 'da_register';
 
-const KNOWN_PLANNING: readonly PlanningProvider[] = ['state_layer', 'amendment_register'];
+const KNOWN_PLANNING: readonly PlanningProvider[] = ['state_layer', 'instrument_currency', 'amendment_register'];
 const KNOWN_DEVELOPMENT: readonly DevelopmentProvider[] = ['da_register', 'major_projects'];
 
 /**

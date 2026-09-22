@@ -56,17 +56,25 @@
  * is unreachable and 1 when the publisher answered and this reader refused.*
  */
 import {
+  FOLDER_WALK_CEILING,
   LAYER_CANDIDATES,
+  LICENCE_CLAIMS,
   UNREAD_JURISDICTIONS,
   assessJurisdictionLayers,
   candidatesFor,
   classifyCandidateFailure,
+  folderRootFor,
+  folderWalkIsComplete,
   jurisdictionLayerNote,
   layerMetadataUrl,
+  licenceMetadataUrl,
   parseArcgisAnswer,
   parseWfsCapabilities,
+  verifyLicenceClaim,
   type CandidateOutcome,
+  type ClaimVerdict,
   type LayerCandidate,
+  type LicenceReading,
 } from '../../supabase/functions/_shared/planning/jurisdictionLayerProbe.pure.ts';
 
 const FETCH_MS = 30_000;
@@ -88,7 +96,7 @@ function ours(what: string, detail: unknown): never {
 
 interface Fetched { status: number; body: string; bytes: number; ms: number; networkError: string | null }
 
-async function ask(url: string, accept: string): Promise<Fetched> {
+async function ask1(url: string, accept: string): Promise<Fetched> {
   const began = Date.now();
   try {
     const res = await fetch(url, {
@@ -114,14 +122,22 @@ async function askCandidate(c: LayerCandidate): Promise<CandidateOutcome> {
   const accept = c.kind === 'arcgis' ? 'application/json' : 'application/xml,text/xml,*/*';
   console.log(`\n  · ${c.jurisdiction} — ${c.service}`);
   kv('url', url);
-  const got = await ask(url, accept);
+  const got = await ask1(url, accept);
   kv('http', got.networkError !== null
     ? `network: ${got.networkError} (${got.ms} ms)`
     : `${got.status} · ${got.bytes} bytes · ${got.ms} ms`);
 
   if (got.networkError !== null || got.status !== 200) {
-    const failure = classifyCandidateFailure(got.networkError !== null ? null : got.status, got.networkError !== null);
+    const failure = classifyCandidateFailure(
+      got.networkError !== null ? null : got.status,
+      got.networkError !== null,
+      got.body,
+    );
     kv('failure', failure);
+    if (failure === 'challenged') {
+      console.log('        A bot-protection interstitial, not a decision the publisher made.');
+      console.log('        The remedy is ours: a browser-shaped client or an agreed path.');
+    }
     if (got.bytes > 0) kv('body, verbatim', JSON.stringify(got.body.slice(0, 220)));
     return {
       kind: 'failed',
@@ -174,6 +190,48 @@ async function main(): Promise<void> {
 
   const readings: { jurisdiction: string; note: string; kind: string }[] = [];
 
+  /**
+   * Walk a directory's folders.
+   *
+   * A directory that lists folders and no services has not answered the
+   * question — the services are one level down. Every folder is asked, up to
+   * the ceiling, and the walk reports whether it was COMPLETE: a reading
+   * assembled from part of a catalogue may not be presented as the
+   * catalogue, which is the fault `organization_list?limit=1000` produced
+   * one publisher along.
+   */
+  async function walkFolders(
+    root: LayerCandidate,
+    folders: readonly string[],
+  ): Promise<{ services: string[]; asked: number; complete: boolean }> {
+    const complete = folderWalkIsComplete(folders);
+    const ask = folders.slice(0, FOLDER_WALK_CEILING);
+    console.log(`\n    walking ${ask.length} of ${folders.length} folders`
+      + `${complete ? '' : ' — PARTIAL, so no absence may be read from this'}`);
+    const services: string[] = [];
+    // Batched rather than all at once: a state GIS host throttling under a
+    // burst would answer 429 and be filed as a finding about the publisher.
+    for (let i = 0; i < ask.length; i += 6) {
+      const batch = ask.slice(i, i + 6);
+      const answers = await Promise.all(batch.map(async (f) => {
+        const c = folderRootFor(root, f);
+        const got = await ask1(layerMetadataUrl(c), 'application/json');
+        if (got.networkError !== null || got.status !== 200) {
+          return { folder: f, note: got.networkError ?? `HTTP ${got.status}`, found: [] as string[] };
+        }
+        const a = parseArcgisAnswer(got.body);
+        if (a.kind === 'directory') return { folder: f, note: `${a.services.length} services`, found: a.services };
+        if (a.kind === 'service') return { folder: f, note: `a service, ${a.layers.length} layers`, found: [] };
+        return { folder: f, note: a.kind === 'error' ? a.message : a.reason, found: [] };
+      }));
+      for (const a of answers) {
+        console.log(`      ${a.folder.padEnd(44)} ${a.note}`);
+        services.push(...a.found.map((sv) => `${a.folder}/${sv}`));
+      }
+    }
+    return { services, asked: ask.length, complete };
+  }
+
   for (const jurisdiction of UNREAD_JURISDICTIONS) {
     const candidates = candidatesFor(jurisdiction);
     h(`${jurisdiction} · ${candidates.length} candidate${candidates.length === 1 ? '' : 's'}`);
@@ -187,7 +245,21 @@ async function main(): Promise<void> {
     }
     const outcomes: { candidate: LayerCandidate; outcome: CandidateOutcome }[] = [];
     for (const c of candidates) {
-      outcomes.push({ candidate: c, outcome: await askCandidate(c) });
+      let outcome = await askCandidate(c);
+      /*
+       * The root answered with folders and nothing else. Ask the folders —
+       * measured: WA's SLIP root lists five folders and zero services, so
+       * the reading without this walk was "a catalogue that lists 0
+       * services", which is a sentence about our walk wearing the shape of a
+       * finding about Landgate.
+       */
+      if (outcome.kind === 'directory' && outcome.services.length === 0 && outcome.folders.length > 0) {
+        const walked = await walkFolders(c, outcome.folders);
+        kv('after the walk', `${walked.services.length} services from ${walked.asked} folders`
+          + `${walked.complete ? '' : ' (PARTIAL)'}`);
+        outcome = { ...outcome, services: walked.services };
+      }
+      outcomes.push({ candidate: c, outcome });
     }
     const reading = assessJurisdictionLayers(outcomes);
     console.log('');
@@ -197,8 +269,67 @@ async function main(): Promise<void> {
     readings.push({ jurisdiction, note, kind: reading.kind });
   }
 
+  /*
+   * ── Stage 2 ─────────────────────────────────────────────────────────────
+   *
+   * The mirror of stage 1, and the half that matters more. Stage 1 asks
+   * whether four jurisdictions publish anything. This asks whether the five
+   * whose layers this product ALREADY republishes into a client's commercial
+   * PDF say the same thing about their terms that this repository says about
+   * them — and none of those five claims had ever been read from the
+   * publisher.
+   *
+   * A wrong restriction costs a report a row. A wrong permission puts
+   * somebody else's data in a document that has already been sent.
+   */
+  h('Do the publishers we already republish agree about their own terms?');
+  kv('claims', LICENCE_CLAIMS.length);
+  console.log('\n  Only a STATED restriction is a defect. Silence is the ordinary state of');
+  console.log('  an ArcGIS `copyrightText` and is not a denial — a licence is granted by a');
+  console.log('  publisher\'s terms of use, not by a metadata field, so nothing here');
+  console.log('  rewrites a constant either way.');
+
+  const verdicts: { jurisdiction: string; claim: string; claimedIn: string; verdict: ClaimVerdict }[] = [];
+  for (const c of LICENCE_CLAIMS) {
+    const url = licenceMetadataUrl(c);
+    console.log(`\n  · ${c.jurisdiction} — ${c.service}`);
+    kv('claims', `${c.claim} (${c.claimedIn})`);
+    kv('url', url);
+    const got = await ask1(url, c.kind === 'arcgis' ? 'application/json' : 'application/xml,text/xml,*/*');
+    kv('http', got.networkError !== null
+      ? `network: ${got.networkError} (${got.ms} ms)`
+      : `${got.status} · ${got.bytes} bytes · ${got.ms} ms`);
+    let reading: LicenceReading | null = null;
+    let detail = got.networkError ?? `HTTP ${got.status}`;
+    if (got.networkError === null && got.status === 200) {
+      const a = c.kind === 'arcgis' ? parseArcgisAnswer(got.body) : parseWfsCapabilities(got.body);
+      if (a.kind === 'service') reading = a.licence;
+      else detail = a.kind === 'directory' ? 'a directory, not a service' : a.kind === 'error' ? a.message : a.reason;
+    }
+    const verdict = verifyLicenceClaim(reading, detail);
+    kv('the publisher says', verdict.kind === 'unasked' ? verdict.detail
+      : verdict.evidence === null ? '(nothing)' : JSON.stringify(verdict.evidence));
+    kv('verdict', verdict.kind);
+    verdicts.push({ jurisdiction: c.jurisdiction, claim: c.claim, claimedIn: c.claimedIn, verdict });
+  }
+
   h('READ');
   for (const r of readings) kv(r.jurisdiction, r.kind);
+  console.log('');
+  for (const v of verdicts) kv(`${v.jurisdiction} licence claim`, v.verdict.kind);
+
+  const contradicted = verdicts.filter((v) => v.verdict.kind === 'contradicted');
+  if (contradicted.length > 0) {
+    console.log('');
+    console.log('  A PUBLISHER STATES TERMS THIS REPOSITORY CONTRADICTS:');
+    for (const v of contradicted) {
+      console.log(`  · ${v.jurisdiction} — this repo claims ${v.claim} in ${v.claimedIn};`);
+      console.log(`    the service says ${JSON.stringify((v.verdict as { evidence: string }).evidence)}`);
+    }
+    console.log('    That is a restriction the publisher states while this product');
+    console.log('    republishes. It is not fixed by editing a constant — read the');
+    console.log('    publisher\'s terms of use and decide whether the layer may be drawn.');
+  }
 
   console.log('\n  What this settles, and what it does not:');
   console.log('');
@@ -206,7 +337,9 @@ async function main(): Promise<void> {
   const reachable = readings.filter((r) => r.kind === 'catalogue_readable' || r.kind === 'integratable'
     || r.kind === 'licence_unverified');
   const refused = readings.filter((r) => r.kind === 'refused_us');
-  const unresolved = readings.filter((r) => r.kind === 'no_candidate_resolved' || r.kind === 'unreachable');
+  const challenged = readings.filter((r) => r.kind === 'challenged');
+  const unresolved = readings.filter((r) => r.kind === 'no_candidate_resolved'
+    || r.kind === 'catalogue_folders_only' || r.kind === 'unreachable');
 
   if (restricted.length > 0) {
     console.log(`  · ${restricted.map((r) => r.jurisdiction).join(', ')} — the service states restricted terms`);
@@ -221,6 +354,12 @@ async function main(): Promise<void> {
   if (refused.length > 0) {
     console.log(`  · ${refused.map((r) => r.jurisdiction).join(', ')} — the publisher declined us. A finding`);
     console.log('    about the publisher, and the note may say so.');
+  }
+  if (challenged.length > 0) {
+    console.log(`  · ${challenged.map((r) => r.jurisdiction).join(', ')} — a bot-protection interstitial`);
+    console.log('    stood in front of every address asked. That is OURS and is emphatically');
+    console.log('    not the publisher declining: a note saying they refused us would send an');
+    console.log('    operator to write about a decision nobody there made.');
   }
   if (unresolved.length > 0) {
     console.log(`  · ${unresolved.map((r) => r.jurisdiction).join(', ')} — no candidate this repository holds`);
