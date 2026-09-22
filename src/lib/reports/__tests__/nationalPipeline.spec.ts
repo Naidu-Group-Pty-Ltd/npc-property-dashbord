@@ -15,8 +15,12 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import { buildInfrastructureEvidence, renderInfrastructureOutlook }
+  from '@/lib/reports/../../../supabase/functions/_shared/planning/infrastructureEvidence.pure';
+
 import {
   MACHINE_READABLE_FORMATS,
+  NATIONAL_PIPELINE_COVERAGE_PHRASE,
   NATIONAL_PIPELINE_ORG_PATTERN,
   NATIONAL_PIPELINE_PUBLISHER,
   NATIONAL_PIPELINE_QUERIES,
@@ -633,5 +637,96 @@ describe('the URLs', () => {
     expect(code).not.toMatch(/organization:\s*\S/);
     // The declared preference order is the one thing that IS a literal here.
     expect(MACHINE_READABLE_FORMATS.join(',')).toBe('CSV,XLSX,XLS,JSON,GEOJSON');
+  });
+});
+
+describe('the acceptance criterion is about the PAGE', () => {
+  /*
+   * W3.2 accepts *"page 22's sentence is replaced by named, dated, sourced
+   * entries, or by a coverage statement that names the register asked."*
+   *
+   * The existing assertion is that `coverageLimitsFor` CONTAINS the named
+   * limit, which is a fact about an array. An array a renderer drops is a
+   * guarantee nobody reads — the `verdict.pricingUrl` defect, and
+   * `stripEditorialBlocks`' whole lesson: an instruction is a request, this is
+   * the guarantee. So the statement is asserted where a client meets it.
+   */
+  const outlook = (programmeRead: boolean): string => renderInfrastructureOutlook(
+    buildInfrastructureEvidence({
+      planningData: {
+        fetchedAt: '2026-09-22T00:00:00.000Z',
+        jurisdiction: programmeRead ? 'QLD' : 'NSW',
+        investmentProgramme: programmeRead
+          ? {
+            status: 'ok',
+            investments: [],
+            edition: '2025-26 to 2028-29',
+            radiusKm: 25,
+            unplaced: 0,
+            source: 'Queensland Transport and Roads Investment Program (QTRIP), Department of Transport and Main Roads',
+            licence: 'CC BY 4.0',
+          }
+          : { status: 'not_served', note: 'the NSW programme is published as budget papers.' },
+      },
+    }),
+  );
+
+  it('names the national register on the page, whether or not a state programme was read', () => {
+    for (const programmeRead of [true, false]) {
+      const page = outlook(programmeRead);
+      expect(page, `programmeRead=${programmeRead}`).toContain(NATIONAL_PIPELINE_COVERAGE_PHRASE);
+      expect(page, `programmeRead=${programmeRead}`).toContain(NATIONAL_PIPELINE_PUBLISHER);
+    }
+  });
+
+  it('and states it as coverage rather than as a finding about the area', () => {
+    /*
+     * Reading one state's forward works says nothing about a national list,
+     * which is why `coverageLimitsFor` keeps this entry in both branches. What
+     * the page may never do is turn the absence into a claim about the area.
+     *
+     * The guard is written as ASSERTED forms, and that bound was found by
+     * execution rather than chosen: the paragraph carries the sentence *"it is
+     * not a basis for rating infrastructure risk as low"*, and a bare-word
+     * scan reads its own prohibition as the thing it prohibits. A rating is a
+     * level ASSERTED of the subject; a sentence forbidding one is the
+     * guarantee working, and rewording it to satisfy a regex would delete the
+     * guarantee to keep the guard. `NO_RATING_FROM_AN_ABSENCE`'s own lesson.
+     */
+    const claimsAbsence = /\bno (?:planned |named |major )?(?:infrastructure|projects?|works)\b/i;
+    const assertsALevel = new RegExp(
+      '(\\|\\s*(?:low|minimal|negligible|favourable)\\s*\\|)'
+      + '|(\\*\\*\\s*(?:low|minimal|negligible|favourable)\\s*\\*\\*)'
+      + '|(\\bis\\s+(?:low|minimal|negligible|favourable)\\b)',
+      'i',
+    );
+    for (const programmeRead of [true, false]) {
+      const page = outlook(programmeRead);
+      const sentence = page.split('\n').find((l) => l.includes(NATIONAL_PIPELINE_COVERAGE_PHRASE)) ?? '';
+      expect(sentence, `programmeRead=${programmeRead}`).not.toMatch(claimsAbsence);
+      expect(sentence, `programmeRead=${programmeRead}`).not.toMatch(assertsALevel);
+      // And it says whose statement the absence is.
+      expect(sentence, `programmeRead=${programmeRead}`)
+        .toMatch(/statement about those registers rather than a finding/i);
+    }
+  });
+});
+
+describe('the register is named in exactly one module', () => {
+  it('and the coverage phrase is not a second literal', () => {
+    /*
+     * `INFRASTRUCTURE_COVERAGE_LIMITS` carried its own copy of the phrase, so
+     * the page said "Infrastructure Australia Priority List" while this module
+     * said "Infrastructure Priority List". Two spellings of one register is
+     * how `AML_COMMAND_REFRESH_EVENT` came to be named once, and it was found
+     * by asserting on the rendered page rather than on the array behind it.
+     */
+    const evidence = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), '../../../../supabase/functions/_shared/planning/infrastructureEvidence.pure.ts'),
+      'utf8',
+    );
+    const code = evidence.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    expect(code).toContain('NATIONAL_PIPELINE_COVERAGE_PHRASE');
+    expect(code).not.toContain('Infrastructure Australia Priority List');
   });
 });

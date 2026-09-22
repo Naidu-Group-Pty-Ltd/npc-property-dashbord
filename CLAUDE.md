@@ -2188,6 +2188,23 @@ inverse guard refuses organisation OBJECTS from the slug endpoint. One rule
 also only ever half worked: `/infrastructure\s+australia/i` matches the TITLE
 and can never match the slug `infrastructure-australia`.
 
+**And the acceptance criterion is about the PAGE.** The assertion that
+existed was that `coverageLimitsFor` CONTAINS the named limit — a fact about an
+array, and an array a renderer drops is a guarantee nobody reads
+(`verdict.pricingUrl`'s defect). It is asserted through
+`renderInfrastructureOutlook` now, in BOTH branches, which immediately found
+the register spelled **twice**: the coverage list carried its own literal
+*"Infrastructure Australia Priority List"* while the module named it
+*"Infrastructure Priority List"*. `NATIONAL_PIPELINE_COVERAGE_PHRASE` is the
+one spelling, a separate constant rather than `${PUBLISHER} ${REGISTER}`
+(which composes to "Infrastructure Australia Infrastructure Priority List"),
+with a source scan refusing the literal elsewhere. One guard was renegotiated
+for the second time in this work: a bare-word rating scan reads the
+paragraph's own *"it is not a basis for rating infrastructure risk as low"* as
+the thing it prohibits, so the guard is written as ASSERTED forms — a sentence
+forbidding a rating is the guarantee working, and rewording it to satisfy a
+regex would delete the guarantee to keep the guard.
+
 **W3.6 — an absence belongs to a jurisdiction, and one had been forgotten.**
 The five absences and the per-jurisdiction sentences already existed; what did
 not exist was anything that could tell you a jurisdiction was MISSING.

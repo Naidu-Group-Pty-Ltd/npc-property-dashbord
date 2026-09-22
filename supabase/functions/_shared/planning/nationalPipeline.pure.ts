@@ -153,8 +153,25 @@
 /** The publisher this module asks about. */
 export const NATIONAL_PIPELINE_PUBLISHER = 'Infrastructure Australia';
 
-/** The register this module asks for. */
+/** The register this module asks for, by its formal name. */
 export const NATIONAL_PIPELINE_REGISTER = 'Infrastructure Priority List';
+
+/**
+ * How the register is named in a sentence a client reads.
+ *
+ * Not `${PUBLISHER} ${REGISTER}`, which composes to *"Infrastructure
+ * Australia Infrastructure Priority List"*. The publisher's own usage drops
+ * the second word, and a sentence has to read as English.
+ *
+ * It lives here because `INFRASTRUCTURE_COVERAGE_LIMITS` spelled it as a
+ * literal of its own, so the page said *"Infrastructure Australia Priority
+ * List"* while this module said *"Infrastructure Priority List"* — two
+ * spellings of one register, which is how `AML_COMMAND_REFRESH_EVENT` came to
+ * be named once. Found by asserting the coverage statement on the rendered
+ * PAGE rather than on the array behind it.
+ */
+export const NATIONAL_PIPELINE_COVERAGE_PHRASE =
+  'the Infrastructure Australia Priority List and other national pipeline registers';
 
 /**
  * The Commonwealth's own catalogue.

@@ -273,6 +273,45 @@ It writes nothing anywhere: no database, no Supabase, no credential.
 
 ---
 
+## 7a · The acceptance criterion is about the PAGE
+
+W3.2 accepts *"page 22's sentence is replaced by named, dated, sourced
+entries, **or** by a coverage statement that names the register asked."* The
+assertion that existed was that `coverageLimitsFor` CONTAINS the named limit —
+a fact about an array, and an array a renderer drops is a guarantee nobody
+reads. That is `verdict.pricingUrl`'s defect (an exported value with zero call
+sites, whose own comment called it *"always a real URL when gated"*) and
+`stripEditorialBlocks`' whole lesson: an instruction is a request; this is the
+guarantee.
+
+So the statement is asserted where a client meets it, through
+`renderInfrastructureOutlook`, in **both** branches — a state programme read
+and not read — because reading one state's forward works says nothing about a
+national list.
+
+Asserting on the page immediately found a drift. The register was spelled
+**twice**: `INFRASTRUCTURE_COVERAGE_LIMITS` carried its own literal
+*"the Infrastructure Australia Priority List and other national pipeline
+registers"* while `nationalPipeline.pure.ts` named the register
+*"Infrastructure Priority List"*. Two spellings of one register is how
+`AML_COMMAND_REFRESH_EVENT` came to be named once, so the sentence form is now
+`NATIONAL_PIPELINE_COVERAGE_PHRASE`, exported from the one module that names
+the register, and a source-scanning test refuses the literal anywhere else.
+
+It is a separate constant rather than `${PUBLISHER} ${REGISTER}`, which
+composes to *"Infrastructure Australia Infrastructure Priority List"*: the
+publisher's own usage drops the second word, and a sentence has to read as
+English.
+
+And one guard was renegotiated, for the second time in this work. A bare-word
+scan for a rating reads the paragraph's own sentence — *"it is not a basis for
+rating infrastructure risk as low"* — as the thing it prohibits. The guard is
+written as ASSERTED forms (a level in a table cell, in a bold run, or after
+"is"), because a sentence forbidding a rating is the guarantee working, and
+rewording it to satisfy a regex would delete the guarantee to keep the guard.
+
+---
+
 ## 8 · W3.6 — the jurisdiction an absence belongs to
 
 > **W3.6 · Coverage travels, with a jurisdiction dimension.**

@@ -144,6 +144,7 @@ import {
 } from './investmentProgramme.pure.ts';
 import { ABSENCE_GUIDE, guidesForKinds } from './infrastructureGuide.pure.ts';
 import { auDate } from './auDate.pure.ts';
+import { NATIONAL_PIPELINE_COVERAGE_PHRASE } from './nationalPipeline.pure.ts';
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -410,7 +411,7 @@ export const INFRASTRUCTURE_COVERAGE_LIMITS: readonly string[] = [
    * does not cover it either. It therefore stands on its own and is never
    * removed, which is why it is not folded into `coverageLimitsFor`.
    */
-  'the Infrastructure Australia Priority List and other national pipeline registers',
+  NATIONAL_PIPELINE_COVERAGE_PHRASE,
   'projects outside the local government area the registers were asked about',
 ];
 
