@@ -600,13 +600,30 @@ export function assessVolumeCoverage(
    */
   inventory: number | null = null,
 ): VolumeCoverage {
+  /*
+   * ── Corroboration gates an ABSENCE, not a FIND ──────────────────────────
+   *
+   * The first version required corroboration before it would rank anything,
+   * and Tasmania then read `catalogue_unavailable` while the Commonwealth
+   * catalogue held **one** dataset attributed to Tasmania — a dataset that
+   * had answered, from an index that had answered, discarded because a
+   * SECOND index had not.
+   *
+   * The two directions are not symmetric, and conflating them is a different
+   * error each way:
+   *
+   *  - **An absence needs two endpoints that agree.** One catalogue's
+   *    silence is a statement about that catalogue — W3.2's fault, paid for
+   *    twice there.
+   *  - **A find needs one endpoint that answered.** A dataset that exists,
+   *    is attributed to this jurisdiction and says it carries a count is a
+   *    find whatever a second index says; requiring a second witness to a
+   *    thing you are holding is not conservatism, it is discarding evidence.
+   *
+   * So the ranking happens first and the corroboration requirement applies
+   * only where it produced nothing.
+   */
   if (parse.kind === 'refused') return { kind: 'catalogue_unavailable', reason: parse.reason };
-  if (!corroborated) {
-    return {
-      kind: 'catalogue_unavailable',
-      reason: 'only one catalogue answered, and one catalogue’s silence is a statement about that catalogue',
-    };
-  }
   /*
    * Every dataset reaching here is already attributed to this jurisdiction by
    * the caller (`attributableTo`). That filtering is deliberately NOT done
@@ -616,6 +633,12 @@ export function assessVolumeCoverage(
    * asserts the call site filters.
    */
   const ranked = rankVolumeCandidates(parse.datasets);
+  if (!corroborated && ranked.length === 0) {
+    return {
+      kind: 'catalogue_unavailable',
+      reason: 'only one catalogue answered, and one catalogue’s silence is a statement about that catalogue',
+    };
+  }
   const best = ranked[0];
   if (best && best.subState && best.machineReadable) {
     return {
@@ -853,4 +876,148 @@ export function measuredVolumeNote(state: string | null | undefined): string | n
   if (!(VOLUME_GAP_STATES as readonly string[]).includes(key)) return null;
   const s = key as VolumeGapState;
   return volumeCoverageNote(MEASURED_VOLUME_COVERAGE[s], s);
+}
+
+// ---------------------------------------------------------------------------
+// Socrata — because the ACT portal is not CKAN
+// ---------------------------------------------------------------------------
+
+/**
+ * A second catalogue dialect, added because the measurement named it.
+ *
+ * The ACT portal answered a CKAN 3 path with
+ * `404 {"code":"not_found","error":true,"message":"No service found for this
+ * URL."}`. That body is the evidence: it is a JSON API that exists and does
+ * not speak CKAN. `www.data.act.gov.au` runs **Socrata**, whose discovery
+ * API is a different shape — and the reason the wrong root was kept and
+ * printed rather than swapped for another guess is that this is what its
+ * 404 bought.
+ *
+ * Socrata's catalog API is **domain-scoped**, which is a genuine advantage
+ * here: `?domains=www.data.act.gov.au` cannot return another jurisdiction's
+ * dataset, so the Victorian-department defect cannot recur through this
+ * route by construction rather than by a name test. `attributableTo` is
+ * still applied, because a guarantee that holds by construction is one worth
+ * asserting rather than assuming.
+ */
+export const SOCRATA_CATALOG = 'https://api.us.socrata.com/api/catalog/v1';
+
+/** One Socrata domain worth asking, per jurisdiction. */
+export interface SocrataPortal {
+  state: VolumeGapState;
+  publisher: string;
+  domain: string;
+}
+
+export const SOCRATA_PORTALS: readonly SocrataPortal[] = [
+  { state: 'ACT', publisher: 'ACT Government (data.act.gov.au)', domain: 'www.data.act.gov.au' },
+];
+
+export function socrataSearchUrl(domain: string, query: string, limit = 50): string {
+  const p = new URLSearchParams({
+    domains: domain,
+    q: query,
+    limit: String(Math.max(1, Math.min(100, limit))),
+    only: 'dataset',
+  });
+  return `${SOCRATA_CATALOG}?${p}`;
+}
+
+/** The domain's whole index size — the same second question CKAN is asked. */
+export function socrataInventoryUrl(domain: string): string {
+  const p = new URLSearchParams({ domains: domain, limit: '0', only: 'dataset' });
+  return `${SOCRATA_CATALOG}?${p}`;
+}
+
+/**
+ * Read a Socrata catalog answer into the SAME `VolumeDataset` shape.
+ *
+ * One projection, so `judgeVolumeDataset`, `rankVolumeCandidates`,
+ * `attributableTo` and `assessVolumeCoverage` are written once and cannot
+ * disagree between dialects. Two readers and one judgement, never two
+ * judgements — the rule `buildCasePassportView` exists for.
+ *
+ * Socrata's envelope is `{resultSetSize, results: [{resource, classification,
+ * metadata, permalink}]}`. A resource carries `id`, `name`, `description` and
+ * `columns_name`; the publisher is `metadata.domain` or the organisation in
+ * `classification.domain_metadata`. There is no per-resource format — a
+ * Socrata dataset IS queryable, which is why `datastoreActive` is true and
+ * the format is `JSON`: that is the API it serves, not a guess.
+ */
+export function parseSocrataCatalogue(text: string): VolumeCatalogueParse {
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch (err) {
+    return {
+      kind: 'refused',
+      reason: `not JSON (${text.length} bytes, ${String(err)}): ${JSON.stringify(text.slice(0, 220))}`,
+    };
+  }
+  if (!body || typeof body !== 'object') {
+    return { kind: 'refused', reason: `JSON but not an object (${text.length} bytes)` };
+  }
+  const env = body as { resultSetSize?: unknown; results?: unknown; error?: unknown; message?: unknown };
+  if (env.error !== undefined || (env.message !== undefined && env.results === undefined)) {
+    return { kind: 'refused', reason: `the catalogue refused: ${JSON.stringify(env.message ?? env.error)}` };
+  }
+  if (!Array.isArray(env.results)) {
+    return {
+      kind: 'refused',
+      reason: `no results array (${text.length} bytes): ${JSON.stringify(text.slice(0, 220))}`,
+    };
+  }
+  const datasets: VolumeDataset[] = [];
+  for (const raw of env.results as unknown[]) {
+    const r = raw as Record<string, unknown>;
+    const res = r.resource as Record<string, unknown> | undefined;
+    const id = str(res?.id);
+    const name = str(res?.name);
+    if (!id || !name) continue;
+    /*
+     * `columns_name` is Socrata's own list of the dataset's COLUMNS, which is
+     * exactly what `COUNT_PATTERN` needs to read and what a CKAN `notes`
+     * field only sometimes carries. Folded into `notes` so one judgement
+     * serves both dialects.
+     */
+    const columns = Array.isArray(res?.columns_name)
+      ? (res.columns_name as unknown[]).map((c) => str(c)).filter((c): c is string => c !== null)
+      : [];
+    const described = [str(res?.description), columns.join(', ')]
+      .filter((d): d is string => d !== null && d !== '')
+      .join(' · ');
+    const classification = r.classification as Record<string, unknown> | undefined;
+    const domainMeta = Array.isArray(classification?.domain_metadata)
+      ? (classification.domain_metadata as Array<Record<string, unknown>>)
+      : [];
+    const org = domainMeta.find((m) => /publisher|agency|organisation|organization/i.test(str(m.key) ?? ''));
+    const meta = r.metadata as Record<string, unknown> | undefined;
+    const licence = str((r.resource as Record<string, unknown> | undefined)?.license)
+      ?? str(classification?.license);
+    datasets.push({
+      id,
+      name,
+      title: name,
+      notes: described === '' ? null : described,
+      organisation: str(org?.value) ?? str(meta?.domain),
+      licence,
+      metadataModified: str(res?.updatedAt) ?? str(res?.createdAt),
+      /*
+       * A Socrata dataset is queryable by construction — that is the API it
+       * serves. So the resource is the dataset itself, JSON and
+       * `datastoreActive`, which is a fact about Socrata rather than an
+       * assumption about this row.
+       */
+      resources: [{
+        id,
+        name,
+        format: 'JSON',
+        url: str(r.permalink) ?? `https://${str(meta?.domain) ?? 'socrata'}/d/${id}`,
+        datastoreActive: true,
+        size: null,
+      }],
+    });
+  }
+  const total = num(env.resultSetSize);
+  return { kind: 'catalogue', total: total ?? datasets.length, datasets };
 }

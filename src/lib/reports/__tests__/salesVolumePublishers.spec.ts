@@ -30,7 +30,11 @@ import {
   catalogueAnswered,
   judgeCatalogueReach,
   MEASURED_VOLUME_COVERAGE,
+  SOCRATA_PORTALS,
   judgeVolumeDataset,
+  parseSocrataCatalogue,
+  socrataInventoryUrl,
+  socrataSearchUrl,
   measuredVolumeNote,
   mergeVolumeReads,
   parseVolumeCatalogue,
@@ -320,6 +324,29 @@ describe('what may be stated', () => {
     const c = assessVolumeCoverage(catalogue([dataset({ title: 'Bus routes' })]), false);
     expect(c.kind).toBe('catalogue_unavailable');
     if (c.kind === 'catalogue_unavailable') expect(c.reason).toMatch(/one catalogue/i);
+  });
+
+  /*
+   * But corroboration gates an ABSENCE, not a FIND — and the first version
+   * gated both. Tasmania read `catalogue_unavailable` while the Commonwealth
+   * catalogue held one dataset attributed to Tasmania: a dataset that had
+   * answered, from an index that had answered, discarded because a second
+   * index had not.
+   *
+   * Requiring a second witness to a thing you are holding is not
+   * conservatism, it is discarding evidence.
+   */
+  it('accepts a find from one catalogue that answered', () => {
+    const found = assessVolumeCoverage(catalogue([dataset({
+      title: 'Number of sales by locality',
+      resources: [{ id: 'r', name: 'x.csv', format: 'CSV', url: 'https://h/x', datastoreActive: true, size: null }],
+    })]), false);
+    expect(found.kind).toBe('countable');
+  });
+
+  it('still refuses a find from a catalogue that did not answer at all', () => {
+    expect(assessVolumeCoverage({ kind: 'refused', reason: 'DNS' }, false).kind)
+      .toBe('catalogue_unavailable');
   });
 
   it('never reads a refusal as an absence', () => {
@@ -778,5 +805,114 @@ describe('the measured readings', () => {
       expect(note, s).not.toMatch(/\bdemand is\b/i);
       expect(note, s).toContain(s);
     }
+  });
+});
+
+
+/**
+ * The second catalogue dialect, added because the measurement named it.
+ *
+ * The ACT answered a CKAN 3 path with `404 {"code":"not_found","message":"No
+ * service found for this URL."}` — a JSON API that exists and does not speak
+ * CKAN. That body is what bought this reader, and it is why the wrong root
+ * was kept and printed rather than swapped for another guess.
+ */
+describe('Socrata, because the ACT portal is not CKAN', () => {
+  const socrataBody = (results: unknown[], total?: number) => JSON.stringify({
+    resultSetSize: total ?? results.length,
+    results,
+  });
+  const resource = (over: Record<string, unknown> = {}) => ({
+    resource: {
+      id: 'abcd-1234',
+      name: 'Property sales',
+      description: 'Quarterly sales',
+      columns_name: ['Suburb', 'Number of sales', 'Median price'],
+      updatedAt: '2026-07-01T00:00:00Z',
+      ...over,
+    },
+    classification: { domain_metadata: [{ key: 'Publisher', value: 'ACT Revenue Office' }] },
+    metadata: { domain: 'www.data.act.gov.au' },
+    permalink: 'https://www.data.act.gov.au/d/abcd-1234',
+  });
+
+  /*
+   * Domain-scoped, which is a real advantage: the catalog API cannot return
+   * another jurisdiction's dataset, so the Victorian-department defect cannot
+   * recur through this route by construction rather than by a name test.
+   */
+  it('scopes every request to one domain', () => {
+    const u = socrataSearchUrl('www.data.act.gov.au', 'property sales', 50);
+    expect(u).toContain('domains=www.data.act.gov.au');
+    expect(u).toContain('only=dataset');
+    expect(u).toContain('limit=50');
+    expect(socrataSearchUrl('d', 'x', 9999)).toContain('limit=100');
+    expect(socrataInventoryUrl('d')).toContain('limit=0');
+  });
+
+  it('declares a portal only where one was measured', () => {
+    expect(SOCRATA_PORTALS.map((p) => p.state)).toEqual(['ACT']);
+    for (const p of SOCRATA_PORTALS) {
+      /* A DOMAIN, never a URL and never a dataset id. */
+      expect(p.domain).not.toMatch(/^https?:/);
+      expect(p.domain).not.toContain('/');
+    }
+  });
+
+  /*
+   * One projection onto `VolumeDataset`, so `judgeVolumeDataset`,
+   * `rankVolumeCandidates` and `assessVolumeCoverage` are written once and
+   * cannot disagree between dialects.
+   */
+  it('projects onto the same shape the CKAN reader produces', () => {
+    const p = parseSocrataCatalogue(socrataBody([resource()], 7));
+    expect(p.kind).toBe('catalogue');
+    if (p.kind !== 'catalogue') return;
+    expect(p.total).toBe(7);
+    const d = p.datasets[0];
+    expect(d.title).toBe('Property sales');
+    expect(d.organisation).toBe('ACT Revenue Office');
+    expect(d.resources[0].format).toBe('JSON');
+    /* A Socrata dataset is queryable by construction — that is the API it serves. */
+    expect(d.resources[0].datastoreActive).toBe(true);
+    expect(d.resources[0].url).toBe('https://www.data.act.gov.au/d/abcd-1234');
+  });
+
+  /*
+   * `columns_name` is Socrata's own list of the dataset's COLUMNS — exactly
+   * what `COUNT_PATTERN` needs, and what a CKAN `notes` field only sometimes
+   * carries. Folding it into `notes` is what lets one judgement serve both.
+   */
+  it('folds the column list in, so a count is visible to the one judgement', () => {
+    const p = parseSocrataCatalogue(socrataBody([resource()]));
+    if (p.kind !== 'catalogue') return expect.fail('expected a catalogue');
+    const judged = judgeVolumeDataset(p.datasets[0]);
+    expect(judged.count, 'the "Number of sales" column should be read as a count').toBe(true);
+    expect(judged.subState, 'the "Suburb" column should be read as sub-state').toBe(true);
+  });
+
+  it('names what it received when it cannot read it', () => {
+    expect(parseSocrataCatalogue('<html/>').kind).toBe('refused');
+    expect(parseSocrataCatalogue(JSON.stringify({ message: 'nope' })).kind).toBe('refused');
+    expect(parseSocrataCatalogue(JSON.stringify({ error: true })).kind).toBe('refused');
+    const p = parseSocrataCatalogue('<html/>');
+    if (p.kind === 'refused') expect(p.reason).toContain('not JSON');
+  });
+
+  it('skips a result carrying no id or name rather than inventing one', () => {
+    const p = parseSocrataCatalogue(socrataBody([
+      resource(), { resource: { id: 'x' } }, { resource: { name: 'no id' } }, {},
+    ], 4));
+    if (p.kind !== 'catalogue') return expect.fail('expected a catalogue');
+    expect(p.datasets).toHaveLength(1);
+    /* And the publisher's own declared total is kept, not recomputed. */
+    expect(p.total).toBe(4);
+  });
+
+  /* The probe reaches for it only where the CKAN root did not answer. */
+  it('is asked only as the fallback the CKAN 404 bought', () => {
+    const probe = readFileSync('scripts/market/sales-volume-liveness.ts', 'utf8');
+    expect(probe).toMatch(/if \(socrata && !catalogueAnswered\(ownRead\.verdict\)\)/);
+    expect(probe).toMatch(/askSocrata\(socrata\)/);
   });
 });

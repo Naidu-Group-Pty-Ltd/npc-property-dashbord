@@ -56,8 +56,12 @@ import {
   assessVolumeCoverage,
   attributableTo,
   catalogueAnswered,
+  SOCRATA_PORTALS,
   judgeCatalogueReach,
   mergeVolumeReads,
+  parseSocrataCatalogue,
+  socrataInventoryUrl,
+  socrataSearchUrl,
   parseVolumeCatalogue,
   rankVolumeCandidates,
   volumeCoverageNote,
@@ -238,11 +242,81 @@ async function main(): Promise<void> {
 
   const readings: { state: string; coverage: VolumeCoverage; note: string }[] = [];
 
+  /**
+   * Ask a Socrata portal, where a jurisdiction runs one.
+   *
+   * A second dialect, added because the measurement named it: the ACT
+   * answered a CKAN 3 path with `404 {"message":"No service found for this
+   * URL."}` — a JSON API that exists and does not speak CKAN.
+   *
+   * It projects onto the SAME `VolumeDataset` shape, so one judgement serves
+   * both dialects. And its catalog API is domain-scoped, so it cannot return
+   * another jurisdiction's dataset — the Victorian-department defect cannot
+   * recur through this route by construction.
+   */
+  async function askSocrata(portal: typeof SOCRATA_PORTALS[number]): Promise<CatalogueRead> {
+    console.log(`\n  · ${portal.state} — ${portal.publisher} (Socrata)`);
+    kv('catalog', socrataSearchUrl(portal.domain, '…').split('?')[0]);
+    kv('domain', portal.domain);
+
+    let inventory: number | null = null;
+    const inv = await ask(socrataInventoryUrl(portal.domain));
+    if (inv.networkError === null && inv.status === 200) {
+      const p = parseSocrataCatalogue(inv.body);
+      if (p.kind === 'catalogue') inventory = p.total;
+    }
+    kv('the index says it holds', inventory === null
+      ? `(it did not say — ${inv.networkError ?? `HTTP ${inv.status}`})`
+      : `${inventory.toLocaleString('en-AU')} datasets`);
+
+    const parses: VolumeCatalogueParse[] = [];
+    let answered = false;
+    for (const q of VOLUME_QUERIES) {
+      const got = await ask(socrataSearchUrl(portal.domain, q, 50));
+      if (got.networkError !== null || got.status !== 200) {
+        console.log(`      ${q.padEnd(30)} ${got.networkError !== null ? `network: ${got.networkError}` : `HTTP ${got.status}`}`);
+        if (got.bytes > 0) console.log(`      ${' '.repeat(30)} ${JSON.stringify(got.body.slice(0, 120))}`);
+        continue;
+      }
+      const parse = parseSocrataCatalogue(got.body);
+      if (parse.kind === 'refused') {
+        const looksJson = got.body.trimStart().startsWith('{');
+        if (!looksJson) {
+          console.log(`      ${q.padEnd(30)} 200 but not a Socrata catalog — ${parse.reason}`);
+          continue;
+        }
+        ours(`${portal.state} Socrata — ${q}`, parse.reason);
+      }
+      answered = true;
+      console.log(`      ${q.padEnd(30)} 200 · ${parse.total} declared · ${parse.datasets.length} read · ${got.ms} ms`);
+      parses.push(parse);
+    }
+    const parse: VolumeCatalogueParse = answered
+      ? mergeVolumeReads(parses)
+      : { kind: 'refused', reason: `no query reached the Socrata catalog for ${portal.domain}` };
+    const verdict = judgeCatalogueReach(parse, {
+      inventory,
+      matched: parse.kind === 'catalogue' ? parse.datasets.length : 0,
+    });
+    kv('verdict', verdict.kind === 'not_this_index' ? `not this index — ${verdict.detail}` : verdict.kind);
+    return { parse, verdict, inventory };
+  }
+
   for (const state of VOLUME_GAP_STATES) {
     const own = VOLUME_CATALOGUES.find((c) => c.state === state && c.kind === 'own');
     h(`${state}`);
     if (!own) ours(`${state} configuration`, 'no own catalogue declared');
-    const ownRead = await askCatalogue(own);
+    let ownRead = await askCatalogue(own);
+    /*
+     * Where the CKAN root did not answer and the jurisdiction runs a Socrata
+     * portal, ask that instead. Both are printed: the CKAN 404 is the
+     * evidence that sent us here, and hiding it would make the next reader
+     * wonder why a second dialect exists.
+     */
+    const socrata = SOCRATA_PORTALS.find((sp) => sp.state === state);
+    if (socrata && !catalogueAnswered(ownRead.verdict)) {
+      ownRead = await askSocrata(socrata);
+    }
     const ownParse = ownRead.parse;
     printCandidates(ownParse);
 
