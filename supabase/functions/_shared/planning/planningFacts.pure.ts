@@ -77,7 +77,9 @@ import {
 import {
   CONTROL_GUIDE,
   NO_STATE_LAYER_NOTE,
+  OVERLAY_COVERAGE,
   VERIFICATION_DOCUMENT,
+  type OverlayCoverage,
 } from './planningControlGuide.pure.ts';
 import {
   emptyLandUseTable,
@@ -179,6 +181,18 @@ export interface PlanningFacts {
   constraintsAsked: ConstraintFamily[];
   /** The registers that answered, and the ones that could not be reached. */
   constraintRegisters: { answered: string[]; unavailable: string[] };
+  /**
+   * What this platform reads of THIS jurisdiction's overlay registers.
+   *
+   * The distinction the page could not previously draw. An empty reading has
+   * two causes that look identical on the wire — a jurisdiction whose
+   * registers this platform has never integrated, and a jurisdiction whose
+   * registers it does read and could not reach today — and they are opposite
+   * statements to a reader: one is permanent and has a remedy, the other is
+   * this report's bad luck and is worth a retry. `null` where no jurisdiction
+   * resolved at all.
+   */
+  overlayCoverage: OverlayCoverage | null;
   /** State development instruments the point sits inside. */
   instruments: PlanningCell;
   instrumentList: PlanningInstrumentFact[];
@@ -623,6 +637,7 @@ export function buildPlanningFacts(input: PlanningFactsInput): PlanningFacts {
     constraints,
     constraintsAsked,
     constraintRegisters,
+    overlayCoverage: jurisdiction ? OVERLAY_COVERAGE[jurisdiction] : null,
     controls,
     instruments,
     instrumentList,
@@ -809,11 +824,35 @@ export function renderConstraintRegister(facts: PlanningFacts): string {
       );
     }
   } else if (!readings.length) {
-    lines.push(
-      (facts.jurisdiction ? NO_STATE_LAYER_NOTE[facts.jurisdiction] : null)
-      ?? 'No overlay or hazard register was reached for this point, so nothing here says whether a control applies.',
-      '',
-    );
+    /*
+     * Two causes, two sentences. A jurisdiction this platform has never
+     * integrated gets its own note, which names the register and the remedy;
+     * a jurisdiction whose registers ARE read and answered nothing gets the
+     * generic sentence, because that is this report's retrieval rather than a
+     * permanent gap — and telling a reader "not yet integrated" about a
+     * register that normally answers is a false limitation, which teaches
+     * them to discount the true ones.
+     *
+     * `overlayCoverage` is what draws the line. Reading the note map alone
+     * could not: a missing entry meant "read in full" and "forgotten"
+     * indistinguishably, and the Australian Capital Territory was forgotten.
+     */
+    const declared = facts.jurisdiction ? NO_STATE_LAYER_NOTE[facts.jurisdiction] : null;
+    if (declared && facts.overlayCoverage !== 'state_layers_read') {
+      lines.push(declared, '');
+    } else if (facts.overlayCoverage === 'state_layers_read') {
+      lines.push(
+        'The overlay and hazard registers this report reads for this jurisdiction returned '
+        + 'nothing for this point, and no register reported an answer, so they are unchecked '
+        + 'rather than clear. Nothing here says whether a control applies.',
+        '',
+      );
+    } else {
+      lines.push(
+        'No overlay or hazard register was reached for this point, so nothing here says whether a control applies.',
+        '',
+      );
+    }
   }
 
   if (facts.constraintRegisters.unavailable.length) {

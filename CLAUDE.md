@@ -2131,6 +2131,76 @@ answered and this reader refused** — its first version printed "THE ABS DID
 NOT ANSWER" and exited 0 over an HTTP 200, which is a size problem on our
 side reported as an outage on theirs.
 
+**The national pipeline was asked for, and the answer is a measurement.**
+Read [`NATIONAL_PIPELINE_EVIDENCE.md`](./docs/reports/NATIONAL_PIPELINE_EVIDENCE.md)
+before touching `_shared/planning/nationalPipeline.pure.ts`,
+`national-pipeline-liveness.ts`, `OVERLAY_COVERAGE`, `NO_STATE_LAYER_NOTE` or
+the empty branch of `renderConstraintRegister`.
+`INFRASTRUCTURE_COVERAGE_LIMITS` has named the Infrastructure Australia
+Priority List as a standing limit since it was written, and W3.2's acceptance
+is two-branched — named entries, **or** a coverage statement naming the
+register asked. The statement shipped first; what had never been done is the
+part that decides which branch is honest, which is **asking the publisher**.
+Measured 22 Sep 2026 from CI: the Commonwealth catalogue lists **no
+Infrastructure Australia among its publishing organisations**, so the register
+is not distributed there and the statement is the honest branch — a
+measurement now rather than a literal. The probe stands as the instrument that
+flips it, and **no per-report call is made**, because a live lookup would spend
+a round trip to learn a fact that changes on the scale of months
+(`amenity_register`'s rule).
+
+Nothing in it is an identifier anybody typed — no organisation slug, no package
+id, no resource id; a resource id is what the module OUTPUTS. Four rules: **a
+document is not a register** (a PDF is refused for this purpose and the formats
+offered are carried back, because "published, but not as a feed" is a different
+sentence from "not published"); **the edition is the one that ANSWERS** (QTRIP's
+own current edition is `datastore_active` and holds zero rows); a queryable
+resource outranks a download; and a refusal names the size and the first bytes.
+Five readings write five sentences, and `publisher_absent` is read BEFORE the
+packages — it sends a person to the publisher's own site where
+`not_in_catalogue` sends them to another name in the same catalogue.
+
+**And the same fault was committed three times in one sitting, each time one
+endpoint further along.** A relevance query is not a filter: the first probe
+read "no match" over **53 packages and 0 survivors** (NESP marine park
+projects, the *Rail Infrastructure Corporation Annual Report 2003-04*) and
+reported an absence — the `layers=all` defect, one publisher along. The rewrite
+then reported `publisher_absent` over **25 organisations, 1 page read**, while
+its own supplementary search declared 1,769 packages in the same run:
+twenty-five is CKAN's default page size, `limit=1000` was silently ignored, and
+a page was read as a list — inside the commit that fixed it. So the enumeration
+is **corroborated from two endpoints that fail differently** (the plain slug
+list and the package index's own organisation facet), an absence needs both to
+answer AND to agree, a facet bucket outside the list refuses, and a matched
+slug that cannot be resolved is a refusal rather than an absence. The reader
+for the endpoint that lied is **deleted** rather than left unused, and the
+inverse guard refuses organisation OBJECTS from the slug endpoint. One rule
+also only ever half worked: `/infrastructure\s+australia/i` matches the TITLE
+and can never match the slug `infrastructure-australia`.
+
+**W3.6 — an absence belongs to a jurisdiction, and one had been forgotten.**
+The five absences and the per-jurisdiction sentences already existed; what did
+not exist was anything that could tell you a jurisdiction was MISSING.
+`NO_STATE_LAYER_NOTE` is a `Partial` record, correctly — a jurisdiction read in
+full needs no note — and a `Partial` record is exactly the shape that lets one
+go missing. The **Australian Capital Territory** did: its zone IS read, so it
+never looked unserved, while its overlay registers have no branch at all, so
+the page fell through to the generic sentence naming neither the territory nor
+the remedy. `OVERLAY_COVERAGE` declares all eight (`state_layers_read` for
+NSW/VIC/TAS, `partial` for QLD, `not_read` for WA/SA/NT/ACT) and the invariant
+is asserted both ways — anything not read in full owes a note, and anything
+read in full must not carry one, because a false limitation teaches a reader to
+discount the true ones. It **decides something**: `overlayCoverage` rides
+`PlanningFacts` so the page can separate a register never integrated
+(permanent, with a remedy) from one that is read and answered nothing
+(*unchecked rather than clear*, worth a retry) — a distinction the note map
+alone could not draw. The spec drives the REAL composer over all eight, and one
+of its bounds was found by execution: the rating guard is scoped to the
+**absence statement**, because Queensland's remedy says *"a limited certificate
+states the zone and the overlays"* and that is the certificate's statutory
+name — the rule forbids rating an absence, not a jurisdiction's legal
+vocabulary.
+
 **Every state has a reading now, and two of them come through the
 archive** (§10 of the same doc). Victoria's suburb series and South
 Australia's quarterly suburb workbooks are walled at their publishers and

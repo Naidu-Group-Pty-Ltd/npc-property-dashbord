@@ -842,6 +842,24 @@ approval never read as funding, funding never as a start on site.
 *Accept:* page 22's sentence is replaced by named, dated, sourced entries, or by
 a coverage statement that names the register asked.
 
+> **Closed 22 Sep 2026 on the second branch, by measurement.**
+> `nationalPipeline.pure.ts` asks the Commonwealth's own open data catalogue
+> and holds no identifier anybody typed. Measured from CI: data.gov.au lists
+> **no Infrastructure Australia among its publishing organisations** — so the
+> register is not distributed there, the coverage statement is the honest
+> branch, and it is now a measurement rather than a literal.
+> `national-pipeline-liveness.ts` runs on every build as the instrument that
+> flips the branch the day that changes. No per-report call is made: a live
+> lookup would spend a round trip to learn a fact that changes on the scale of
+> months. Full record: `NATIONAL_PIPELINE_EVIDENCE.md`.
+>
+> The asking took three attempts, and each failure was the same class one
+> endpoint further along — a relevance query read as a filter (53 packages, 0
+> survivors, reported as an absence), then `all_fields=true&limit=1000`
+> answered with CKAN's default 25 and a page read as a list, inside the commit
+> that fixed the first. The enumeration is corroborated from two endpoints
+> that fail differently, and an absence needs both to answer and to agree.
+
 **W3.3 · National forward demand: ABS population projections by SA2.**
 Replaces "no forward projection" everywhere rather than in one state.
 
@@ -865,6 +883,23 @@ exist — `not_served`, `not_integrated`, `licence_restricted`, `none_at_point`,
 *Accept:* a test asserting that for each of the eight jurisdictions the planning
 and development readings carry an explicit coverage statement, and that no
 absence is rated.
+
+> **Closed 22 Sep 2026, and it found one.** The five absences and the
+> per-jurisdiction sentences already existed; what did not exist was anything
+> that could tell you a jurisdiction had been FORGOTTEN.
+> `NO_STATE_LAYER_NOTE` is a `Partial` record — correctly, since a
+> jurisdiction read in full needs no note — and a `Partial` record is exactly
+> the shape that lets one go missing. The **Australian Capital Territory**
+> did: its zone IS read, so it never looked unserved, while its overlay
+> registers have no branch at all, so the page fell through to the generic
+> sentence naming neither the territory nor the remedy.
+>
+> `OVERLAY_COVERAGE` declares all eight and the invariant is asserted both
+> ways. It also DECIDES something — `overlayCoverage` rides `PlanningFacts` so
+> the page separates a register never integrated (permanent, with a remedy)
+> from one that is read and answered nothing (*unchecked rather than clear*,
+> worth a retry), which the note map alone could not draw.
+> `jurisdictionCoverage.spec.ts` drives the real composer over all eight.
 
 ### W4 · Typography, brand and copy hygiene
 
@@ -1282,10 +1317,16 @@ on more code.
 **Everything left in this programme that needs no new infrastructure is
 closed.** W3.1's prohibition and W3.2's coverage statement shipped without
 their registers because the guarantee is worth having before the evidence
-exists; W3.1's register, W3.2's, W3.3's, W3.4's and W3.5's all need a table, a
+exists; W3.1's register, W3.3's, W3.4's and W3.5's all need a table, a
 schedule and a first ingest, and a production egress that can reach the
 publisher. Those are one approval and one probe away, not one more pass over
 the document.
+
+**W3.2 needs none of that, and that is the finding.** Its register is not
+published as a feed at all — measured, not assumed — so there is no table to
+create and no schedule to run, and the acceptance criterion's second branch is
+the true one. W3.6 needed no infrastructure either and is closed with it, since
+both are about what a reading SAYS rather than about what it holds.
 
 ---
 
