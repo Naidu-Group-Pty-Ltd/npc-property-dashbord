@@ -1731,17 +1731,22 @@ currently failing.** Found while looking for other generated artefacts that
 seed v19 might have left stale — the migration object index was one, and
 `security` caught it in 50 seconds.
 
-| check | wired into CI | state today |
+The table below is **as found**, and every "no" in it has since been closed;
+what each became is in the column beside it. It is kept in its original state
+rather than rewritten, because the count of what was unwired is the finding.
+
+| check | wired when found | state today |
 | --- | --- | --- |
 | `reportkit:tokens:check` | yes | pass |
 | `reportkit:assets:check` | yes | pass |
 | `market:registry:check` | yes | pass |
 | `integrations:secrets:check` | yes | pass |
 | `migrations:index:check` | yes | pass (after this branch regenerated it) |
-| `brand:icons:check` | **no** | pass |
-| `mobile:tokens:check` | **no** | pass |
-| `mobile:api:check` | **no** | **FAIL** |
-| `templates:compass:qa` | **no** | pass |
+| `brand:icons:check` | **no** | wired (`1ac0242`), pass |
+| `mobile:tokens:check` | **no** | wired (`1ac0242`), pass |
+| `mobile:api:check` | **no** — and FAILING | wired (`1ac0242`), pass after regeneration |
+| `templates:compass:qa` | **no** | wired (`1ac0242`) as its own `template-geometry` job, pass |
+| `templates:library:seed:check` | **did not exist** | wired (`4c973bd`) beside the render gate, pass |
 
 **And the fourth is the most consequential.** No workflow runs ANY
 `templates:*` script — checked across every file in `.github/workflows/`. The
@@ -1780,22 +1785,36 @@ and no existing function's `exposure_class`, `mobileScope` or `verify_jwt`
 changed. The only other lines that moved were the three counts. The artefact
 was simply stale by five functions, with nothing to say so.
 
-`mobile/api-surface.json` reports itself *"out of date with the security
-registry"*, and it fails on the PR BASE as well as on this branch — so it
-predates this work and is nobody's regression from it. `CLAUDE.md` says both
-mobile artefacts "must never be hand-edited" and that "both have `:check`
-drift modes", so the intent is plainly that they be checked; nothing checks
-them.
+**What follows is the reasoning as it stood before the regeneration above,
+kept because it is why the caution was right to take and what discharged it.**
+It reported, in the present tense, that `mobile/api-surface.json` fails on the
+PR base as well as on this branch, that `CLAUDE.md` plainly intends both
+mobile artefacts to be checked while *"nothing checks them"*, that this was
+"the unmounted-component class applied to a CI gate — a check that exists,
+works, and is wired to nothing, the same shape as `DimensionRail`, `bd-chip`
+and `verdict.pricingUrl`", and that **it was recorded rather than fixed**
+because regenerating an artefact feeding the Flutter workspace, with no gate
+covering it and this session never having read that subsystem, is the kind of
+unverifiable change to an outside subsystem that this programme exists to
+stop.
 
-That is the unmounted-component class applied to a CI gate: a check that
-exists, works, and is wired to nothing — the same shape as `DimensionRail`,
-`bd-chip` and `verdict.pricingUrl`.
+Every one of those sentences is now false, and each was closed by the
+paragraph above: the artefact was regenerated (five functions added, zero
+removed, every entry derived rather than authored), which made the change
+verifiable and discharged the caution, and both mobile checks are wired —
+`ci.yml` runs `mobile:tokens:check` and `mobile:api:check` in `verify`.
 
-**It is recorded rather than fixed, for one reason that decides it: the change
-could not be verified.** Regenerating the artefact is one command, but it
-feeds the Flutter workspace, no gate covers it, and this session has not read
-that subsystem. An unverifiable change to a subsystem outside this programme
-is the thing this programme exists to stop, so it goes in the list instead.
+**Leaving them in the present tense cost something measurable, which is why
+they are marked rather than left standing.** On 22 Sep 2026, with W3.1 and
+W3.3 assessed and found to need nothing, the next move chosen was to wire the
+two mobile gates — *because this section said nothing checked them*. Both were
+already wired and both already passed. That is this document misleading its own
+author inside one session, and it is the same defect the programme records
+against `strategySectionRules` (a module naming five composed sections where
+three exist), against the two contradicting prompt blocks, and against
+`SA_NT_NOTE`: **a record that states two things resolves to whichever the
+reader reaches first.** A superseded paragraph is kept for its reasoning and
+must say that it is superseded.
 
 ### The generated artefact nobody checked, and the 301 templates it cost
 
