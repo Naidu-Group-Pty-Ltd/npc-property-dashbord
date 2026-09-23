@@ -80,8 +80,14 @@ merged. Every item marked PENDING below is unperformed.
 2. On the prime, dispatch `20261210000000`–`040000` (urban centres) with
    `record_version: true`. Check first that the vault holds `supabase_url`,
    because `20261210010000` raises without it.
-3. On the prime, dispatch `20261219000000`–`030000`. Dispatch
-   `20261219040000` only once the Quick Send decision is made.
+3. On the prime, dispatch `20261219000000`–`020000`.
+   - Before `20261219030000`, run migration-drift and read that file's
+     `@effect` probe. `NOT APPLIED` means applying it changes the prime's row
+     security: replies to a client's email stop being visible across
+     clients. `effect present` means it changes nothing on the prime and only
+     carries the policies to the clones. Either way, the prime's ledger has to
+     record it before Mission Control sends it to any clone.
+   - Dispatch `20261219040000` only once the Quick Send decision is made.
 4. Merge and deploy Mission Control. Its reader expects the skeleton manifest
    on the prime's `main`.
 5. Let Mission Control redeploy `market-sales-ingest` on the clones. Then
