@@ -458,7 +458,7 @@ would write, because it is the same code.
 | **VIC** | Victoria in Future 2023 (`VIF2023`) | LGA | VIF2023 | 2021 → 2036 | 80 LGAs / 320 rows · 1 declined (the state) | **CC BY 4.0, read** |
 | **TAS** | Treasury 2024 projections | LGA | Medium · High · Low | 2023 → 2053 | 29 LGAs / 899 rows per series · 1 declined (the state) | **not read — refused** |
 | **QLD** | QGSO regions tables, 2021–2046 | SA2/SA3/SA4 (medium) · LGA (low, medium, high) | — | — | being described (§9.3) | — |
-| **SA** | 2016-based, released 2019, on data.sa.gov.au | SA2 · LGA | high · medium · low | 2016 → 2041 | **declined — superseded** (§9.4) | CC BY (catalogue) |
+| **SA** | 2016-based, released 2019, on data.sa.gov.au | SA2 · LGA | not described | 2016 → 2041 | **declined — superseded** (§9.4) | CC BY (catalogue) |
 | **WA** | WA Tomorrow Report 12 | SA2 | bands | — | **declined — licence** (§9.4) | Custom (Active Acceptance) |
 | **ACT** | Projections by District (2015–2041) | district | — | 2015 → 2041 | **declined — superseded** (§9.4) | CC BY 4.0 |
 | **NT** | NTPOP 2024 | — | — | — | **not reached** (§9.4) | — |
@@ -553,10 +553,15 @@ shipping.
   Projections for SA* is CC BY and publishes SA2 and LGA workbooks, but it is
   the 2016-based edition released in 2019. The Department's current edition
   is on `plan.sa.gov.au`, which refuses CI; the archive's index answered 503
-  (busy) on every ask, and is asked again with a retry. Printing a superseded
-  edition as the jurisdiction's projection states the publisher's view of a
-  decade ago as its view today — QTRIP's rule, *the edition is the one that
-  answers*, applied to a forecast.
+  (busy) on every ask, and is asked again with a retry. **A superseded
+  projection is not the publisher's projection**: a projection is the
+  publisher's current assumption set, and a newer edition replaces those
+  assumptions rather than adding to them, so printing the older one under the
+  publisher's name states a view it has since abandoned. This is deliberately
+  NOT QTRIP's rule (*the edition is the one that answers*): an older edition
+  of a register of projects still lists things that were true when it was
+  published, while an older projection's figures are the publisher's replaced
+  opinion about the future.
 - **Western Australia — a licence.** WA Tomorrow Report 12 publishes SA2
   forecasts, and the catalogue states its licence as *Custom (Active
   Acceptance)*: reuse requires accepting terms this platform has not accepted

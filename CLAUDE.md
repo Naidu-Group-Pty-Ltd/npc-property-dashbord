@@ -2412,11 +2412,13 @@ its own terms), and refuses terms that name none — while `suppliedNotice`
 carries the file's own © notice onto every row, because CC BY 4.0 asks a
 reuser to keep it. Tasmania's ReadMe says *"© Government of Tasmania"* and nothing about
 reuse, and **a notice is silence about terms**, so Tasmania stays refused
-until its terms are read. **The edition is the one that answers**: South
-Australia's catalogue edition is 2016-based and the ACT's 2015-based, both
-superseded by editions their publishers print elsewhere, so both are declined
-rather than printed as the jurisdiction's view today, and WA's SA2 forecasts
-are *Custom (Active Acceptance)*. And **a batch never splits an area** — a
+until its terms are read. **A superseded projection is not the publisher's
+projection** — a newer edition REPLACES the assumption set rather than adding
+to it, which is why this is not QTRIP's "the edition is the one that answers":
+South Australia's catalogue edition is 2016-based and the ACT's 2015-based,
+both superseded by editions their publishers print elsewhere, so both are
+declined rather than printed as the jurisdiction's view today, and WA's SA2
+forecasts are *Custom (Active Acceptance)*. And **a batch never splits an area** — a
 failed batch would otherwise leave an area holding half a series under a new
 edition, which the reader, preferring the edition that reaches furthest, would
 print as the projection; the prune follows every batch and keeps to its own
