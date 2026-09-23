@@ -527,7 +527,13 @@ Two rules hold the licence at load time, not only at declaration:
   publisher's "unless otherwise stated". So a later edition published under
   different terms at the same URL is refused rather than loaded under the
   terms read for this one — and a file that affirms its own licence, as
-  government workbooks commonly do, is not refused for agreeing.
+  government workbooks commonly do, is not refused for agreeing. **A cell is
+  judged by what it says, not by how it starts**: the first version left out
+  every cell that opened with `©`, on the reasoning that a notice is not a
+  statement of terms — which let *"© State of X. All rights reserved."* and a
+  notice naming CC BY-NC through unjudged, in exactly the cell publishers write
+  them in. A bare notice (*"© Government of Tasmania"*) names no terms and
+  still matches nothing.
 - **The notice the file supplies travels with every row.** CC BY 4.0
   §3(a)(1)(A)(ii) asks a reuser to retain a copyright notice the licensor
   supplies; `suppliedNotice` reads it from the workbook (never typed) and every
