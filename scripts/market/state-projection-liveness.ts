@@ -88,7 +88,7 @@ import {
 import { readZipDirectoryFromTail, memberDataStart, ZIP_TAIL_BYTES } from '../../supabase/functions/_shared/gtfsFeed.pure.ts';
 import { PROJECTION_FILES, parseProjectionFile, type ProjectionFile } from '../../supabase/functions/_shared/reports/market/openData/stateProjectionFiles.pure.ts';
 import { guardProjectionRows } from '../../supabase/functions/_shared/reports/market/openData/projectionLoad.pure.ts';
-import { readXlsxSheets, cellText, type Grid } from '../../supabase/functions/_shared/reports/market/openData/xlsxSheet.pure.ts';
+import { readXlsxSheets, cellText, readMember, sheetMembers, unescapeXml, xlsxMembers, type Grid } from '../../supabase/functions/_shared/reports/market/openData/xlsxSheet.pure.ts';
 
 const FETCH_MS = 30_000;
 const DOWNLOAD_MS = 90_000;
@@ -117,7 +117,24 @@ function ours(what: string, detail: unknown): never {
 
 interface Fetched { status: number; body: string; ms: number; networkError: string | null; contentType: string | null }
 
+/**
+ * The archive's index sheds load under concurrent asks, and it answered 503 to
+ * every question the 23 Sep 2026 run put to it — which hid the Northern
+ * Territory's 2024 edition and South Australia's newer one behind a busy
+ * signal rather than an answer. A 503, 504 or 429 from the index is asked
+ * again, twice, after a pause; anything else is the answer.
+ */
 async function ask(url: string, accept = 'application/json'): Promise<Fetched> {
+  let got = await askOnce(url, accept);
+  if (!/^https:\/\/web\.archive\.org\/cdx\//.test(url)) return got;
+  for (let attempt = 1; attempt <= 2 && [429, 503, 504].includes(got.status); attempt += 1) {
+    await new Promise((r) => setTimeout(r, 5_000 * attempt));
+    got = await askOnce(url, accept);
+  }
+  return got;
+}
+
+async function askOnce(url: string, accept: string): Promise<Fetched> {
   const began = Date.now();
   try {
     const res = await fetch(url, {
@@ -565,11 +582,15 @@ function printRightsLines(label: string, grid: Grid | undefined, all = false): v
   for (const l of lines.slice(0, 16)) console.log(`        ${l.length > 400 ? `${l.slice(0, 399)}…` : l}`);
 }
 
+/** The bytes each dry run fetched, so the terms pass reads the file the dry run read rather than fetching it twice. */
+const fetchedFiles = new Map<string, Uint8Array>();
+
 async function dryRun(file: ProjectionFile): Promise<string> {
   console.log(`\n    ${file.key} — ${file.state} · ${file.url}`);
   if (budgetLeft() < 60_000) { skippedForBudget.push(`dry run ${file.key}`); return 'not run (budget)'; }
   const got = await fetchLikeTheLoader(file.url);
   if (got.bytes === null) { console.log(`      NOT FETCHED — ${got.why}`); return 'not fetched'; }
+  fetchedFiles.set(file.key, got.bytes);
   console.log(`      fetched    ${got.bytes.length.toLocaleString('en-AU')} bytes via ${got.via}`);
   const began = Date.now();
   let read;
@@ -626,9 +647,16 @@ function pageLines(html: string): string[] {
 async function rightsPages(origin: string): Promise<void> {
   const home = await readPage(`${origin}/`);
   if (!home) { console.log(`      ${origin}/ not read`); return; }
+  /*
+   * An href is an HTML attribute, so its `&amp;` is `&`: the 23 Sep run
+   * followed Tasmania's "Disclaimer & Copyright" link with the entity still
+   * in it and SharePoint answered 404 to a URL nobody had published. And a
+   * bare "licence" is not a rights link — the same run's first pick was
+   * *Liquor licence decisions*.
+   */
   const hrefs = [...home.body.matchAll(/<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)]
-    .map((m) => ({ href: m[1], text: m[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() }))
-    .filter((l) => /copyright|disclaimer|licen[cs]|terms/i.test(`${l.href} ${l.text}`));
+    .map((m) => ({ href: unescapeXml(m[1]), text: m[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() }))
+    .filter((l) => RIGHTS_LINK.test(`${l.href} ${l.text}`));
   const urls = [...new Set(hrefs.map((l) => new URL(l.href, `${origin}/`).toString()))].slice(0, 3);
   console.log(`      ${origin}/ via ${home.via} · rights links: ${urls.length === 0 ? 'none' : urls.join(' | ')}`);
   for (const u of urls) {
@@ -636,7 +664,120 @@ async function rightsPages(origin: string): Promise<void> {
     if (!page) continue;
     const lines = pageLines(page.body).filter((l) => LICENCE_WORDS.test(l));
     console.log(`      ${u} (via ${page.via}) — ${lines.length} line(s) about rights`);
+    for (const l of lines.slice(0, 14)) console.log(`        ${l.length > 300 ? `${l.slice(0, 299)}…` : l}`);
+  }
+}
+
+/** A link that leads to a statement of rights: copyright, disclaimer, a licence by name, or terms of use. */
+const RIGHTS_LINK = /copyright|disclaimer|creative commons|terms (of use|and conditions)|terms-of-use/i;
+
+/**
+ * The external links a worksheet carries, in the publisher's own words — the
+ * hyperlinks live in the sheet's relationships part, not in its cells, so a
+ * cell reading "Click here for Treasury's population projections home page"
+ * says where it points only here.
+ */
+async function sheetHyperlinks(bytes: Uint8Array, sheet: string): Promise<string[]> {
+  const members = xlsxMembers(bytes);
+  const byName = new Map(members.map((m) => [m.name, m]));
+  const text = async (name: string) => {
+    const m = byName.get(name);
+    return m ? new TextDecoder().decode(await readMember(bytes, m)) : null;
+  };
+  const workbook = await text('xl/workbook.xml');
+  const rels = await text('xl/_rels/workbook.xml.rels');
+  if (!workbook || !rels) return [];
+  const paths = sheetMembers(workbook, rels);
+  const path = paths.get(sheet) ?? [...paths.entries()].find(([n]) => n.trim().toLowerCase() === sheet.trim().toLowerCase())?.[1];
+  if (!path) return [];
+  const slash = path.lastIndexOf('/');
+  const sheetRels = await text(`${path.slice(0, slash)}/_rels/${path.slice(slash + 1)}.rels`);
+  if (!sheetRels) return [];
+  return [...sheetRels.matchAll(/<Relationship\b([^>]*?)\/?>/g)]
+    .filter((m) => /TargetMode="External"/.test(m[1]))
+    .map((m) => unescapeXml(/\bTarget="([^"]*)"/.exec(m[1])?.[1] ?? ''))
+    .filter((t) => /^https?:\/\//.test(t));
+}
+
+/**
+ * The text of a PDF's first and last pages, where a publisher prints its
+ * copyright and licence statement. pdf.js's legacy build, in Node; the
+ * polyfill is for Node 20, which CI pins and which predates
+ * `Promise.withResolvers`.
+ */
+async function pdfText(bytes: Uint8Array, first = 4, last = 2): Promise<string[]> {
+  const P = Promise as unknown as { withResolvers?: unknown };
+  if (typeof P.withResolvers !== 'function') {
+    P.withResolvers = function withResolvers<T>() {
+      let resolve!: (v: T) => void;
+      let reject!: (e: unknown) => void;
+      const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+      return { promise, resolve, reject };
+    };
+  }
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const doc = await pdfjs.getDocument({ data: bytes, isEvalSupported: false, disableFontFace: true, useSystemFonts: false }).promise;
+  const pages = new Set<number>();
+  for (let i = 1; i <= Math.min(first, doc.numPages); i += 1) pages.add(i);
+  for (let i = Math.max(1, doc.numPages - last + 1); i <= doc.numPages; i += 1) pages.add(i);
+  const lines: string[] = [];
+  for (const n of [...pages].sort((a, b) => a - b)) {
+    const page = await doc.getPage(n);
+    const content = await page.getTextContent();
+    let line = '';
+    for (const item of content.items as Array<{ str?: string; hasEOL?: boolean }>) {
+      line += item.str ?? '';
+      if (item.hasEOL) { if (line.trim() !== '') lines.push(`p${n}: ${line.replace(/\s+/g, ' ').trim()}`); line = ''; }
+      else line += ' ';
+    }
+    if (line.trim() !== '') lines.push(`p${n}: ${line.replace(/\s+/g, ' ').trim()}`);
+  }
+  await doc.destroy();
+  return lines;
+}
+
+/**
+ * Tasmania's own terms, read where the publisher points. The workbook's ReadMe
+ * links to the Treasury's projections page; that page links the Final Report,
+ * and a Treasury report carries its copyright and licence statement on its
+ * opening pages. The 23 Sep run read "© Government of Tasmania" in the ReadMe
+ * and nothing about reuse anywhere — a notice is silence about terms, so the
+ * load stays refused until a statement of terms is read.
+ */
+async function tasmaniaTerms(): Promise<void> {
+  let bytes = fetchedFiles.get('tas_medium') ?? null;
+  if (!bytes) {
+    const got = await fetchLikeTheLoader('https://www.treasury.tas.gov.au/Documents/2024-population-projections-Medium-series-Main-output-file.xlsx');
+    bytes = got.bytes;
+  }
+  if (!bytes) { console.log('      the medium-series workbook was not fetched, so its links were not read'); return; }
+  const links = await sheetHyperlinks(bytes, 'ReadMe');
+  console.log(`      the ReadMe links to: ${links.length === 0 ? '(nothing)' : links.join(' | ')}`);
+  const reports: Array<{ url: string; text: string }> = [];
+  for (const link of links.slice(0, 3)) {
+    const page = await readPage(link);
+    if (!page) continue;
+    const lines = pageLines(page.body).filter((l) => LICENCE_WORDS.test(l));
+    console.log(`      ${link} (via ${page.via}) — ${lines.length} line(s) about rights`);
     for (const l of lines.slice(0, 10)) console.log(`        ${l.length > 300 ? `${l.slice(0, 299)}…` : l}`);
+    const docs = [...page.body.matchAll(/<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)]
+      .map((m) => ({ url: new URL(unescapeXml(m[1]), link).toString(), text: m[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() }))
+      .filter((d) => /\.(pdf|docx?)(\?|$)/i.test(d.url));
+    for (const d of docs.slice(0, 12)) console.log(`        document  ${d.text.slice(0, 70).padEnd(70)} ${d.url}`);
+    reports.push(...docs.filter((d) => /\.pdf(\?|$)/i.test(d.url) && /report|guide|projection/i.test(`${d.text} ${d.url}`)));
+  }
+  for (const r of reports.slice(0, 2)) {
+    if (budgetLeft() < 60_000) { skippedForBudget.push(`Tasmanian report — ${r.url}`); break; }
+    const got = await download(r.url);
+    if (!got.bytes) { console.log(`      ${r.url} → ${got.note}`); continue; }
+    try {
+      const lines = await pdfText(got.bytes);
+      const rights = lines.filter((l) => LICENCE_WORDS.test(l));
+      console.log(`      ${r.text || r.url} — ${got.note}, ${lines.length} line(s) read from its opening and closing pages, ${rights.length} about rights`);
+      for (const l of rights.slice(0, 14)) console.log(`        ${l.length > 300 ? `${l.slice(0, 299)}…` : l}`);
+    } catch (err) {
+      console.log(`      ${r.url} — ${got.note}, not readable as a PDF: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 }
 
@@ -651,6 +792,14 @@ async function main(): Promise<void> {
   console.log('\n  The licence each publisher states for reuse');
   await rightsPages('https://www.planning.nsw.gov.au');
   await rightsPages('https://www.treasury.tas.gov.au');
+  await rightsPages('https://www.qgso.qld.gov.au');
+
+  console.log('\n  Tasmania\'s terms, where its own workbook points');
+  await tasmaniaTerms();
+
+  console.log('\n  Queensland\'s own projection tables, described for a parser (links read by the 23 Sep run)');
+  await describe('https://www.qgso.qld.gov.au/issues/5281/qld-population-projections-regions-tables-sa2s-sa3s-sa4s-qld-med-series-2021-2046.xlsx', 'QGSO — SA2, SA3 and SA4, medium series');
+  await describe('https://www.qgso.qld.gov.au/issues/5281/qld-population-projections-regions-tables-lgas-qld-low-med-high-series-2021-2046.xlsx', 'QGSO — LGAs, low, medium and high series');
 
   console.log('\n  Where Queensland puts its projection files (the first walk found none one level down)');
   for (const page of [
