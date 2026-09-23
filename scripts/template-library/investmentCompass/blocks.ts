@@ -2535,6 +2535,9 @@ export function disclaimerPage(text: string): PageDef {
       // the binding resolves to nothing.
       mark: '{{org.markMono}}',
       markHeight: 37,
+      // The family's margin, so the closing page's copy sits on the same inset
+      // as every page before it rather than the block's own 20pt.
+      margin: ctx().margin,
       /*
        * The deployment's own disclaimer, not this constant.
        *
