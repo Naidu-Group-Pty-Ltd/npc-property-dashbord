@@ -290,6 +290,23 @@ The harvest paths spend the same allowance through `analyseWithinBudget`; an
 image a request cannot afford is stored without a verdict and the sweep takes
 it, in a request with the whole allowance to itself.
 
+**In production, 23 Sep 2026.** The last run on version 481 (20:47 UTC) ended
+546 like every run before it. The first on version 483 (20:57) answered 200 and
+logged `analysed=1 failed=0 too_large=1 unsupported=0 deferred=false
+remaining=3507`. Two rows inside a 1,200 ms budget means the first cost no
+decode: the head of the queue, which every earlier run had died decoding, was
+read from its header, stamped too large, and passed. The next three runs each
+answered 200 and analysed one image (3,506 → 3,504).
+
+**One image a run is the time budget, not the pixel budget**: 1,200 ms of wall
+clock is spent by the first image's download and decode, so `hasBudget` ends
+the run after it. Measured runs took 3.1–6.4 s end to end. At one image every
+five minutes the backlog takes about twelve days.
+`LISTING_IMAGE_ANALYSIS_BUDGET_MS` is the lever, and raising it is a decision
+about the plan's CPU allowance, which the function cannot read. What now
+protects the worker's memory is the pixel allowance, whatever the time budget
+is.
+
 ## A photograph that is not of this property
 
 The one question no single image can answer. A stock interior render is a
