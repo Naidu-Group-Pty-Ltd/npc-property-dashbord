@@ -42,13 +42,16 @@ const REPORT = [
 ].join('\n');
 
 describe('the two kinds of control are different kinds', () => {
-  it('defaults to a complete document with hero imagery off', () => {
+  it('defaults to a complete document with hero imagery off, written for an investor', () => {
     expect(DEFAULTS).toEqual({
       includeSources: true,
       includeScoring: true,
       includeCharts: true,
       includeHeroImages: false,
       includeSparklines: true,
+      // Every document produced before the audience existed was an
+      // investor's, so the default reproduces it exactly.
+      audience: 'investor',
     });
   });
 

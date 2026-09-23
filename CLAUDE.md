@@ -79,7 +79,15 @@ those served from opaque Google Drive ids no URL rule can read.
 thresholds are measured (21 labelled production images, 21 correct), and the
 verdict is stored so every surface gets it before the first paint. Decoding is
 **budgeted, not counted** — ~116 ms of CPU each against an Edge Function's
-allowance — and the decoder import is lazy so `resolve` pays nothing.
+allowance — and the decoder import is lazy so `resolve` pays nothing. **The
+budget is in pixels as well as time**: the decoder holds every pixel before it
+downscales (13–17.5 bytes each, measured), and one floor plan too large for a
+worker killed every `op: 'analyse'` run, every five minutes, from at least
+12 Sep to 23 Sep 2026 — 546 on each, and nothing in the function said so. So
+`listingImageDecode.pure.ts` reads the size from the image's own header before
+anything is decoded, and the sweep **stamps a row before it decodes it**,
+because a worker the platform ends cannot be caught and an unstamped row is
+back at the head of a position-ordered queue on the next run.
 
 The other half is a question no single image can answer: **is this photograph
 even of this property?** 3,035 of 4,841 rows are a picture some other listing
@@ -1779,6 +1787,31 @@ The one escape is `projectInvestmentReport(row, { tier })`, for the condense
 fork alone: **the document being PRODUCED decides**, and keying it on the row
 being READ would hand a Snapshot's prompt a Compass parent with no modelling in
 it. Shipped as seed **v14** plus the active-master refresh.
+
+## Who a report is written for — investor, owner-occupier or both
+
+Read [`docs/reports/AUDIENCE.md`](./docs/reports/AUDIENCE.md) before touching
+`_shared/reports/investment/audienceContent.pure.ts`,
+`_shared/reports/location/ownerOccupierLens.pure.ts`, the `audience` option on
+`projectInvestmentReport`, or the dashboard's two KPI bands in the Investment
+masters. `tierContent.pure.ts` decides which QUESTION a document answers; the
+audience decides who it answers it FOR, chosen on the report page's export
+panel and applied once, above the choice of presentation. Three rules bite.
+**It decides what is PUBLISHED, never what is COMPUTED** — an owner-occupier's
+copy withholds every figure that describes a letting (the rent, the yields,
+the weekly position, a landlord's insurance, the investor cost total) and
+prints everything true of both as the record holds it; an owner-occupier's
+cash flow is a different model and no figure is recalculated to fake one.
+**A mixed section is never cut into** — only the four sections whose whole
+subject is a letting leave, named by section id through the registry, and two
+tenant headings that speak to a buyer as well are kept by name. And **the
+investor is byte-identical**: the body, the projection and every master draw
+exactly what they drew before, which is what lets the choice reach all stored
+reports at once. The owner-occupier's section is composed from the record and
+nothing else — the Census only where `isCensusProjectionSource` recognises it,
+a commute only to this property's own centre, no count that saturates, no
+rating. The prose the model wrote is still the investor's; framing it needs a
+stored audience, which is a migration for the owner to approve.
 
 ## The Compass prompt was 96% a different report
 
