@@ -9,8 +9,6 @@
  * never cut into; and the owner-occupier's section is placed by the
  * document's own shape.
  */
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   AUDIENCE_DESCRIPTION,
@@ -33,9 +31,80 @@ import {
 } from '../../../../supabase/functions/_shared/planning/landUsePermissibility.pure';
 import { INVESTMENT_COMPASS_TEMPLATES } from '../../../../scripts/template-library/investmentCompass/templates';
 
-const ROOT = resolve(__dirname, '../../../..');
-const row = (name: 'annabelle' | 'pallas') =>
-  JSON.parse(readFileSync(resolve(ROOT, `reports/fixtures/${name}-row.json`), 'utf8')) as Record<string, any>;
+/**
+ * A stored report row, in the shape the stored columns have and with nothing
+ * real in it.
+ *
+ * Every name and figure below is invented. A spec may only read what the
+ * repository carries (`noLocalOnlyFixtures.spec.ts`), and the rows under
+ * `reports/fixtures/` are customers' records, gitignored on purpose — a spec
+ * that read one passed on the machine that wrote it and could only ever fail
+ * on a runner. The shapes are the ones `location-intelligence-service`, the
+ * Census projection, the RBA reader and the financial engine store.
+ */
+const RECORD: Record<string, any> = {
+  id: 'audience-spec',
+  report_tier: 'compass',
+  location_intelligence: {
+    schools: {
+      topSchools: [
+        { name: 'Wattle Grove Public School', distance: 0.09 },
+        { name: "St Brigid's Primary School", distance: 0.7 },
+        { name: 'Ironbark High School', distance: 0.82 },
+        // The same school answered twice — named once, at its nearest.
+        { name: 'Wattle Grove Public School', distance: 1.4 },
+        { name: 'Casuarina College', distance: 2.1 },
+      ],
+    },
+    lifestyle: { nearestShopping: 'Wattle Grove Shopping Village', nearestPark: 'Banksia Reserve' },
+    healthcare: { nearestHospital: 'Wattle Grove Physiotherapy', distanceToHospital: 0.15 },
+    transport: {
+      verdict: 'stops_nearby',
+      nearestStation: 'Main Rd opp Banksia Ave',
+      distanceToStation: 0.1,
+      stopsWithin1km: 117,
+      stopsWithinRadius: 117,
+      radiusMetres: 1600,
+      sources: ['Transport for NSW Open Data (CC BY 4.0)'],
+    },
+    __acquisition: {
+      stages: {
+        amenitySources: { schools: 'register', shopping: 'register', recreation: 'register', healthcare: 'register' },
+      },
+    },
+  },
+  demographics_data: {
+    housing: { source: 'ABS Census 2021 (POA 2999)', ownerOccupierRate: 73.3, renterRate: 24.8, averageHouseholdSize: 3.3 },
+    income: { source: 'ABS Census 2021 (POA 2999)', medianAge: 35 },
+  },
+  economic_data: {
+    lendingRates: {
+      source: 'RBA statistical table F5 (Indicator Lending Rates)',
+      ownerOccupier: { discountedVariable: { value: 6.8, periodLabel: 'July 2026' } },
+      investor: { discountedVariable: { value: 7.13, periodLabel: 'July 2026' } },
+    },
+  },
+  financial_calculations: {
+    income: { weeklyRent: 850, annualRent: 44200, occupancyWeeks: 50, effectiveAnnualRent: 42500 },
+    keyMetrics: {
+      lvr: 80, annualNet: -31240, weeklyNet: -601, netRentalYield: 2.61, occupancyWeeks: 50,
+      totalInvestment: 312400, cashOnCashReturn: -10.0, grossRentalYield: 3.07, annualLoanPayments: 67200,
+    },
+    annualCosts: {
+      landTax: 3200, strataFees: 0, waterRates: 900, lettingFees: 850, maintenance: 1800,
+      councilRates: 2100, landlordInsurance: 1600, propertyManagement: 2975, totalAnnual: 13425,
+    },
+    assumptions: { capitalGrowth: 5.2, occupancyWeeks: 50 },
+    loanDetails: {
+      lvr: 80, loanAmount: 1152000, interestRate: 5.83, loanType: 'principal_and_interest',
+      annualPayment: 81252, weeklyPayment: 1562, monthlyPayment: 6771,
+    },
+    initialCosts: {
+      lmi: 0, deposit: 288000, legalFees: 2200, stampDuty: 59415, loanAmount: 1152000,
+      totalUpfront: 350115, propertyValue: 1440000, inspectionFees: 500,
+    },
+  },
+};
 
 const SECTION = { heading: OWNER_OCCUPIER_SECTION_HEADING, body: '| Living here | What the evidence shows |\n| --- | --- |\n| Schools | A, 90 m |' };
 
@@ -170,21 +239,22 @@ describe('the audience', () => {
 });
 
 describe("the owner-occupier's section", () => {
-  const annabelle = row('annabelle');
+  const record = RECORD;
   const lens = composeOwnerOccupierLens({
-    locationIntelligence: annabelle.location_intelligence,
-    demographicsData: annabelle.demographics_data,
-    economicData: annabelle.economic_data,
+    locationIntelligence: record.location_intelligence,
+    demographicsData: record.demographics_data,
+    economicData: record.economic_data,
     carriesPlanningRegister: true,
   });
 
   it('answers a home buyer from the stored record, row by row', () => {
     expect(lens?.heading).toBe(OWNER_OCCUPIER_SECTION_HEADING);
     const body = lens!.body;
-    expect(body).toContain('| Schools | Kellyville Public School, 90 m; Our Lady of the Rosary School, 700 m; Tallowood School, 820 m — the nearest by straight-line distance. |');
-    expect(body).toContain('Nearest health care: Wellbeing Chiropractor, 150 m in a straight line.');
-    expect(body).toContain('Nearest public transport stop: Windsor Rd Before President Rd, 100 m in a straight line; 117 boarding places within 1.6 km.');
-    expect(body).toContain('At the 2021 Census (ABS), 73.3% of occupied homes in postcode 2155 were owner-occupied and 24.8% rented; the average household was 3.3 people and the median age was 35.');
+    expect(body).toContain("| Schools | Wattle Grove Public School, 90 m; St Brigid's Primary School, 700 m; Ironbark High School, 820 m — the nearest by straight-line distance. |");
+    expect(body).toContain('Nearest shopping: Wattle Grove Shopping Village. Nearest park: Banksia Reserve.');
+    expect(body).toContain('Nearest health care: Wattle Grove Physiotherapy, 150 m in a straight line.');
+    expect(body).toContain('Nearest public transport stop: Main Rd opp Banksia Ave, 100 m in a straight line; 117 boarding places within 1.6 km.');
+    expect(body).toContain('At the 2021 Census (ABS), 73.3% of occupied homes in postcode 2999 were owner-occupied and 24.8% rented; the average household was 3.3 people and the median age was 35.');
     expect(body).toContain("Banks' discounted variable home loan rate was 6.80% for an owner-occupier and 7.13% for an investor in July 2026 (RBA statistical table F5).");
     expect(body).toContain('*Places: © OpenStreetMap contributors. Stops: Transport for NSW Open Data (CC BY 4.0).*');
   });
@@ -200,7 +270,7 @@ describe("the owner-occupier's section", () => {
 
   it('keeps a land-use sentence\'s qualifications with it where the tier prints no planning register', () => {
     const li = {
-      ...annabelle.location_intelligence,
+      ...record.location_intelligence,
       planning: {
         landUse: {
           status: 'retrieved', instrument: 'The Hills Local Environmental Plan 2019', zoneCode: 'R2', objectives: null,
@@ -209,8 +279,8 @@ describe("the owner-occupier's section", () => {
         },
       },
     };
-    const inCompass = composeOwnerOccupierLens({ locationIntelligence: li, carriesPlanningRegister: true, economicData: annabelle.economic_data })!;
-    const inSnapshot = composeOwnerOccupierLens({ locationIntelligence: li, carriesPlanningRegister: false, economicData: annabelle.economic_data })!;
+    const inCompass = composeOwnerOccupierLens({ locationIntelligence: li, carriesPlanningRegister: true, economicData: record.economic_data })!;
+    const inSnapshot = composeOwnerOccupierLens({ locationIntelligence: li, carriesPlanningRegister: false, economicData: record.economic_data })!;
     const sentence = 'Under The Hills Local Environmental Plan 2019, as read on 20 Sep 2026, a dwelling house is permitted with development consent, and secondary dwellings (granny flats) are prohibited.';
     expect(inCompass.body).toContain(`| The land | ${sentence} |`);
     expect(inCompass.body).not.toContain(READING_LIMIT);
@@ -223,13 +293,13 @@ describe("the owner-occupier's section", () => {
       income: { source: 'ABS Census 2021 estimates', medianAge: 38 },
     };
     const out = composeOwnerOccupierLens({
-      locationIntelligence: annabelle.location_intelligence, demographicsData: generated, economicData: annabelle.economic_data,
+      locationIntelligence: record.location_intelligence, demographicsData: generated, economicData: record.economic_data,
     })!;
     expect(out.body).not.toContain('Neighbourhood');
   });
 
   it('prints a commute only where it was measured to this property\'s own centre', () => {
-    const base = { ...annabelle.location_intelligence };
+    const base = { ...record.location_intelligence };
     const withCommute = (commute: unknown) => composeOwnerOccupierLens({ locationIntelligence: { ...base, commute } })!.body;
     expect(withCommute({ durationMinutes: 38, distanceKm: 31.2, mode: 'driving', destination: 'Sydney CBD', destinationOwnCentre: 'yes' }))
       .toContain('A drive to Sydney CBD was measured at 38 minutes (31.2 km by road), without traffic.');
@@ -247,7 +317,7 @@ describe("the owner-occupier's section", () => {
   });
 
   it('owes a line about land tax only where the financial model is printed', () => {
-    const args = { locationIntelligence: annabelle.location_intelligence, economicData: annabelle.economic_data };
+    const args = { locationIntelligence: record.location_intelligence, economicData: record.economic_data };
     expect(composeOwnerOccupierLens({ ...args, carriesFinancialModelling: true })!.body).toContain('exempt from land tax');
     expect(composeOwnerOccupierLens({ ...args, carriesFinancialModelling: false })!.body).not.toContain('land tax');
   });
@@ -261,8 +331,8 @@ describe("the owner-occupier's section", () => {
 });
 
 describe('what an owner-occupier\'s projection publishes', () => {
-  const annabelle = row('annabelle');
-  const financial = { ...annabelle, report_tier: 'financial' };
+  const record = RECORD;
+  const financial = { ...record, report_tier: 'financial' };
 
   it('is byte-identical for the investor', () => {
     expect(projectInvestmentReport(financial as never, { audience: 'investor' }))
@@ -286,7 +356,7 @@ describe('what an owner-occupier\'s projection publishes', () => {
   });
 
   it('narrows "Land tax and strata" to the strata levy a home still pays', () => {
-    const fin = JSON.parse(JSON.stringify(annabelle.financial_calculations));
+    const fin = JSON.parse(JSON.stringify(record.financial_calculations));
     fin.annualCosts.strataFees = 2400;
     const withStrata = { ...financial, financial_calculations: fin };
     const investor = projectInvestmentReport(withStrata as never);
