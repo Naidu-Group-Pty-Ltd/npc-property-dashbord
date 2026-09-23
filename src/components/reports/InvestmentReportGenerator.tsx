@@ -719,12 +719,34 @@ export function InvestmentReportGenerator() {
     return plan.owned;
   };
 
+  // Paste the listing URL straight from the clipboard. Clipboard access can be
+  // refused by the browser, so the fallback is the field itself — never a
+  // silent failure.
+  const handlePasteUrl = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text.trim()) {
+        setPropertyUrl(text.trim());
+        toast({
+          title: "URL pasted",
+          description: 'Review the link, then click "Extract URL".',
+        });
+      }
+    } catch {
+      toast({
+        title: "Paste not available",
+        description: "Your browser blocked clipboard access — use Ctrl+V (or Cmd+V) in the field instead.",
+        variant: "destructive",
+      });
+    }
+  };
+
   // Handle URL scraping ONLY - populates fields without generating report
   const handleScrapeUrlOnly = async () => {
     if (!propertyUrl.trim()) {
       toast({
         title: "URL Required",
-        description: "Please enter a property listing URL to scrape.",
+        description: "Please enter a property listing URL to extract.",
         variant: "destructive",
       });
       return;
