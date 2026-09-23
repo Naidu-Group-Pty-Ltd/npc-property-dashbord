@@ -23,6 +23,15 @@ import {
   projectionSearchUrl,
   rankProjectionCandidates,
   rankProjectionLinks,
+  POPULATION_PROJECTION_TITLE,
+  isOwnPopulationProjection,
+  jurisdictionsNamedIn,
+  normalisePublisher,
+  ownCatalogueDataset,
+  projectionSubPages,
+  rankOwnProjections,
+  rankProjectionResources,
+  resourceGrain,
 } from '../../../../supabase/functions/_shared/reports/market/openData/stateProjectionPublishers.pure';
 import { FORWARD_DEMAND_PUBLISHERS } from '../../../../supabase/functions/_shared/reports/market/openData/forwardDemand.pure';
 import type { VolumeDataset } from '../../../../supabase/functions/_shared/reports/market/openData/salesVolumePublishers.pure';
@@ -168,5 +177,132 @@ describe('the probe writes nothing, describes a file without downloading an arch
     expect(DESCRIBE_MAX_BYTES).toBeLessThanOrEqual(50_000_000);
     expect(probe.match(/process\.exit\(1\)/g) ?? []).toHaveLength(1);
     expect(probe).toMatch(/function ours\(/);
+  });
+});
+
+
+/*
+ * ── The second pass: what the first run's own output showed ──────────────
+ *
+ * Every title and URL below is one the 23 Sep 2026 CI run printed.
+ */
+describe('a candidate is a POPULATION projection by its own title', () => {
+  it('accepts the titles the publishers use', () => {
+    for (const t of [
+      '2022 NSW Population Projections',
+      'VIF2023 LGA Population Household Dwelling Projections to 2036',
+      'Queensland Government population projections: Regions',
+      'Projected population, by five–year age group and sex, Queensland and regions',
+      'Population Projections for SA',
+      'WA Tomorrow Report 12 - SA2 Forecasts (DPLH-111)',
+      'ACT Population Projections by District (2015 - 2041)',
+      'NT Population Projections',
+    ]) expect(POPULATION_PROJECTION_TITLE.test(t), t).toBe(true);
+  });
+
+  /* The first run ranked a map projection for NSW and a CPI forecast for Victoria. */
+  it('refuses what the first run described by mistake', () => {
+    for (const t of [
+      'Habitat Models for the Northern Comprehensive Regional Assessment (CRA) 1999',
+      'State Budget 2016-17 - Growth in Consumer Price Index',
+      'Historical LGA Population density & gaming expenditure statistics',
+      'Public and Affordable Housing Demand',
+      'Workforce Forecasts',
+      'Population Density, Australia 2011 (ABS)',
+    ]) expect(POPULATION_PROJECTION_TITLE.test(t), t).toBe(false);
+    // An electoral commission's projection of enrolled voters is not the population.
+    expect(isOwnPopulationProjection(ds({
+      id: 'e', title: 'Projected Enrolled Population by Statistical Area Level 1 (SA1)', organisation: 'Electoral Commission',
+    }), 'NT', 'own')).toBe(false);
+  });
+});
+
+describe('an own catalogue can list another jurisdiction’s dataset', () => {
+  it('names a jurisdiction by full name, or by its abbreviation as a whole word', () => {
+    expect(jurisdictionsNamedIn('2022 NSW Population Projections')).toEqual(['NSW']);
+    expect(jurisdictionsNamedIn('Population Projections for SA')).toEqual(['SA']);
+    expect(jurisdictionsNamedIn('WA Tomorrow Report 12 - SA2 Forecasts (DPLH-111)')).toEqual(['WA']);
+    // A digit is a word character, so SA2 is not South Australia.
+    expect(jurisdictionsNamedIn('SA2 Forecasts')).toEqual([]);
+    // A Perth suburb is not the state of Victoria, and an Act is not the Territory.
+    expect(jurisdictionsNamedIn('Town of Victoria Park population forecast')).toEqual([]);
+    expect(jurisdictionsNamedIn('Areas permitted to clear vegetation under the Planning Act')).toEqual([]);
+  });
+
+  /* Measured: South Australia's catalogue listed New South Wales' 2022 projections first. */
+  it('sets aside another jurisdiction’s dataset, and a council’s, whichever catalogue listed it', () => {
+    const nswInSa = ds({ id: 'n', title: '2022 NSW Population Projections', organisation: 'NSW Department of Planning, Housing and Infrastructure' });
+    const tfnsw = ds({ id: 't', title: 'Population Projections', organisation: 'Transport for NSW' });
+    const sa = ds({ id: 's', title: 'Population Projections for SA', organisation: 'Department for Housing and Urban Development' });
+    const council = ds({ id: 'c', title: 'City of Melbourne Population Forecasts by Small Area 2023-2043', organisation: 'City of Melbourne' });
+    expect(ownCatalogueDataset(nswInSa, 'SA')).toBe(false);
+    expect(ownCatalogueDataset(tfnsw, 'SA')).toBe(false);
+    expect(ownCatalogueDataset(sa, 'SA')).toBe(true);
+    expect(ownCatalogueDataset(nswInSa, 'NSW')).toBe(true);
+    expect(ownCatalogueDataset(council, 'VIC')).toBe(false);
+  });
+});
+
+describe('the publisher the register names comes first', () => {
+  it('matches a publisher without the words that say whose it is', () => {
+    expect(normalisePublisher('the Victorian Department of Transport and Planning')).toBe('department of transport and planning');
+    expect(normalisePublisher('Department of Transport and Planning')).toBe('department of transport and planning');
+    expect(normalisePublisher('the Queensland Government Statistician’s Office')).toBe('government statisticians office');
+  });
+
+  it('puts the planning department’s projection above a transport agency’s', () => {
+    const tfnsw = ds({ id: 't', title: 'Population Projections', organisation: 'Transport for NSW', metadataModified: '2026-01-01' });
+    const dphi = ds({ id: 'd', title: '2022 NSW Population Projections', organisation: 'NSW Department of Planning, Housing and Infrastructure', metadataModified: '2025-01-01' });
+    const ranked = rankOwnProjections([tfnsw, dphi, dphi], FORWARD_DEMAND_PUBLISHERS.NSW?.publisher ?? null);
+    expect(ranked.map((j) => j.dataset.id)).toEqual(['d', 't']);
+  });
+});
+
+describe('a dataset is not a file: its files are ranked by the grain their own names state', () => {
+  const nsw = ds({
+    id: 'nsw2022',
+    title: '2022 NSW Population Projections',
+    resources: [
+      { id: '1', name: 'Projections summary', format: 'PDF', url: 'https://datasets.seed.nsw.gov.au/x/summary.pdf', datastoreActive: false, size: null },
+      { id: '2', name: 'NSW', format: 'XLSX', url: 'https://datasets.seed.nsw.gov.au/x/2022-nsw-population-and-dwelling-projections-1971-2061_nsw.xlsx', datastoreActive: false, size: null },
+      { id: '3', name: 'LGA', format: 'XLSX', url: 'https://datasets.seed.nsw.gov.au/x/2022-nsw-population-projections_lga.xlsx', datastoreActive: false, size: null },
+      { id: '4', name: 'SA2', format: 'XLSX', url: 'https://datasets.seed.nsw.gov.au/x/2022-nsw-population-projections_sa2.xlsx', datastoreActive: false, size: null },
+    ],
+  });
+
+  it('reads the grain from the resource’s name or its file name', () => {
+    expect(resourceGrain(nsw.resources[3])).toBe('sa2');
+    expect(resourceGrain(nsw.resources[2])).toBe('lga');
+    expect(resourceGrain(nsw.resources[1])).toBe('state');
+    expect(resourceGrain({ name: 'Download', url: 'https://x/population-projections-for-south-australian-statistical-areas-level-2_-2.._.xlsx' })).toBe('sa2');
+  });
+
+  it('offers the SA2 file first and never a document', () => {
+    const ranked = rankProjectionResources(nsw);
+    expect(ranked.map((r) => r.resource.id)).toEqual(['4', '3', '2']);
+    expect(ranked.some((r) => r.resource.format === 'PDF')).toBe(false);
+  });
+});
+
+describe('a product page is walked one level down, on its own host', () => {
+  const page = 'https://www.qgso.qld.gov.au/statistics/theme/population/population-projections';
+  const html = `
+    <a href="/statistics/theme/population/population-projections/regions">Regions</a>
+    <a href="/statistics/theme/population/population-projections/state">Projected population, Queensland</a>
+    <a href="https://www.example.com/population-projections">Elsewhere</a>
+    <a href="/statistics/theme/economy">Economy</a>
+    <a href="/documents/projections.xlsx">Workbook</a>
+    <a href="mailto:x@example.com">Population enquiries</a>
+    <a href="#population">Skip</a>`;
+
+  it('follows same-host pages named for projections or population, and nothing else', () => {
+    expect(projectionSubPages(html, page)).toEqual([
+      'https://www.qgso.qld.gov.au/statistics/theme/population/population-projections/regions',
+      'https://www.qgso.qld.gov.au/statistics/theme/population/population-projections/state',
+    ]);
+  });
+
+  it('is bounded', () => {
+    expect(projectionSubPages(html, page, 1)).toHaveLength(1);
   });
 });

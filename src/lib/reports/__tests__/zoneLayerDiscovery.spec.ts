@@ -19,6 +19,12 @@ import {
   readLayerDescription,
   readPointAnswer,
   readServiceLayers,
+  directoryEntry,
+  rankZoneServices,
+  webmapDataUrl,
+  webmapIdOf,
+  webmapServiceRoots,
+  zoneServiceScore,
 } from '../../../../supabase/functions/_shared/planning/zoneLayerDiscovery.pure';
 import { assessAuPoint } from '../../../../supabase/functions/_shared/auGeoSanity.pure';
 import type { VolumeDataset } from '../../../../supabase/functions/_shared/reports/market/openData/salesVolumePublishers.pure';
@@ -160,5 +166,76 @@ describe('the probe writes nothing and types no layer', () => {
 
   it('exits 1 on exactly one path', () => {
     expect(probe.match(/process\.exit\(1\)/g) ?? []).toHaveLength(1);
+  });
+});
+
+
+/*
+ * ── The second pass: which of a directory's services to ask ───────────────
+ *
+ * The first CI run (23 Sep 2026) asked South Australia's directory's first
+ * twelve matching services; seven were print tools, and the two "zone"
+ * layers were a transport permit zone and a canopy priority zone. Every
+ * service name below is one that run printed.
+ */
+describe('a service is ranked for the question before it is asked', () => {
+  const printed = [
+    'Historical_Site_Plan_2_png (MapServer)',
+    'Hosted/AdelaideHillsZone_20240422 (FeatureServer)',
+    'Hosted/DIT_Priority_Zoning (FeatureServer)',
+    'Hosted/Planning_Regions_2022 (FeatureServer)',
+    'PlanSA/CodeAmendments_Print (GPServer)',
+    'PlanSA/CodeAmendments_PrintMap (GPServer)',
+    'PlanSA/ExportWebMap_CodeAmendments (GPServer)',
+    'PlanSA/Dwellings_Built_1991_to_2021_map_image (MapServer)',
+    'TransportAnalytics/Permit_Zones (MapServer)',
+  ].map((x) => directoryEntry(x)!);
+
+  it('reads a directory entry as the path and the type', () => {
+    expect(directoryEntry('PlanSA/CodeAmendments_Print (GPServer)')).toEqual({ path: 'PlanSA/CodeAmendments_Print', type: 'GPServer' });
+    expect(directoryEntry('no type here')).toBeNull();
+  });
+
+  it('never asks a tool a point question, and pushes down other kinds of zone', () => {
+    const ranked = rankZoneServices(printed).map((x) => x.path);
+    expect(ranked).not.toContain('PlanSA/CodeAmendments_Print');
+    expect(ranked).not.toContain('PlanSA/ExportWebMap_CodeAmendments');
+    expect(ranked).not.toContain('TransportAnalytics/Permit_Zones');
+    expect(ranked).not.toContain('Hosted/DIT_Priority_Zoning');
+    expect(ranked).not.toContain('Historical_Site_Plan_2_png');
+    expect(zoneServiceScore({ path: 'PlanSA/Anything', type: 'GPServer' })).toBe(-Infinity);
+  });
+
+  it('puts the planning code’s own vocabulary first', () => {
+    const withCode = [...printed, { path: 'PlanSA/PDC_Zones', type: 'MapServer' }, { path: 'SAPPA/Layers', type: 'MapServer' }];
+    const ranked = rankZoneServices(withCode).map((x) => x.path);
+    expect(ranked[0]).toBe('PlanSA/PDC_Zones');
+    expect(ranked).toContain('SAPPA/Layers');
+  });
+});
+
+describe('a map viewer names its service inside the web map it opens', () => {
+  it('reads a web map id from the ways a viewer link carries one, and nothing else', () => {
+    const id = '0123456789abcdef0123456789ABCDEF';
+    expect(webmapIdOf(`https://www.arcgis.com/home/webmap/viewer.html?webmap=${id}`)).toBe(id.toLowerCase());
+    expect(webmapIdOf(`https://sa.maps.arcgis.com/apps/mapviewer/index.html?id=${id}`)).toBe(id.toLowerCase());
+    expect(webmapIdOf('https://location.sa.gov.au/viewer/?map=planning')).toBeNull();
+    expect(webmapIdOf('not a url')).toBeNull();
+    expect(webmapDataUrl('abc')).toBe('https://www.arcgis.com/sharing/rest/content/items/abc/data?f=json');
+  });
+
+  it('collects every service the operational layers name, nested ones included', () => {
+    const data = JSON.stringify({
+      operationalLayers: [
+        { url: 'https://example.sa.gov.au/server/rest/services/PlanSA/Zones/MapServer/3' },
+        { layers: [{ url: 'https://example.sa.gov.au/server/rest/services/PlanSA/Overlays/MapServer' }] },
+        { url: 'https://tiles.example.com/not/a/service' },
+      ],
+    });
+    expect(webmapServiceRoots(data)).toEqual([
+      'https://example.sa.gov.au/server/rest/services/PlanSA/Zones/MapServer',
+      'https://example.sa.gov.au/server/rest/services/PlanSA/Overlays/MapServer',
+    ]);
+    expect(webmapServiceRoots('not json')).toEqual([]);
   });
 });

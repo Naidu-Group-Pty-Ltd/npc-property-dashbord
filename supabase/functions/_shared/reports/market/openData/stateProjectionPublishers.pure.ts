@@ -292,3 +292,194 @@ export function rankProjectionLinks(links: readonly ProjectionLink[]): Projectio
  * refusing a whole-state microdata archive nobody asked for.
  */
 export const DESCRIBE_MAX_BYTES = 40_000_000;
+
+// ---------------------------------------------------------------------------
+// Second pass, 23 Sep 2026: what the first run got wrong about its own reads
+// ---------------------------------------------------------------------------
+
+/*
+ * The first CI run (23 Sep 2026) found the right files and described the
+ * wrong ones, for three reasons its output shows:
+ *
+ *  - **`PROJECTION_PATTERN` matched a map projection and a budget forecast.**
+ *    *"Habitat Models for the Northern Comprehensive Regional Assessment"*
+ *    was ranked for New South Wales and *"State Budget 2016-17 — Growth in
+ *    Consumer Price Index"* for Victoria, because both use the word. A
+ *    candidate is now named for a POPULATION projection in its own title.
+ *  - **An own catalogue is not only its own jurisdiction's.** South
+ *    Australia's catalogue returned *"2022 NSW Population Projections"* first
+ *    and the probe described New South Wales' file for South Australia. A
+ *    dataset whose title or publisher names another jurisdiction is that
+ *    jurisdiction's, whichever catalogue listed it.
+ *  - **A dataset is not a file.** The first machine-readable resource was
+ *    described, which for New South Wales was the whole-state workbook
+ *    beside the SA2 and LGA ones. Resources are ranked by the grain their
+ *    own names state.
+ */
+
+/** A population projection, named as one in the publisher's own title. */
+export const POPULATION_PROJECTION_TITLE =
+  /\bpopulation\b[^.]{0,40}\b(?:projections?|projected|forecasts?)\b|\bprojected\b[^.]{0,30}\bpopulation\b|\bvictoria in future\b|\bVIF\s?20\d\d\b|\bNTPOP\b|\bWA Tomorrow\b/i;
+
+/**
+ * How each jurisdiction is named in a title: its full name, case-blind, and
+ * its abbreviation as a whole word, case-SENSITIVE — `ACT` is an abbreviation
+ * and "act" is a word (a *Planning Act*), `SA` is not inside `SA2` because a
+ * digit is a word character, and `WA` must not match "wa" in "water".
+ */
+const JURISDICTION_IN_TITLE: Readonly<Record<ProjectionState, { full: RegExp; abbreviation: RegExp }>> = {
+  NSW: { full: /\bnew south wales\b/i, abbreviation: /\bNSW\b/ },
+  VIC: { full: /\bvictoria(?:n)?\b/i, abbreviation: /\bVIC\b/ },
+  QLD: { full: /\bqueensland(?:er)?\b/i, abbreviation: /\bQLD\b|\bQld\b/ },
+  SA: { full: /\bsouth australia(?:n)?\b/i, abbreviation: /\bSA\b/ },
+  WA: { full: /\bwestern australia(?:n)?\b/i, abbreviation: /\bWA\b/ },
+  TAS: { full: /\btasmania(?:n)?\b/i, abbreviation: /\bTAS\b|\bTas\b/ },
+  ACT: { full: /\baustralian capital territory\b/i, abbreviation: /\bACT\b/ },
+  NT: { full: /\bnorthern territory\b/i, abbreviation: /\bNT\b/ },
+};
+
+/** The jurisdictions a title names, by full name or whole-word abbreviation. */
+export function jurisdictionsNamedIn(text: string): ProjectionState[] {
+  return PROJECTION_STATES.filter((s) => {
+    const { full, abbreviation } = JURISDICTION_IN_TITLE[s];
+    // "Victoria Park" is a Western Australian town and a Perth suburb, not the state.
+    const scrubbed = s === 'VIC' ? text.replace(/\bvictoria park\b/gi, ' ') : text;
+    return full.test(scrubbed) || abbreviation.test(scrubbed);
+  });
+}
+
+/**
+ * Is a dataset from a jurisdiction's OWN catalogue that jurisdiction's?
+ *
+ * An own catalogue needs no attribution for its own publishers — that is what
+ * makes it the authority — but it can list another jurisdiction's dataset,
+ * measured: South Australia's listed New South Wales' 2022 projections first.
+ * So the question is asked in the negative: refused where the title names
+ * ANOTHER jurisdiction and not this one, or where the publisher is another
+ * jurisdiction's by its full name.
+ */
+export function ownCatalogueDataset(dataset: VolumeDataset, state: ProjectionState): boolean {
+  const named = jurisdictionsNamedIn(dataset.title);
+  if (named.length > 0 && !named.includes(state)) return false;
+  const org = (dataset.organisation ?? '').toLowerCase();
+  // A council's own forecast is not the jurisdiction's projection, in any catalogue.
+  if (LOCAL_GOVERNMENT.test(org)) return false;
+  const others = PROJECTION_STATES.filter((s) => s !== state);
+  if (others.some((s) => STATE_NAMES[s].some((n) => org.includes(n))) && !STATE_NAMES[state].some((n) => org.includes(n))) {
+    return false;
+  }
+  // "Transport for NSW" names its jurisdiction by abbreviation — measured,
+  // listed second in South Australia's catalogue.
+  const orgNamed = jurisdictionsNamedIn(dataset.organisation ?? '');
+  if (orgNamed.length > 0 && !orgNamed.includes(state)) return false;
+  return true;
+}
+
+/** A population projection by its own title, and this jurisdiction's. */
+export function isOwnPopulationProjection(dataset: VolumeDataset, state: ProjectionState, route: 'own' | 'harvest'): boolean {
+  if (!POPULATION_PROJECTION_TITLE.test(dataset.title)) return false;
+  if (ESTIMATE_PATTERN.test(dataset.title) && !/projection|projected|forecast/i.test(dataset.title)) return false;
+  // A projection of ENROLLED voters is an electoral commission's, and not a population.
+  if (/\benrol(?:l?ed|ment)\b/i.test(dataset.title)) return false;
+  return route === 'own' ? ownCatalogueDataset(dataset, state) : projectionAttributable(dataset, state);
+}
+
+/**
+ * A publisher's name without the words that say whose it is — "the
+ * Victorian Department of Transport and Planning" and a catalogue's
+ * "Department of Transport and Planning" are one publisher.
+ */
+export function normalisePublisher(name: string): string {
+  return name.toLowerCase()
+    .replace(/[’'`]/g, '')
+    .replace(/\b(?:the|new south wales|nsw|victorian|victoria|queensland|south australian|western australian|tasmanian|australian capital territory|act|northern territory|government of)\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * The jurisdiction's own projections, the publisher `FORWARD_DEMAND_PUBLISHERS`
+ * names first — a transport agency's travel-zone projection is a real
+ * projection and a different product from the planning department's — then
+ * the finest grain a title or file names, then the most recently maintained.
+ */
+export function rankOwnProjections(
+  datasets: readonly VolumeDataset[],
+  preferredPublisher: string | null,
+): ProjectionJudgement[] {
+  const preferred = normalisePublisher(preferredPublisher ?? '');
+  const byPublisher = (j: ProjectionJudgement) => {
+    const org = normalisePublisher(j.dataset.organisation ?? '');
+    if (preferred === '' || org.length < 12) return 1;
+    return org.includes(preferred) || preferred.includes(org) ? 0 : 1;
+  };
+  const seen = new Set<string>();
+  return datasets
+    .filter((d) => (seen.has(d.id) ? false : (seen.add(d.id), true)))
+    .map(judgeProjectionDataset)
+    .sort((a, b) =>
+      byPublisher(a) - byPublisher(b)
+      || grainRank(a) - grainRank(b)
+      || Number(b.machineReadable !== null) - Number(a.machineReadable !== null)
+      || (b.dataset.metadataModified ?? '').localeCompare(a.dataset.metadataModified ?? ''));
+}
+
+const RESOURCE_FORMAT_RANK: Readonly<Record<string, number>> = { XLSX: 0, CSV: 0, XLS: 1, ZIP: 2, JSON: 3 };
+
+/** The grain a resource's OWN name or file name states, finest first; `null` where it states none. */
+export function resourceGrain(resource: Pick<VolumeResource, 'name' | 'url'>): string | null {
+  const file = decodeURIComponent((resource.url.split(/[?#]/)[0] ?? '').split('/').pop() ?? '');
+  const words = `${resource.name} ${file.replace(/[-_.]+/g, ' ')}`;
+  for (const [g, re] of GRAIN_WORDS) if (re.test(words)) return g;
+  if (/\bregions?\b/i.test(words)) return 'region';
+  if (/\bstate\b|_nsw\b|\bnsw\b/i.test(words)) return 'state';
+  return null;
+}
+
+/**
+ * A dataset's files, finest stated grain first, then the formats a loader
+ * reads most directly. A resource that is not machine-readable is not
+ * offered — a PDF is a document, and "published, but not as a feed" is a
+ * different sentence from "published".
+ */
+export function rankProjectionResources(dataset: VolumeDataset): Array<{ resource: VolumeResource; grain: string | null }> {
+  const order = [...GRAIN_WORDS.map(([g]) => g as string), 'region', 'state'];
+  const grainRank = (g: string | null) => (g === null ? order.length : order.indexOf(g));
+  return dataset.resources
+    .filter((r) => r.format in RESOURCE_FORMAT_RANK)
+    .map((resource) => ({ resource, grain: resourceGrain(resource) }))
+    .sort((a, b) =>
+      grainRank(a.grain) - grainRank(b.grain)
+      || (RESOURCE_FORMAT_RANK[a.resource.format] ?? 9) - (RESOURCE_FORMAT_RANK[b.resource.format] ?? 9));
+}
+
+/**
+ * Links on a product page worth following one level down: same host, and
+ * named for projections or population in their own words or path. Bounded by
+ * the caller; this only chooses.
+ */
+export function projectionSubPages(html: string, pageUrl: string, max = 8): string[] {
+  let base: URL;
+  try { base = new URL(pageUrl); } catch { return []; }
+  const out: string[] = [];
+  const seen = new Set<string>([base.toString()]);
+  const anchor = /<a\b[^>]*?\bhref\s*=\s*(?:"([^"]*)"|'([^']*)')[^>]*>([\s\S]*?)<\/a>/gi;
+  for (const m of html.matchAll(anchor)) {
+    const href = (m[1] ?? m[2] ?? '').trim();
+    if (href === '' || href.startsWith('#') || /^(?:mailto|tel|javascript):/i.test(href)) continue;
+    let url: URL;
+    try { url = new URL(href.replace(/&amp;/g, '&'), base); } catch { continue; }
+    if (url.host !== base.host || (url.protocol !== 'https:' && url.protocol !== 'http:')) continue;
+    if (/\.(?:pdf|docx?|xlsx?|csv|zip|jpe?g|png|gif|svg)(?:$|[?#])/i.test(url.pathname)) continue;
+    url.hash = '';
+    const key = url.toString();
+    if (seen.has(key)) continue;
+    const inner = m[3].replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
+    if (!/projection|projected|forecast|population|demograph|victoria in future|\bvif\b/i.test(`${inner} ${url.pathname}`)) continue;
+    seen.add(key);
+    out.push(key);
+    if (out.length >= max) break;
+  }
+  return out;
+}

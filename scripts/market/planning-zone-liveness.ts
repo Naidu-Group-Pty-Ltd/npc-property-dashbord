@@ -44,13 +44,18 @@ import {
   ZONE_CATALOGUES,
   ZONE_PROBE_POINTS,
   ZONE_QUERIES,
-  ZONE_SERVICE_PATTERN,
   buildZonePointQuery,
+  directoryEntry,
   isZoneLayerName,
   rankZoneDatasets,
+  rankZoneServices,
   readLayerDescription,
   readPointAnswer,
   readServiceLayers,
+  webmapDataUrl,
+  webmapIdOf,
+  webmapServiceRoots,
+  type DirectoryService,
   type UnreadZoneJurisdiction,
 } from '../../supabase/functions/_shared/planning/zoneLayerDiscovery.pure.ts';
 import {
@@ -62,7 +67,7 @@ import {
 
 const FETCH_MS = 30_000;
 const UA = 'npc-property-dashboard/planning-zone-liveness (+zone layer verification probe)';
-const SERVICES_PER_JURISDICTION = 12;
+const SERVICES_PER_JURISDICTION = 16;
 const ZONE_LAYERS_PER_SERVICE = 3;
 
 const h = (s: string) => { console.log(`\n${s}`); console.log('─'.repeat(Math.min(s.length, 100))); };
@@ -123,8 +128,15 @@ async function catalogueRoute(j: UnreadZoneJurisdiction): Promise<string[]> {
   if (parses.length === 0) return [];
   const merged = mergeVolumeReads(parses);
   if (merged.kind !== 'catalogue') return [];
+  // Every title the queries returned, so a zoning dataset the ranking's words
+  // missed is still on the page — the NT's first run named none.
+  console.log(`      titles returned (${merged.datasets.length}):`);
+  for (const d of merged.datasets.slice(0, 80)) {
+    console.log(`        · ${d.title.slice(0, 90)}  [${[...new Set(d.resources.map((r) => r.format))].join(',').slice(0, 40)}]  (${(d.organisation ?? '').slice(0, 40)})`);
+  }
   const ranked = rankZoneDatasets(merged.datasets);
   kv('zone datasets', ranked.length);
+  const fromWebmaps: string[] = [];
   for (const r of ranked.slice(0, 8)) {
     console.log(`\n      ${r.dataset.title}`);
     console.log(`        publisher   ${r.dataset.organisation ?? '(not stated)'}`);
@@ -132,8 +144,19 @@ async function catalogueRoute(j: UnreadZoneJurisdiction): Promise<string[]> {
     console.log(`        formats     ${r.formats.join(', ') || '(none stated)'}`);
     console.log(`        updated     ${r.dataset.metadataModified ?? '(not stated)'}`);
     console.log(`        services    ${r.services.length > 0 ? r.services.join(' | ') : '(no ArcGIS service among its resources)'}`);
+    if (r.dataset.notes) console.log(`        notes       ${r.dataset.notes.replace(/\s+/g, ' ').slice(0, 600)}`);
+    for (const res of r.dataset.resources.slice(0, 8)) {
+      console.log(`        resource    ${res.format.padEnd(12)} ${res.url}`);
+      // A map viewer names its service inside the web map it opens.
+      const id = webmapIdOf(res.url);
+      if (!id) continue;
+      const wm = await ask(webmapDataUrl(id));
+      const roots = wm.status === 200 ? webmapServiceRoots(wm.body) : [];
+      console.log(`          web map ${id} → ${wm.networkError ?? `HTTP ${wm.status}`} · ${roots.length > 0 ? roots.join(' | ') : 'names no service'}`);
+      fromWebmaps.push(...roots);
+    }
   }
-  return [...new Set(ranked.flatMap((r) => r.services))];
+  return [...new Set([...fromWebmaps, ...ranked.flatMap((r) => r.services)])];
 }
 
 async function directoryRoute(j: UnreadZoneJurisdiction): Promise<string[]> {
@@ -152,20 +175,33 @@ async function directoryRoute(j: UnreadZoneJurisdiction): Promise<string[]> {
     if (answer.kind === 'error') { kv(c.root, answer.message); continue; }
     if (answer.kind === 'service') continue; // a single service root is walked from the catalogue route
     kv(c.root, `${answer.services.length} services, ${answer.folders.length} folders`);
-    const rootServices = answer.services.map((s) => s.replace(/ \((\w+)\)$/, '/$1'));
-    for (const s of rootServices) if (ZONE_SERVICE_PATTERN.test(s)) found.push(`${c.root}/${s}`);
+    // EVERY service, printed and then ranked for the question — the first run
+    // asked the directory's first twelve and seven were print tools.
+    const all: DirectoryService[] = [];
+    const take = (rendered: string) => {
+      const e = directoryEntry(rendered);
+      if (e) all.push(e);
+    };
+    answer.services.forEach(take);
     for (const folder of answer.folders.slice(0, 48)) {
       const sub: LayerCandidate = folderRootFor(c, folder);
       const f = await ask(`${sub.root}?f=json`);
-      if (f.networkError !== null || f.status !== 200) continue;
+      if (f.networkError !== null || f.status !== 200) {
+        console.log(`      folder ${folder}: ${f.networkError ?? `HTTP ${f.status}`}`);
+        continue;
+      }
       const fa = parseArcgisAnswer(f.body);
       if (fa.kind !== 'directory') continue;
-      for (const s of fa.services) {
-        // A service name inside a folder carries the folder: `PlanSA/Zones (MapServer)`.
-        const path = s.replace(/ \((\w+)\)$/, '/$1');
-        if (ZONE_SERVICE_PATTERN.test(path)) found.push(`${c.root}/${path}`);
-      }
+      // A service name inside a folder carries the folder: `PlanSA/Zones (MapServer)`.
+      fa.services.forEach(take);
+      console.log(`      folder ${folder.padEnd(28)} ${fa.services.map((x) => x.replace(`${folder}/`, '')).join(', ').slice(0, 400)}`);
     }
+    const ranked = rankZoneServices(all);
+    kv('ranked for the question', `${ranked.length} of ${all.length}: ${ranked.slice(0, 16).map((x) => `${x.path} (${x.type})`).join(', ')}`);
+    // The ranking IS the question: everything the old name filter admitted
+    // either scores above zero here or was a print tool, a picture or another
+    // kind of zone — which is what the first run spent seven of twelve asks on.
+    for (const r of ranked) found.push(`${c.root}/${r.path}/${r.type}`);
   }
   return [...new Set(found)];
 }
@@ -183,7 +219,19 @@ async function askService(j: UnreadZoneJurisdiction, service: string): Promise<b
     return false;
   }
   if (answer.kind === 'service') {
-    console.log(`      terms read       ${answer.licence.kind}${'evidence' in answer.licence && answer.licence.evidence ? ` — "${short(answer.licence.evidence)}"` : ''}`);
+    const evidence = 'evidence' in answer.licence && answer.licence.evidence ? String(answer.licence.evidence) : '';
+    console.log(`      terms read       ${answer.licence.kind}${evidence ? ` — "${short(evidence)}"` : ''}`);
+    // A restriction or a grant is the decision; print what the service says, in full.
+    if (evidence && answer.licence.kind !== 'unverified') {
+      try {
+        const svc = JSON.parse(got.body) as Record<string, unknown>;
+        for (const key of ['copyrightText', 'serviceDescription', 'description']) {
+          const v = svc[key];
+          if (typeof v !== 'string' || v.trim() === '') continue;
+          console.log(`      ${key.padEnd(16)} ${v.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1500)}`);
+        }
+      } catch { /* the reading above already says what was read */ }
+    }
   }
   const layers = readServiceLayers(got.body) ?? [];
   const zones = layers.filter((l) => isZoneLayerName(l.name));

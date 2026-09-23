@@ -37,22 +37,32 @@ import * as XLSX from 'xlsx';
 import { FORWARD_DEMAND_PUBLISHERS } from '../../supabase/functions/_shared/reports/market/openData/forwardDemand.pure.ts';
 import {
   DESCRIBE_MAX_BYTES,
+  POPULATION_PROJECTION_TITLE,
   PROJECTION_CATALOGUES,
   PROJECTION_HARVEST_ROOT,
   PROJECTION_QUERIES,
   PROJECTION_STATES,
+  isOwnPopulationProjection,
+  ownCatalogueDataset,
   parseProjectionCatalogue,
-  projectionAttributable,
   projectionFileLinks,
   projectionInventoryUrl,
   projectionSearchUrl,
-  rankProjectionCandidates,
+  projectionSubPages,
+  rankOwnProjections,
   rankProjectionLinks,
+  rankProjectionResources,
   type ProjectionCatalogue,
   type ProjectionJudgement,
   type ProjectionLink,
   type ProjectionState,
 } from '../../supabase/functions/_shared/reports/market/openData/stateProjectionPublishers.pure.ts';
+import {
+  cdxUrl,
+  originalBytesUrl,
+  parseCdxJson,
+  type WaybackCapture,
+} from '../../supabase/functions/_shared/reports/market/openData/waybackMirror.pure.ts';
 import {
   mergeVolumeReads,
   type VolumeCatalogueParse,
@@ -91,19 +101,33 @@ async function ask(url: string, accept = 'application/json'): Promise<Fetched> {
   }
 }
 
+interface Downloaded { bytes: Uint8Array | null; status: number; type: string | null; note: string; finalUrl: string | null }
+
 /** A file, whole, or a statement of why not. Capped so a description never downloads an archive nobody asked for. */
-async function download(url: string): Promise<{ bytes: Uint8Array | null; status: number; type: string | null; note: string }> {
+async function download(url: string): Promise<Downloaded> {
+  const got = await downloadRaw(url);
+  // An empty 200 is not a file. The first run described two of them as
+  // "0 bytes · text/html" and moved on; it is a refusal by another name.
+  if (got.bytes !== null && got.bytes.length === 0) return { ...got, bytes: null, note: `HTTP ${got.status} with an EMPTY body` };
+  return got;
+}
+
+async function downloadRaw(url: string): Promise<Downloaded> {
   try {
     const res = await fetch(url, { headers: { 'user-agent': UA, accept: '*/*' }, signal: AbortSignal.timeout(DOWNLOAD_MS), redirect: 'follow' });
     const type = res.headers.get('content-type');
     const declared = Number(res.headers.get('content-length') ?? NaN);
-    if (!res.ok) return { bytes: null, status: res.status, type, note: `HTTP ${res.status}` };
+    const finalUrl = res.url || null;
+    if (!res.ok) {
+      const head = (await res.text().catch(() => '')).slice(0, 160).replace(/\s+/g, ' ');
+      return { bytes: null, status: res.status, type, note: `HTTP ${res.status}${head ? ` ${JSON.stringify(head)}` : ''}`, finalUrl };
+    }
     if (Number.isFinite(declared) && declared > DESCRIBE_MAX_BYTES) {
       await res.body?.cancel();
-      return { bytes: null, status: res.status, type, note: `declares ${declared.toLocaleString('en-AU')} bytes, past the ${DESCRIBE_MAX_BYTES.toLocaleString('en-AU')} a description needs` };
+      return { bytes: null, status: res.status, type, note: `declares ${declared.toLocaleString('en-AU')} bytes, past the ${DESCRIBE_MAX_BYTES.toLocaleString('en-AU')} a description needs`, finalUrl };
     }
     const reader = res.body?.getReader();
-    if (!reader) return { bytes: null, status: res.status, type, note: 'no body' };
+    if (!reader) return { bytes: null, status: res.status, type, note: 'no body', finalUrl };
     const chunks: Uint8Array[] = [];
     let total = 0;
     for (;;) {
@@ -112,59 +136,123 @@ async function download(url: string): Promise<{ bytes: Uint8Array | null; status
       total += value.length;
       if (total > DESCRIBE_MAX_BYTES) {
         await reader.cancel();
-        return { bytes: null, status: res.status, type, note: `past ${DESCRIBE_MAX_BYTES.toLocaleString('en-AU')} bytes without ending` };
+        return { bytes: null, status: res.status, type, note: `past ${DESCRIBE_MAX_BYTES.toLocaleString('en-AU')} bytes without ending`, finalUrl };
       }
       chunks.push(value);
     }
     const bytes = new Uint8Array(total);
     let o = 0;
     for (const c of chunks) { bytes.set(c, o); o += c.length; }
-    return { bytes, status: res.status, type, note: `${total.toLocaleString('en-AU')} bytes` };
+    return { bytes, status: res.status, type, note: `${total.toLocaleString('en-AU')} bytes`, finalUrl };
   } catch (err) {
-    return { bytes: null, status: 0, type: null, note: `network: ${err instanceof Error ? err.message : String(err)}` };
+    return { bytes: null, status: 0, type: null, note: `network: ${err instanceof Error ? err.message : String(err)}`, finalUrl: null };
   }
 }
 
+/**
+ * The archive's newest 200 capture of a URL, or why there is none.
+ *
+ * Asked for EVERY file described, not only a refused one: the loader runs
+ * from the production egress, which is not CI's — `data.sa.gov.au` answers
+ * production a plain 403 while it answers CI (`waybackMirror.pure.ts`). A
+ * file CI can read and production cannot is read through the archive there,
+ * so whether the archive holds it is part of what a loader is written
+ * against.
+ */
+async function archiveCapture(url: string): Promise<{ capture: WaybackCapture | null; note: string }> {
+  const got = await ask(cdxUrl({ urlPattern: url, limit: 200 }), 'application/json');
+  if (got.networkError !== null) return { capture: null, note: `archive index: network: ${got.networkError}` };
+  if (got.status !== 200) return { capture: null, note: `archive index: HTTP ${got.status}` };
+  let captures: WaybackCapture[];
+  try {
+    captures = parseCdxJson(got.body);
+  } catch (err) {
+    return { capture: null, note: `archive index unreadable — ${err instanceof Error ? err.message : String(err)}` };
+  }
+  if (captures.length === 0) return { capture: null, note: 'archive holds no 200 capture of it' };
+  const newest = [...captures].sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
+  return { capture: newest, note: `archive holds ${captures.length} capture(s), newest ${newest.timestamp} (${newest.mimetype}${newest.length !== null ? `, ${newest.length.toLocaleString('en-AU')} bytes` : ''})` };
+}
+
+const looksLikeHtml = (bytes: Uint8Array) => new TextDecoder().decode(bytes.subarray(0, 300)).trimStart().startsWith('<');
+
 const cell = (v: unknown) => {
   const s = v === null || v === undefined ? '' : String(v).replace(/\s+/g, ' ').trim();
-  return s.length > 28 ? `${s.slice(0, 27)}…` : s;
+  return s.length > 24 ? `${s.slice(0, 23)}…` : s;
 };
 
-/** What a workbook holds: every sheet's name and size, and the first rows of the sheets that matter. */
+const SHEETS_DESCRIBED = 10;
+const HEAD_ROWS = 30;
+const TAIL_ROWS = 4;
+const CELLS_PER_ROW = 18;
+
+function printRow(n: number, row: unknown[]): void {
+  const cells = row.slice(0, CELLS_PER_ROW).map(cell);
+  while (cells.length > 0 && cells[cells.length - 1] === '') cells.pop();
+  if (cells.length === 0) return;
+  console.log(`        ${String(n).padStart(5)}  ${cells.join(' ¦ ')}${row.length > CELLS_PER_ROW ? ` ¦ …(${row.length} cells)` : ''}`);
+}
+
+/**
+ * What a workbook holds, in the detail a parser is written against: every
+ * sheet's name and extent, the first thirty rows and the last four of each,
+ * with the ROW NUMBERS — the first run read forty rows of four sheets and
+ * could not show where a header row sits or where the footnotes start.
+ */
 function describeWorkbook(bytes: Uint8Array): void {
   let wb: XLSX.WorkBook;
   try {
-    wb = XLSX.read(bytes, { type: 'array', cellDates: false, sheetRows: 40 });
+    wb = XLSX.read(bytes, { type: 'array', cellDates: false });
   } catch (err) {
     console.log(`      not readable as a workbook — ${err instanceof Error ? err.message : String(err)}`);
     console.log(`      first bytes ${JSON.stringify(new TextDecoder().decode(bytes.subarray(0, 80)))}`);
     return;
   }
   console.log(`      sheets (${wb.SheetNames.length}): ${wb.SheetNames.join(' | ')}`);
-  // Sheets named for a grain or for population first; otherwise the first few.
   const scored = wb.SheetNames.map((name, i) => ({
     name, i,
-    score: (/SA2|LGA|local government|suburb|district|region/i.test(name) ? 2 : 0) + (/pop|proj/i.test(name) ? 1 : 0),
+    score: (/SA2|LGA|local government|suburb|district|region|SA3|SA4/i.test(name) ? 2 : 0) + (/pop|proj|persons|total/i.test(name) ? 1 : 0)
+      - (/note|content|explan|about|info|cover|metadata|glossary/i.test(name) ? 2 : 0),
   })).sort((a, b) => b.score - a.score || a.i - b.i);
-  for (const { name } of scored.slice(0, 4)) {
+  for (const { name } of scored.slice(0, SHEETS_DESCRIBED)) {
     const ws = wb.Sheets[name];
-    const ref = ws['!ref'] ?? '(empty)';
-    const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, blankrows: false, defval: '' }) as unknown[][];
-    console.log(`\n      sheet "${name}"  ref ${ref}  (first 40 rows read)`);
-    for (const row of rows.slice(0, 14)) {
-      const cells = row.slice(0, 14).map(cell);
-      while (cells.length > 0 && cells[cells.length - 1] === '') cells.pop();
-      if (cells.length === 0) continue;
-      console.log(`        ${cells.join(' ¦ ')}`);
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, blankrows: true, defval: '' }) as unknown[][];
+    console.log(`\n      sheet "${name}"  ref ${ws['!ref'] ?? '(empty)'}  ${rows.length.toLocaleString('en-AU')} rows`);
+    rows.slice(0, HEAD_ROWS).forEach((row, i) => printRow(i + 1, row));
+    if (rows.length > HEAD_ROWS + TAIL_ROWS) {
+      console.log('        …');
+      rows.slice(rows.length - TAIL_ROWS).forEach((row, i) => printRow(rows.length - TAIL_ROWS + i + 1, row));
+    }
+  }
+  // The notes a publisher writes are where the licence, the base and the series live.
+  for (const { name } of scored.filter((x) => /note|content|explan|about|info|cover/i.test(x.name)).slice(0, 2)) {
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[name], { header: 1, blankrows: false, defval: '' }) as unknown[][];
+    console.log(`\n      notes sheet "${name}"`);
+    for (const row of rows.slice(0, 24)) {
+      const text = row.map((v) => String(v ?? '').replace(/\s+/g, ' ').trim()).filter((v) => v !== '').join(' ¦ ');
+      if (text !== '') console.log(`        ${text.length > 220 ? `${text.slice(0, 219)}…` : text}`);
     }
   }
 }
 
+/** A CSV's first lines, its size, and the distinct values of its first columns — the areas and years a loader will key on. */
 function describeCsv(bytes: Uint8Array): void {
   const text = new TextDecoder().decode(bytes);
   const lines = text.split(/\r?\n/).filter((l) => l.trim() !== '');
   console.log(`      ${lines.length.toLocaleString('en-AU')} lines`);
-  for (const l of lines.slice(0, 8)) console.log(`        ${l.length > 200 ? `${l.slice(0, 199)}…` : l}`);
+  for (const l of lines.slice(0, 12)) console.log(`        ${l.length > 240 ? `${l.slice(0, 239)}…` : l}`);
+  const split = (l: string) => l.match(/("([^"]|"")*"|[^,]*)(,|$)/g)?.map((c) => c.replace(/,$/, '').replace(/^"|"$/g, '').trim()) ?? [];
+  const header = split(lines[0] ?? '');
+  for (let col = 0; col < Math.min(3, header.length); col += 1) {
+    const values = new Set<string>();
+    for (const l of lines.slice(1)) {
+      const v = split(l)[col];
+      if (v !== undefined && v !== '') values.add(v);
+      if (values.size > 60) break;
+    }
+    const list = [...values];
+    console.log(`      column ${col + 1} "${header[col]}": ${values.size > 60 ? 'more than 60' : values.size} distinct — ${list.slice(0, 40).join(' | ')}${list.length > 40 ? ' | …' : ''}`);
+  }
 }
 
 function describeZip(bytes: Uint8Array): void {
@@ -192,12 +280,8 @@ function describeZip(bytes: Uint8Array): void {
   }
 }
 
-async function describe(url: string, label: string): Promise<void> {
-  console.log(`\n    DESCRIBING (${label}) ${url}`);
-  const got = await download(url);
-  console.log(`      ${got.note}${got.type ? ` · ${got.type}` : ''}`);
-  if (!got.bytes) return;
-  let bytes = got.bytes;
+function describeBytes(url: string, bytes0: Uint8Array): void {
+  let bytes = bytes0;
   if (bytes[0] === 0x1f && bytes[1] === 0x8b) bytes = new Uint8Array(gunzipSync(bytes));
   const isZip = bytes[0] === 0x50 && bytes[1] === 0x4b;
   const isOle = bytes[0] === 0xd0 && bytes[1] === 0xcf;
@@ -209,12 +293,42 @@ async function describe(url: string, label: string): Promise<void> {
     return head.includes('[Content_Types].xml') || head.includes('xl/') ? describeWorkbook(bytes) : describeZip(bytes);
   }
   if (isOle) return describeWorkbook(bytes);
-  const start = new TextDecoder().decode(bytes.subarray(0, 200)).trimStart();
-  if (start.startsWith('<')) {
-    console.log(`      the link served a web page, not a file: ${JSON.stringify(start.slice(0, 120))}`);
+  if (looksLikeHtml(bytes)) {
+    console.log(`      a web page, not a file: ${JSON.stringify(new TextDecoder().decode(bytes.subarray(0, 160)).trimStart())}`);
     return;
   }
   describeCsv(bytes);
+}
+
+/**
+ * Describe a file from the publisher, and say whether the archive holds it.
+ *
+ * The publisher first. Where it refuses, serves an empty 200 or serves a web
+ * page in the file's place, the archive's newest capture is described
+ * instead and SAYS so — and the archive is asked either way, because the
+ * loader's egress is not this one's.
+ */
+async function describe(url: string, label: string): Promise<'publisher' | 'archive' | null> {
+  console.log(`\n    DESCRIBING (${label})`);
+  console.log(`      url        ${url}`);
+  const got = await download(url);
+  console.log(`      publisher  ${got.note}${got.type ? ` · ${got.type}` : ''}${got.finalUrl && got.finalUrl !== url ? ` · ended at ${got.finalUrl}` : ''}`);
+  const archive = await archiveCapture(url);
+  console.log(`      archive    ${archive.note}`);
+  if (got.bytes && !looksLikeHtml(got.bytes)) {
+    describeBytes(url, got.bytes);
+    return 'publisher';
+  }
+  if (archive.capture) {
+    const viaArchive = await download(originalBytesUrl(archive.capture));
+    console.log(`      from the archive (${archive.capture.timestamp}): ${viaArchive.note}${viaArchive.type ? ` · ${viaArchive.type}` : ''}`);
+    if (viaArchive.bytes) {
+      describeBytes(url, viaArchive.bytes);
+      return 'archive';
+    }
+  }
+  if (got.bytes) describeBytes(url, got.bytes);
+  return null;
 }
 
 async function askCatalogue(c: ProjectionCatalogue): Promise<VolumeCatalogueParse> {
@@ -228,7 +342,7 @@ async function askCatalogue(c: ProjectionCatalogue): Promise<VolumeCataloguePars
   }
   const parses: VolumeCatalogueParse[] = [];
   for (const q of PROJECTION_QUERIES) {
-    const got = await ask(projectionSearchUrl(c, q, 50));
+    const got = await ask(projectionSearchUrl(c, q, 100));
     if (got.networkError !== null || got.status !== 200) {
       console.log(`      ${q.padEnd(26)} ${got.networkError !== null ? `network: ${got.networkError}` : `HTTP ${got.status} ${JSON.stringify(got.body.slice(0, 100))}`}`);
       continue;
@@ -248,22 +362,119 @@ async function askCatalogue(c: ProjectionCatalogue): Promise<VolumeCataloguePars
 }
 
 function printCandidates(ranked: ProjectionJudgement[]): void {
-  kv('projection datasets', ranked.length);
-  for (const j of ranked.slice(0, 6)) {
+  kv('its own population projections', ranked.length);
+  for (const j of ranked.slice(0, 5)) {
     console.log(`\n      ${j.dataset.title}`);
     console.log(`        publisher   ${j.dataset.organisation ?? '(not stated)'}`);
+    console.log(`        id          ${j.dataset.id}`);
     console.log(`        grain words ${j.grainWords.length > 0 ? j.grainWords.join(', ') : '(none in its own words)'}`);
-    console.log(`        formats     ${j.formats.join(', ') || '(none stated)'}`);
     console.log(`        licence     ${j.dataset.licence ?? '(not stated)'}`);
     console.log(`        updated     ${j.dataset.metadataModified ?? '(not stated)'}`);
-    console.log(`        file        ${j.machineReadable ? `${j.machineReadable.format} ${j.machineReadable.url}` : 'NO machine-readable resource'}`);
+    for (const r of j.dataset.resources.slice(0, 12)) {
+      console.log(`        resource    ${r.format.padEnd(6)} ${r.name.slice(0, 70)}`);
+      console.log(`                    ${r.url}`);
+    }
   }
 }
 
 function printLinks(links: ProjectionLink[]): void {
-  for (const l of links.slice(0, 10)) {
+  for (const l of links.slice(0, 14)) {
     console.log(`      ${l.format.padEnd(5)} ${(l.grainWords.join(',') || '-').padEnd(14)} ${l.projection ? 'proj' : '    '}  ${l.text.slice(0, 70)}`);
     console.log(`            ${l.url}`);
+  }
+}
+
+/** A page, from the publisher, or from the archive where the publisher refuses. */
+async function readPage(url: string): Promise<{ body: string; via: string } | null> {
+  const page = await ask(url, 'text/html,*/*');
+  if (page.networkError === null && page.status === 200 && page.body.trim() !== '') return { body: page.body, via: 'publisher' };
+  const archive = await archiveCapture(url);
+  const why = page.networkError ?? `HTTP ${page.status}${page.body.trim() === '' ? ' (empty)' : ''}`;
+  if (!archive.capture) {
+    console.log(`      page ${url} → ${why}; ${archive.note}`);
+    return null;
+  }
+  const copy = await ask(originalBytesUrl(archive.capture), 'text/html,*/*');
+  if (copy.networkError !== null || copy.status !== 200) {
+    console.log(`      page ${url} → ${why}; archive copy ${copy.networkError ?? `HTTP ${copy.status}`}`);
+    return null;
+  }
+  return { body: copy.body, via: `archive ${archive.capture.timestamp} (publisher: ${why})` };
+}
+
+/**
+ * The publisher's own pages, one level down from the product page — the first
+ * run found Queensland's and New South Wales' product pages answering 200 and
+ * linking to no file at all, because the files are one page deeper. Where the
+ * product page itself is gone (Tasmania's answered 404), the walk starts at
+ * the publisher's root. Bounded: ten pages.
+ */
+async function walkProductPages(start: string): Promise<ProjectionLink[]> {
+  const first = await readPage(start);
+  let queue: string[] = [];
+  const links: ProjectionLink[] = [];
+  const visited = new Set<string>([start]);
+  if (first) {
+    kv('product page', `${start} → via ${first.via}`);
+    links.push(...projectionFileLinks(first.body, start));
+    queue = projectionSubPages(first.body, start, 8);
+  } else {
+    const root = `${new URL(start).origin}/`;
+    kv('product page', `${start} → not read; walking from ${root}`);
+    const home = await readPage(root);
+    visited.add(root);
+    if (home) queue = projectionSubPages(home.body, root, 8);
+  }
+  for (const next of queue) {
+    if (visited.size >= 10) break;
+    if (visited.has(next)) continue;
+    visited.add(next);
+    const page = await readPage(next);
+    if (!page) continue;
+    const found = projectionFileLinks(page.body, next);
+    console.log(`      sub-page  ${next} → via ${page.via} · ${found.length} file link(s)`);
+    links.push(...found);
+    // One more level where a sub-page is itself an index of projection pages.
+    if (found.length === 0) {
+      for (const deeper of projectionSubPages(page.body, next, 4)) {
+        if (visited.size >= 10 || visited.has(deeper)) continue;
+        visited.add(deeper);
+        const d = await readPage(deeper);
+        if (!d) continue;
+        const f2 = projectionFileLinks(d.body, deeper);
+        console.log(`      sub-page  ${deeper} → via ${d.via} · ${f2.length} file link(s)`);
+        links.push(...f2);
+      }
+    }
+  }
+  const seen = new Set<string>();
+  return rankProjectionLinks(links.filter((l) => (seen.has(l.url) ? false : (seen.add(l.url), true))));
+}
+
+/** Socrata's own record of a dataset — its licence, attribution and columns, which the catalogue API does not carry. */
+async function socrataMetadata(domain: string, id: string): Promise<void> {
+  const got = await ask(`https://${domain}/api/views/${encodeURIComponent(id)}.json`);
+  if (got.networkError !== null || got.status !== 200) {
+    console.log(`        metadata    ${got.networkError ?? `HTTP ${got.status}`}`);
+    return;
+  }
+  try {
+    const v = JSON.parse(got.body) as {
+      name?: string; attribution?: string; attributionLink?: string; rowsUpdatedAt?: number;
+      license?: { name?: string; termsLink?: string }; licenseId?: string;
+      columns?: Array<{ fieldName?: string; name?: string; dataTypeName?: string }>;
+      metadata?: { custom_fields?: Record<string, Record<string, string>> };
+    };
+    console.log(`        licence     ${v.license?.name ?? v.licenseId ?? '(not stated)'}${v.license?.termsLink ? ` · ${v.license.termsLink}` : ''}`);
+    console.log(`        attribution ${v.attribution ?? '(not stated)'}${v.attributionLink ? ` · ${v.attributionLink}` : ''}`);
+    console.log(`        rows updated ${typeof v.rowsUpdatedAt === 'number' ? new Date(v.rowsUpdatedAt * 1000).toISOString() : '(not stated)'}`);
+    console.log(`        columns     ${(v.columns ?? []).slice(0, 14).map((c) => `${c.fieldName ?? '?'}[${c.dataTypeName ?? '?'}]`).join(', ')}${(v.columns ?? []).length > 14 ? ` …(${(v.columns ?? []).length})` : ''}`);
+    const custom = v.metadata?.custom_fields ?? {};
+    for (const [group, fields] of Object.entries(custom).slice(0, 4)) {
+      console.log(`        ${group.slice(0, 11).padEnd(11)} ${Object.entries(fields).map(([k, x]) => `${k}: ${String(x).slice(0, 60)}`).join(' · ').slice(0, 300)}`);
+    }
+  } catch {
+    console.log(`        metadata    200 but not JSON — ${JSON.stringify(got.body.slice(0, 80))}`);
   }
 }
 
@@ -272,12 +483,16 @@ async function main(): Promise<void> {
   console.log('  The ABS projects to capital city or rest of state and no finer, so forward');
   console.log('  demand at a property\'s own area is a per-jurisdiction register. This asks');
   console.log('  each publisher what it has and prints what the file holds. It writes nothing.');
+  console.log('  Second pass: a candidate is a POPULATION projection by its own title and');
+  console.log('  this jurisdiction\'s; a dataset\'s files are ranked by the grain their own names');
+  console.log('  state; every file is also looked up in the archive, which the loader uses');
+  console.log('  where the production egress is refused.');
 
   // The harvest, once: every jurisdiction's attributable projections in one read.
   h('The Commonwealth harvest');
   const harvestParses: VolumeCatalogueParse[] = [];
   for (const q of PROJECTION_QUERIES) {
-    const got = await ask(`${PROJECTION_HARVEST_ROOT}/action/package_search?${new URLSearchParams({ q, rows: '200' })}`);
+    const got = await ask(`${PROJECTION_HARVEST_ROOT}/action/package_search?${new URLSearchParams({ q, rows: '400' })}`);
     if (got.networkError !== null || got.status !== 200) {
       console.log(`      ${q.padEnd(26)} ${got.networkError ?? `HTTP ${got.status}`}`);
       continue;
@@ -289,7 +504,7 @@ async function main(): Promise<void> {
   }
   const harvest = harvestParses.length > 0 ? mergeVolumeReads(harvestParses) : null;
 
-  const summary: { state: ProjectionState; finest: string; files: number }[] = [];
+  const summary: { state: ProjectionState; candidates: number; described: string[] }[] = [];
 
   for (const state of PROJECTION_STATES) {
     const pub = FORWARD_DEMAND_PUBLISHERS[state];
@@ -299,49 +514,62 @@ async function main(): Promise<void> {
     const catalogue = PROJECTION_CATALOGUES.find((c) => c.state === state);
     if (catalogue) {
       const parse = await askCatalogue(catalogue);
-      if (parse.kind === 'catalogue') datasets.push(...parse.datasets);
+      if (parse.kind === 'catalogue') {
+        const titled = parse.datasets.filter((d) => POPULATION_PROJECTION_TITLE.test(d.title));
+        const others = titled.filter((d) => !ownCatalogueDataset(d, state));
+        kv('named a population projection', `${titled.length} (${others.length} another jurisdiction's or a council's, set aside)`);
+        for (const d of others.slice(0, 5)) console.log(`      set aside  ${d.title}  (${d.organisation ?? 'no publisher'})`);
+        datasets.push(...parse.datasets.filter((d) => isOwnPopulationProjection(d, state, 'own')));
+      }
     } else {
       kv('catalogue', 'none this repository has verified — see sales-volume-liveness for where it publishes');
     }
     const fromHarvest = harvest?.kind === 'catalogue'
-      ? harvest.datasets.filter((d) => projectionAttributable(d, state))
+      ? harvest.datasets.filter((d) => isOwnPopulationProjection(d, state, 'harvest'))
       : [];
     kv('harvest datasets attributable', fromHarvest.length);
     datasets.push(...fromHarvest);
 
-    const ranked = rankProjectionCandidates(datasets);
+    const ranked = rankOwnProjections(datasets, pub?.publisher ?? null);
     printCandidates(ranked);
-
-    // The product page.
-    let links: ProjectionLink[] = [];
-    if (pub?.url) {
-      const page = await ask(pub.url, 'text/html,*/*');
-      kv('product page', `${pub.url} → ${page.networkError ?? `HTTP ${page.status}`}`);
-      if (page.networkError === null && page.status === 200) {
-        links = rankProjectionLinks(projectionFileLinks(page.body, pub.url));
-        kv('files it links to', links.length);
-        printLinks(links);
+    if (catalogue?.dialect === 'socrata') {
+      for (const j of ranked.slice(0, 4)) {
+        console.log(`\n      Socrata record for ${j.dataset.id} — ${j.dataset.title.slice(0, 60)}`);
+        await socrataMetadata(catalogue.root, j.dataset.id);
       }
     }
 
-    // Describe the best of each route, so the loader is written against the file.
-    const described = new Set<string>();
-    const best = ranked.find((j) => j.machineReadable !== null);
-    if (best?.machineReadable) {
-      described.add(best.machineReadable.url);
-      await describe(best.machineReadable.url, `catalogue: ${best.dataset.title.slice(0, 60)}`);
+    // The product page, one level down, through the archive where it refuses.
+    let links: ProjectionLink[] = [];
+    if (pub?.url) {
+      links = await walkProductPages(pub.url);
+      kv('files the pages link to', links.length);
+      printLinks(links);
+    }
+
+    // Describe the best file of each of the top three datasets, and the best two page links.
+    const described: string[] = [];
+    const tried = new Set<string>();
+    for (const j of ranked.slice(0, 3)) {
+      const best = rankProjectionResources(j.dataset)[0];
+      if (!best || tried.has(best.resource.url)) continue;
+      tried.add(best.resource.url);
+      const via = await describe(best.resource.url, `catalogue: ${j.dataset.title.slice(0, 60)} · ${best.grain ?? 'grain not named'}`);
+      if (via) described.push(`${best.grain ?? '?'} via ${via}`);
     }
     for (const l of links.filter((x) => x.projection || x.grainWords.length > 0).slice(0, 2)) {
-      if (described.has(l.url)) continue;
-      described.add(l.url);
-      await describe(l.url, `page: ${l.text.slice(0, 60)}`);
+      if (tried.has(l.url)) continue;
+      tried.add(l.url);
+      const via = await describe(l.url, `page: ${l.text.slice(0, 60)}`);
+      if (via) described.push(`${l.grainWords[0] ?? '?'} via ${via}`);
     }
-    const finest = [...ranked.flatMap((j) => j.grainWords), ...links.flatMap((l) => l.grainWords)][0] ?? '(none named)';
-    summary.push({ state, finest, files: described.size });
+    summary.push({ state, candidates: ranked.length, described });
   }
 
   h('READ');
-  for (const s of summary) kv(s.state, `finest grain named: ${s.finest} · files described: ${s.files}`);
+  for (const s of summary) {
+    kv(s.state, `${s.candidates} own projection dataset(s) · described: ${s.described.length > 0 ? s.described.join(', ') : 'none'}`);
+  }
   console.log('\n  A grain NAMED is a claim in the publisher\'s words; the file descriptions above');
   console.log('  are what a loader is written against. Nothing was written anywhere.');
 }

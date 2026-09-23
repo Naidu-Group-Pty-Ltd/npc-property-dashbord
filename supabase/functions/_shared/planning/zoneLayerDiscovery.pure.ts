@@ -246,3 +246,107 @@ export function readPointAnswer(text: string): PointAnswer {
     .filter((a): a is Record<string, unknown> => !!a && typeof a === 'object');
   return attributes.length === 0 ? { kind: 'none_at_point' } : { kind: 'features', attributes };
 }
+
+// ---------------------------------------------------------------------------
+// Second pass, 23 Sep 2026: which of a directory's services to ask
+// ---------------------------------------------------------------------------
+
+/*
+ * The first CI run walked South Australia's directory — 131 services across
+ * 30 folders — and asked the first twelve whose names matched
+ * `ZONE_SERVICE_PATTERN`. Seven of the twelve were print and export
+ * GEOPROCESSING tools (`PlanSA/CodeAmendments_Print/GPServer`), one was a
+ * historical site plan, and the two layers named as zones were a transport
+ * PERMIT zone and a tree-canopy PRIORITY zone. The Planning and Design Code's
+ * own zone layer was never asked, because the order was the directory's
+ * rather than the question's.
+ *
+ * So a service is ranked for the question before it is asked: types that
+ * cannot answer a point query are not services to ask, names that describe a
+ * tool or a different kind of "zone" are pushed down, and the planning code's
+ * own vocabulary is pulled up. Only what scores above zero is asked.
+ */
+export interface DirectoryService {
+  /** `Folder/Name`, as the directory names it. */
+  path: string;
+  /** `MapServer`, `FeatureServer`, `GPServer`, … */
+  type: string;
+}
+
+/** Service types a point query cannot be put to. */
+export const UNQUERYABLE_SERVICE_TYPES = /^(?:GPServer|GeometryServer|GeocodeServer|NAServer|GlobeServer|SceneServer|VectorTileServer|ImageServer|StreamServer|SearchServer|MobileServer|UtilityNetworkServer)$/i;
+
+/** Names that describe a tool, a picture or a different kind of zone. */
+export const NOT_A_PLANNING_ZONE_SERVICE =
+  /print|export|geoprocess|locator|basemap|base_map|historical|imagery|aerial|photo|permit|priority|speed|project_zone|climate|water|storm|surge|flood|fire|bushfire|noise|school|electoral|census/i;
+
+export function zoneServiceScore(service: DirectoryService): number {
+  if (UNQUERYABLE_SERVICE_TYPES.test(service.type)) return -Infinity;
+  const name = service.path;
+  let score = 0;
+  if (/zon(?:e|es|ing)/i.test(name)) score += 4;
+  if (/design.?code|\bpdc\b|_code\b|code_/i.test(name)) score += 3;
+  if (/plansa|planning|sappa|atlas/i.test(name)) score += 2;
+  if (/scheme|landuse|land_use/i.test(name)) score += 1;
+  if (NOT_A_PLANNING_ZONE_SERVICE.test(name)) score -= 6;
+  return score;
+}
+
+/** The services worth asking, most promising first; nothing that scores at or below zero. */
+export function rankZoneServices(services: readonly DirectoryService[]): DirectoryService[] {
+  return services
+    .map((s) => ({ s, score: zoneServiceScore(s) }))
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score || a.s.path.localeCompare(b.s.path))
+    .map((x) => x.s);
+}
+
+/** `Folder/Name (MapServer)` → `{ path: 'Folder/Name', type: 'MapServer' }`, as `parseArcgisAnswer` renders a directory entry. */
+export function directoryEntry(rendered: string): DirectoryService | null {
+  const m = /^(.+?) \((\w+)\)$/.exec(rendered.trim());
+  return m ? { path: m[1], type: m[2] } : null;
+}
+
+/**
+ * The ArcGIS Online web map a "MAP VIEWER" resource opens, where it names one.
+ *
+ * South Australia's *Planning and Design Code Zones* dataset carried SHP,
+ * GeoJSON and KML files and a MAP VIEWER, and no service URL: the service is
+ * inside the web map, whose own definition names it. A web map id is 32 hex
+ * characters, passed as `webmap=` or `id=`.
+ */
+export function webmapIdOf(raw: string): string | null {
+  let url: URL;
+  try { url = new URL(raw); } catch { return null; }
+  for (const key of ['webmap', 'id', 'appid']) {
+    const v = url.searchParams.get(key);
+    if (v && /^[0-9a-f]{32}$/i.test(v)) return v.toLowerCase();
+  }
+  return null;
+}
+
+/** The definition URL for a web map's operational layers. */
+export function webmapDataUrl(id: string): string {
+  return `https://www.arcgis.com/sharing/rest/content/items/${encodeURIComponent(id)}/data?f=json`;
+}
+
+/** Every service a web map's operational layers name, as service roots. */
+export function webmapServiceRoots(text: string): string[] {
+  let body: unknown;
+  try { body = JSON.parse(text); } catch { return []; }
+  const out = new Set<string>();
+  const visit = (layers: unknown) => {
+    if (!Array.isArray(layers)) return;
+    for (const raw of layers) {
+      const l = raw as { url?: unknown; layers?: unknown };
+      if (typeof l.url === 'string') {
+        const root = arcgisServiceRootOf(l.url);
+        if (root) out.add(root);
+      }
+      visit(l.layers);
+    }
+  };
+  const o = body as { operationalLayers?: unknown; baseMap?: unknown };
+  visit(o?.operationalLayers);
+  return [...out];
+}
