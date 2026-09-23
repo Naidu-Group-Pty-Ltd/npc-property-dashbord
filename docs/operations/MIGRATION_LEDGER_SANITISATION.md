@@ -24,6 +24,18 @@ merged. Every item marked PENDING below is unperformed.
     versions.
   - With the seed skeletons read, it sends 5, 7 and 7 on the three mirrors and
     25 on the CRM.
+- **The vault, and the urban centres:** every deployment — the prime and all
+  four clones — holds `supabase_url`, one row each and non-empty, beside
+  `cron_service_role_headers()` and `net.http_post`. So neither
+  `20261210010000` nor `20261210040000` raises anywhere, the CRM clone
+  included. Only the secret's NAME and whether it is non-empty were read; no
+  value was.
+  - On the prime those five migrations have **already run, and nothing
+    records them**: the register holds 102 centres, the monthly job is
+    scheduled at `10 18 1 * *`, both functions exist, and the ledger carries
+    no `20261210*` row at all.
+  - `urban_centre_refresh` exists on no clone, so the clones are waiting on
+    delivery rather than on the vault.
 - **The apply workflow:**
   - It applied whatever a checkout held.
   - Twelve runs came from one feature branch.
@@ -78,8 +90,16 @@ merged. Every item marked PENDING below is unperformed.
 1. Merge the prime pull request. Dispatches after this come from `main`,
    because the workflow now refuses any other ref.
 2. On the prime, dispatch `20261210000000`–`040000` (urban centres) with
-   `record_version: true`. Check first that the vault holds `supabase_url`,
-   because `20261210010000` raises without it.
+   `record_version: true`. This **records what already ran** rather than
+   applying it: every object those five files create is present, and only the
+   ledger rows are missing. Each is safe to re-run — `create table if not
+   exists`, `create or replace function`, `drop constraint if exists`, and an
+   unschedule-then-schedule block that reproduces the live `10 18 1 * *`. The
+   one live side effect is `20261210010000`'s closing probe, which posts to
+   `urban-centre-register-ingest` and writes nothing. The vault holds
+   `supabase_url`, so nothing raises. No `reapply: true` is needed on the
+   ledger as read — no `20261210*` version is recorded and those rows carry no
+   body to match — and the preflight names it if that has changed.
 3. On the prime, dispatch `20261219000000`–`020000`.
    - Before `20261219030000`, run migration-drift and read that file's
      `@effect` probe. `NOT APPLIED` means applying it changes the prime's row
@@ -108,7 +128,6 @@ merged. Every item marked PENDING below is unperformed.
   read-back and the API-route re-check are proven by tests, not yet against a
   live database.
 - Delivery to each clone after the Mission Control deploy.
-- Whether the CRM vault holds `supabase_url`.
 
 Lint was run on 23 Sep over the 23 changed script and spec files: 0 errors and
 0 warnings. It used the repository's `eslint.config.js`, with its plugins
