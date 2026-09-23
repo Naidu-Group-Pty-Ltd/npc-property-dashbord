@@ -35,7 +35,9 @@ const page = (id: string, name: string, blocks: unknown[], conditional?: string)
   ...(conditional ? { conditional } : {}),
 });
 
-const template = (furniture: (part: string, label: string) => unknown[], opener: typeof decimalOpener) => ({
+type Opener = (numeral: string, heading: string) => { id: string; type: string; name: string; props: Record<string, unknown> };
+
+const template = (furniture: (part: string, label: string) => unknown[], opener: Opener) => ({
   version: 1,
   name: 'Probe',
   tokens: { colors: { ink: '#111', surface: '#fff', primary: '#2F4858', text: '#111', muted: '#666', border: '#ddd', bg: '#eee', line: '#ccc' }, fonts: {}, spacing: {} },

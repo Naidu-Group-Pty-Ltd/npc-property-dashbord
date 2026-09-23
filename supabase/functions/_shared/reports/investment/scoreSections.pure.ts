@@ -23,6 +23,7 @@
  */
 
 import { num, str } from './figures.pure.ts';
+import { closeDoubledStops } from '../text.pure.ts';
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -315,11 +316,32 @@ function verdictLines(score: Record<string, unknown>): string[] | null {
  * from a proxy. Empty when no dimension carries a basis, so a legacy record
  * renders exactly as before.
  */
+/*
+ * One line per dimension, not one line for all of them.
+ *
+ * This printed `_Scored from: yield — … ; demand — … ; growth — … ;
+ * location — …._` — every dimension's evidence joined into a single italic
+ * paragraph, eleven lines on the 23 Sep 2026 Snapshot and Briefing for 97
+ * Poole Road, with "p.a.." where two of the engine's sentences met. The words
+ * are the engine's and are unchanged; what changed is that a reader can find
+ * the dimension they are looking for. The lead-in is the Compass grade table's
+ * own, so the two documents name the list the same way.
+ */
 export function scoreBasisLine(score: unknown): string | undefined {
   if (!isRecord(score)) return undefined;
   const dims = breakdownEntries(score).filter((d) => d.score !== undefined && d.basis);
   if (!dims.length) return undefined;
-  return `_Scored from: ${dims.map((d) => `${d.label} — ${d.basis}`).join('; ')}._`;
+  const sentence = (text: string) => {
+    const t = closeDoubledStops(text.trim());
+    const opened = t.charAt(0).toUpperCase() + t.slice(1);
+    return /[.!?]$/.test(opened) ? opened : `${opened}.`;
+  };
+  const title = (label: string) => label.charAt(0).toUpperCase() + label.slice(1);
+  return [
+    '**What each dimension rested on.**',
+    '',
+    ...dims.map((d) => `- **${title(d.label)}.** ${sentence(d.basis!)}`),
+  ].join('\n');
 }
 
 /** The weighted dimensions table. Empty when the record scored none of them. */

@@ -88,6 +88,7 @@ import {
 } from '../market/scoreAssessmentReading.pure.ts';
 import type { SubjectPrice } from './subjectPrice.pure.ts';
 import { MONTHS_SHORT, formatReportDateShort } from '../reportDate.pure.ts';
+import { closeDoubledStops } from '../text.pure.ts';
 
 /**
  * A date as the reader writes it: `17 Sep 2026`, never `2026-09-17`.
@@ -335,6 +336,48 @@ export interface StrategyRecord {
   planning: StrategyPlanning;
   transport: StrategyTransport;
   score: StrategyScore;
+  /**
+   * What the site's own registers said, where the caller read them. Optional,
+   * and absent on every record built before the strategic read existed, which
+   * is what keeps every composer that does not read it byte-identical.
+   */
+  site?: StrategySite | null;
+}
+
+/** How a land use table treats a use — `landUsePermissibility`'s own words. */
+export type StrategyStanding =
+  | 'permitted_with_consent' | 'permitted_without_consent' | 'prohibited' | 'not_stated';
+
+/**
+ * The land use table and the development pipeline, read by the CALLER.
+ *
+ * A canonical investment module may not import `_shared/planning`, so the
+ * reading arrives as plain data — and the planning module's own qualifying
+ * sentences arrive WITH it, verbatim, because a rule stated twice is how the
+ * two statements come to disagree.
+ */
+export interface StrategySite {
+  landUse: {
+    /** `instrumentAnchor(table)` — "Under <instrument>, as read on <date>,". */
+    anchor: string;
+    dwellingHouse: StrategyStanding;
+    /** The additional residential uses the table names, each with its standing. */
+    additional: Array<{ use: string; standing: StrategyStanding }>;
+    /** `EXISTING_DWELLING_CAVEAT`, verbatim. */
+    caveat: string;
+    /** `READING_LIMIT`, verbatim. */
+    limit: string;
+  } | null;
+  pipeline: {
+    /** New dwellings stated on the applications that gave a count. */
+    dwellings: number;
+    council: string;
+    /** The register window, as the evidence words it. */
+    window: string | null;
+    /** How much of the register the total was summed from. */
+    rowsRead: number | null;
+    totalStated: number | null;
+  } | null;
 }
 
 // ─── Small shared writers ───────────────────────────────────────────────────
@@ -802,18 +845,8 @@ export function composeSwot(rec: StrategyRecord, heading: string): string {
  * reason rather than omitted — excluding is a statement, and a table that
  * silently drops two of five rows reads as a complete score.
  */
-/**
- * Close the join artefacts in a sentence the engine composed, and nothing else.
- *
- * `breakdown.growthScore.details` is five measure sentences joined with `. `,
- * and three of them already end in a full stop — so the production row reads
- * "…the five-year rate of 6.2% p.a.. Twelve-month movement…". Purely
- * presentational: no figure, word or clause is altered, and an ellipsis is
- * left alone.
- */
-function tidySentences(text: string): string {
-  return text.replace(/([^.])\.\.(?!\.)/g, '$1.');
-}
+/** The shared rule, under the name this module has always called it by. */
+const tidySentences = closeDoubledStops;
 
 export function composeScoreDimensionTable(rec: StrategyRecord): string | null {
   const a = rec.score.assessment;
@@ -1693,6 +1726,13 @@ export interface StrategyRowOptions {
    * before this option existed.
    */
   measuredAt?: string | null;
+  /**
+   * The land use table's standing and the development pipeline, read by the
+   * caller from the stored planning and infrastructure evidence — for the
+   * same reason `transport` is. Only the Due Diligence document's strategic
+   * read uses it; absent, nothing changes.
+   */
+  site?: StrategySite | null;
 }
 
 const rec = (v: unknown): Record<string, unknown> | null =>
@@ -1845,6 +1885,9 @@ export function readStrategyRecord(row: StrategyRowInput, opts: StrategyRowOptio
       // dimension, and the composer draws no table for that.
       assessment: readScoreAssessment(row.investmentScore),
     },
+    // Only where the caller read it, so a record built without it carries no
+    // key at all and every composer that ignores it stays byte-identical.
+    ...(opts.site ? { site: opts.site } : {}),
   };
 }
 
@@ -1861,8 +1904,192 @@ export function readStrategyRecord(row: StrategyRowInput, opts: StrategyRowOptio
  * `Cumulative Cashflow Projections`) that a Financial report legitimately
  * writes as sections of their own beside the canonical one.
  */
+// ─── The opportunity in strategic terms ─────────────────────────────────────
+
+/** "a, b and c"; more than four named, the rest counted. */
+function listUses(uses: readonly string[]): string {
+  const named = uses.length > 4 ? uses.slice(0, 3) : [...uses];
+  const rest = uses.length - named.length;
+  const parts = rest > 0 ? [...named, `${rest} other forms of residential accommodation`] : named;
+  return parts.length <= 1 ? (parts[0] ?? '') : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}
+
+/** The benchmark row for a measure, or null. Never the subject's. */
+function benchmarkRow(market: MarketFacts, key: EvidenceKey): MarketFactRow | null {
+  return market.rows.find((r) => r.key === key && r.benchmark) ?? null;
+}
+
+/** The period a row's description ends on (its last ISO date), or null. */
+function rowPeriod(row: MarketFactRow): string | null {
+  const all = row.describes.match(/\b\d{4}-\d{2}(?:-\d{2})?\b/g);
+  return all ? all[all.length - 1] : null;
+}
+
+/** A percentage row's figure as a number, or null. */
+function percentOf(row: MarketFactRow | null): number | null {
+  if (!row) return null;
+  const m = /^\s*(−|-)?\s*(\d+(?:\.\d+)?)\s*%/.exec(row.value);
+  if (!m) return null;
+  return Number(m[2]) * (m[1] ? -1 : 1);
+}
+
+/** A register's all-capitals name set as a name: "THE HILLS SHIRE" → "The Hills Shire". */
+function asName(value: string): string {
+  if (value !== value.toUpperCase()) return value;
+  return value.toLowerCase().replace(/\b[a-z]/g, (c, at: number) => (
+    at > 0 && /^(of|and|the)\b/.test(value.toLowerCase().slice(at)) ? c : c.toUpperCase()
+  ));
+}
+
+/** An area, grouped by hand (never `toLocaleString` — see `money`). */
+const area = (n: number): string => {
+  const [whole, frac] = String(n).split('.');
+  return `${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}${frac ? `.${frac}` : ''}`;
+};
+
+/** "A house on 497.6 m² in the R2 — Low Density Residential zone, The Hills Shire." — held facts only. */
+function assetLine(rec: StrategyRecord): string | null {
+  const kind = rec.property.propertyType ? rec.property.propertyType.toLowerCase() : null;
+  const land = isNum(rec.property.landSqm) ? `${area(rec.property.landSqm)} m²` : null;
+  const zone = rec.planning.zone;
+  const councilRaw = rec.planning.council ?? rec.property.councilArea;
+  const council = councilRaw ? asName(councilRaw) : null;
+  if (!kind && !land && !zone) return null;
+  const what = kind ? `A ${kind}` : 'A property';
+  return `${what}${land ? ` on ${land}` : ''}${zone ? ` in the ${zone} zone` : ''}${council ? `, ${council}` : ''}.`;
+}
+
+/**
+ * What kind of purchase the land use table makes this.
+ *
+ * Drawn from the TABLE, never from the land's size or the zone's name — the
+ * planning programme's rule that land size is not a permission. Where the
+ * table permits a dwelling house and prohibits every additional dwelling it
+ * names, the consequence is stated in one sentence, because that is the
+ * strategic fact a buyer most needs and the evidence chapters only imply it.
+ * Where it permits one, the permission is named and no value is attached.
+ */
+function purchaseKind(rec: StrategyRecord): string | null {
+  const asset = assetLine(rec);
+  const table = rec.site?.landUse ?? null;
+  if (!table) {
+    if (!asset) return null;
+    return `**What kind of purchase this is.** ${asset} No land use table was retrieved for this property, so `
+      + 'nothing here says what may or may not be added to it — the council\'s planning certificate settles that.';
+  }
+  const dwelling = table.dwellingHouse === 'permitted_with_consent'
+    ? 'a dwelling house is permitted with development consent'
+    : table.dwellingHouse === 'permitted_without_consent'
+      ? 'a dwelling house is permitted without development consent'
+      : table.dwellingHouse === 'prohibited'
+        ? 'a dwelling house is prohibited'
+        : null;
+  const prohibited = table.additional.filter((a) => a.standing === 'prohibited').map((a) => a.use);
+  const permitted = table.additional
+    .filter((a) => a.standing === 'permitted_with_consent' || a.standing === 'permitted_without_consent')
+    .map((a) => a.use);
+  const said = [
+    dwelling,
+    prohibited.length ? `${listUses(prohibited)} ${prohibited.length === 1 ? 'is' : 'are'} prohibited` : null,
+  ].filter((x): x is string => x !== null);
+  if (!said.length && !permitted.length) {
+    return asset
+      ? `**What kind of purchase this is.** ${asset} The land use table that was retrieved does not name the `
+        + 'residential uses this report asks about, so it settles nothing here — the council\'s planning certificate does.'
+      : null;
+  }
+  const standing = said.length ? `${table.anchor} ${said.join(', and ')}.` : '';
+  const dwellingPermitted = table.dwellingHouse === 'permitted_with_consent'
+    || table.dwellingHouse === 'permitted_without_consent';
+  const consequence = permitted.length
+    ? `The table permits ${listUses(permitted)} with consent. A permission in the table is not an approval: whether `
+      + 'this site could take one is a question for a planning professional with the survey in hand, and no value '
+      + 'is attached to it here.'
+    : dwellingPermitted && prohibited.length
+      ? 'So this is a single-dwelling purchase: its value rests on the dwelling that stands on the land and on the '
+        + 'land itself, not on adding another dwelling to it.'
+      : '';
+  return [
+    `**What kind of purchase this is.** ${[asset, standing, consequence].filter(Boolean).join(' ')}`,
+    '',
+    `*${dwelling ? `${table.caveat} ` : ''}${table.limit}*`,
+  ].join('\n');
+}
+
+/**
+ * What the market has done, beside the benchmark it is judged against.
+ *
+ * A gap is computed only where the two rows end on the same period, because a
+ * difference between windows that do not match is two facts, not one.
+ */
+function marketPath(rec: StrategyRecord): string | null {
+  const g5 = subjectRow(rec.market, 'growth5YearCagr');
+  const g5n = percentOf(g5);
+  if (!g5 || g5n === null) return null;
+  const parts = [`Measured price growth over five years was ${g5.value} a year (${citeRow(g5)}).`];
+  const b5 = benchmarkRow(rec.market, 'benchmarkGrowth5YearCagr');
+  const b5n = percentOf(b5);
+  if (b5 && b5n !== null) {
+    const same = rowPeriod(g5) !== null && rowPeriod(g5) === rowPeriod(b5);
+    parts.push(`The benchmark it is judged against grew ${b5.value} a year (${citeRow(b5)})`
+      + (same && Math.abs(g5n - b5n) >= 0.05
+        ? `, so this market ${g5n < b5n ? 'trailed' : 'ran ahead of'} it by ${Math.abs(g5n - b5n).toFixed(1)} points over the same window.`
+        : same ? ', so this market kept pace with it over the same window.' : '.'));
+  }
+  parts.push('That is a record of what happened, not a forecast of what will.');
+  return `**What the market has done.** ${parts.join(' ')}`;
+}
+
+/** What it will compete with — the register's pipeline, as a floor where it is one. */
+function competingSupply(rec: StrategyRecord): string | null {
+  const p = rec.site?.pipeline;
+  if (!p || !isNum(p.dwellings) || p.dwellings <= 0) return null;
+  const count = String(Math.round(p.dwellings)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const floor = isNum(p.rowsRead) && isNum(p.totalStated) && p.rowsRead < p.totalStated;
+  return `**What it competes with.** ${floor ? 'At least ' : ''}${count} new dwellings were stated on development `
+    + `applications in ${p.council}${p.window ? `, ${periodsIn(p.window)}` : ''}`
+    + (floor ? ` — a floor, summed from ${p.rowsRead} of the ${p.totalStated} applications the register states.` : '.')
+    + ' That is supply arriving in the same local government area, which a buyer reselling or letting a comparable '
+    + 'dwelling will meet.';
+}
+
+/**
+ * The strategic read the Due Diligence document opens with.
+ *
+ * The owner's words about the 23 Sep 2026 document for 97 Poole Road: it
+ * should identify "the strategic nature of this opportunity itself rather
+ * than just information pounding". Its sixteen chapters each describe one
+ * register, and none said what they add up to — what kind of purchase the
+ * land use table makes it, how its market has moved against the benchmark,
+ * what supply it will meet, and what the decision turns on. This says that,
+ * in four paragraphs, from the same record the chapters read; it rates
+ * nothing, forecasts nothing and values nothing.
+ *
+ * Empty where the record supports none of the first three, so a record with
+ * no planning, market or pipeline reading draws no section rather than a
+ * section of absences.
+ */
+export function composeStrategicRead(rec: StrategyRecord, heading: string): string {
+  const paragraphs = [purchaseKind(rec), marketPath(rec), competingSupply(rec)]
+    .filter((p): p is string => p !== null);
+  if (!paragraphs.length) return '';
+  paragraphs.push(
+    '**What decides it.** The case turns on what no register can answer: the condition and lawful status of the '
+    + 'dwelling, the title, and the council\'s planning certificate. The Due Diligence Checklist sets them out in '
+    + 'the order they are owed.',
+  );
+  return [
+    `## ${heading}`,
+    '',
+    'What this purchase is, what its value rests on and what the decision turns on, drawn from the registers read '
+    + 'for this report. The chapters that follow carry the evidence; this is what it adds up to.',
+    '',
+    ...paragraphs.flatMap((p) => [p, '']),
+  ].join('\n').trimEnd() + '\n';
+}
+
 export const STRATEGY_SECTION_IDS = [
-  'swot', 'suitability', 'holdingStrategy', 'exitStrategy', 'monitoring',
+  'swot', 'suitability', 'holdingStrategy', 'exitStrategy', 'monitoring', 'strategicRead',
 ] as const;
 
 export interface StrategySection {
@@ -1889,6 +2116,7 @@ export function composeStrategySections(
     holdingStrategy: composeHoldingStrategy,
     exitStrategy: composeExitOutlook,
     monitoring: composeMonitoringPlan,
+    strategicRead: composeStrategicRead,
   };
   return wanted.map(({ id, heading }) => ({ id, heading, markdown: composers[id](record, heading) }));
 }
