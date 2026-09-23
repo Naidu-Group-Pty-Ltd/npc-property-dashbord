@@ -57,17 +57,50 @@ name: Apply a migration
 # applied. That is safe for the catalogue seed because it upserts on
 # (slug, version). Do not point this at a file that is not idempotent without
 # reading it first.
+#
+# ## What it refuses before anything runs
+#
+# A person chooses the files, and this checks the choice first. The preflight
+# step's module, `scripts/ops/applyPreflight.pure.mjs`, records what the
+# missing checks cost.
+#
+# - A dispatch from any branch but the default branch.
+# - A path that is not a versioned file directly under `supabase/migrations/`.
+# - A file declared in `MIGRATION_WITHDRAWN.json`.
+# - A file whose version another file shares.
+# - A file whose recorded body matches none of its forms, meaning it was
+#   edited after it applied.
+# - A version this ledger already records, or a body it already holds under
+#   another version. These two pass only with `reapply: true`.
+#
+# The file list is parsed once, by the preflight, and both routes apply what
+# it approved.
+#
+# ## What it writes to the ledger
+#
+# The version, the name and, for a file of 256 KiB or less, the file itself.
+# That is the row the Supabase CLI writes, and it is read back before the run
+# says "Recorded" (`scripts/security/ledgerRecord.mjs`). Rows this workflow
+# wrote before this change carry no body. They stay that way: backfilling them
+# is a ledger write nobody has approved.
 
 on:
   workflow_dispatch:
     inputs:
       file:
-        description: 'Migration file path(s), relative to the repo root. Several may be given, one per line or comma-separated; they are applied in the order written and the run stops at the first failure.'
+        # No default. The form used to be filled with a v5 template seed, and
+        # every seed from v2 to v19 upserts its catalogue rows, so a dispatch
+        # that kept the default reverted rows later seeds had corrected.
+        description: 'Migration file path(s) under supabase/migrations/, named <14-digit version>_<name>.sql. Several may be given, one per line or comma-separated; they are applied in the order written and the run stops at the first failure.'
         required: true
         type: string
-        default: supabase/migrations/20260812090000_seed_template_library_v5_borrowing_capacity_portfolio.sql
+      reapply:
+        description: 'Allow a file whose version this ledger already records, or whose body it already holds under another version, to run again. Only for an idempotent file you mean to re-run.'
+        required: false
+        type: boolean
+        default: false
       record_version:
-        description: 'Record the file version in schema_migrations when it succeeds'
+        description: 'Record the file version (and, up to 256 KiB, its body) in schema_migrations when it succeeds'
         required: false
         type: boolean
         default: true
@@ -93,6 +126,25 @@ jobs:
   apply:
     runs-on: ubuntu-latest
     steps:
+      # First, and a failing step rather than a job-level `if:` — a skipped job
+      # shows green. Twelve dispatches (#78 to #91) ran from one feature branch
+      # and recorded three versions no commit on the default branch carries; a
+      # later migration had to delete those rows. The documented order is merge,
+      # confirm the deploy, then dispatch from the default branch.
+      #
+      # This step is not enforcement. A dispatch runs the dispatched ref's copy
+      # of this file, so a branch can delete the step. The binding control is a
+      # GitHub Environment restricted to the default branch that holds the
+      # database credentials, and adding one is an owner decision.
+      - name: Refuse a dispatch from anywhere but the default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [ -z "${DEFAULT_BRANCH:-}" ] || [ "${GITHUB_REF}" != "refs/heads/${DEFAULT_BRANCH}" ]; then
+            echo "::error title=Not the default branch::This run is on ${GITHUB_REF}. Migrations are applied from refs/heads/${DEFAULT_BRANCH:-<unknown>} only, after the change has merged."
+            exit 1
+          fi
+
       - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v7
@@ -142,57 +194,71 @@ jobs:
             exit 1
           fi
 
+      # Before either route, and on both. It parses the file list once, judges
+      # every file against the tree and this database's own ledger, and hands
+      # the apply steps the list it approved. Nothing below parses
+      # `inputs.file` again. The reader is `scripts/lib/ledgerQuery.mjs`, the
+      # same one the ledger record and the re-check use, and on the route this
+      # run chose: the database URL wins where there is one.
+      - name: Check the request against the tree and the ledger
+        id: preflight
+        env:
+          FILE: ${{ inputs.file }}
+          REAPPLY: ${{ inputs.reapply }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF || (github.repository == 'Naidu-Group-Pty-Ltd/npc-property-dashbord' && 'dduzbchuswwbefdunfct' || '') }}
+        run: node .github/scripts/apply-preflight.mjs
+
       - name: Apply over psql
         if: steps.route.outputs.route == 'psql'
         env:
-          PGCONN: ${{ secrets.SUPABASE_DB_URL }}
-          FILE: ${{ inputs.file }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          FILES: ${{ steps.preflight.outputs.files }}
           RECORD_VERSION: ${{ inputs.record_version }}
         run: |
           set -euo pipefail
           psql --version
-          # Several files may be named, and they are applied in the order
-          # written. Order is the dispatcher's responsibility and it matters:
-          # migrations are ordered by construction, so a later file may need an
-          # object an earlier one creates — list them oldest first, as the
-          # drift report prints them. Every file is checked to exist BEFORE any
-          # is applied, so a typo in the fourth cannot leave the first three
-          # applied against an operator who thought they had named four.
-          mapfile -t FILES < <(printf '%s' "$FILE" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$')
-          if [ "${#FILES[@]}" -eq 0 ]; then echo '::error title=No file named::'; exit 1; fi
-          for f in "${FILES[@]}"; do
-            test -f "$f" || { echo "::error title=No such file::$f"; exit 1; }
-          done
-          echo "Applying ${#FILES[@]} file(s), in the order given."
-          for FILE in "${FILES[@]}"; do
-          echo "--- $FILE"
-
-          # ON_ERROR_STOP and no --single-transaction, matching what the API
-          # route does: statements are applied in order and the run stops at the
-          # first error, leaving what came before it applied. Idempotence is the
-          # file's job either way, and a migration that uses CREATE INDEX
-          # CONCURRENTLY cannot be wrapped in a transaction at all.
-          psql "$PGCONN" -v ON_ERROR_STOP=1 -f "$FILE"
-          if [ "${RECORD_VERSION}" = 'true' ]; then
-            base="$(basename "$FILE" .sql)"
-            version="${base%%_*}"
-            name="${base#*_}"
-            case "$version" in
-              [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;;
-              *) echo "::notice title=Version not recorded::$base does not start with a 14-digit version"; version='' ;;
-            esac
-            if [ -n "$version" ]; then
-              psql "$PGCONN" -v ON_ERROR_STOP=1 \
-                -v version="$version" -v name="$name" \
-                -c "insert into supabase_migrations.schema_migrations (version, name) select :'version', :'name' where not exists (select 1 from supabase_migrations.schema_migrations where version = :'version');"
-              echo "Recorded $version in schema_migrations."
+          # The list the preflight approved, in the order written. Order is the
+          # dispatcher's responsibility and it matters: migrations are ordered
+          # by construction, so a later file may need an object an earlier one
+          # creates — list them oldest first, as the drift report prints them.
+          mapfile -t LIST < <(printf '%s\n' "$FILES" | grep -v '^$')
+          if [ "${#LIST[@]}" -eq 0 ]; then echo '::error title=No file approved::The preflight approved nothing.'; exit 1; fi
+          echo "Applying ${#LIST[@]} file(s), in the order given."
+          for f in "${LIST[@]}"; do
+            echo "--- $f"
+            # ON_ERROR_STOP and no --single-transaction, matching what the API
+            # route does: statements are applied in order and the run stops at
+            # the first error, leaving what came before it applied. Idempotence
+            # is the file's job either way, and a migration that uses CREATE
+            # INDEX CONCURRENTLY cannot be wrapped in a transaction at all.
+            psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f "$f"
+            {
+              echo "### Applied \`$f\`"
+              echo
+              echo "- over psql, in one file"
+            } >> "$GITHUB_STEP_SUMMARY"
+            if [ "${RECORD_VERSION}" = 'true' ]; then
+              FILE="$f" node .github/scripts/record-migration.mjs
             fi
-          fi
-          {
-            echo "### Applied \`$FILE\`"
-            echo
-            echo "- over psql, in one file"
-          } >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: Apply over the Management API
+        if: steps.route.outputs.route == 'api'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF || (github.repository == 'Naidu-Group-Pty-Ltd/npc-property-dashbord' && 'dduzbchuswwbefdunfct' || '') }}
+          FILES: ${{ steps.preflight.outputs.files }}
+          RECORD_VERSION: ${{ inputs.record_version }}
+          TUPLES_PER_CHUNK: ${{ inputs.tuples_per_chunk }}
+        run: |
+          set -euo pipefail
+          mapfile -t LIST < <(printf '%s\n' "$FILES" | grep -v '^$')
+          if [ "${#LIST[@]}" -eq 0 ]; then echo '::error title=No file approved::The preflight approved nothing.'; exit 1; fi
+          for f in "${LIST[@]}"; do
+            echo "--- $f"
+            FILE="$f" node .github/scripts/apply-migration.mjs
           done
 
       # The half a pull request cannot do.
@@ -208,29 +274,23 @@ jobs:
       # that is the ordinary state one second after a migration applies, and the
       # remedy is `npm run migrations:body-digests`, which it prints.
       #
-      # psql route only: the Management API route has no client here, and adding
-      # one would put a second way of reading the same table into this workflow.
+      # After both apply steps, so it reads the ledger as this run left it, and
+      # on both routes. It used to be psql-only and placed before the Management
+      # API step, so on the prime, which applies over the Management API, it
+      # never ran at all.
+      #
+      # On the prime only. The manifest describes the prime's ledger, and a
+      # mirror carries the prime's copy of it, so on a clone it would be checked
+      # against a ledger it does not describe.
       - name: Re-check the applied-body manifest against the live ledger
-        if: steps.route.outputs.route == 'psql'
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-        run: node scripts/security/build-applied-body-digests.mjs --verify
-
-      - name: Apply over the Management API
-        if: steps.route.outputs.route == 'api'
-        env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF || (github.repository == 'Naidu-Group-Pty-Ltd/npc-property-dashbord' && 'dduzbchuswwbefdunfct' || '') }}
-          FILE: ${{ inputs.file }}
-          RECORD_VERSION: ${{ inputs.record_version }}
-          TUPLES_PER_CHUNK: ${{ inputs.tuples_per_chunk }}
+          MANIFEST_DESCRIBES_THIS_DATABASE: ${{ github.repository == 'Naidu-Group-Pty-Ltd/npc-property-dashbord' }}
         run: |
-          set -euo pipefail
-          mapfile -t FILES < <(printf '%s' "$FILE" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$')
-          for f in "${FILES[@]}"; do
-            test -f "$f" || { echo "::error title=No such file::$f"; exit 1; }
-          done
-          for f in "${FILES[@]}"; do
-            echo "--- $f"
-            FILE="$f" node .github/scripts/apply-migration.mjs
-          done
+          if [ "${MANIFEST_DESCRIBES_THIS_DATABASE}" != 'true' ]; then
+            echo "::notice title=Manifest not re-checked::applied-body-digests.txt describes the prime's ledger, not this deployment's, so it is not checked here."
+            exit 0
+          fi
+          node scripts/security/build-applied-body-digests.mjs --verify

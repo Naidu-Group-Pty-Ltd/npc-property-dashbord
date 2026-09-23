@@ -523,19 +523,23 @@ const REPO = resolve(__dirname, '../..');
  *     and 13 blocks** — 2 masters +9, 4 +10, 19 +11, 1 +12, 24 +13. Nothing
  *     is removed, because the typed pages stay for the tier that draws them.
  *
- * The version is `20261219000000`. `20261219010000` re-copies the ACTIVE
- * masters from it, by the v15 mechanism, unchanged.
+ * The version is `20261219060000`. `20261219070000` re-copies the ACTIVE
+ * masters from it, by the v15 mechanism, unchanged. It was written as
+ * `20261219000000` / `…010000` and moved before it was applied anywhere,
+ * because main had meanwhile taken both versions for its restatements
+ * (`20261219000000_restate_mfa_recovery_code_consumption` onwards) — a version
+ * is the order a migration runs in, so two files cannot share one.
  */
 /**
  * The identifier this release records against a baseline and against a
  * refreshed master. It is the seed migration's own basename, so a row that
  * says it carries this release names the artefact that put it there.
  */
-const RELEASE_ID = '20261219000000_seed_template_library_v20_continuous_front_matter';
+const RELEASE_ID = '20261219060000_seed_template_library_v20_continuous_front_matter';
 
 const MIGRATION = resolve(
   REPO,
-  'supabase/migrations/20261219000000_seed_template_library_v20_continuous_front_matter.sql',
+  'supabase/migrations/20261219060000_seed_template_library_v20_continuous_front_matter.sql',
 );
 
 /** Postgres string literal, dollar-quoted so JSON never has to be escaped. */
