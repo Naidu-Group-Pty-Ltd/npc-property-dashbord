@@ -377,12 +377,25 @@ async function askCatalogue(c: ProjectionCatalogue): Promise<VolumeCataloguePars
   return parses.length > 0 ? mergeVolumeReads(parses) : { kind: 'refused', reason: `no query reached ${c.root}` };
 }
 
-function printCandidates(ranked: ProjectionJudgement[]): void {
+/**
+ * The page a READER opens for a dataset — what `FORWARD_DEMAND_PUBLISHERS.url`
+ * should point at. Measured 23 Sep 2026: Tasmania's typed product URL answered
+ * 404, and that link is printed in every Tasmanian report's forward-demand
+ * sentence. A catalogue's dataset page is official and stable.
+ */
+function datasetPage(c: ProjectionCatalogue | null, d: VolumeDataset): string {
+  if (c?.dialect === 'socrata') return `https://${c.root}/d/${d.id}`;
+  const root = (c?.root ?? PROJECTION_HARVEST_ROOT).replace(/\/api\/3$/, '');
+  return `${root}/dataset/${d.name}`;
+}
+
+function printCandidates(ranked: ProjectionJudgement[], catalogue: ProjectionCatalogue | null, harvestIds: Set<string>): void {
   kv('its own population projections', ranked.length);
   for (const j of ranked.slice(0, 5)) {
     console.log(`\n      ${j.dataset.title}`);
     console.log(`        publisher   ${j.dataset.organisation ?? '(not stated)'}`);
     console.log(`        id          ${j.dataset.id}`);
+    console.log(`        page        ${datasetPage(harvestIds.has(j.dataset.id) ? null : catalogue, j.dataset)}`);
     console.log(`        grain words ${j.grainWords.length > 0 ? j.grainWords.join(', ') : '(none in its own words)'}`);
     console.log(`        licence     ${j.dataset.licence ?? '(not stated)'}`);
     console.log(`        updated     ${j.dataset.metadataModified ?? '(not stated)'}`);
@@ -551,7 +564,7 @@ async function main(): Promise<void> {
     datasets.push(...fromHarvest);
 
     const ranked = rankOwnProjections(datasets, pub?.publisher ?? null);
-    printCandidates(ranked);
+    printCandidates(ranked, catalogue ?? null, new Set(fromHarvest.map((d) => d.id)));
     if (catalogue?.dialect === 'socrata') {
       for (const j of ranked.slice(0, 4)) {
         console.log(`\n      Socrata record for ${j.dataset.id} — ${j.dataset.title.slice(0, 60)}`);
