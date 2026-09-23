@@ -31,9 +31,10 @@
  *
  * The stage components the workspace mounted remain in
  * `components/commercial/workspace/`. Valuation and Forecast are mounted by the
- * assessment; the rest are kept, unmounted, because this repository receives
- * files from the platform's cascade and a cascaded copy of the old page must
- * still compile. See `docs/commercial/MODULE_STRUCTURE.md`.
+ * assessment; the rest are kept, unmounted, for a separate clean-up. This
+ * change reaches every clone by cascade, and a clone can carry code of its own
+ * (`docs/operations/CLONE_PROVISIONING_GAPS.md`), so it deletes nothing a
+ * clone's own code might still import. See `docs/commercial/MODULE_STRUCTURE.md`.
  */
 
 import { Navigate, useSearchParams } from 'react-router-dom';

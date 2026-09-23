@@ -6,12 +6,13 @@
  *
  * It talks to the same Edge Function (`manage-ci-assessments`) and could have
  * been more methods on `ciAssessmentApi` in `hooks/useCiAssessments.ts`. It is a
- * module of its own because that file is delivered to this repository by the
- * platform's cascade and can be replaced wholesale: components that import a
- * method added there would stop compiling the moment an unmodified copy
- * arrived. Here, a replaced hook file costs nothing, and a server that has not
- * yet been redeployed answers "Unknown operation", which every caller below
- * reports as an ordinary error.
+ * module of its own because its callers need more of the answer than that API
+ * returns: a refusal carries a reason code AND a body (`archiveOffered` on a
+ * refused delete, `existingClient` on a duplicate email), where the editing API
+ * reduces a response to its message and code. Keeping the management calls here
+ * also leaves the API every assessment step edits through untouched by them. A
+ * server that has not yet been redeployed answers "Unknown operation", which
+ * every caller below reports as an ordinary error.
  *
  * ## Errors keep their code
  *

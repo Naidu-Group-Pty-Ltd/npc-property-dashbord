@@ -13,7 +13,7 @@ editor.** There is one way to start it, one ten-step workflow to complete it,
 one place it records which building it concerns and one place it records which
 client it is for.
 
-## 1. What was wrong, measured at `e8f55ec`
+## 1. What was wrong, measured at `2ebc652`
 
 **Two editors over one record.** "Standalone calculators" on the landing opened
 `/calculators`, a second workspace over the same `commercial_industrial_assessments`
@@ -386,23 +386,28 @@ made here.
 G6 and G7 are access and ownership decisions to take with the client record's
 owners.
 
-## 7. This repository receives cascades
+## 7. How this reaches the clones
 
-This deployment is a clone that receives **file-level cascades** from the prime
-repository (`chore(aurixa): cascade N file(s) from prime@…`). Three things
-follow:
+This is the prime. Aurixa Mission Control cascades changed files from here to
+each clone as a pull request: to `npc-client-dashboard` directly and on to its
+own children through it. On the same cascade it deploys the Edge Functions
+into each clone's Supabase project. The lineage is in
+[`CLONE_PROVISIONING_GAPS.md`](../operations/CLONE_PROVISIONING_GAPS.md),
+"Which deployment a clone receives from". Three things follow for this work:
 
-- The changes here live in **new modules** wherever they could. They include
+- **It is new modules wherever it could be.** They include
   `_shared/ciAssessments/*.pure.ts`, `_shared/commercialOwnership.pure.ts`,
   `lib/ciAssessment/{assessmentManagement,registerProperty,newAssessment,legacyCalculatorLinks,clientRecords,assessmentDeletion}.ts`
-  and the new components.
-- **No file was deleted or renamed**, because a prime file may still import it
-  and a cascade would then land a broken import. The retired workspace's modules
-  stay in place, unreferenced (§8).
-- **Edits to existing files can be reverted by a later cascade** if prime
-  changes the same file. The durable home for this work is prime. Until it is
-  there, the tests in §9 are what will show a revert: each pins a behaviour, not
-  an implementation.
+  and the new components. New files travel on a cascade like changed ones.
+- **No file was deleted or renamed.** A clone can carry code of its own, so a
+  change that reaches every clone deletes nothing a clone's own code might
+  still import. The retired workspace's modules stay in place, unreferenced
+  (§8), for a separate clean-up.
+- **No migration is added.** Nothing here changes a table, so a cascade has
+  nothing to apply to a clone's database. `manage-ci-assessments` and
+  `manage-commercial-data` changed, and a frontend that calls the new
+  operations before its server is redeployed is answered "Unknown operation",
+  which every caller reports as an ordinary error.
 
 ## 8. Found along the way and not fixed here
 
@@ -425,7 +430,7 @@ follow:
   `pages/industrial/IndustrialProperties.tsx` (not routed; its "Calculators"
   button points at `/calculators`, which now redirects). `ValuationStage` and
   `ForecastStage` are live, used by the Valuation & forecast step. Delete the
-  rest once prime no longer carries them.
+  rest in a change of their own (§7).
 - **`/calculators/classic`** still serves the pre-workspace suite, unlinked.
   Retire it with its engines' last callers.
 
