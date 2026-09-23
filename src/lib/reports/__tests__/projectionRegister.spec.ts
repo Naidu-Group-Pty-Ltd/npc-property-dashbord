@@ -123,7 +123,11 @@ describe('the block a report may print', () => {
   it('carries provenance with every figure, and the statement that it is not a measurement', () => {
     const block = projectionTableBlock(reading);
     expect(block).toContain('Source: Queensland Government Statistician’s Office, Queensland Government population projections, 2023 edition, CC BY 4.0.');
-    expect(block).toContain('Taken into this platform\'s register on 2026-09-24.');
+    // The date a reader sees is the reader's format (`auDate`), never an ISO
+    // prefix — this assertion pinned `2026-09-24` until the prose-date rule
+    // reached the register.
+    expect(block).toContain('Taken into this platform\'s register on 24 Sep 2026.');
+    expect(block).not.toMatch(/\b\d{4}-\d{2}-\d{2}\b/);
     expect(block).toContain(A_PROJECTION_IS_NOT_A_MEASUREMENT);
     expect(block).toMatch(/State no other projected population, growth rate or horizon/);
   });

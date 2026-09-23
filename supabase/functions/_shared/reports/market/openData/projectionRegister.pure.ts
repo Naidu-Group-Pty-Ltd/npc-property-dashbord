@@ -32,6 +32,7 @@
 import { A_PROJECTION_IS_NOT_A_MEASUREMENT, PROJECTION_GRAIN_LABEL } from './absPopulationProjections.pure.ts';
 import { forwardDemandCoverageNote, type ForwardDemandAvailability } from './forwardDemand.pure.ts';
 import type { ProjectionState } from './stateProjectionPublishers.pure.ts';
+import { auDate } from '../../../planning/auDate.pure.ts';
 
 export type ProjectionAreaKind = 'sa2' | 'sa3' | 'sa4' | 'lga' | 'suburb' | 'district' | 'region' | 'gccsa' | 'state';
 
@@ -220,8 +221,13 @@ export function projectionColumns(reading: PopulationProjectionReading, max = 6,
 
 const formatCount = (v: number) => Math.round(v).toLocaleString('en-AU');
 
-/** `YYYY-MM-DD` from an instant, with no Date and so no timezone. */
-const dayOf = (iso: string) => (/^\d{4}-\d{2}-\d{2}/.exec(iso)?.[0] ?? iso);
+/**
+ * The day the register took a reading, formatted for the reader: `auDate`, the
+ * one date format a page shows. An ISO prefix is the right thing to STORE and
+ * never the right thing to print — a delivered Compass once said "as read on
+ * 2026-09-20" in prose beside tables reading "20 Sep 2026" (`auDate.pure.ts`).
+ */
+const dayOf = (iso: string) => auDate(iso) ?? iso;
 
 /**
  * The block a report prompt carries for a held reading.
