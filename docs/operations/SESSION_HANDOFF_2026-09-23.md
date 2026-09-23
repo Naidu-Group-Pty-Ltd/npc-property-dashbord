@@ -438,11 +438,14 @@ and a merged commit each describe what was meant to happen.
    Supply section after the fifth window, when it first states a
    year-on-year change.
 3. **#2737 (items 4–6)** — §13. The owner confirms the merge; then the
-   migrations `20261218000000` (the table) and `20261218010000` (the monthly
-   jobs) are dispatched through `apply-migration.yml`, in that order and only
-   after the deploy that ships `market-sales-ingest`'s `projections` stage —
-   the approvals register's first run answered 400 because its table landed
-   before its loader did (`20261214000000`).
+   migrations `20261218000000` (the table), `20261218010000` (the monthly
+   jobs) and `20261218020000` (the first NSW and Victorian loads, fired once)
+   are dispatched through `apply-migration.yml`, in that order and only after
+   the deploy that ships `market-sales-ingest`'s `projections` stage — the
+   approvals register's first run answered 400 because its table landed before
+   its loader did (`20261214000000`). Then read each load's `market_sales_sync`
+   row back through the function logs: `rows_written` should equal the CI dry
+   run's 13,482 (NSW SA2), 2,709 (NSW LGA) and 320 (VIC LGA).
 
 ---
 
