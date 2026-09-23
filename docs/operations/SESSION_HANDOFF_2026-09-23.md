@@ -22,6 +22,16 @@ by effect (§0). The branch now carries the owner's items 4–6 in a second pull
 request (#2737), which merges, and whose migrations are dispatched, only on the
 owner's confirmation (§1, §13).
 
+**Update, 11:25 UTC.** On the owner's confirmation, #2737 is shipped:
+- merged as `16364001c`;
+- the functions deployed;
+- all three migrations applied;
+- the five first projection loads proved by their log lines, each equal to its
+  CI dry run to the row;
+- the frontend publish started once Lovable reported `16364001c`.
+
+What is proved, and what is still owed, is in §12 step 3 and §13.
+
 ---
 
 ## 0 · If you read one thing
@@ -36,12 +46,14 @@ hourly ticks read back from production say so:
 | 06:20 | 2025-07 → 2025-09 | POST 200, no refusal |
 | 07:20 | 2025-04 → 2025-06 | POST 200 in 11,169 ms, no refusal |
 
-These ticks prove **#2736's fix** — the one production runs. Item 4 (the
-walk's lower edge derived from windows the ledger vouches for, rather than
-`min(period)`, §6's remedy) is on the SECOND pull request, #2737, and is not
-deployed; it changes the walk only where a window was left half-written, and
-the ticks above did not need it. #2737 carries items 4, 5 and 6; its state is
-§13.
+These ticks prove **#2736's fix**. Item 4 is the walk's lower edge derived
+from windows the ledger vouches for, rather than from `min(period)` (§6's
+remedy). It shipped on the second pull request, #2737, deployed at 10:49 UTC.
+It changes the walk only where a window was left half-written, and the ticks
+above did not need it. The 08:20, 09:20 and 10:20 ticks (old code) asked
+`2025-01→03`, `2024-10→12` and `2024-07→09`, each POST 200. The first tick on the new code is 11:20 UTC;
+its request line is item 4's first observation in production.
+§13 has #2737's state.
 
 ---
 
@@ -446,19 +458,17 @@ and a merged commit each describe what was meant to happen.
    ledger back once it reaches the register's floor, then read a delivered
    Supply section after the fifth window, when it first states a
    year-on-year change.
-3. **#2737 (items 4–6)** — §13. The owner confirms the merge; then the
-   migrations `20261218000000` (the table), `20261218010000` (the monthly
-   jobs) and `20261218020000` (the first NSW, Victorian and Queensland loads,
-   fired once) are dispatched through `apply-migration.yml`, in that order and
-   only after the deploy that ships `market-sales-ingest`'s `projections`
-   stage — the approvals register's first run answered 400 because its table
-   landed before its loader did (`20261214000000`). Then prove each load through
-   `query_logs` (log inspection, permitted — no SQL): the stage prints one line
-   per file, `[market-sales-ingest] projections <file>: <n> rows for <n> areas
-   via <publisher|archive> …`, and `<n> rows` should equal the CI dry run's
-   13,482 (NSW SA2), 2,709 (NSW LGA), 320 (VIC LGA), 3,276 (QLD SA2) and
-   1,404 (QLD LGA, three series). A refusal prints `projections
-   refused/failed:` with its reason instead.
+3. ~~**#2737 (items 4–6)** — the merge, the migrations, the first loads.~~
+   **Done 23 Sep, on the owner's confirmation:**
+   - merged as `16364001c` (10:31 UTC);
+   - deployed (run 35849263700, 10:49);
+   - `20261218000000`, `20261218010000` and `20261218020000` applied in one
+     ordered `apply-migration.yml` run (35851171153, 10:52);
+   - the five first loads each proved by their own log line, equal to the CI
+     dry run to the row (§13).
+
+   The frontend publish started once Lovable reported `16364001c` (deployment
+   `4d90e9d6-5510-4cd2-9128-34b9efce394c`).
 4. **Owner: Tasmania's terms** (`FORWARD_DEMAND_EVIDENCE.md` §9.2). The
    Treasury's quick guide grants reproduction *"in published work … provided
    you identify and credit them as Tasmanian Treasury 2024 projections"*; the
@@ -517,10 +527,33 @@ and a merged commit each describe what was meant to happen.
 - **Item 6b — South Australia's zone is read** from the Planning and Design
   Code's own layer (`JURISDICTION_PLANNING_COVERAGE.md` §3.6); WA's is readable
   and licence-restricted; the NT's is challenged.
-- **PENDING, and named:** the owner's merge confirmation; the migrations; the
-  first production load of each file (proved by its `market_sales_sync` row,
-  never by the cron tick); whether production's egress reaches
-  `dpti.geohub.sa.gov.au` (the first South Australian report after deploy).
+- **Shipped 23 Sep** (§12 step 3). The five first loads logged, each equal to
+  its dry run:
+  - `nsw_sa2`: 13,482 rows, 622 SA2s;
+  - `nsw_lga`: 2,709 rows, 129 councils;
+  - `vic_lga`: 320 rows, 80 councils, through the archive (the publisher
+    answered production 403);
+  - `qld_sa2`: 3,276 rows, 546 SA2s;
+  - `qld_lga`: 1,404 rows, 78 councils, three series.
+
+  NSW and Queensland were fetched from their publishers with HTTP 200, so
+  production's egress reaches QGSO.
+- **Still PENDING, and named:**
+  - The first report after 10:53 UTC to read the projection register (its
+    `[forward-demand]` log line names the series, area and release).
+  - The monthly jobs' first tick, 3 Oct from 18:05 UTC. A job is proved by its
+    tick, not by its migration.
+  - Item 4's `oldest_vouched` / `windows_vouching` / `windows_stale`. Every
+    approvals run writes them to `market_sales_sync`, and this session reads
+    logs, not tables. The first run on the new code is the 11:20 UTC tick;
+    its request line and status are the part logs can show.
+  - Whether production's egress reaches `dpti.geohub.sa.gov.au` (the first
+    South Australian report after deploy).
+  - The published bundle. This sandbox's egress refuses both
+    `command-centre.npcservices.com.au` and `*.lovable.app` (CONNECT 403), so
+    the publish is confirmed as started, not as served. `/version.json` should
+    name `16364001c`.
+  - The owner's Tasmanian decision (§12 step 4).
 - **Found and deliberately left for a follow-up** (outside items 4–6): two
   more reader-facing sentences print an ISO date prefix instead of going
   through `auDate` — the archive-capture clause in an open-data sales point's
