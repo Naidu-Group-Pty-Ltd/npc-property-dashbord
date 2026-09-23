@@ -492,6 +492,22 @@ const CASES = [
     replace: 'DEPLOYED_BY: ${{ vars.BACKEND_DEPLOYED_BY }}',
   },
 
+  {
+    /* The seed-skeleton check stands down on the same marker, and its step is
+       a second mapping of the same line — so the case above, which rewrites
+       the FIRST occurrence, never reaches it. Anchored on the step's own run
+       line so it removes this mapping and no other. */
+    gate: 'check-gate-env-wiring.mjs',
+    file: '.github/workflows/ci.yml',
+    what: 'the step running the seed-skeleton check stops mapping BACKEND_DEPLOYED_BY',
+    find:
+      'BACKEND_DEPLOYED_BY: ${{ vars.BACKEND_DEPLOYED_BY }}\n'
+      + '        run: npm run migrations:seed-skeletons:check',
+    replace:
+      'DEPLOYED_BY: ${{ vars.BACKEND_DEPLOYED_BY }}\n'
+      + '        run: npm run migrations:seed-skeletons:check',
+  },
+
 ];
 
 /**

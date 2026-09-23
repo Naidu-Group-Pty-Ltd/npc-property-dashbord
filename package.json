@@ -12,6 +12,8 @@
     "lint": "eslint .",
     "migrations:index": "node scripts/build-migration-object-index.mjs",
     "migrations:index:check": "node scripts/build-migration-object-index.mjs --check",
+    "migrations:seed-skeletons": "node scripts/build-migration-seed-skeletons.mjs",
+    "migrations:seed-skeletons:check": "node scripts/build-migration-seed-skeletons.mjs --check",
     "check:src-names": "node scripts/security/check-src-missing-names.mjs",
     "check:search-clear": "node scripts/security/check-search-clear.mjs",
     "check:status-ink": "node scripts/security/check-status-ink-contrast.mjs",

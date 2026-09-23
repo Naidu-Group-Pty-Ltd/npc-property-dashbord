@@ -647,6 +647,23 @@ jobs:
           BACKEND_DEPLOYED_BY: ${{ vars.BACKEND_DEPLOYED_BY }}
         run: npm run migrations:index:check
 
+      # Mission Control reads a migration's dependency facts from its body, and
+      # reads no body over 256 KiB — so every template-library seed was a file
+      # that might create anything, and held everything behind it on every
+      # clone. The skeleton manifest publishes each seed's statements without
+      # its rows, pinned to the file's git blob, and Mission Control reads the
+      # facts from that. Generated, never hand-edited; a stale entry is
+      # ignored there, and caught here.
+      #
+      # It stands itself down where Mission Control owns the backend, on the
+      # same marker as the index above and for the same reason: a clone cannot
+      # hold the seeds it describes. `check-gate-env-wiring.mjs` fails if this
+      # mapping goes.
+      - name: The migration seed skeletons are current
+        env:
+          BACKEND_DEPLOYED_BY: ${{ vars.BACKEND_DEPLOYED_BY }}
+        run: npm run migrations:seed-skeletons:check
+
       # WP-18: 329 catch blocks across 275 functions returned the caught error
       # to the caller. A Postgres message names tables, columns and constraints;
       # at that scale it is a readable map of the database, and provoking a 500
