@@ -124,6 +124,13 @@ jobs:
       - name: Security invariant suites (WP-29)
         run: npx vitest run src/lib/security
 
+      # The specs for the migration tooling itself ran in no workflow: the
+      # applied-body manifest, the drift reporter, the withdrawals manifest and
+      # the seed skeletons each had a spec, and CI names its vitest paths one by
+      # one, so none of them was named. An unrun spec guards nothing.
+      - name: Migration tooling suites
+        run: npx vitest run src/lib/deploy src/lib/ops src/lib/__tests__/migrationSeedSkeletons.spec.ts
+
       # The Workflow Playground's step catalog is derived from the same registry,
       # and its templates reference catalog ids by hand — both rot silently when an
       # integration or an operation is renamed. Ordered here for the same reason as

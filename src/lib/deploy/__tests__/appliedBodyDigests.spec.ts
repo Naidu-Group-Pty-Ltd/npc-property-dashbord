@@ -162,8 +162,16 @@ describe('the guard is wired, not merely written', () => {
   it('is re-checked against the live ledger wherever a migration is applied', () => {
     // The half a pull request cannot do. Without it the manifest could become
     // fiction and nothing would say so.
-    expect(readFileSync('.github/workflows/apply-migration.yml', 'utf8')).toContain(
-      'build-applied-body-digests.mjs --verify',
-    );
+    // After BOTH apply steps and on neither route alone: it used to be
+    // psql-only and placed before the Management API step, so on the prime,
+    // which applies over the Management API, it never ran.
+    const wf = readFileSync('.github/workflows/apply-migration.yml', 'utf8');
+    const recheck = wf.indexOf('- name: Re-check the applied-body manifest against the live ledger');
+    expect(recheck).toBeGreaterThan(wf.indexOf('- name: Apply over the Management API'));
+    expect(recheck).toBeGreaterThan(wf.indexOf('- name: Apply over psql'));
+    const step = wf.slice(recheck);
+    expect(step).toContain('build-applied-body-digests.mjs --verify');
+    expect(step).not.toMatch(/\n\s+if: steps\.route/);
+    expect(step).toContain('SUPABASE_ACCESS_TOKEN');
   });
 });
