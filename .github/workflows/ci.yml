@@ -1069,7 +1069,14 @@ jobs:
   # ours: the ABS answered and our discovery or parser refused what it sent.
   abs-register-liveness:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Seven probes share this ceiling. The two that describe files and walk
+    # directories — state projections and SA/WA/NT zones — each spend a
+    # wall-clock budget of their own (11 and 6 minutes) and NAME what they did
+    # not reach, so the ceiling is sized to their budgets plus the other five
+    # (about 3 minutes measured) rather than to a hope. A job killed by its
+    # timeout is red for a reason that is ours, and the probes after the cut
+    # never run.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:

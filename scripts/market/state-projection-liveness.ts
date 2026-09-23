@@ -72,6 +72,17 @@ import { readZipDirectoryFromTail, memberDataStart, ZIP_TAIL_BYTES } from '../..
 
 const FETCH_MS = 30_000;
 const DOWNLOAD_MS = 90_000;
+/**
+ * The probe's own wall-clock budget. It shares a job with six other probes
+ * under one timeout, and a job killed by its timeout reports red for a reason
+ * that is ours while the probes after it never run. So the budget is spent
+ * deliberately: past it, nothing more is fetched, and what was not described
+ * is NAMED as not described rather than left to look like an absence.
+ */
+const BUDGET_MS = 11 * 60_000;
+const startedAt = Date.now();
+const budgetLeft = () => BUDGET_MS - (Date.now() - startedAt);
+const skippedForBudget: string[] = [];
 const UA = 'npc-property-dashboard/state-projection-liveness (+forward demand coverage probe)';
 
 const h = (s: string) => { console.log(`\n${s}`); console.log('─'.repeat(Math.min(s.length, 100))); };
@@ -309,6 +320,11 @@ function describeBytes(url: string, bytes0: Uint8Array): void {
  * loader's egress is not this one's.
  */
 async function describe(url: string, label: string): Promise<'publisher' | 'archive' | null> {
+  if (budgetLeft() < 45_000) {
+    skippedForBudget.push(`${label} — ${url}`);
+    console.log(`\n    NOT DESCRIBED — the probe's time budget is spent (${label})`);
+    return null;
+  }
   console.log(`\n    DESCRIBING (${label})`);
   console.log(`      url        ${url}`);
   const got = await download(url);
@@ -386,6 +402,10 @@ function printLinks(links: ProjectionLink[]): void {
 
 /** A page, from the publisher, or from the archive where the publisher refuses. */
 async function readPage(url: string): Promise<{ body: string; via: string } | null> {
+  if (budgetLeft() < 90_000) {
+    skippedForBudget.push(`page — ${url}`);
+    return null;
+  }
   const page = await ask(url, 'text/html,*/*');
   if (page.networkError === null && page.status === 200 && page.body.trim() !== '') return { body: page.body, via: 'publisher' };
   const archive = await archiveCapture(url);
@@ -569,6 +589,11 @@ async function main(): Promise<void> {
   h('READ');
   for (const s of summary) {
     kv(s.state, `${s.candidates} own projection dataset(s) · described: ${s.described.length > 0 ? s.described.join(', ') : 'none'}`);
+  }
+  kv('time spent', `${Math.round((Date.now() - startedAt) / 1000)} s of a ${BUDGET_MS / 1000} s budget`);
+  if (skippedForBudget.length > 0) {
+    console.log(`\n  NOT READ, because the budget was spent (${skippedForBudget.length}) — a gap in this run, not an absence:`);
+    for (const x of skippedForBudget.slice(0, 30)) console.log(`    · ${x}`);
   }
   console.log('\n  A grain NAMED is a claim in the publisher\'s words; the file descriptions above');
   console.log('  are what a loader is written against. Nothing was written anywhere.');

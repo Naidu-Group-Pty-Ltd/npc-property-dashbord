@@ -324,7 +324,104 @@ the false negative would have buried.
 
 ---
 
-## 7 · What is NOT claimed
+## 7 · The per-jurisdiction register (W3.4, from 23 September 2026)
+
+§1's measurement settled where forward demand at a property's own area has to
+come from: each jurisdiction's OWN projection, because the Bureau's finest is
+capital city or rest of state. The owner approved the infrastructure on
+23 September 2026, and it is built in the order this programme has learned to
+build a register in — the table and the reader first, the loaders only
+against files a probe has described.
+
+### 7.1 · The table, and the five rules it records
+
+`population_projections` (migration `20261218000000`) holds a jurisdiction's
+projection row by row: edition, series, measure, area, year, value, plus the
+publisher, the source URL, the licence and the day the register took it. The
+key is the publisher's own `(state, release, series, measure, area_kind,
+area_code, year)`, so a re-run of an edition replaces it and a new edition sits
+beside the old rather than silently overwriting it.
+
+1. **A projection is not a measurement.** Nothing reading this table builds an
+   `EvidencePoint`, and a source scan asserts it (§3.1, unchanged).
+2. **The series is the publisher's own word and is never defaulted.** It is
+   part of the key, so no load keeps one quietly, and the report prints every
+   series with *"None is preferred here"* beside them — `choices[0]` is what
+   printed the maximum-growth corner of the Bureau's 72 as "the projection".
+3. **The base year is marked as the base** (`year_kind`) and printed
+   *"2021 (estimated base)"*, because a projection table opens on the measured
+   population it starts from and printing that under a forward heading as if
+   projected is the worst failure this register could commit.
+4. **The grain is the publisher's** (`area_kind`), and only an SA2, an SA3 or
+   the publisher's suburb describes the property's own area; anything coarser
+   is printed under the sentence saying it describes a region the property
+   sits in (§3.3, unchanged).
+5. **Provenance travels with the figure** — publisher, edition, licence and
+   the register's own date — and a figure with none is not printed.
+
+The table is created **empty**, with RLS on and no policy: the rows a
+migration INSERTs do not travel to a clone (`CLONE_PROVISIONING_GAPS.md`), so
+the ingest fills it on every deployment.
+
+### 7.2 · How a report reads it
+
+`readProjectionRegister` asks by **trusted geography only**, finest first: the
+SA2 the verified coordinate falls in (`report_geography.sa2_code`, now carried
+through the generator's `subjectGeography` and its stored-row fallback), the
+resolved suburb, then the council the cadastre returned — never a typed suburb
+and never the NSW-defaulting state. It never throws, and keeps four absences
+apart, because each is a different remedy:
+
+| absence | what it is about | sentence |
+| --- | --- | --- |
+| `not_loaded` | this deployment | nothing is held for the jurisdiction |
+| `none_for_area` | how the areas line up | the jurisdiction is held and names no area matching this one |
+| `no_area_resolved` | the subject | nothing trusted could select a reading |
+| `unavailable` | us | the read failed |
+
+The generator stores the whole answer on `enhancedData.forwardDemandProjection`
+beside the approvals read, in the same shape and for the same reason: it is our
+own table, so it costs no ledger entry, no budget and no reuse gate, and a
+resume sees whatever the last ingest wrote.
+
+### 7.3 · One composer, in the section and on the pin
+
+A reading prints the publisher's own table — every series, the base labelled,
+the source line with edition, licence and the register's date — with the rules
+that bound it: use the figures exactly as printed, name the series, state no
+other projected population, growth rate or horizon, and never call the base a
+projection. An absence prints its own sentence. **`forwardDemandBlocks` is the
+one composer**, read by the demographics section and by the pinned context,
+and the pin is where it has to be: a held projection is the authority for every
+projected figure the report may state, and the section that discusses demand
+sits in the middle `limitPromptContext` trims — §6 of
+`PLANNING_CONTROLS_IN_THE_REPORT.md`, applied to a forecast. Where a table is
+held, the flat "no population projection" prohibition gives way to "no
+projected figure other than those in the forward-demand table".
+
+### 7.4 · Three readings the register made necessary
+
+A register that can hold a jurisdiction can also hold it and not name this
+property's area, be asked about a property whose area was never resolved, or
+not be asked at all. Those are three more sentences, not three variations:
+
+- **`area_not_named`** — held, and no area matches. Its route sentence names
+  the publisher and the link but NOT "which this report does not read",
+  because it did read it.
+- **`no_area_resolved`** — a statement about the report's inputs.
+- **`not_read`** — the caller never read the register. It is the **default**
+  now, and that is the change that matters: the regeneration path composes this
+  block without a register read (the recorded asymmetry of §5.2), and the
+  moment one jurisdiction loads, `not_loaded`'s *"No population projection has
+  been loaded by this deployment"* would be false there. A caller that did not
+  read says it did not read, which is always true.
+
+`not_loaded` itself now names the jurisdiction rather than the whole
+deployment, for the same reason.
+
+---
+
+## 8 · What is NOT claimed
 
 - **No ABS projection is loaded, and no table was created.** The measurement
   is why: there is no SA2 series to load, and a state-grain register would
@@ -333,5 +430,8 @@ the false negative would have buried.
 - **Nothing reaches the scorer**, by design (§3.1).
 - **Nothing is inferred about the grain.** §2.2 was resolved by a second
   measurement rather than by the inference that happened to be right.
-- **The per-jurisdiction registers are not read.** All eight are
-  `ingested: false`, truthfully, and the sentence a reader gets says so.
+- **No jurisdiction's register is loaded by this document.** The table, the
+  reader and the report's wiring exist (§7); which jurisdictions load, and
+  against which files, is recorded in §9 as each is measured and loaded. A
+  jurisdiction stays `ingested: false` until its loader exists, and a report
+  says what the register ANSWERED rather than what the flag says.

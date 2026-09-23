@@ -66,6 +66,16 @@ import {
 } from '../../supabase/functions/_shared/reports/market/openData/salesVolumePublishers.pure.ts';
 
 const FETCH_MS = 30_000;
+/**
+ * This probe's own wall-clock budget, for the reason the projection probe has
+ * one: seven probes share one job timeout, and past the budget nothing more
+ * is asked and what was not asked is NAMED rather than left to read as an
+ * absence.
+ */
+const BUDGET_MS = 6 * 60_000;
+const startedAt = Date.now();
+const budgetLeft = () => BUDGET_MS - (Date.now() - startedAt);
+const skippedForBudget: string[] = [];
 const UA = 'npc-property-dashboard/planning-zone-liveness (+zone layer verification probe)';
 const SERVICES_PER_JURISDICTION = 16;
 const ZONE_LAYERS_PER_SERVICE = 3;
@@ -207,6 +217,10 @@ async function directoryRoute(j: UnreadZoneJurisdiction): Promise<string[]> {
 }
 
 async function askService(j: UnreadZoneJurisdiction, service: string): Promise<boolean> {
+  if (budgetLeft() < 30_000) {
+    skippedForBudget.push(`${j} ${service}`);
+    return false;
+  }
   const got = await ask(`${service}?f=json`);
   console.log(`\n    SERVICE ${service}`);
   if (got.networkError !== null || got.status !== 200) {
@@ -286,6 +300,11 @@ async function main(): Promise<void> {
 
   h('READ');
   for (const s of summary) kv(s.j, `${s.services} planning service(s) asked, ${s.zoneServices} carrying a layer named as a zone`);
+  kv('time spent', `${Math.round((Date.now() - startedAt) / 1000)} s of a ${BUDGET_MS / 1000} s budget`);
+  if (skippedForBudget.length > 0) {
+    console.log(`\n  NOT ASKED, because the budget was spent (${skippedForBudget.length}) — a gap in this run, not an absence:`);
+    for (const x of skippedForBudget.slice(0, 30)) console.log(`    · ${x}`);
+  }
   console.log('\n  A layer named as a zone is a candidate. The point answers above are what a');
   console.log('  parser is written against; the terms above are what decides whether it may be');
   console.log('  republished. Nothing was written anywhere.');
