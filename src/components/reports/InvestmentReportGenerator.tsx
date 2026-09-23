@@ -799,7 +799,7 @@ export function InvestmentReportGenerator() {
         if (pollError || !pollData?.success) {
           consecutivePollErrors += 1;
           if (consecutivePollErrors >= maxConsecutivePollErrors) {
-            throw new Error(pollError?.message || pollData?.error || 'Failed to check scrape status');
+            throw new Error(pollError?.message || pollData?.error || 'Failed to check extraction status');
           }
           continue;
         }
@@ -815,7 +815,7 @@ export function InvestmentReportGenerator() {
       }
 
       if (!scrapedResult) {
-        throw new Error('Scrape is taking longer than expected. Please try again.');
+        throw new Error('Extraction is taking longer than expected. Please try again.');
       }
 
       console.log('Scrape successful:', scrapedResult);
@@ -2007,7 +2007,7 @@ export function InvestmentReportGenerator() {
                     </Button>
                   </div>
 
-                  {/* Scrape Error */}
+                  {/* Extraction Error */}
                   {scrapeError && (
                     <div className="reports-validation-state reports-validation-state-error">
                       <div className="flex items-start gap-3">
@@ -2119,7 +2119,7 @@ export function InvestmentReportGenerator() {
                           <li>Most Australian property listing sites</li>
                         </ul>
                         <p className="mt-2">
-                          The scraper will extract property details and automatically generate a comprehensive investment report. Override values above will be used if provided.
+                          The extractor will pull the property details and automatically generate a comprehensive investment report. Override values above will be used if provided.
                         </p>
                       </div>
                     </div>
