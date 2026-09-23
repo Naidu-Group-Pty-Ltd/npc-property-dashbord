@@ -153,7 +153,7 @@ export const FORWARD_DEMAND_PUBLISHERS: Readonly<Record<string, ForwardDemandPub
 /**
  * What this deployment can say about forward demand for one property, and why.
  *
- * Five readings, and they are five different sentences for the reason
+ * Eight readings, and they are eight different sentences for the reason
  * `SUPPLY_EVIDENCE.md` and `NATIONAL_PIPELINE_EVIDENCE.md` both record: an
  * absence that cannot say which kind it is sends a reader — or an operator —
  * to the wrong conclusion. Here the two that would otherwise collapse are
@@ -161,6 +161,13 @@ export const FORWARD_DEMAND_PUBLISHERS: Readonly<Record<string, ForwardDemandPub
  * than this suburb) and `grain_not_published` (the publisher does not offer
  * one for an area this size at all): the first is a caveat on a figure that
  * IS printed, the second is the absence of any figure.
+ *
+ * Three more arrived with the register (23 Sep 2026), because a register that
+ * can hold a jurisdiction can also hold it and not name this property's area
+ * (`area_not_named`), be asked about a property whose area was never resolved
+ * (`no_area_resolved`), or not be asked at all (`not_read`) — and each of
+ * those is a different remedy from `not_loaded`, which is about the
+ * deployment.
  */
 export type ForwardDemandAvailability =
   /** Held at a grain that describes the property's own area. */
@@ -172,7 +179,22 @@ export type ForwardDemandAvailability =
   /** The register exists and this deployment has never loaded it. */
   | { kind: 'not_loaded' }
   /** The retrieval failed. Ours, or theirs — never the area's. */
-  | { kind: 'unavailable'; reason: string };
+  | { kind: 'unavailable'; reason: string }
+  /**
+   * The jurisdiction's projection IS held here, and names no area matching
+   * this property's. A statement about how the publisher's areas line up
+   * with this property's — never about the area, and never "not loaded".
+   */
+  | { kind: 'area_not_named' }
+  /** The property's area could not be resolved from its verified location, so nothing could be selected. */
+  | { kind: 'no_area_resolved' }
+  /**
+   * The caller did not read the register at all. Once a jurisdiction is
+   * loaded, `not_loaded` stops being true for a caller that simply never
+   * asked — the regeneration path composes this block without a register
+   * read — so a report that did not read says THAT, which is always true.
+   */
+  | { kind: 'not_read' };
 
 /**
  * Resolve the availability from what was actually read.
@@ -224,6 +246,14 @@ export function forwardDemandCoverageNote(
       + `${pub.product}, which this report does not read; they can be read at ${pub.url}.`
     : ' No forward projection publisher is named for this jurisdiction in this report, '
       + 'which is a limit of this report rather than a finding about the area.';
+  /*
+   * Where the jurisdiction's projection IS held, "which this report does not
+   * read" is false — the register was read and answered for somewhere else.
+   * The route is still owed; only that clause is not.
+   */
+  const heldRoute = pub
+    ? ` The projection is published by ${pub.publisher} as ${pub.product} and can be read at ${pub.url}.`
+    : route;
 
   switch (availability.kind) {
     case 'projected':
@@ -241,9 +271,23 @@ export function forwardDemandCoverageNote(
           : 'The national projection publishes no geography this report reads.')
         + route;
     case 'not_loaded':
-      return 'No population projection has been loaded by this deployment, so this report '
-        + 'states no projected figure for this area. That is a statement about this '
+      return 'No population projection for this jurisdiction has been loaded by this deployment, so '
+        + 'this report states no projected figure for this area. That is a statement about this '
         + 'deployment rather than about the area.'
+        + route;
+    case 'area_not_named':
+      return 'The population projection this deployment holds for this jurisdiction names no area '
+        + 'matching this property\'s, so this report states no projected figure for it. That is a '
+        + 'statement about how the publisher\'s areas line up with this property\'s, not about the area.'
+        + heldRoute;
+    case 'no_area_resolved':
+      return 'No population projection could be selected for this property, because its area could '
+        + 'not be resolved from its verified location, so this report states no projected figure for '
+        + 'it. That is a statement about this report\'s inputs rather than about the area.'
+        + route;
+    case 'not_read':
+      return 'This report does not read a population projection, so it states no projected figure '
+        + 'for this area.'
         + route;
     case 'unavailable':
       return 'The population projection could not be read for this report, so no projected '

@@ -8,13 +8,18 @@ import {
   OWN_AREA_KINDS,
   PROJECTION_AREA_KINDS,
   PROJECTION_AREA_LABEL,
+  availabilityOfRead,
+  forwardDemandStatement,
   projectionColumns,
   projectionDescribesTheArea,
   projectionTableBlock,
   readingFromRows,
+  type ProjectionRegisterRead,
   type ProjectionRow,
 } from '../../../../supabase/functions/_shared/reports/market/openData/projectionRegister.pure';
 import { A_PROJECTION_IS_NOT_A_MEASUREMENT } from '../../../../supabase/functions/_shared/reports/market/openData/absPopulationProjections.pure';
+import { FORWARD_DEMAND_PUBLISHERS } from '../../../../supabase/functions/_shared/reports/market/openData/forwardDemand.pure';
+import { forwardDemandBlocks, regionalTrendBlocks } from '../../../../supabase/functions/_shared/reports/regionalPromptBlocks.pure';
 
 const row = (over: Partial<ProjectionRow>): ProjectionRow => ({
   state: 'QLD',
@@ -171,5 +176,107 @@ describe('nothing here can reach the scorer', () => {
       .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
     expect(src).not.toMatch(/EvidencePoint/);
     expect(src).not.toMatch(/marketEvidence\.pure/);
+  });
+});
+
+
+describe('one composer for the section and the pin', () => {
+  const reading = readingFromRows(series('Medium series', [[2021, 10_000, true], [2026, 10_800], [2031, 11_500]]))!;
+  const held: ProjectionRegisterRead = { kind: 'reading', reading, askedAt: 'sa2' };
+  const absent = (absence: 'no_area_resolved' | 'none_for_area' | 'not_loaded' | 'unavailable'): ProjectionRegisterRead =>
+    ({ kind: 'absent', absence, askedAt: 'sa2' });
+
+  it('prints the publisher’s table for a reading, and nothing about absence', () => {
+    const out = forwardDemandStatement(held, 'QLD');
+    expect(out).toBe(projectionTableBlock(reading));
+    expect(availabilityOfRead(held)).toBeNull();
+  });
+
+  it('keeps four absences as four sentences, none of them a figure', () => {
+    const notes = (['no_area_resolved', 'none_for_area', 'not_loaded', 'unavailable'] as const)
+      .map((a) => forwardDemandStatement(absent(a), 'QLD'));
+    expect(new Set(notes).size).toBe(4);
+    for (const n of notes) {
+      expect(n).toMatch(/no projected figure/);
+      expect(n).not.toMatch(/\|/);
+      expect(n).not.toMatch(/\b(19|20)\d{2}\b/);
+    }
+    expect(availabilityOfRead(absent('none_for_area'))).toEqual({ kind: 'area_not_named' });
+  });
+
+  /*
+   * A caller that never read the register is not a deployment with nothing
+   * loaded. The regeneration path is one, and once a jurisdiction loads,
+   * "No population projection has been loaded" would be false there.
+   */
+  it('says a caller that did not read did not read', () => {
+    expect(forwardDemandStatement(null, 'QLD')).toMatch(/This report does not read a population projection/);
+    expect(forwardDemandStatement(undefined, null)).toMatch(/limit of this report rather than a finding about the area/);
+  });
+
+  it('puts the table in the demographics block and lifts the flat prohibition only where a table is held', () => {
+    const withTable = regionalTrendBlocks({
+      state: 'QLD',
+      forwardDemandProjection: held,
+      regionalTrends: {
+        sa2: { name: 'Kelvin Grove - Herston' },
+        population: { latest: { year: 2024, erp: 10234 }, source: 'ABS Regional population' },
+      },
+    });
+    expect(withTable).toContain(projectionTableBlock(reading));
+    expect(withTable).toMatch(/a projected figure other than those in the forward-demand table below/);
+    expect(withTable).not.toMatch(/Do NOT state an unemployment rate, a population projection,/);
+    const without = regionalTrendBlocks({
+      state: 'QLD',
+      forwardDemandProjection: absent('not_loaded'),
+      regionalTrends: {
+        sa2: { name: 'Kelvin Grove - Herston' },
+        population: { latest: { year: 2024, erp: 10234 }, source: 'ABS Regional population' },
+      },
+    });
+    expect(without).toMatch(/Do NOT state an unemployment rate, a population projection,/);
+    expect(without).toMatch(/No population projection for this jurisdiction has been loaded/);
+  });
+
+  it('pins exactly what the section says', () => {
+    const input = { state: 'QLD', forwardDemandProjection: held };
+    expect(regionalTrendBlocks(input)).toContain(forwardDemandBlocks(input));
+    const absentInput = { state: 'QLD', forwardDemandProjection: absent('none_for_area') };
+    expect(regionalTrendBlocks(absentInput)).toContain(forwardDemandBlocks(absentInput));
+    expect(forwardDemandBlocks(absentInput)).toContain(FORWARD_DEMAND_PUBLISHERS.QLD.publisher);
+  });
+});
+
+describe('the generator reads the register by trusted geography, stores it and pins it', () => {
+  const generator = readFileSync('supabase/functions/generate-investment-report/index.ts', 'utf8');
+  const regenerator = readFileSync('supabase/functions/regenerate-report-qualitative/index.ts', 'utf8');
+
+  it('asks with the trusted state, the resolved SA2 code, suburb and cadastre council', () => {
+    const at = generator.indexOf('await readProjectionRegister(supabase, {');
+    expect(at).toBeGreaterThan(0);
+    const call = generator.slice(at, at + 700);
+    expect(call).toMatch(/state: \(trustedStateForForwardDemand\(subjectGeography, abbreviateState\)/);
+    expect(call).toMatch(/sa2Code: typeof subjectGeography\?\.sa2_code === 'string'/);
+    expect(call).toMatch(/trustedSuburb: marketSuburb/);
+    expect(call).toMatch(/parcel\?\.lga/);
+    // The SA2 code travels from the resolution and from the stored-row fallback.
+    expect(generator).toMatch(/sa2_code: geoOutcome\.row\.sa2_code/);
+    expect(generator).toMatch(/\.select\('postcode, status, suburb, state, sa2_code'\)/);
+  });
+
+  it('stores the whole answer and pins it through the one composer', () => {
+    expect(generator).toMatch(/buildingApprovals: approvals,\s*forwardDemandProjection,/);
+    expect(generator).toMatch(/forwardDemandBlocks\(\{\s*state: trustedStateForForwardDemand\(subjectGeography, abbreviateState\),\s*forwardDemandProjection: enhancedData\.forwardDemandProjection \?\? null,/);
+  });
+
+  /*
+   * The recorded asymmetry, restated for the register: the regeneration path
+   * reads no register, and so says it did not read one rather than that the
+   * deployment holds none.
+   */
+  it('leaves the regeneration path reading nothing, and saying so', () => {
+    expect(regenerator).not.toMatch(/readProjectionRegister/);
+    expect(regenerator).toContain('regionalTrendBlocks(enhancedData)');
+    expect(regionalTrendBlocks({})).toMatch(/This report does not read a population projection/);
   });
 });

@@ -30,6 +30,7 @@
  * Deno-compatible: explicit `.ts` extensions, no `@/` aliases.
  */
 import { A_PROJECTION_IS_NOT_A_MEASUREMENT, PROJECTION_GRAIN_LABEL } from './absPopulationProjections.pure.ts';
+import { forwardDemandCoverageNote, type ForwardDemandAvailability } from './forwardDemand.pure.ts';
 import type { ProjectionState } from './stateProjectionPublishers.pure.ts';
 
 export type ProjectionAreaKind = 'sa2' | 'sa3' | 'sa4' | 'lga' | 'suburb' | 'district' | 'region' | 'gccsa' | 'state';
@@ -238,3 +239,35 @@ export type ProjectionRegisterRead =
     absence: 'no_area_resolved' | 'none_for_area' | 'not_loaded' | 'unavailable';
     askedAt: ProjectionAreaKind | null;
   };
+
+/**
+ * The availability sentence an absent read maps to. A reading maps to none —
+ * it prints its own table — and each absence keeps its own sentence, because
+ * `not_loaded` is about the deployment, `area_not_named` about how the areas
+ * line up, `no_area_resolved` about the subject and `unavailable` about us.
+ */
+export function availabilityOfRead(read: ProjectionRegisterRead): ForwardDemandAvailability | null {
+  if (read.kind === 'reading') return null;
+  switch (read.absence) {
+    case 'not_loaded': return { kind: 'not_loaded' };
+    case 'none_for_area': return { kind: 'area_not_named' };
+    case 'no_area_resolved': return { kind: 'no_area_resolved' };
+    case 'unavailable': return { kind: 'unavailable', reason: 'the register could not be read' };
+  }
+}
+
+/**
+ * What a report says about forward demand: the publisher's own table, or
+ * which absence it is. ONE composer, read by the demographics section and by
+ * the pinned context both, because two statements of one reading is how a
+ * section and the pin come to disagree (`riskRegisterInstruction()`'s lesson).
+ *
+ * `null` — a caller that never read the register — is `not_read`, never
+ * `not_loaded`: once a jurisdiction is loaded, a caller that simply did not
+ * ask may not say the deployment holds nothing.
+ */
+export function forwardDemandStatement(read: ProjectionRegisterRead | null | undefined, state: string | null): string {
+  if (read && read.kind === 'reading') return projectionTableBlock(read.reading);
+  const availability = read ? availabilityOfRead(read) : null;
+  return forwardDemandCoverageNote(availability ?? { kind: 'not_read' }, state);
+}

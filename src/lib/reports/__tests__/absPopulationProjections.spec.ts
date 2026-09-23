@@ -466,13 +466,23 @@ describe('W3.3’s word is "everywhere"', () => {
   });
 });
 
-describe('the five forward-demand readings', () => {
+describe('the eight forward-demand readings', () => {
+  /*
+   * Five from the national floor, three from the register (23 Sep 2026): a
+   * jurisdiction held and the area not named in it, a property whose area was
+   * never resolved, and a caller that never read the register at all — which
+   * is what the regeneration path is, and why `not_loaded` stopped being a
+   * safe default the day one jurisdiction loaded.
+   */
   const readings = [
     { kind: 'projected', grain: 'sa2' },
     { kind: 'coarser_than_area', grain: 'state' },
     { kind: 'grain_not_published', finest: 'state' },
     { kind: 'not_loaded' },
     { kind: 'unavailable', reason: 'HTTP 503' },
+    { kind: 'area_not_named' },
+    { kind: 'no_area_resolved' },
+    { kind: 'not_read' },
   ] as const;
 
   it('resolves each from what was actually read', () => {
@@ -497,9 +507,29 @@ describe('the five forward-demand readings', () => {
     expect(r.reason).toBe('timeout');
   });
 
-  it('writes five distinct sentences', () => {
+  it('writes eight distinct sentences', () => {
     const notes = readings.map((r) => forwardDemandCoverageNote(r, 'NSW'));
-    expect(new Set(notes).size).toBe(5);
+    expect(new Set(notes).size).toBe(8);
+  });
+
+  /*
+   * Where the jurisdiction IS held, "which this report does not read" is
+   * false — the register was read and answered for somewhere else. The route
+   * is still owed; that clause is not.
+   */
+  it('never says it does not read a register it read', () => {
+    const held = forwardDemandCoverageNote({ kind: 'area_not_named' }, 'SA');
+    expect(held).toContain(FORWARD_DEMAND_PUBLISHERS.SA.publisher);
+    expect(held).toContain(FORWARD_DEMAND_PUBLISHERS.SA.url);
+    expect(held).not.toMatch(/does not read/);
+    expect(held).toMatch(/line up with this property/);
+    // And the reading that DID not read says so, whichever jurisdiction.
+    expect(forwardDemandCoverageNote({ kind: 'not_read' }, 'SA')).toMatch(/does not read a population projection/);
+  });
+
+  it('keeps "not loaded" about the jurisdiction, not the whole deployment', () => {
+    expect(forwardDemandCoverageNote({ kind: 'not_loaded' }, 'NSW'))
+      .toMatch(/No population projection for this jurisdiction has been loaded by this deployment/);
   });
 
   it('separates a caveat on a printed figure from the absence of one', () => {
