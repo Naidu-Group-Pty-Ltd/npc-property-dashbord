@@ -1107,6 +1107,20 @@ jobs:
         if: always()
         run: npx tsx scripts/market/sales-volume-liveness.ts
 
+      # The per-jurisdiction projection registers forward demand needs: what
+      # each state publishes, and what its files hold, before a loader is
+      # written against them. Writes nothing.
+      - name: Ask each state what it publishes as its own population projection
+        if: always()
+        run: npx tsx scripts/market/state-projection-liveness.ts
+
+      # The zone layer for SA, WA and the NT: which layer, its fields and terms,
+      # and one point question per capital, so a parser is verified against a
+      # real answer. Writes nothing.
+      - name: Ask SA, WA and NT which layer is the zone, and what it says at a point
+        if: always()
+        run: npx tsx scripts/market/planning-zone-liveness.ts
+
   template-geometry:
     runs-on: ubuntu-latest
     timeout-minutes: 45

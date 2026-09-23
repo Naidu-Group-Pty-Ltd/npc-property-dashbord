@@ -575,11 +575,23 @@ export type VolumeCoverage =
    * believable beside the size of the question that found it, which is the
    * rule the sanctions register and the PEP index both answer to.
    */
-  | { kind: 'medians_only'; searched: number; inventory: number | null }
+  | { kind: 'medians_only'; searched: number; inventory: number | null; route?: VolumeRoute }
   /** The catalogues answered and hold no count series. */
-  | { kind: 'no_count_published'; searched: number; inventory: number | null }
+  | { kind: 'no_count_published'; searched: number; inventory: number | null; route?: VolumeRoute }
   /** A catalogue could not be read. Says nothing about the jurisdiction. */
   | { kind: 'catalogue_unavailable'; reason: string };
+
+/**
+ * How an absence was established, where it matters to the sentence.
+ *
+ * `harvest_enumeration` is the route a jurisdiction with no catalogue of its
+ * own is read by: every dataset its own publishers list in the Commonwealth
+ * catalogue, enumerated publisher by publisher and read in full, beside the
+ * relevance search of the same index — two questions that fail differently.
+ * Absent, the route is the ordinary one (its own catalogue and the harvest),
+ * and the sentence is unchanged.
+ */
+export type VolumeRoute = 'harvest_enumeration';
 
 /**
  * Decide, from corroborated reads.
@@ -599,6 +611,8 @@ export function assessVolumeCoverage(
    * only what survived it.
    */
   inventory: number | null = null,
+  /** How the reads were taken, where it is not the ordinary route. */
+  route?: VolumeRoute,
 ): VolumeCoverage {
   /*
    * ── Corroboration gates an ABSENCE, not a FIND ──────────────────────────
@@ -666,9 +680,8 @@ export function assessVolumeCoverage(
     };
   }
   const anyMedian = parse.datasets.some((d) => judgeVolumeDataset(d).median);
-  return anyMedian
-    ? { kind: 'medians_only', searched: parse.total, inventory }
-    : { kind: 'no_count_published', searched: parse.total, inventory };
+  const kind = anyMedian ? 'medians_only' as const : 'no_count_published' as const;
+  return route ? { kind, searched: parse.total, inventory, route } : { kind, searched: parse.total, inventory };
 }
 
 /**
@@ -701,6 +714,21 @@ function searchScale(searched: number, inventory: number | null): string {
     : `${matched} out of a published index of ${inventory.toLocaleString('en-AU')}`;
 }
 
+/** The size of an enumerated question: every dataset a jurisdiction's own publishers list. */
+function enumerationScale(saleNaming: number, inventory: number | null): string {
+  const named = `${saleNaming.toLocaleString('en-AU')} name${saleNaming === 1 ? 's' : ''} a sale`;
+  return inventory === null || inventory <= 0
+    ? `${named} among the datasets its own publishers list in the Commonwealth catalogue`
+    : `of the ${inventory.toLocaleString('en-AU')} datasets its own publishers list in the `
+      + `Commonwealth catalogue, read in full, ${named}`;
+}
+
+/** Why the Commonwealth catalogue is the index for this jurisdiction. */
+function noOwnCatalogue(state: VolumeGapState): string {
+  return `${state} runs no open-data catalogue of its own, so that list is where its published `
+    + 'data is indexed.';
+}
+
 export function volumeCoverageNote(coverage: VolumeCoverage, state: VolumeGapState): string {
   switch (coverage.kind) {
     case 'countable':
@@ -720,11 +748,23 @@ export function volumeCoverageNote(coverage: VolumeCoverage, state: VolumeGapSta
         + `${coverage.publisher}), so nothing from it is read here. That is a statement about the `
         + 'form it is published in, not about the market.';
     case 'medians_only':
+      if (coverage.route === 'harvest_enumeration') {
+        return `${state}'s published sales data states prices and not counts — `
+          + `${enumerationScale(coverage.searched, coverage.inventory)}, and none carries a number `
+          + `of sales. ${noOwnCatalogue(state)} This report therefore states no transaction-volume `
+          + 'reading for this area, which is a limit of what is published rather than a measurement.';
+      }
       return `${state}'s published sales data states prices and not counts — `
         + `${searchScale(coverage.searched, coverage.inventory)} and none carries a number of `
         + 'sales. This report therefore states no transaction-volume reading for this area, which '
         + 'is a limit of what is published rather than a measurement.';
     case 'no_count_published':
+      if (coverage.route === 'harvest_enumeration') {
+        return `No count of residential sales below ${grainWord(state)} level was found published `
+          + `for ${state} — ${enumerationScale(coverage.searched, coverage.inventory)}, and none `
+          + `carries a number of sales. ${noOwnCatalogue(state)} This report states no `
+          + 'transaction-volume reading for this area.';
+      }
       return `No count of residential sales below ${grainWord(state)} level was found published `
         + `for ${state} — ${searchScale(coverage.searched, coverage.inventory)} across its own `
         + 'catalogue and the Commonwealth catalogue, and none carries a number of sales. This '
@@ -1375,4 +1415,43 @@ export const SALE_WORDS = /\b(?:sales?|sold|transfers?|transactions?)\b/i;
 
 export function datasetsNamingASale(datasets: readonly VolumeDataset[]): VolumeDataset[] {
   return datasets.filter((d) => SALE_WORDS.test([d.title, d.notes].filter(Boolean).join(' ')));
+}
+
+/**
+ * A body named for the jurisdiction that is not its government.
+ *
+ * The harvest's facet for "tasmania" named the University of Tasmania's
+ * schools and institutes beside the state's departments — attributable by
+ * name, and not the jurisdiction's own publishers. An absence stated about
+ * what a jurisdiction publishes has to be about the jurisdiction.
+ */
+export const ACADEMIC_PUBLISHER = /\buniversit(?:y|ies)\b|\binstitute\b|\bschool of\b|\bresearch\b/i;
+
+export function governmentPublishers(
+  organisations: readonly HarvestOrganisation[],
+  state: VolumeGapState,
+): HarvestOrganisation[] {
+  return jurisdictionOrganisations(organisations, state).filter((o) => !ACADEMIC_PUBLISHER.test(o.title));
+}
+
+/** One publisher's list, as the enumeration read it. */
+export interface EnumeratedPublisher {
+  name: string;
+  title: string;
+  /** How many datasets the index says the publisher holds. */
+  declared: number;
+  /** How many were read. */
+  read: number;
+}
+
+/**
+ * Was every publisher's every dataset read?
+ *
+ * An absence found by reading part of a list is a truncated download by
+ * another route — `organization_list` answered a page of 25 once and was read
+ * as the list. So complete means complete: no publishers is not complete, and
+ * one publisher read short makes the whole enumeration short.
+ */
+export function enumerationComplete(publishers: readonly EnumeratedPublisher[]): boolean {
+  return publishers.length > 0 && publishers.every((p) => p.declared > 0 && p.read >= p.declared);
 }

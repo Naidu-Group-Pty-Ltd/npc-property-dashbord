@@ -71,6 +71,10 @@ import {
   catalogueProbesFor,
   ckanRootFor,
   datasetsNamingASale,
+  enumerationComplete,
+  governmentPublishers,
+  type EnumeratedPublisher,
+  type VolumeRoute,
   harvestOrgFacetUrl,
   isJurisdictionHost,
   jurisdictionOrganisations,
@@ -139,6 +143,8 @@ interface CatalogueRead {
   verdict: CatalogueVerdict;
   /** What the index said about its own size, so an absence can state it. */
   inventory: number | null;
+  /** How the read was taken, where it is not the ordinary route. */
+  route?: VolumeRoute;
 }
 
 async function askCatalogue(c: VolumeCatalogue): Promise<CatalogueRead> {
@@ -330,25 +336,54 @@ async function discoverOwnCatalogue(
   }
   const facet = parseOrgFacet(facetGot.body);
   if (facet.kind === 'refused') ours(`${state} harvest organisation facet`, facet.reason);
-  const orgs = jurisdictionOrganisations(facet.organisations, state);
-  kv('harvest publishers named', `${facet.organisations.length} for the query, ${orgs.length} of them ${state}'s by their own name`);
-  for (const o of orgs.slice(0, 12)) console.log(`      ${String(o.count).padStart(5)}  ${o.title}  (${o.name})`);
+  const named = jurisdictionOrganisations(facet.organisations, state);
+  const orgs = governmentPublishers(facet.organisations, state);
+  kv('harvest publishers named', `${facet.organisations.length} for the query, ${named.length} of them ${state}'s by their own name, ${orgs.length} of those its government (universities and institutes set aside)`);
+  for (const o of named.slice(0, 20)) {
+    console.log(`      ${String(o.count).padStart(5)}  ${o.title}  (${o.name})${orgs.includes(o) ? '' : '  — not the government'}`);
+  }
   if (orgs.length === 0) return null;
 
-  // 2 — where those publishers' datasets are served from.
+  /*
+   * 2 — EVERY dataset those publishers list, read in full.
+   *
+   * Not a sample: an absence stated from part of a list is the
+   * `organization_list`-answered-with-25 fault. Each publisher is paged until
+   * what was read reaches what the index declared, and one short read makes
+   * the whole enumeration short.
+   */
   const datasets: VolumeDataset[] = [];
-  for (const o of orgs.slice(0, 10)) {
-    const got = await ask(orgDatasetsUrl(harvestApi, o.name, 200));
-    if (got.networkError !== null || got.status !== 200) {
-      console.log(`      ${o.name.padEnd(40)} ${got.networkError ?? `HTTP ${got.status}`}`);
-      continue;
+  const seen = new Set<string>();
+  const enumerated: EnumeratedPublisher[] = [];
+  for (const o of orgs) {
+    let read = 0;
+    let declared = o.count;
+    for (let start = 0; start < 5_000; start += 1_000) {
+      const got = await ask(orgDatasetsUrl(harvestApi, o.name, 1_000, start));
+      if (got.networkError !== null || got.status !== 200) {
+        console.log(`      ${o.name.padEnd(44)} page at ${start}: ${got.networkError ?? `HTTP ${got.status}`}`);
+        break;
+      }
+      const parse = parseVolumeCatalogue(got.body);
+      if (parse.kind === 'refused') ours(`${state} harvest datasets for ${o.name}`, parse.reason);
+      declared = parse.total;
+      read += parse.datasets.length;
+      for (const d of parse.datasets) {
+        if (seen.has(d.id)) continue;
+        seen.add(d.id);
+        datasets.push(d);
+      }
+      if (parse.datasets.length === 0 || read >= declared) break;
     }
-    const parse = parseVolumeCatalogue(got.body);
-    if (parse.kind === 'refused') ours(`${state} harvest datasets for ${o.name}`, parse.reason);
-    datasets.push(...parse.datasets);
+    enumerated.push({ name: o.name, title: o.title, declared, read });
+    console.log(`      ${o.name.padEnd(44)} ${read} of ${declared} read`);
   }
+  const complete = enumerationComplete(enumerated);
+  kv('enumeration', complete
+    ? `complete — ${datasets.length.toLocaleString('en-AU')} datasets across ${enumerated.length} publishers`
+    : `SHORT — ${enumerated.filter((p) => p.read < p.declared).map((p) => `${p.name} ${p.read}/${p.declared}`).join(', ')}`);
+
   const hosts = publicationHostsOf(datasets);
-  kv('datasets read from them', datasets.length);
   kv('hosts serving them', hosts.length);
   for (const t of hosts.slice(0, 15)) {
     const own = isJurisdictionHost(t.host, state) ? `${state}'s own` : 'elsewhere';
@@ -362,6 +397,7 @@ async function discoverOwnCatalogue(
     return null;
   }
   const answered: { host: string; dialect: CatalogueDialect; inventory: number | null }[] = [];
+  const arcgisHosts: string[] = [];
   for (const t of ownHosts) {
     console.log(`\n    ${t.host}`);
     for (const probe of catalogueProbesFor(t.host)) {
@@ -373,11 +409,49 @@ async function discoverOwnCatalogue(
       const a = readCatalogueDialect(probe.dialect, got.status, got.body);
       console.log(`      ${probe.dialect.padEnd(10)} ${a.answered ? 'ANSWERED' : 'no'.padEnd(8)} ${a.detail}`);
       if (a.answered && probe.dialect !== 'arcgis') answered.push({ host: t.host, dialect: probe.dialect, inventory: a.inventory });
+      if (a.answered && probe.dialect === 'arcgis') arcgisHosts.push(t.host);
     }
   }
+  // A map-service directory is a catalogue of LAYERS. Walk its folders once
+  // for a layer named for sales — a lead to record, never a count series.
+  for (const t of arcgisHosts) {
+    const root = `https://${t}/arcgis/rest/services`;
+    const top = await ask(`${root}?f=json`);
+    const folders: string[] = (() => {
+      try { return (JSON.parse(top.body) as { folders?: string[] }).folders ?? []; } catch { return []; }
+    })();
+    const hits: string[] = [];
+    for (const f of folders.slice(0, 24)) {
+      const got = await ask(`${root}/${encodeURIComponent(f)}?f=json`);
+      try {
+        const services = (JSON.parse(got.body) as { services?: { name?: string; type?: string }[] }).services ?? [];
+        for (const sv of services) if (/sale|transfer|valu/i.test(sv.name ?? '')) hits.push(`${sv.name} (${sv.type})`);
+      } catch { /* a folder that is not JSON names nothing */ }
+    }
+    kv(`${t} layers named for sales`, hits.length > 0 ? hits.join(', ') : `none across ${Math.min(folders.length, 24)} folder(s)`);
+  }
+
   if (answered.length === 0) {
     kv('searchable catalogue', `none of ${ownHosts.length} own host(s) answered as CKAN, Socrata or a DCAT feed`);
-    return null;
+    /*
+     * No catalogue of its own: the Commonwealth catalogue IS where this
+     * jurisdiction's data is indexed, and the enumeration above is the
+     * whole of it. Judge that — the sale-naming datasets among EVERYTHING its
+     * government lists — rather than report the absence of a catalogue as
+     * the absence of an answer.
+     */
+    const saleNaming = datasetsNamingASale(datasets);
+    kv('datasets naming a sale', `${saleNaming.length} of ${datasets.length.toLocaleString('en-AU')}`);
+    for (const d of saleNaming.slice(0, 12)) console.log(`      ${d.title}  (${d.organisation ?? 'no publisher'})`);
+    const parse: VolumeCatalogueParse = { kind: 'catalogue', total: saleNaming.length, datasets: saleNaming };
+    return {
+      parse,
+      verdict: complete
+        ? judgeCatalogueReach(parse, { inventory: datasets.length, matched: saleNaming.length })
+        : { kind: 'not_this_index', detail: 'the list of its government publishers was not read in full' },
+      inventory: datasets.length,
+      route: 'harvest_enumeration',
+    };
   }
 
   // 4 — search the biggest one, in its own dialect.
@@ -495,10 +569,15 @@ async function main(): Promise<void> {
       corroborated ? merged : (ownParse.kind === 'refused' ? ownParse : merged),
       corroborated,
       ownRead.inventory,
+      ownRead.route,
     );
     console.log('');
     kv('reading', coverage.kind);
-    kv('corroborated', corroborated ? 'yes — both catalogues answered' : 'NO — only one answered');
+    kv('corroborated', corroborated
+      ? (ownRead.route === 'harvest_enumeration'
+        ? 'yes — its government publishers\' whole list, read in full, and the search of the same index'
+        : 'yes — both catalogues answered')
+      : 'NO — only one answered');
     const note = volumeCoverageNote(coverage, state);
     console.log(`\n  What a report may say:\n    ${note}`);
     readings.push({ state, coverage, note });

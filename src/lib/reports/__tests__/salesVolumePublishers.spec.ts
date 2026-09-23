@@ -60,6 +60,9 @@ import {
   parseOrgFacet,
   publicationHostsOf,
   readCatalogueDialect,
+  ACADEMIC_PUBLISHER,
+  enumerationComplete,
+  governmentPublishers,
 } from '../../../../supabase/functions/_shared/reports/market/openData/salesVolumePublishers.pure';
 import { VOLUME_BASELINE_PERIODS } from '../../../../supabase/functions/_shared/reports/market/demandScoring.pure';
 
@@ -1125,5 +1128,70 @@ describe('discovering where a jurisdiction publishes, rather than typing it', ()
     expect(probe).toContain('discoverOwnCatalogue(state, harvestEntry.api, own.api)');
     // Only where the typed root did not answer — a working root is never second-guessed.
     expect(probe).toMatch(/if \(!catalogueAnswered\(ownRead\.verdict\)\) \{\s*const discovered = await discoverOwnCatalogue/);
+  });
+});
+
+/*
+ * ── A jurisdiction with no catalogue of its own ───────────────────────────
+ *
+ * Measured from CI on 23 Sep 2026: `data.tas.gov.au` answers ENOTFOUND, and
+ * none of the eight Tasmanian hosts its publishers' files are served from
+ * answers as a searchable catalogue (one is a map-layer directory). The
+ * Commonwealth catalogue is where Tasmania's data is indexed — so the reading
+ * is taken from EVERYTHING Tasmania's government lists there, read in full.
+ */
+describe('reading a jurisdiction whose data is indexed only in the harvest', () => {
+  const org = (name: string, title: string, count: number) => ({ name, title, count });
+
+  it('counts the jurisdiction’s government, not every body named for it', () => {
+    const orgs = [
+      org('tas-government-the-list', "Tasmania Government's The List Data", 792),
+      org('department-of-justice-tasmania', 'Department of Justice (Tasmania)', 68),
+      org('sbs-utas', 'School of Biological Sciences (SBS), University of Tasmania (UTAS)', 7),
+      org('imas-utas', 'Institute for Marine and Antarctic Studies (IMAS), University of Tasmania (UTAS)', 6),
+      org('tmag', 'Tasmanian Museum and Art Gallery', 2),
+      org('vic', 'Department of Energy, Environment and Climate Action', 40),
+    ];
+    expect(governmentPublishers(orgs, 'TAS').map((o) => o.name))
+      .toEqual(['tas-government-the-list', 'department-of-justice-tasmania', 'tmag']);
+    expect(ACADEMIC_PUBLISHER.test('Libraries Tasmania')).toBe(false);
+  });
+
+  it('calls an enumeration complete only when every publisher was read to what it declared', () => {
+    expect(enumerationComplete([])).toBe(false);
+    expect(enumerationComplete([{ name: 'a', title: 'A', declared: 792, read: 792 }])).toBe(true);
+    expect(enumerationComplete([
+      { name: 'a', title: 'A', declared: 792, read: 792 },
+      { name: 'b', title: 'B', declared: 68, read: 50 },
+    ])).toBe(false);
+    // A publisher the index says holds nothing has not been enumerated.
+    expect(enumerationComplete([{ name: 'a', title: 'A', declared: 0, read: 0 }])).toBe(false);
+  });
+
+  it('says where the absence was established, and why that index is the right one', () => {
+    const cov = assessVolumeCoverage(
+      { kind: 'catalogue', total: 3, datasets: [] },
+      true,
+      1_021,
+      'harvest_enumeration',
+    );
+    expect(cov).toEqual({ kind: 'no_count_published', searched: 3, inventory: 1_021, route: 'harvest_enumeration' });
+    const note = volumeCoverageNote(cov, 'TAS');
+    expect(note).toMatch(/of the 1,021 datasets its own publishers list in the Commonwealth catalogue, read in full, 3 name a sale/);
+    expect(note).toMatch(/TAS runs no open-data catalogue of its own/);
+    // Never the ordinary route's words, which would claim a catalogue it does not have.
+    expect(note).not.toMatch(/across its own catalogue/);
+  });
+
+  it('leaves the ordinary route’s sentence exactly as it was', () => {
+    const cov = assessVolumeCoverage({ kind: 'catalogue', total: 0, datasets: [] }, true, 1_075);
+    expect(cov).toEqual({ kind: 'no_count_published', searched: 0, inventory: 1_075 });
+    expect('route' in cov).toBe(false);
+    expect(volumeCoverageNote(cov, 'NT')).toMatch(/across its own catalogue and the Commonwealth catalogue/);
+  });
+
+  it('still refuses an absence nobody corroborated, whatever the route', () => {
+    expect(assessVolumeCoverage({ kind: 'catalogue', total: 0, datasets: [] }, false, 1_021, 'harvest_enumeration').kind)
+      .toBe('catalogue_unavailable');
   });
 });
