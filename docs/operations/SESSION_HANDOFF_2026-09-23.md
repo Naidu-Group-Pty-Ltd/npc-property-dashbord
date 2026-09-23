@@ -443,9 +443,12 @@ and a merged commit each describe what was meant to happen.
    are dispatched through `apply-migration.yml`, in that order and only after
    the deploy that ships `market-sales-ingest`'s `projections` stage — the
    approvals register's first run answered 400 because its table landed before
-   its loader did (`20261214000000`). Then read each load's `market_sales_sync`
-   row back through the function logs: `rows_written` should equal the CI dry
-   run's 13,482 (NSW SA2), 2,709 (NSW LGA) and 320 (VIC LGA).
+   its loader did (`20261214000000`). Then prove each load through
+   `query_logs` (log inspection, permitted — no SQL): the stage prints one line
+   per file, `[market-sales-ingest] projections <file>: <n> rows for <n> areas
+   via <publisher|archive> …`, and `<n> rows` should equal the CI dry run's
+   13,482 (NSW SA2), 2,709 (NSW LGA) and 320 (VIC LGA). A refusal prints
+   `projections refused/failed:` with its reason instead.
 
 ---
 

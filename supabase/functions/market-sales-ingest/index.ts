@@ -1508,6 +1508,13 @@ Deno.serve(async (req) => {
         remaining: PROJECTION_FILES.filter((f) => f.key !== file.key).map((f) => f.key),
       };
       await supabase.from('market_sales_sync').insert({ detail });
+      // One line a log reader can prove the load by, without reading the
+      // table: the file, what was written, and where the bytes came from.
+      console.log(
+        `[market-sales-ingest] projections ${file.key}: ${written} rows for ${parsed.areas} areas via ${got.via}`
+        + ` (publisher ${got.publisherAnswer}); ${parsed.release} · ${parsed.series.join(', ')} · base ${parsed.base ?? 'none'}`
+        + ` → ${parsed.horizon}; ${parsed.declined.length} declined`,
+      );
       return json({ success: true, ...detail });
     }
 
