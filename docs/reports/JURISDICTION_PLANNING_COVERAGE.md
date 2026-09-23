@@ -259,6 +259,52 @@ question could have found it* — the rule this programme has now paid for
 four times, and a ceiling that truncated SA's folders would reproduce the
 `organization_list?limit=1000`-answered-with-25 fault one publisher along.
 
+### 3.5 The zone layers, asked a question (W3.4's third half, 23 Sep 2026)
+
+Metadata settled reachability; it could not say which layer carries the
+zone, what its fields are called, or what it returns at a real place. So
+`scripts/market/planning-zone-liveness.ts` asks: it finds the zone layer in
+each publisher's own catalogue and directory, reads its fields and stated
+terms, and puts ONE point query to it at a public place in each capital and
+one suburb — the shape `buildActZoningQuery` already runs in production.
+Nothing in it is a layer id anybody typed.
+
+**Western Australia — readable, and restricted.** The zone is there and it
+answers: SLIP's public `Property_and_Planning` MapServer carries
+*Local Planning Scheme — Zones and Reserves (DPLH-071)*, which read
+`City centre` (scheme PERTH No. 2, City of Perth) at Forrest Place and
+`Business` (scheme STIRLING No. 3, City of Stirling) at Beaufort Street,
+Mount Lawley, and *Region Scheme — Zones and Reserves (DPLH-023)*, which
+read the MRS `Central city area` and `Urban`. Two points, two correct
+readings, fields named — a parser could be written against it today. It is
+not, because the licence decides: the WA catalogue lists every one of those
+datasets under **"Custom (Active Acceptance)"**, the service's own terms
+read as restricted, and the restricted and token services beside it answered
+401 and *"Token Required"*. So **`WA_LICENCE_NOTE` is now measured rather
+than typed**, and it stands: a client's report is a commercial document, and
+reading a layer whose terms require active acceptance into one is the breach
+the note exists to prevent. What the service says about its terms is printed
+in full by the probe on every run.
+
+**The Northern Territory — challenged, and no zoning dataset.** NTLIS
+answered a bot-protection challenge again, `spatial.nt.gov.au` did not
+resolve, and the NT's own catalogue answered every zoning query with water,
+storm-surge and sinkhole datasets — none a planning-scheme zone. `NT_NOTE`
+stands as written: a property of automated access, not a decision the
+Territory made.
+
+**South Australia — the first run asked the wrong services.** The directory
+answered with 131 services across 30 folders, and the probe asked the first
+twelve whose names matched — seven of them print and export geoprocessing
+tools, and the two "zone" layers it found were a transport permit zone and a
+tree-canopy priority zone. The Planning and Design Code's own zone layer was
+never asked, because the order was the directory's rather than the
+question's. The second pass ranks every service for the question
+(`rankZoneServices`: tools and pictures never asked, other kinds of "zone"
+pushed down, the planning code's vocabulary pulled up) and resolves the
+catalogue's MAP VIEWER through its web map to the services it names. See
+§3.6 for what it found.
+
 ### What is typed, and what is discovered
 
 A **host** is typed; a layer id never is. An ArcGIS service directory
@@ -379,11 +425,9 @@ permitted at all.
   four remain `not_integrated` / `licence_restricted`, and
   `OVERLAY_COVERAGE` still records all four as `not_read`. Reachable is
   not read.
-- **`WA_LICENCE_NOTE` is unchanged and still unverified.** WA's root
-  answered folders-only, so the Planning service's own terms were not
-  reached. The note errs conservative — nothing is fetched either way —
-  and softening a restriction on no evidence is the one direction that
-  could breach a licence. Open.
+- **`WA_LICENCE_NOTE` is unchanged, and now measured** (§3.5): WA's zone
+  layer answers correctly at a point and every dataset carrying it is listed
+  under "Custom (Active Acceptance)". Readable is not republishable.
 - **The ACT `copyrightText: "TP"` is recorded, not acted on.** See §4.
 - **No licence claim's provenance is recorded anywhere.** All five came back
   `silent`, which is not a contradiction and not a defect — but where each

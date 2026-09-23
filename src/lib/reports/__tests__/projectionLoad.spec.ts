@@ -106,3 +106,20 @@ describe('one figure, one row', () => {
     expect(guardProjectionRows([row({ source_url: '' })]).ok).toBe(false);
   });
 });
+
+describe('a row is written with the token it will be asked by', () => {
+  it('writes a council by its words and anything else by its name', async () => {
+    const { projectionAreaToken } = await import('../../../../supabase/functions/_shared/reports/market/openData/projectionLoad.pure');
+    expect(projectionAreaToken('lga', 'City of Onkaparinga')).toBe(projectionAreaToken('lga', 'ONKAPARINGA CITY COUNCIL'));
+    expect(projectionAreaToken('suburb', 'North Adelaide')).toBe('NORTH ADELAIDE');
+    expect(projectionAreaToken('district', 'Belconnen')).toBe('BELCONNEN');
+  });
+
+  it('is the rule the register is read by', async () => {
+    const { readFileSync } = await import('node:fs');
+    const reader = readFileSync('supabase/functions/_shared/reports/market/projectionRegisterRead.ts', 'utf8');
+    expect(reader).toMatch(/projectionAreaToken\('suburb', suburb\)/);
+    expect(reader).toMatch(/projectionAreaToken\('lga', lga\)/);
+    expect(reader).not.toMatch(/salesAreaToken/);
+  });
+});

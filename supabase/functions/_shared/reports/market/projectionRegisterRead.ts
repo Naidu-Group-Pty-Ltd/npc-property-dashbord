@@ -29,7 +29,7 @@ import {
   type ProjectionRegisterRead,
   type ProjectionRow,
 } from './openData/projectionRegister.pure.ts';
-import { salesAreaToken } from './openData/salesRegister.pure.ts';
+import { projectionAreaToken } from './openData/projectionLoad.pure.ts';
 import type { ProjectionState } from './openData/stateProjectionPublishers.pure.ts';
 
 export interface ProjectionRegisterQuery {
@@ -59,9 +59,9 @@ function rungsFor(query: ProjectionRegisterQuery): Array<{ areaKind: ProjectionA
   const sa2 = query.sa2Code?.trim() ?? '';
   if (/^\d{9}$/.test(sa2)) rungs.push({ areaKind: 'sa2', column: 'area_code', value: sa2 });
   const suburb = query.trustedSuburb?.trim() ?? '';
-  if (suburb !== '') rungs.push({ areaKind: 'suburb', column: 'area_token', value: salesAreaToken('suburb', suburb) });
+  if (suburb !== '') rungs.push({ areaKind: 'suburb', column: 'area_token', value: projectionAreaToken('suburb', suburb) });
   const lga = query.cadastreLga?.trim() ?? '';
-  if (lga !== '') rungs.push({ areaKind: 'lga', column: 'area_token', value: salesAreaToken('lga', lga) });
+  if (lga !== '') rungs.push({ areaKind: 'lga', column: 'area_token', value: projectionAreaToken('lga', lga) });
   return rungs;
 }
 

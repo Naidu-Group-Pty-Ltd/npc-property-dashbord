@@ -28,6 +28,20 @@
  * Deno-compatible: explicit `.ts` extensions, no `@/` aliases. Pure.
  */
 import type { ProjectionAreaKind, ProjectionMeasure, ProjectionRow } from './projectionRegister.pure.ts';
+import { salesAreaToken, suburbToken } from './salesRegister.pure.ts';
+
+/**
+ * The lookup token a row is written with — the SAME rule
+ * `readProjectionRegister` asks by, so a loaded council can be found by the
+ * name the cadastre returns (`City of Onkaparinga` and `ONKAPARINGA CITY
+ * COUNCIL` are one token) and a suburb by the resolved suburb. One function,
+ * because a loader and a reader that normalise differently write rows no
+ * query can reach — which looks exactly like a jurisdiction with nothing
+ * loaded.
+ */
+export function projectionAreaToken(kind: ProjectionAreaKind, name: string): string {
+  return kind === 'lga' ? salesAreaToken('lga', name) : suburbToken(name);
+}
 
 /** A row as a parser emits it; `loaded_at` is the database's. */
 export type ProjectionLoadRow = Omit<ProjectionRow, 'loaded_at'>;
