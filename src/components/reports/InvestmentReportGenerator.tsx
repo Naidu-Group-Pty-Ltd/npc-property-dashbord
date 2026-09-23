@@ -755,7 +755,7 @@ export function InvestmentReportGenerator() {
     if (!user) {
       toast({
         title: "Authentication Required",
-        description: "Please log in to scrape listings.",
+        description: "Please log in to extract listings.",
         variant: "destructive",
       });
       return;
