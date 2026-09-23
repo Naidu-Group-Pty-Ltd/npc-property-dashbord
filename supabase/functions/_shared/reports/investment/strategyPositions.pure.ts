@@ -87,6 +87,31 @@ import {
   type ScoreAssessmentReading,
 } from '../market/scoreAssessmentReading.pure.ts';
 import type { SubjectPrice } from './subjectPrice.pure.ts';
+import { MONTHS_SHORT, formatReportDateShort } from '../reportDate.pure.ts';
+
+/**
+ * A date as the reader writes it: `17 Sep 2026`, never `2026-09-17`.
+ *
+ * Every date in these sections used to be printed with `.slice(0, 10)` — the
+ * machine's form, on a page a client reads (the 23 Sep 2026 Compass for
+ * 97 Poole Road carried nine of them). The value is unchanged; only how it is
+ * written. Anything that is not an ISO date comes back as it was.
+ */
+function dayOf(iso: string | null | undefined): string {
+  if (!iso) return '';
+  return formatReportDateShort(iso.slice(0, 10)).replace(/^0(?=\d)/, '');
+}
+
+/** `2021-03` → `Mar 2021`, `2026-03-31` → `31 Mar 2026`, anything else unchanged. */
+function periodsIn(text: string): string {
+  return text
+    // Found here and READ by the shared formatter (`dayOf`), never parsed.
+    .replace(/\b\d{4}-\d{2}-\d{2}\b/g, (m) => dayOf(m))
+    .replace(/\b(\d{4})-(\d{2})\b/g, (m, y: string, mo: string) => {
+      const name = MONTHS_SHORT[Number(mo) - 1];
+      return name ? `${name} ${y}` : m;
+    });
+}
 
 // ─── What the sections rest on ──────────────────────────────────────────────
 
@@ -367,7 +392,7 @@ function subjectRow(market: MarketFacts, key: EvidenceKey): MarketFactRow | null
 
 /** "the NSW Department of … median sale price of houses, postcode 2155, March 2026 quarter". */
 function citeRow(row: MarketFactRow): string {
-  return `${row.publisher} — ${row.describes}`;
+  return periodsIn(`${row.publisher} — ${row.describes}`);
 }
 
 /**
@@ -442,20 +467,20 @@ function transportBasis(t: StrategyTransport): string {
   // Stating only the load stamp presented the publisher's currency as ours.
   if (t.measuredAt) {
     parts.push(t.feedLoadedAt
-      ? `Counted on ${t.measuredAt.slice(0, 10)}, against a stop file last loaded on ${t.feedLoadedAt.slice(0, 10)}.`
-      : `Counted on ${t.measuredAt.slice(0, 10)}. When the stop file behind it was loaded is not recorded on this reading.`);
+      ? `Counted on ${dayOf(t.measuredAt)}, against a stop file last loaded on ${dayOf(t.feedLoadedAt)}.`
+      : `Counted on ${dayOf(t.measuredAt)}. When the stop file behind it was loaded is not recorded on this reading.`);
   } else {
     parts.push(t.feedLoadedAt
-      ? `The stop file behind this count was last loaded on ${t.feedLoadedAt.slice(0, 10)}. When the count itself was taken is not recorded on this reading.`
+      ? `The stop file behind this count was last loaded on ${dayOf(t.feedLoadedAt)}. When the count itself was taken is not recorded on this reading.`
       : 'Neither the date this count was taken nor the date the stop file behind it was loaded is recorded on this reading.');
   }
   if (t.nearestName && isNum(t.nearestKm)) {
     parts.push(`Nearest boarding place: ${t.nearestName}, ${t.nearestKm} km straight-line.`);
   }
-  parts.push(
-    'It does not establish mode, service frequency, walking distance or travel time'
-    + (t.notMeasured.length ? ` — ${t.notMeasured.join(' ')}` : '.'),
-  );
+  // One sentence, not the feeds' own paragraph on each thing they omit: the
+  // reader needs to know the count is not a journey, and the four words say
+  // it. The fuller notes stay on the reading for anyone who asks the record.
+  parts.push('It does not establish mode, service frequency, walking distance or travel time.');
   return parts.join(' ');
 }
 
@@ -527,31 +552,35 @@ export function buildSwot(rec: StrategyRecord): Swot {
    * produce a rating.** The volume is a fact and it is stated as one, in the
    * exit section, where a reader can judge it against a market they know.
    */
+  /*
+   * The price beside the market's median is CONTEXT, never a quadrant entry.
+   *
+   * It was an Opportunity when the price sat below the median and a Weakness
+   * when above — on the 23 Sep 2026 Compass for 97 Poole Road, "9% below the
+   * market's median" was the whole Opportunities quadrant. A median is the
+   * middle of what sold across a postcode; the difference can be land,
+   * condition, age or position, and filing it under Opportunities is the
+   * valuation claim `MARKET_FIGURES_IN_THE_REPORT.md` forbids by name. Both
+   * figures stay on the page (S5-F), stated side by side in the evidence
+   * notes, with no verdict between them.
+   */
   if (median && median.value && rec.price.value !== null) {
     const m = Number(median.value.replace(/[^0-9.]/g, ''));
     if (Number.isFinite(m) && m > 0) {
-      const diff = rec.price.value - m;
-      const share = Math.abs(diff) / m * 100;
-      const side = diff < 0 ? 'below' : 'above';
-      (diff < 0 ? o : w).push({
-        // The label is a noun phrase that can end in a preposition ("…this
-        // analysis is modelled on"), so it is quoted as a subject rather than
-        // run straight into a verb: "The purchase price this analysis is
-        // modelled on sits 18% below" is correct and reads as a mistake.
-        claim: `At ${money(rec.price.value)}, the ${rec.price.basis === 'accepted_input' ? 'figure this analysis is modelled on' : 'price the listing recorded'} is ${pct(share, 0)} ${side} the market's median.`,
-        basis: `${money(rec.price.value)} against ${median.value} — ${citeRow(median)}. `
-          + 'A median is the middle of what sold across the whole geography and dwelling split named; it does not '
-          + 'describe this dwelling, and the difference may be land size, condition, age or position rather than value.',
-      });
+      coverage.push(
+        `The ${rec.price.basis === 'accepted_input' ? 'price this analysis is modelled on' : 'price the listing recorded'} `
+        + `is ${money(rec.price.value)}; the market's median is ${median.value} (${citeRow(median)}). A median describes `
+        + 'the whole market, not this dwelling, so the difference is not counted for or against the property.',
+      );
     }
   }
 
   // ── Planning ──
   if (rec.planning.zoneStatus === 'stated' && rec.planning.zone) {
     s.push({
-      claim: `The zone is on a published layer: ${rec.planning.zone}.`,
+      claim: `The zone is confirmed on the published planning layer: ${rec.planning.zone}.`,
       basis: `${rec.planning.zoneSource ?? 'the jurisdiction planning layer'}`
-        + (rec.planning.zoneEffectiveDate ? `, current at ${rec.planning.zoneEffectiveDate}` : '')
+        + (rec.planning.zoneEffectiveDate ? `, current at ${dayOf(rec.planning.zoneEffectiveDate)}` : '')
         + `. ${rec.planning.verification ?? ''}`.trimEnd(),
     });
   } else if (rec.planning.zoneStatus) {
@@ -698,8 +727,8 @@ export function buildSwot(rec: StrategyRecord): Swot {
   }
   if (rec.score.gaps.length) {
     coverage.push(
-      `The investment score itself records ${rec.score.gaps.length === 1 ? 'a gap' : `${rec.score.gaps.length} gaps`}: `
-      + `${rec.score.gaps.join('; ')}.`,
+      tidySentences(`The investment score itself records ${rec.score.gaps.length === 1 ? 'a gap' : `${rec.score.gaps.length} gaps`}: `
+      + `${rec.score.gaps.map((g) => g.replace(/[.\s]+$/, '')).join('; ')}.`),
     );
   }
   if (rec.score.coverageLabel) {
@@ -725,26 +754,20 @@ export function buildSwot(rec: StrategyRecord): Swot {
  * reading is a reassurance the record does not support.
  */
 const QUADRANT_NOTE: Record<keyof Omit<Swot, 'coverage'>, string> = {
-  strengths: 'No entry. This quadrant draws only on the market register, the planning layer, the transport feeds '
-    + 'and the recorded financial position; on this record none of them produced a reading that stands on its own '
-    + 'as a strength. Read *What this rests on* below for which of them answered and which did not.',
-  weaknesses: 'No entry. The same four sources feed this quadrant, and none of them produced a reading that stands '
-    + 'on its own as a weakness. That is a statement about what was examined, not a clearance: the sources listed '
-    + 'below are the whole of what was looked at.',
-  opportunities: 'No entry. An opportunity here has to be evidenced by a figure the record holds, and none of the '
-    + 'readings below supports one. Nothing is inferred in its place.',
-  threats: 'No entry. A threat here has to come from a register, a planning layer or the recorded loan; the ones '
-    + 'read for this property are listed below and none returned a finding. Registers that were NOT read are '
-    + 'listed there too — an unread register is not a clean one.',
+  strengths: 'None identified from the market register, the planning layer, the transport feeds or the recorded '
+    + 'financial position. The evidence examined is listed below.',
+  weaknesses: 'None identified from the same sources. That is a statement about what was examined, not a clearance.',
+  opportunities: 'None identified: no recorded figure supports one, and none is inferred.',
+  threats: 'None identified in the registers read for this property. Registers not read are listed below — an '
+    + 'unread register is not a clean one.',
 };
 
 export function composeSwot(rec: StrategyRecord, heading: string): string {
   const swot = buildSwot(rec);
   const lines: string[] = [`## ${heading}`, ''];
   lines.push(
-    'Each entry names the recorded figure or register reading it rests on. Nothing here is inferred from an '
-    + 'absence: a measure nobody published, and a register nobody read, appear under *What this rests on* at the '
-    + 'foot rather than in a quadrant.',
+    'Each entry names the recorded figure it rests on. Measures not published for this market, and registers not '
+    + 'read, are listed under *What this rests on* rather than counted for or against the property.',
     '',
   );
   const groups: Array<[keyof Omit<Swot, 'coverage'>, string]> = [
@@ -1190,7 +1213,7 @@ export function composeHoldingStrategy(rec: StrategyRecord, heading: string): st
     holds.push({
       claim: `The zone in force is ${rec.planning.zone}, and it can change.`,
       basis: `${rec.planning.zoneSource ?? 'the planning layer'}`
-        + (rec.planning.zoneEffectiveDate ? `, current at ${rec.planning.zoneEffectiveDate}` : '')
+        + (rec.planning.zoneEffectiveDate ? `, current at ${dayOf(rec.planning.zoneEffectiveDate)}` : '')
         + '. A zone admits uses; it is not approval for any of them, and a planning proposal in this locality would '
         + 'change what the register says without anything happening on this lot.',
     });
@@ -1268,11 +1291,9 @@ export function composeExitOutlook(rec: StrategyRecord, heading: string): string
      */
     liquidity.push({
       claim: `${volume.value} dwellings settled in the latest published quarter.`,
-      basis: `${citeRow(volume)}. That is a count of completed transactions at the geography and dwelling split `
-        + 'named — not at this street, and not a measure of liquidity. **Days on market, time to sell and buyer '
-        + 'depth are not held for this market.** The registers this report reads did not return them; whether any '
-        + 'publisher issues them at this geography is a separate question this report does not answer. Nothing '
-        + 'here estimates them.',
+      basis: 'A count of completed transactions at the geography and dwelling split named — not at this street, and '
+        + 'not a measure of liquidity. **Days on market, time to sell and buyer depth are not held for this market:** '
+        + 'the registers this report reads did not return them, and nothing here estimates them.',
     });
   }
   if (median?.value) {
@@ -1282,22 +1303,29 @@ export function composeExitOutlook(rec: StrategyRecord, heading: string): string
       // inferred a buyer pool from a median and a count. Nothing in this
       // record measures one, which is the liquidity claim this section
       // already says it cannot make.
-      basis: `${citeRow(median)}. Half of what sold went for less and half for more, across the whole geography and `
-        + 'dwelling split named. How many buyers are active at any particular price is not published at this '
-        + 'geography and is not measured here.',
+      basis: 'Half of what sold went for less and half for more, across the whole geography and dwelling split named. '
+        + 'How many buyers are active at any particular price is not published at this geography.',
     });
   }
   if (series?.value) {
+    // "4 periods, 2021-03 to 2026-03" — the count, then the span, each said once.
+    const [count, ...span] = periodsIn(series.value).split(',');
     liquidity.push({
-      claim: `The register holds ${series.value} of history for this market.`,
-      basis: `${citeRow(series)}. A long series is what makes a growth rate a measurement rather than an impression, `
-        + 'and it is re-read each time this report is produced.',
+      claim: `The register holds ${count.trim()} of price history for this market${span.length ? ` (${span.join(',').trim()})` : ''}.`,
+      basis: 'A long series is what makes a growth rate a measurement rather than an impression.',
     });
   }
   if (liquidity.length) {
     lines.push('### What the market recorded', '');
     lines.push(...writeEntries(liquidity));
     lines.push('');
+    // The source, once. Each bullet used to carry the full citation — the same
+    // forty words three times in three bullets on the 23 Sep 2026 Compass.
+    const sourced = [volume, median, series].filter((r): r is MarketFactRow => Boolean(r?.value));
+    const cites = [...new Set(sourced.map(citeRow))];
+    if (cites.length) {
+      lines.push(`*Source: ${cites.join('; ')}.*`, '');
+    }
     if (rec.property.landSqm) {
       lines.push(
         `*This property's land is ${rec.property.landSqm} m² — recorded on the property rather than by any `
@@ -1343,14 +1371,10 @@ export function composeExitOutlook(rec: StrategyRecord, heading: string): string
       + 'no market is obliged to do, and it is not a valuation, an appraisal or a forecast.*',
       '',
     );
-  } else if (!f) {
-    lines.push(
-      '### The modelled position', '',
-      '*The equity path at year five and year ten is modelling, and belongs to the Financial Analysis Report. It is '
-      + 'not restated here.*',
-      '',
-    );
   }
+  // Where the tier carries no modelling there is no modelled position here at
+  // all — not a heading over a sentence saying it is elsewhere. The document's
+  // own companion note already names where the ten-year projection is.
   return lines.join('\n').trimEnd();
 }
 
@@ -1379,7 +1403,7 @@ export function buildMonitorRows(rec: StrategyRecord): MonitorRow[] {
       what: 'The market\'s median sale price and its growth',
       register: median.publisher,
       cadence: 'Quarterly, on the publisher\'s own schedule',
-      lastRead: `${median.value ?? '—'} — ${median.describes}`,
+      lastRead: periodsIn(`${median.value ?? '—'} — ${median.describes}`),
       // "Two consecutive quarters" and "four quarters" were thresholds
       // invented in this file. Rule 7 forbids exactly that.
       changesIf: 'A median that moves away from the recorded trend is the first place a change in this market shows '
@@ -1404,8 +1428,8 @@ export function buildMonitorRows(rec: StrategyRecord): MonitorRow[] {
       register: rec.planning.zoneSource ?? 'the jurisdiction planning layer',
       cadence: 'On gazettal — no schedule; the layer carries its own currency date',
       lastRead: rec.planning.zoneEffectiveDate
-        ? `current at ${rec.planning.zoneEffectiveDate}`
-        : (rec.planning.retrievedAt ? `retrieved ${rec.planning.retrievedAt.slice(0, 10)}` : 'retrieved for this report'),
+        ? `current at ${dayOf(rec.planning.zoneEffectiveDate)}`
+        : (rec.planning.retrievedAt ? `retrieved ${dayOf(rec.planning.retrievedAt)}` : 'retrieved for this report'),
       changesIf: 'A planning proposal, a new overlay or an amended instrument changes what may be built here and '
         + 'nearby. A spatial layer is indicative — a planning certificate from the council is what settles it.',
     });
@@ -1428,7 +1452,7 @@ export function buildMonitorRows(rec: StrategyRecord): MonitorRow[] {
       cadence: 'Each time the feed is reloaded on this platform',
       lastRead: rec.transport.countReading
         ? transportCountPhrase(rec.transport.countReading)
-          + (rec.transport.feedLoadedAt ? `, feed loaded ${rec.transport.feedLoadedAt.slice(0, 10)}` : '')
+          + (rec.transport.feedLoadedAt ? `, feed loaded ${dayOf(rec.transport.feedLoadedAt)}` : '')
         : '—',
       changesIf: 'A count changes when the network changes. Mode, service frequency, walking distance and travel '
         + 'time are not measured at all here, so a change in any of them would not show in this reading.',
