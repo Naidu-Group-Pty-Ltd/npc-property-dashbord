@@ -2378,13 +2378,50 @@ demand discussion is read forward by a reader never told otherwise. Two
 bounds: the model may not present that publisher as a source this report
 consulted, and the default availability is `not_loaded`, because any other
 default announces a reading nobody has. `FORWARD_DEMAND_PUBLISHERS` names all
-eight jurisdictions with `ingested: false` truthfully, because "everywhere" is
-what makes loading one state wrong; the table states **no grain**, since
-nothing here can reach those publishers to check one. And the state it names
-is the TRUSTED geography's — the generator's own `state` is
+eight jurisdictions, because "everywhere" is what makes loading one state
+wrong, and its `ingested` is DERIVED from the loader below rather than typed;
+the table states **no grain**, since the grain is the file's. And the state it
+names is the TRUSTED geography's — the generator's own `state` is
 `detectedState || 'NSW'`, so reading it would name the NSW publisher on every
 unresolved property. The regeneration path names NO publisher, a recorded
 asymmetry asserted by a test rather than an oversight.
+
+**The register has loaders, and a licence is read before a byte is
+fetched.** Read §9 of
+[`FORWARD_DEMAND_EVIDENCE.md`](./docs/reports/FORWARD_DEMAND_EVIDENCE.md)
+before touching `_shared/reports/market/openData/stateProjectionFiles.pure.ts`,
+`xlsxSheet.pure.ts`, `projectionLoad.pure.ts`, the `projections` stage of
+`market-sales-ingest` or `state-projection-liveness.ts`. Six files load —
+NSW's 2024 projections by SA2 and by council, Victoria in Future 2023 by
+council, and Tasmania's medium, high and low series — each parser written
+against the layout CI printed, and each **run dry in CI over the real file on
+every build** through the loader's own read, parse and gate, so what CI proves
+about a file is what production writes. NSW's SA2 workbook is 9.2 MB and
+VIF2023 declares a 16,307-column range over six columns of data, so
+`xlsxSheet` reads one sheet through the zip's central directory and native
+deflate-raw, holding only cells that carry a value. Four rules bite. **The base
+is the publisher's statement** — NSW's *"Historic (2001-2021) and projected
+(2022-2041)"*, VIF's stated ERP jump-off, Tasmania's first components interval
+checked against its own Totals sheet — because an estimate printed under a
+forward heading is this register's worst failure. **Readable is not
+republishable**: a file whose licence is unread is refused BEFORE the fetch,
+and "unless otherwise stated" is held at load time — `statedTerms` refuses a
+workbook that states terms of its own, and `suppliedNotice` carries the
+file's own © notice onto every row, because CC BY 4.0 asks a reuser to keep
+it. Tasmania's ReadMe says *"© Government of Tasmania"* and nothing about
+reuse, and **a notice is silence about terms**, so Tasmania stays refused
+until its terms are read. **The edition is the one that answers**: South
+Australia's catalogue edition is 2016-based and the ACT's 2015-based, both
+superseded by editions their publishers print elsewhere, so both are declined
+rather than printed as the jurisdiction's view today, and WA's SA2 forecasts
+are *Custom (Active Acceptance)*. And **a batch never splits an area** — a
+failed batch would otherwise leave an area holding half a series under a new
+edition, which the reader, preferring the edition that reaches furthest, would
+print as the projection; the prune follows every batch and keeps to its own
+edition and series. The council a report asks by is the cadastre's or, where
+no parcel layer answered, the zone layer's (`planningCouncilName`) — without
+it the Victorian and Tasmanian registers, published by council only, could
+never be reached.
 
 **A jurisdiction's registers are asked behind a declared order, and the
 licences were never read.** Read

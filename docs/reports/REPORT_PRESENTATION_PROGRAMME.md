@@ -979,6 +979,24 @@ Replaces "no forward projection" everywhere rather than in one state.
 > validator REQUIRES it to write about population, and a prohibition with no
 > permitted form is one a model routes around. Full record:
 > `FORWARD_DEMAND_EVIDENCE.md`.
+>
+> **The per-jurisdiction register has loaders (23 Sep 2026,
+> `FORWARD_DEMAND_EVIDENCE.md` §9).** Six files are declared and every one is
+> run DRY in CI over the real file on every build, through the loader's own
+> code: NSW's 2024 projections by SA2 (622 areas) and council (129), Victoria
+> in Future 2023 by council (80), and Tasmania's three series (29 councils
+> each). NSW and Victoria load under CC BY 4.0 read from each publisher —
+> NSW's from its own copyright page, with the © notice the workbook supplies
+> carried onto every row. **Tasmania parses and is refused**: its workbook
+> says *"© Government of Tasmania"* and nothing about reuse, and a notice is
+> silence about terms. South Australia's and the ACT's catalogue editions are
+> 2016- and 2015-based and superseded, so they are declined rather than
+> printed as today's view; WA's SA2 forecasts are *Custom (Active
+> Acceptance)*; the NT's 2024 edition sits behind a challenge; Queensland's two
+> tables are being described before a parser is written. `ingested` is now
+> derived from the loader, so the flag cannot say a state is held that the
+> loader refuses. **Not yet run in production** — each file's first load is
+> proved by its own `market_sales_sync` row.
 
 **W3.4 · Per-jurisdiction refinement behind a declared order.**
 `DEVELOPMENT_PROVIDERS` / `PLANNING_PROVIDERS`, mirroring `AMENITY_PROVIDERS`
@@ -1068,6 +1086,23 @@ answer.
 > answered folders-only and softening a restriction on no evidence is the one
 > direction that could breach a licence; `amendment_register` is integrated
 > nowhere and says so rather than being omitted.
+>
+> **The third half — the ZONE layers, asked a question (23 Sep 2026,
+> [`JURISDICTION_PLANNING_COVERAGE.md`](./JURISDICTION_PLANNING_COVERAGE.md)
+> §3.5–§3.6).** Metadata settled reachability and could not say which layer
+> is the zone. A zone probe now finds it in each publisher's own catalogue and
+> directory and asks it one point in each capital. **South Australia's zone is
+> read now**: the Planning and Design Code's own layer answered *Adelaide Park
+> Lands* at Victoria Square and *Established Neighbourhood* at Prospect, each
+> in force since 19 March 2021, and `parseSaZoning` reads only the zone in
+> force (the layer is temporal) under the catalogue's Creative Commons
+> Attribution. **Western Australia's is readable and deliberately not read** —
+> its zone layers answered correctly, and every dataset carrying them is
+> "Custom (Active Acceptance)", so `WA_LICENCE_NOTE` is measured rather than
+> typed and stands. **The Northern Territory's is behind a challenge** and its
+> catalogue holds no zoning dataset; `NT_NOTE` stands. Whether production's
+> egress reaches South Australia's service is unmeasured until the first South
+> Australian report after deploy.
 
 **W3.5 · Close the Demand scoring gap.**
 Sales counts for ACT, NT, TAS and WA, so Demand can score nationally rather than
