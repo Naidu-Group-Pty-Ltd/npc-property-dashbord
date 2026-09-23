@@ -48,6 +48,18 @@ import {
   type VolumeCoverage,
   type VolumeDataset,
   type VolumeGapState,
+  JURISDICTION_DOMAINS,
+  catalogueProbesFor,
+  ckanRootFor,
+  datasetsNamingASale,
+  harvestOrgFacetUrl,
+  isJurisdictionHost,
+  jurisdictionOrganisations,
+  orgDatasetsUrl,
+  parseDcatCatalogue,
+  parseOrgFacet,
+  publicationHostsOf,
+  readCatalogueDialect,
 } from '../../../../supabase/functions/_shared/reports/market/openData/salesVolumePublishers.pure';
 import { VOLUME_BASELINE_PERIODS } from '../../../../supabase/functions/_shared/reports/market/demandScoring.pure';
 
@@ -988,5 +1000,130 @@ describe('Socrata, because the ACT portal is not CKAN', () => {
     const probe = readFileSync('scripts/market/sales-volume-liveness.ts', 'utf8');
     expect(probe).toMatch(/if \(socrata && !catalogueAnswered\(ownRead\.verdict\)\)/);
     expect(probe).toMatch(/askSocrata\(socrata\)/);
+  });
+});
+
+
+/*
+ * ── Where a jurisdiction publishes, read off the harvest ──────────────────
+ *
+ * Tasmania's typed root does not resolve. The answer to that is not a second
+ * typed host — it is to ask the harvest where Tasmania's own publishers serve
+ * their files, and then ask those hosts whether they are catalogues.
+ */
+describe('discovering where a jurisdiction publishes, rather than typing it', () => {
+  const ds = (id: string, org: string | null, urls: string[], title = id, notes: string | null = null): VolumeDataset => ({
+    id, name: id, title, notes, organisation: org, licence: null, metadataModified: null,
+    resources: urls.map((url, i) => ({ id: `${id}-${i}`, name: `${id}-${i}`, format: 'CSV', url, datastoreActive: false, size: null })),
+  });
+
+  it('knows a jurisdiction host by its domain, and not by a lookalike', () => {
+    expect(isJurisdictionHost('listdata.thelist.tas.gov.au', 'TAS')).toBe(true);
+    expect(isJurisdictionHost('tas.gov.au', 'TAS')).toBe(true);
+    expect(isJurisdictionHost('TAS.GOV.AU.', 'TAS')).toBe(true);
+    expect(isJurisdictionHost('nottas.gov.au', 'TAS')).toBe(false);
+    expect(isJurisdictionHost('tas.gov.au.example.com', 'TAS')).toBe(false);
+    expect(isJurisdictionHost('data.gov.au', 'TAS')).toBe(false);
+    for (const state of VOLUME_GAP_STATES) expect(JURISDICTION_DOMAINS[state]).toMatch(/\.gov\.au$/);
+  });
+
+  it('asks the harvest for its publishers through the facet, never a paged list', () => {
+    const url = new URL(harvestOrgFacetUrl('https://data.gov.au/data/api/3/', 'tasmania'));
+    expect(url.pathname).toBe('/data/api/3/action/package_search');
+    expect(url.searchParams.get('rows')).toBe('0');
+    expect(url.searchParams.get('facet.field')).toBe('["organization"]');
+    expect(url.searchParams.get('facet.limit')).toBe('-1');
+    expect(url.pathname).not.toContain('organization_list');
+  });
+
+  it('reads the facet, most datasets first, and refuses a body that has none', () => {
+    const body = JSON.stringify({ success: true, result: { count: 40, search_facets: { organization: { items: [
+      { name: 'dpac-tas', display_name: 'Department of Premier and Cabinet (Tasmania)', count: 3 },
+      { name: 'nre-tas', display_name: 'Department of Natural Resources and Environment Tasmania', count: 31 },
+      { name: 'csiro', display_name: 'CSIRO', count: 6 },
+      { name: 'broken', display_name: 'no count' },
+    ] } } } });
+    const parsed = parseOrgFacet(body);
+    expect(parsed.kind).toBe('facet');
+    if (parsed.kind !== 'facet') return;
+    expect(parsed.organisations.map((o) => o.name)).toEqual(['nre-tas', 'csiro', 'dpac-tas']);
+    expect(jurisdictionOrganisations(parsed.organisations, 'TAS').map((o) => o.name)).toEqual(['nre-tas', 'dpac-tas']);
+    expect(parseOrgFacet(JSON.stringify({ success: true, result: { count: 0 } })).kind).toBe('refused');
+    expect(parseOrgFacet('<html>').kind).toBe('refused');
+  });
+
+  it('filters one publisher by the slug the facet returned, quoted', () => {
+    const url = new URL(orgDatasetsUrl('https://data.gov.au/data/api/3', 'nre-tas', 5000));
+    expect(url.searchParams.get('fq')).toBe('organization:"nre-tas"');
+    expect(url.searchParams.get('rows')).toBe('1000');
+    expect(new URL(orgDatasetsUrl('https://x/api/3', 'a"b')).searchParams.get('fq')).toBe('organization:"ab"');
+  });
+
+  it('tallies where the files are served from, most datasets first, with the paths that name the directory', () => {
+    const hosts = publicationHostsOf([
+      ds('a', 'Tas', ['https://listdata.thelist.tas.gov.au/opendata/data/LIST_A.zip', 'https://listdata.thelist.tas.gov.au/opendata/data/LIST_B.zip']),
+      ds('b', 'Tas', ['https://listdata.thelist.tas.gov.au/opendata/data/LIST_C.zip']),
+      ds('c', 'Tas', ['https://www.treasury.tas.gov.au/Documents/x.xlsx', 'not a url', 'ftp://old.example/x']),
+    ]);
+    expect(hosts.map((h) => [h.host, h.datasets, h.resources])).toEqual([
+      ['listdata.thelist.tas.gov.au', 2, 3],
+      ['www.treasury.tas.gov.au', 1, 1],
+    ]);
+    expect(hosts[0].paths[0]).toBe('/opendata/data/');
+  });
+
+  it('asks each host in five dialects, and the CKAN roots it would then search are the ones it asked', () => {
+    const probes = catalogueProbesFor('Data.Example.tas.gov.au');
+    expect(probes.map((p) => p.dialect)).toEqual(['ckan', 'ckan_data', 'socrata', 'dcat', 'arcgis']);
+    expect(probes[0].url).toBe(volumeInventoryUrl(ckanRootFor('data.example.tas.gov.au', 'ckan')));
+    expect(probes[1].url).toBe(volumeInventoryUrl(ckanRootFor('data.example.tas.gov.au', 'ckan_data')));
+    expect(probes[2].url).toBe(socrataInventoryUrl('data.example.tas.gov.au'));
+  });
+
+  it('judges a dialect by the SHAPE of the answer, never the digit alone', () => {
+    const ckan = JSON.stringify({ success: true, result: { count: 812, results: [] } });
+    expect(readCatalogueDialect('ckan', 200, ckan)).toMatchObject({ answered: true, inventory: 812 });
+    // A portal that is not CKAN answers its path with a 200 HTML page.
+    expect(readCatalogueDialect('ckan', 200, '<!doctype html><title>Home</title>').answered).toBe(false);
+    // The ACT's Socrata portal answered CKAN's path with a JSON 404.
+    expect(readCatalogueDialect('ckan', 404, '{"code":"not_found"}').answered).toBe(false);
+    // An index that says it is empty has not answered the question.
+    expect(readCatalogueDialect('ckan', 200, JSON.stringify({ success: true, result: { count: 0, results: [] } })).answered).toBe(false);
+    expect(readCatalogueDialect('socrata', 200, JSON.stringify({ resultSetSize: 378, results: [] })))
+      .toMatchObject({ answered: true, inventory: 378 });
+    expect(readCatalogueDialect('dcat', 200, JSON.stringify({ dataset: [{ identifier: 'x', title: 'X' }] })))
+      .toMatchObject({ answered: true, inventory: 1 });
+    expect(readCatalogueDialect('dcat', 200, JSON.stringify({ something: [] })).answered).toBe(false);
+    const arc = readCatalogueDialect('arcgis', 200, JSON.stringify({ folders: ['Public'], services: [] }));
+    expect(arc.answered).toBe(true);
+    expect(arc.detail).toMatch(/catalogue of layers, not of datasets/);
+  });
+
+  it('reads a DCAT feed into the same dataset shape, and judges it whole', () => {
+    const feed = JSON.stringify({ dataset: [
+      { identifier: 'https://x/1', title: 'Property sales by suburb', description: 'Number of sales per quarter',
+        publisher: { name: 'Valuer-General Tasmania' }, distribution: [{ downloadURL: 'https://x/1.csv', mediaType: 'text/csv' }] },
+      { identifier: 'https://x/2', title: 'Road network', distribution: [] },
+      { title: 'no identifier' },
+    ] });
+    const parsed = parseDcatCatalogue(feed, 'example.tas.gov.au');
+    expect(parsed.kind).toBe('catalogue');
+    if (parsed.kind !== 'catalogue') return;
+    expect(parsed.total).toBe(2);
+    expect(parsed.datasets[0].resources[0]).toMatchObject({ format: 'CSV', url: 'https://x/1.csv' });
+    expect(parsed.datasets[0].organisation).toBe('Valuer-General Tasmania');
+    expect(parsed.datasets[1].organisation).toBe('example.tas.gov.au');
+    expect(datasetsNamingASale(parsed.datasets).map((d) => d.title)).toEqual(['Property sales by suburb']);
+    // And the judgement that follows is the one every dialect gets.
+    expect(rankVolumeCandidates(parsed.datasets).map((c) => c.dataset.title)).toEqual(['Property sales by suburb']);
+    expect(parseDcatCatalogue('{"nope":1}', 'x').kind).toBe('refused');
+  });
+
+  it('types no Tasmanian host in the probe: the host it searches comes from the harvest', () => {
+    const probe = readFileSync('scripts/market/sales-volume-liveness.ts', 'utf8');
+    expect(probe).not.toMatch(/https?:\/\/[a-z0-9.-]+\.tas\.gov\.au/i);
+    expect(probe).toContain('discoverOwnCatalogue(state, harvestEntry.api, own.api)');
+    // Only where the typed root did not answer — a working root is never second-guessed.
+    expect(probe).toMatch(/if \(!catalogueAnswered\(ownRead\.verdict\)\) \{\s*const discovered = await discoverOwnCatalogue/);
   });
 });

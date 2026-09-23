@@ -47,6 +47,7 @@
  *  - A catalogue that answers and this repository cannot read what it sent:
  *    **1**. The one failure a fixture can never catch.
  */
+import { lookup } from 'node:dns/promises';
 import {
   VOLUME_CATALOGUES,
   VOLUME_GAP_STATES,
@@ -67,6 +68,19 @@ import {
   volumeCoverageNote,
   volumeInventoryUrl,
   volumeSearchUrl,
+  catalogueProbesFor,
+  ckanRootFor,
+  datasetsNamingASale,
+  harvestOrgFacetUrl,
+  isJurisdictionHost,
+  jurisdictionOrganisations,
+  orgDatasetsUrl,
+  parseDcatCatalogue,
+  parseOrgFacet,
+  publicationHostsOf,
+  readCatalogueDialect,
+  type CatalogueDialect,
+  type VolumeGapState,
   type CatalogueVerdict,
   type VolumeCatalogue,
   type VolumeCatalogueParse,
@@ -219,6 +233,176 @@ function printCandidates(parse: VolumeCatalogueParse): void {
   }
 }
 
+/**
+ * Ask a Socrata portal, where a jurisdiction runs one.
+ *
+ * A second dialect, added because the measurement named it: the ACT
+ * answered a CKAN 3 path with `404 {"message":"No service found for this
+ * URL."}` — a JSON API that exists and does not speak CKAN.
+ *
+ * It projects onto the SAME `VolumeDataset` shape, so one judgement serves
+ * both dialects. And its catalog API is domain-scoped, so it cannot return
+ * another jurisdiction's dataset — the Victorian-department defect cannot
+ * recur through this route by construction.
+ */
+async function askSocrata(portal: typeof SOCRATA_PORTALS[number]): Promise<CatalogueRead> {
+  console.log(`\n  · ${portal.state} — ${portal.publisher} (Socrata)`);
+  kv('catalog', socrataSearchUrl(portal.domain, '…').split('?')[0]);
+  kv('domain', portal.domain);
+
+  let inventory: number | null = null;
+  const inv = await ask(socrataInventoryUrl(portal.domain));
+  if (inv.networkError === null && inv.status === 200) {
+    const p = parseSocrataCatalogue(inv.body);
+    if (p.kind === 'catalogue') inventory = p.total;
+  }
+  kv('the index says it holds', inventory === null
+    ? `(it did not say — ${inv.networkError ?? `HTTP ${inv.status}`})`
+    : `${inventory.toLocaleString('en-AU')} datasets`);
+
+  const parses: VolumeCatalogueParse[] = [];
+  let answered = false;
+  for (const q of VOLUME_QUERIES) {
+    const got = await ask(socrataSearchUrl(portal.domain, q, 50));
+    if (got.networkError !== null || got.status !== 200) {
+      console.log(`      ${q.padEnd(30)} ${got.networkError !== null ? `network: ${got.networkError}` : `HTTP ${got.status}`}`);
+      if (got.bytes > 0) console.log(`      ${' '.repeat(30)} ${JSON.stringify(got.body.slice(0, 120))}`);
+      continue;
+    }
+    const parse = parseSocrataCatalogue(got.body);
+    if (parse.kind === 'refused') {
+      const looksJson = got.body.trimStart().startsWith('{');
+      if (!looksJson) {
+        console.log(`      ${q.padEnd(30)} 200 but not a Socrata catalog — ${parse.reason}`);
+        continue;
+      }
+      ours(`${portal.state} Socrata — ${q}`, parse.reason);
+    }
+    answered = true;
+    console.log(`      ${q.padEnd(30)} 200 · ${parse.total} declared · ${parse.datasets.length} read · ${got.ms} ms`);
+    parses.push(parse);
+  }
+  const parse: VolumeCatalogueParse = answered
+    ? mergeVolumeReads(parses)
+    : { kind: 'refused', reason: `no query reached the Socrata catalog for ${portal.domain}` };
+  const verdict = judgeCatalogueReach(parse, {
+    inventory,
+    matched: parse.kind === 'catalogue' ? parse.datasets.length : 0,
+  });
+  kv('verdict', verdict.kind === 'not_this_index' ? `not this index — ${verdict.detail}` : verdict.kind);
+  return { parse, verdict, inventory };
+}
+
+/**
+ * Where does a jurisdiction actually publish? Asked of the harvest's own
+ * records, never typed — see the note above `JURISDICTION_DOMAINS`.
+ *
+ * Runs only where the jurisdiction's typed root did not answer, because that
+ * is the one case where the probe would otherwise have to guess. Everything
+ * it finds is printed, answered or not: a host that is not a catalogue is
+ * still where the publisher's bytes are, and that is what the next
+ * increment reads.
+ */
+async function discoverOwnCatalogue(
+  state: VolumeGapState,
+  harvestApi: string,
+  typedRoot: string,
+): Promise<CatalogueRead | null> {
+  h(`${state} — where does it actually publish?`);
+
+  // Does the typed root resolve at all? A DNS answer separates "the name
+  // does not exist" from "the name exists and would not talk to us".
+  const typedHost = new URL(typedRoot).hostname;
+  try {
+    const addr = await lookup(typedHost);
+    kv(`${typedHost} resolves`, `yes — ${addr.address}`);
+  } catch (err) {
+    const code = (err as { code?: string }).code ?? (err instanceof Error ? err.message : String(err));
+    kv(`${typedHost} resolves`, `NO — ${code}`);
+  }
+
+  // 1 — the harvest's publishers for this jurisdiction, from its own facet.
+  const names = { ACT: 'australian capital territory', NT: 'northern territory', TAS: 'tasmania', WA: 'western australia' } as const;
+  const facetGot = await ask(harvestOrgFacetUrl(harvestApi, names[state]));
+  if (facetGot.networkError !== null || facetGot.status !== 200) {
+    kv('harvest publishers', `not read — ${facetGot.networkError ?? `HTTP ${facetGot.status}`}`);
+    return null;
+  }
+  const facet = parseOrgFacet(facetGot.body);
+  if (facet.kind === 'refused') ours(`${state} harvest organisation facet`, facet.reason);
+  const orgs = jurisdictionOrganisations(facet.organisations, state);
+  kv('harvest publishers named', `${facet.organisations.length} for the query, ${orgs.length} of them ${state}'s by their own name`);
+  for (const o of orgs.slice(0, 12)) console.log(`      ${String(o.count).padStart(5)}  ${o.title}  (${o.name})`);
+  if (orgs.length === 0) return null;
+
+  // 2 — where those publishers' datasets are served from.
+  const datasets: VolumeDataset[] = [];
+  for (const o of orgs.slice(0, 10)) {
+    const got = await ask(orgDatasetsUrl(harvestApi, o.name, 200));
+    if (got.networkError !== null || got.status !== 200) {
+      console.log(`      ${o.name.padEnd(40)} ${got.networkError ?? `HTTP ${got.status}`}`);
+      continue;
+    }
+    const parse = parseVolumeCatalogue(got.body);
+    if (parse.kind === 'refused') ours(`${state} harvest datasets for ${o.name}`, parse.reason);
+    datasets.push(...parse.datasets);
+  }
+  const hosts = publicationHostsOf(datasets);
+  kv('datasets read from them', datasets.length);
+  kv('hosts serving them', hosts.length);
+  for (const t of hosts.slice(0, 15)) {
+    const own = isJurisdictionHost(t.host, state) ? `${state}'s own` : 'elsewhere';
+    console.log(`      ${String(t.datasets).padStart(5)} datasets  ${String(t.resources).padStart(5)} files  ${t.host.padEnd(42)} ${own}  ${t.paths.join(' ')}`);
+  }
+
+  // 3 — which of the jurisdiction's own hosts is a catalogue, in which dialect.
+  const ownHosts = hosts.filter((t) => isJurisdictionHost(t.host, state)).slice(0, 8);
+  if (ownHosts.length === 0) {
+    kv('own hosts', `none — every file ${state}'s publishers list is served from outside ${state}'s own domain`);
+    return null;
+  }
+  const answered: { host: string; dialect: CatalogueDialect; inventory: number | null }[] = [];
+  for (const t of ownHosts) {
+    console.log(`\n    ${t.host}`);
+    for (const probe of catalogueProbesFor(t.host)) {
+      const got = await ask(probe.url);
+      if (got.networkError !== null) {
+        console.log(`      ${probe.dialect.padEnd(10)} network: ${got.networkError}`);
+        continue;
+      }
+      const a = readCatalogueDialect(probe.dialect, got.status, got.body);
+      console.log(`      ${probe.dialect.padEnd(10)} ${a.answered ? 'ANSWERED' : 'no'.padEnd(8)} ${a.detail}`);
+      if (a.answered && probe.dialect !== 'arcgis') answered.push({ host: t.host, dialect: probe.dialect, inventory: a.inventory });
+    }
+  }
+  if (answered.length === 0) {
+    kv('searchable catalogue', `none of ${ownHosts.length} own host(s) answered as CKAN, Socrata or a DCAT feed`);
+    return null;
+  }
+
+  // 4 — search the biggest one, in its own dialect.
+  const best = [...answered].sort((a, b) => (b.inventory ?? 0) - (a.inventory ?? 0))[0];
+  kv('searching', `${best.host} as ${best.dialect}${best.inventory !== null ? ` (${best.inventory.toLocaleString('en-AU')} datasets)` : ''}`);
+  if (best.dialect === 'ckan' || best.dialect === 'ckan_data') {
+    return askCatalogue({ state, publisher: `${best.host} (discovered from the harvest)`, api: ckanRootFor(best.host, best.dialect), kind: 'own' });
+  }
+  if (best.dialect === 'socrata') {
+    return askSocrata({ state, publisher: `${best.host} (discovered from the harvest)`, domain: best.host });
+  }
+  // DCAT: the feed IS the inventory, so it is judged whole rather than queried.
+  const feed = await ask(`https://${best.host}/data.json`);
+  const parse = parseDcatCatalogue(feed.body, best.host);
+  if (parse.kind === 'refused') ours(`${state} DCAT feed at ${best.host}`, parse.reason);
+  const matched = datasetsNamingASale(parse.datasets);
+  kv('feed datasets naming a sale', `${matched.length} of ${parse.total}`);
+  const matchedParse: VolumeCatalogueParse = { kind: 'catalogue', total: parse.total, datasets: matched };
+  return {
+    parse: matchedParse,
+    verdict: judgeCatalogueReach(matchedParse, { inventory: parse.total, matched: matched.length }),
+    inventory: parse.total,
+  };
+}
+
 async function main(): Promise<void> {
   h('Does ACT, NT, TAS or WA publish a COUNT of residential sales?');
   kv('jurisdictions', VOLUME_GAP_STATES.join(', '));
@@ -242,66 +426,6 @@ async function main(): Promise<void> {
 
   const readings: { state: string; coverage: VolumeCoverage; note: string }[] = [];
 
-  /**
-   * Ask a Socrata portal, where a jurisdiction runs one.
-   *
-   * A second dialect, added because the measurement named it: the ACT
-   * answered a CKAN 3 path with `404 {"message":"No service found for this
-   * URL."}` — a JSON API that exists and does not speak CKAN.
-   *
-   * It projects onto the SAME `VolumeDataset` shape, so one judgement serves
-   * both dialects. And its catalog API is domain-scoped, so it cannot return
-   * another jurisdiction's dataset — the Victorian-department defect cannot
-   * recur through this route by construction.
-   */
-  async function askSocrata(portal: typeof SOCRATA_PORTALS[number]): Promise<CatalogueRead> {
-    console.log(`\n  · ${portal.state} — ${portal.publisher} (Socrata)`);
-    kv('catalog', socrataSearchUrl(portal.domain, '…').split('?')[0]);
-    kv('domain', portal.domain);
-
-    let inventory: number | null = null;
-    const inv = await ask(socrataInventoryUrl(portal.domain));
-    if (inv.networkError === null && inv.status === 200) {
-      const p = parseSocrataCatalogue(inv.body);
-      if (p.kind === 'catalogue') inventory = p.total;
-    }
-    kv('the index says it holds', inventory === null
-      ? `(it did not say — ${inv.networkError ?? `HTTP ${inv.status}`})`
-      : `${inventory.toLocaleString('en-AU')} datasets`);
-
-    const parses: VolumeCatalogueParse[] = [];
-    let answered = false;
-    for (const q of VOLUME_QUERIES) {
-      const got = await ask(socrataSearchUrl(portal.domain, q, 50));
-      if (got.networkError !== null || got.status !== 200) {
-        console.log(`      ${q.padEnd(30)} ${got.networkError !== null ? `network: ${got.networkError}` : `HTTP ${got.status}`}`);
-        if (got.bytes > 0) console.log(`      ${' '.repeat(30)} ${JSON.stringify(got.body.slice(0, 120))}`);
-        continue;
-      }
-      const parse = parseSocrataCatalogue(got.body);
-      if (parse.kind === 'refused') {
-        const looksJson = got.body.trimStart().startsWith('{');
-        if (!looksJson) {
-          console.log(`      ${q.padEnd(30)} 200 but not a Socrata catalog — ${parse.reason}`);
-          continue;
-        }
-        ours(`${portal.state} Socrata — ${q}`, parse.reason);
-      }
-      answered = true;
-      console.log(`      ${q.padEnd(30)} 200 · ${parse.total} declared · ${parse.datasets.length} read · ${got.ms} ms`);
-      parses.push(parse);
-    }
-    const parse: VolumeCatalogueParse = answered
-      ? mergeVolumeReads(parses)
-      : { kind: 'refused', reason: `no query reached the Socrata catalog for ${portal.domain}` };
-    const verdict = judgeCatalogueReach(parse, {
-      inventory,
-      matched: parse.kind === 'catalogue' ? parse.datasets.length : 0,
-    });
-    kv('verdict', verdict.kind === 'not_this_index' ? `not this index — ${verdict.detail}` : verdict.kind);
-    return { parse, verdict, inventory };
-  }
-
   for (const state of VOLUME_GAP_STATES) {
     const own = VOLUME_CATALOGUES.find((c) => c.state === state && c.kind === 'own');
     h(`${state}`);
@@ -316,6 +440,16 @@ async function main(): Promise<void> {
     const socrata = SOCRATA_PORTALS.find((sp) => sp.state === state);
     if (socrata && !catalogueAnswered(ownRead.verdict)) {
       ownRead = await askSocrata(socrata);
+    }
+    /*
+     * Where the typed root still has not answered, ask the harvest where this
+     * jurisdiction actually publishes rather than typing a second guess. The
+     * typed root's failure stays printed above: it is the evidence that sent
+     * the probe here.
+     */
+    if (!catalogueAnswered(ownRead.verdict)) {
+      const discovered = await discoverOwnCatalogue(state, harvestEntry.api, own.api);
+      if (discovered && catalogueAnswered(discovered.verdict)) ownRead = discovered;
     }
     const ownParse = ownRead.parse;
     printCandidates(ownParse);

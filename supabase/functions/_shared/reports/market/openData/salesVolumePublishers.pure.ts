@@ -1067,3 +1067,312 @@ export const VOLUME_READING_IS_CURRENT: Readonly<Record<VolumeGapState, boolean>
   ACT: true,
   TAS: true,
 };
+
+// ---------------------------------------------------------------------------
+// Where a jurisdiction actually publishes — read off the harvest, not typed
+// ---------------------------------------------------------------------------
+
+/*
+ * ── Why Tasmania needs discovery rather than a second guess ──────────────
+ *
+ * Tasmania's typed root, `data.tas.gov.au`, does not resolve (measured from
+ * CI, 22 Sep 2026), so its reading is `catalogue_unavailable` and that is
+ * ours. The obvious next step is to type another host, and that is the
+ * mistake this module keeps declining: a typed host that is wrong fails
+ * exactly like a jurisdiction that publishes nothing, and the ACT's first
+ * root proved it.
+ *
+ * The harvest already knows. `data.gov.au` indexes Tasmanian publishers, and
+ * every harvested dataset carries resource URLs pointing at wherever its
+ * publisher actually serves it. So the question is asked of the harvest's
+ * OWN records, in three steps, and nothing in it is an identifier anybody
+ * typed:
+ *
+ *   1. the harvest's organisation facet names the jurisdiction's publishers
+ *      (judged on the publisher's own full name — `attributableTo`'s rule);
+ *   2. their datasets' resource URLs name the hosts they are served from,
+ *      counted, so the tally says where the jurisdiction really publishes;
+ *   3. each of the jurisdiction's own hosts is asked, in each catalogue
+ *      dialect this module reads, whether it is a catalogue at all.
+ *
+ * A host that answers as a populated catalogue is then searched like any
+ * `own` catalogue. One that does not is printed with what it did answer,
+ * because that is what the next increment needs.
+ */
+
+/** The domain a jurisdiction's own government hosts sit under. */
+export const JURISDICTION_DOMAINS: Readonly<Record<VolumeGapState, string>> = {
+  ACT: 'act.gov.au',
+  NT: 'nt.gov.au',
+  TAS: 'tas.gov.au',
+  WA: 'wa.gov.au',
+};
+
+/** Is this host the jurisdiction's own — the domain itself or under it? */
+export function isJurisdictionHost(host: string, state: VolumeGapState): boolean {
+  const h = host.trim().toLowerCase().replace(/\.$/, '');
+  const domain = JURISDICTION_DOMAINS[state];
+  return h === domain || h.endsWith(`.${domain}`);
+}
+
+/**
+ * The harvest's publishers, from its own organisation facet.
+ *
+ * A facet rather than `organization_list`, because the Commonwealth
+ * catalogue answered `organization_list` with CKAN's default page of 25 and
+ * ignored `limit=1000` — a page read as a list is the W3.2 fault. A facet
+ * counts what the index holds for the query it was asked.
+ */
+export function harvestOrgFacetUrl(api: string, query: string): string {
+  const p = new URLSearchParams({
+    q: query,
+    rows: '0',
+    'facet.field': '["organization"]',
+    'facet.limit': '-1',
+  });
+  return `${api.replace(/\/+$/, '')}/action/package_search?${p}`;
+}
+
+export interface HarvestOrganisation {
+  /** The slug the index filters on — read from the index, never typed. */
+  name: string;
+  /** The publisher's own name, which is what attribution is judged on. */
+  title: string;
+  count: number;
+}
+
+export type OrgFacetParse =
+  | { kind: 'facet'; organisations: HarvestOrganisation[] }
+  | { kind: 'refused'; reason: string };
+
+export function parseOrgFacet(text: string): OrgFacetParse {
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch (err) {
+    return { kind: 'refused', reason: `not JSON (${text.length} bytes, ${String(err)}): ${JSON.stringify(text.slice(0, 220))}` };
+  }
+  const result = (body as { result?: { search_facets?: { organization?: { items?: unknown } } } }).result;
+  const items = result?.search_facets?.organization?.items;
+  if (!Array.isArray(items)) {
+    return { kind: 'refused', reason: `no result.search_facets.organization.items (${text.length} bytes): ${JSON.stringify(text.slice(0, 220))}` };
+  }
+  const organisations: HarvestOrganisation[] = [];
+  for (const raw of items as unknown[]) {
+    const it = raw as Record<string, unknown>;
+    const name = str(it.name);
+    const count = num(it.count);
+    if (!name || count === null) continue;
+    organisations.push({ name, title: str(it.display_name) ?? name, count });
+  }
+  return { kind: 'facet', organisations: organisations.sort((a, b) => b.count - a.count) };
+}
+
+/** The organisations in a facet that are this jurisdiction's, by their own full name. */
+export function jurisdictionOrganisations(
+  organisations: readonly HarvestOrganisation[],
+  state: VolumeGapState,
+): HarvestOrganisation[] {
+  return organisations.filter((o) => {
+    const title = o.title.toLowerCase();
+    return JURISDICTION_NAMES[state].some((n) => title.includes(n));
+  });
+}
+
+/** One organisation's datasets, by the slug the facet returned. */
+export function orgDatasetsUrl(api: string, slug: string, rows = 200, start = 0): string {
+  const p = new URLSearchParams({
+    fq: `organization:"${slug.replace(/"/g, '')}"`,
+    rows: String(Math.max(1, Math.min(1000, rows))),
+    start: String(Math.max(0, start)),
+  });
+  return `${api.replace(/\/+$/, '')}/action/package_search?${p}`;
+}
+
+export interface HostTally {
+  host: string;
+  /** Datasets with at least one resource served from this host. */
+  datasets: number;
+  resources: number;
+  /** The commonest leading path segments, so a directory of downloads is visible. */
+  paths: string[];
+}
+
+/**
+ * Where a set of datasets is actually served from, most-used host first.
+ *
+ * Read off resource URLs, because that is where a harvested dataset's bytes
+ * live. A URL that does not parse is skipped rather than guessed at.
+ */
+export function publicationHostsOf(datasets: readonly VolumeDataset[]): HostTally[] {
+  const tally = new Map<string, { datasets: Set<string>; resources: number; paths: Map<string, number> }>();
+  for (const d of datasets) {
+    for (const r of d.resources) {
+      let url: URL;
+      try {
+        url = new URL(r.url);
+      } catch {
+        continue;
+      }
+      if (url.protocol !== 'https:' && url.protocol !== 'http:') continue;
+      const host = url.hostname.toLowerCase();
+      const entry = tally.get(host) ?? { datasets: new Set<string>(), resources: 0, paths: new Map<string, number>() };
+      entry.datasets.add(d.id);
+      entry.resources += 1;
+      const lead = url.pathname.split('/').filter(Boolean).slice(0, 2).join('/');
+      const path = `/${lead}${lead ? '/' : ''}`;
+      entry.paths.set(path, (entry.paths.get(path) ?? 0) + 1);
+      tally.set(host, entry);
+    }
+  }
+  return [...tally.entries()]
+    .map(([host, e]) => ({
+      host,
+      datasets: e.datasets.size,
+      resources: e.resources,
+      paths: [...e.paths.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([p]) => p),
+    }))
+    .sort((a, b) => b.datasets - a.datasets || b.resources - a.resources || a.host.localeCompare(b.host));
+}
+
+/**
+ * The catalogue dialects a host is asked in, cheapest question each.
+ *
+ * `ckan` and `ckan_data` are the same API at the two roots state portals use
+ * (`/api/3` and `/data/api/3` — `data.gov.au` itself is the second). `dcat`
+ * is the `data.json` feed an ArcGIS Hub or DKAN portal publishes: the whole
+ * inventory in one document. `arcgis` is a map-service directory, which is
+ * a catalogue of LAYERS rather than of datasets and is reported but never
+ * searched for a sales series.
+ */
+export type CatalogueDialect = 'ckan' | 'ckan_data' | 'socrata' | 'dcat' | 'arcgis';
+
+export function catalogueProbesFor(host: string): { dialect: CatalogueDialect; url: string }[] {
+  const h = host.trim().toLowerCase();
+  return [
+    { dialect: 'ckan', url: volumeInventoryUrl(`https://${h}/api/3`) },
+    { dialect: 'ckan_data', url: volumeInventoryUrl(`https://${h}/data/api/3`) },
+    { dialect: 'socrata', url: socrataInventoryUrl(h) },
+    { dialect: 'dcat', url: `https://${h}/data.json` },
+    { dialect: 'arcgis', url: `https://${h}/arcgis/rest/services?f=json` },
+  ];
+}
+
+/** The CKAN root a dialect answered at, for searching it afterwards. */
+export function ckanRootFor(host: string, dialect: 'ckan' | 'ckan_data'): string {
+  return dialect === 'ckan' ? `https://${host}/api/3` : `https://${host}/data/api/3`;
+}
+
+export interface DialectAnswer {
+  /** Did the host answer AS this dialect — the shape, not the digit. */
+  answered: boolean;
+  /** How big it says its index is, where it said. */
+  inventory: number | null;
+  detail: string;
+}
+
+/**
+ * Did a host answer in this dialect?
+ *
+ * Judged on the SHAPE of the body, never the status alone: a portal that is
+ * not CKAN answers `/api/3` with a 200 HTML page as often as with a 404, and
+ * the ACT's Socrata portal answered CKAN's path with a JSON 404. So a 200
+ * that is not the dialect's own envelope is "not this dialect", and says
+ * what it was.
+ */
+export function readCatalogueDialect(dialect: CatalogueDialect, status: number, body: string): DialectAnswer {
+  const head = JSON.stringify(body.slice(0, 120));
+  if (status !== 200) return { answered: false, inventory: null, detail: `HTTP ${status} ${head}` };
+  let json: unknown;
+  try {
+    json = JSON.parse(body);
+  } catch {
+    return { answered: false, inventory: null, detail: `200 but not JSON ${head}` };
+  }
+  switch (dialect) {
+    case 'ckan':
+    case 'ckan_data': {
+      const parse = parseVolumeCatalogue(body);
+      if (parse.kind === 'refused') return { answered: false, inventory: null, detail: parse.reason };
+      return { answered: parse.total > 0, inventory: parse.total, detail: `CKAN index of ${parse.total}` };
+    }
+    case 'socrata': {
+      const parse = parseSocrataCatalogue(body);
+      if (parse.kind === 'refused') return { answered: false, inventory: null, detail: parse.reason };
+      return { answered: parse.total > 0, inventory: parse.total, detail: `Socrata catalog of ${parse.total}` };
+    }
+    case 'dcat': {
+      const ds = (json as { dataset?: unknown }).dataset;
+      if (!Array.isArray(ds)) return { answered: false, inventory: null, detail: `JSON without a dataset array ${head}` };
+      return { answered: ds.length > 0, inventory: ds.length, detail: `DCAT feed of ${ds.length}` };
+    }
+    case 'arcgis': {
+      const dir = json as { folders?: unknown; services?: unknown };
+      if (!Array.isArray(dir.folders) && !Array.isArray(dir.services)) {
+        return { answered: false, inventory: null, detail: `JSON without folders or services ${head}` };
+      }
+      const services = Array.isArray(dir.services) ? dir.services.length : 0;
+      const folders = Array.isArray(dir.folders) ? dir.folders.length : 0;
+      return {
+        answered: services + folders > 0,
+        inventory: null,
+        detail: `ArcGIS directory: ${services} services, ${folders} folders — a catalogue of layers, not of datasets`,
+      };
+    }
+  }
+}
+
+/**
+ * Read a DCAT `data.json` into the SAME `VolumeDataset` shape.
+ *
+ * The feed is the whole inventory, so it is judged in full rather than
+ * searched: `matched` is the datasets whose own words name a sale, which is
+ * the question the CKAN and Socrata queries ask of their indexes.
+ */
+export function parseDcatCatalogue(text: string, publisher: string): VolumeCatalogueParse {
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch (err) {
+    return { kind: 'refused', reason: `not JSON (${text.length} bytes, ${String(err)}): ${JSON.stringify(text.slice(0, 220))}` };
+  }
+  const ds = (body as { dataset?: unknown }).dataset;
+  if (!Array.isArray(ds)) {
+    return { kind: 'refused', reason: `no dataset array (${text.length} bytes): ${JSON.stringify(text.slice(0, 220))}` };
+  }
+  const datasets: VolumeDataset[] = [];
+  for (const raw of ds as unknown[]) {
+    const d = raw as Record<string, unknown>;
+    const id = str(d.identifier) ?? str(d['@id']);
+    const title = str(d.title);
+    if (!id || !title) continue;
+    const resources: VolumeResource[] = [];
+    const dist = Array.isArray(d.distribution) ? (d.distribution as unknown[]) : [];
+    dist.forEach((rawDist, i) => {
+      const r = rawDist as Record<string, unknown>;
+      const url = str(r.downloadURL) ?? str(r.accessURL);
+      if (!url) return;
+      const format = (str(r.format) ?? str(r.mediaType)?.split('/').pop() ?? '').toUpperCase();
+      resources.push({ id: `${id}#${i}`, name: str(r.title) ?? format, format, url, datastoreActive: false, size: null });
+    });
+    const pub = d.publisher as Record<string, unknown> | undefined;
+    datasets.push({
+      id,
+      name: id,
+      title,
+      notes: str(d.description),
+      organisation: str(pub?.name) ?? publisher,
+      licence: str(d.license),
+      metadataModified: str(d.modified),
+      resources,
+    });
+  }
+  return { kind: 'catalogue', total: datasets.length, datasets };
+}
+
+/** The datasets in a whole-inventory feed whose own words name a sale. */
+export const SALE_WORDS = /\b(?:sales?|sold|transfers?|transactions?)\b/i;
+
+export function datasetsNamingASale(datasets: readonly VolumeDataset[]): VolumeDataset[] {
+  return datasets.filter((d) => SALE_WORDS.test([d.title, d.notes].filter(Boolean).join(' ')));
+}
