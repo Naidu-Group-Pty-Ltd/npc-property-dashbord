@@ -1,5 +1,13 @@
 # Session handoff — 22 Sep 2026
 
+> **Superseded in part — read [`SESSION_HANDOFF_2026-09-23.md`](./SESSION_HANDOFF_2026-09-23.md)
+> first.** §3 below presents `8c9ff3a` as the fix for the stalled approvals
+> walk. It was one layer of three: the table's own `CHECK (… >= 0)` refuses the
+> same negative, a partly written window would have left a permanent hole, and
+> its 1% drift allowance was too loose to catch a 1,000× drift. The complete fix
+> is on `claude/adoring-hopper-g02tdt`, which also carries every commit listed
+> here. Nothing else in this document is contradicted.
+
 Written for whoever picks this up next. It records **state**, not recollection:
 every number in it was read back from production or from an executed
 measurement, and where something is unverified it says so in those words.
@@ -166,6 +174,10 @@ Two things are wrong and each on its own is enough:
    444 localities.
 
 #### The fix — written and tested, NOT LIVE
+
+> **23 Sep: this fix was incomplete, and on its own it would have made things
+> worse.** See `SESSION_HANDOFF_2026-09-23.md` §3 for all three defects, and
+> §4–§5 for the complete fix and how to ship it.
 
 `absBuildingApprovals.pure.ts`: the ceiling is tested on `Math.abs`, so a
 negative amendment is accepted and drift is still caught in either direction;

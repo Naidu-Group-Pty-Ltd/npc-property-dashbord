@@ -11,6 +11,7 @@
  * fixture would be a statement about the fixture.
  */
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   ABS_BA_GRAIN_LADDER,
   ABS_BA_NAME_PATTERN,
@@ -31,6 +32,9 @@ import {
   flowEdition,
   grainOfAreaCode,
   isStorableGrain,
+  approvalsWriteOrder,
+  carriesNetNegative,
+  type ApprovalRow,
 } from '../../../../supabase/functions/_shared/reports/market/openData/absBuildingApprovals.pure.ts';
 
 // ─── Catalogues ─────────────────────────────────────────────────────────────
@@ -690,10 +694,102 @@ describe('the refusals', () => {
     expect(dropped?.dwellingUnits).toBeNull();
   });
 
-  it('holds the boundary between the two at a measured share', () => {
-    // Small on purpose: the refusal is what stops a wrongly-read column
-    // reaching a client, and only ISOLATED cells are bought out of it.
-    expect(ABS_BA_PLAUSIBILITY.maxImplausibleShare).toBe(0.01);
+  /*
+   * THE BOUNDARY IS A COUNT, NOT A SHARE.
+   *
+   * The first version of this fix allowed 1% of the cells read to be dropped
+   * before refusing. For dwelling counts that is too loose to catch the fault
+   * the ceiling exists for: a 1,000x drift crosses the SA2/LGA ceiling of
+   * 100,000 only on cells whose TRUE figure is above 100 units a month, and
+   * those are a small minority. This fixture is that case — one cell in 250
+   * is a large month, the rest are ordinary — and under a 1,000x drift the
+   * over-ceiling cells are 0.2% of those read. The share rule would have
+   * ACCEPTED it and written every other cell a thousand times too large.
+   */
+  it('refuses a 1,000x drift that crosses the ceiling on only a few percent of cells', () => {
+    const base = (i: number) => (i % 250 === 0 ? 150 : i % 30);
+    const drifted = download({ units: (i) => String(base(i) * 1000) });
+    // The fixture really is the case the share rule missed: under 1%.
+    const unitCells = 205 * 26 * 3;
+    const over = Array.from({ length: unitCells }, (_, i) => base(i) * 1000)
+      .filter((v) => v > ABS_BA_PLAUSIBILITY.maxUnitsPerAreaMonth.lga).length;
+    const cellsRead = unitCells * 2; // units and value, both judged
+    expect(over / cellsRead).toBeLessThan(0.01);
+    expect(over).toBeGreaterThan(ABS_BA_PLAUSIBILITY.maxIsolatedImplausibleCells);
+    // …and it is refused, naming examples rather than a bare count.
+    expect(() => parseAbsBuildingApprovals(drifted, 'lga'))
+      .toThrow(/outside their magnitude ceiling \(more than 3\).*For example: .*150000 dwelling units/);
+  });
+
+  it('drops up to three isolated cells, and refuses on the fourth', () => {
+    const bad = (n: number) => download({
+      units: (i) => (i < n ? '900000' : String(10 + (i % 40))),
+    });
+    const three = parseAbsBuildingApprovals(bad(3), 'lga');
+    expect(three.implausibleCells).toHaveLength(3);
+    expect(() => parseAbsBuildingApprovals(bad(4), 'lga'))
+      .toThrow(/4 of \d+ ABS building-approvals cells are outside their magnitude ceiling/);
+  });
+
+  it('judges a negative by its magnitude, so drift is still caught in both directions', () => {
+    // A negative is admitted as a figure — and a negative of impossible size
+    // is as implausible as a positive one.
+    const oneHugeNegative = download({ units: (i) => (i === 0 ? '-900000' : String(10 + (i % 40))) });
+    const parse = parseAbsBuildingApprovals(oneHugeNegative, 'lga');
+    expect(parse.implausibleCells).toHaveLength(1);
+    expect(parse.implausibleCells[0]).toMatch(/-900000 dwelling units/);
+  });
+
+  it('holds the boundary at a count', () => {
+    expect(ABS_BA_PLAUSIBILITY.maxIsolatedImplausibleCells).toBe(3);
+  });
+});
+
+/*
+ * The write order is part of the fix, not a nicety.
+ *
+ * `oldest` is min(period) over the table and the loader writes in batches that
+ * throw on the first failure, so a batch refused part-way through a window
+ * leaves the rows before it committed and moves the walk past a window it never
+ * finished. Until the migration admitting negatives is applied, the table
+ * refuses them — so they are written FIRST, and a refusal happens before
+ * anything else of the window commits.
+ */
+describe('a window is written negatives-first', () => {
+  const row = (area: string, period: string, units: number | null, value: number | null = null): ApprovalRow => ({
+    state: 'NSW', areaKind: 'sa2', area, areaToken: area.toLowerCase(), areaCode: area,
+    period, buildingType: 'house', dwellingUnits: units, value,
+  });
+
+  it('puts every row carrying a negative ahead of the rest, keeping each group in parse order', () => {
+    const rows = [
+      row('A', '2025-07', 4), row('B', '2025-07', -5), row('C', '2025-08', 9),
+      row('D', '2025-08', 3, -250_000), row('E', '2025-09', 0), row('F', '2025-09', null),
+    ];
+    const { first, then } = approvalsWriteOrder(rows);
+    expect(first.map((r) => r.area)).toEqual(['B', 'D']);
+    expect(then.map((r) => r.area)).toEqual(['A', 'C', 'E', 'F']);
+    // Nothing lost, nothing written twice.
+    expect(first.length + then.length).toBe(rows.length);
+  });
+
+  it('treats zero and null as ordinary — only a published negative goes first', () => {
+    expect(carriesNetNegative(row('Z', '2025-07', 0, 0))).toBe(false);
+    expect(carriesNetNegative(row('N', '2025-07', null, null))).toBe(false);
+    expect(carriesNetNegative(row('M', '2025-07', 2, -1))).toBe(true);
+  });
+
+  it('is what the loader actually calls, before anything else of the window is written', () => {
+    const src = readFileSync('supabase/functions/market-sales-ingest/index.ts', 'utf8');
+    const writer = src.slice(src.indexOf('async function upsertApprovals('), src.indexOf('async function upsertApprovalShapes('));
+    expect(writer).toContain('approvalsWriteOrder(rows)');
+    expect(writer).toMatch(/for \(const group of \[order\.first, order\.then\]\)/);
+  });
+
+  it('records the dropped and the negative cells where an operator reads them', () => {
+    const src = readFileSync('supabase/functions/market-sales-ingest/index.ts', 'utf8');
+    expect(src).toContain('implausible_cells: parsed.implausibleCells');
+    expect(src).toContain('negative_rows: parsed.rows.filter(carriesNetNegative).length');
   });
 });
 

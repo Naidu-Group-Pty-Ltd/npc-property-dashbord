@@ -166,16 +166,31 @@ export const ABS_BA_PLAUSIBILITY = {
     sa2: 20_000_000_000, lga: 20_000_000_000, state: 80_000_000_000, national: 250_000_000_000,
   } as Record<ApprovalsAreaKind, number>,
   /**
-   * The share of cells that may exceed those ceilings before the download is
-   * refused as drifted rather than having them dropped individually.
+   * How many cells may exceed those ceilings before the download is refused
+   * as drifted rather than having them dropped individually.
    *
-   * Drift is systematic — a column read in thousands moves EVERY cell — so
-   * one implausible cell in twenty-two thousand is a publisher artefact and
-   * a hundredth of them is a fault in how the column was read. Small on
-   * purpose: the refusal is what stops a wrong column reaching a client's
-   * page, and only isolated cells are bought out of it.
+   * A COUNT, not a share, and the difference is the whole of the rule. An
+   * isolated publisher artefact is a count: it does not grow with the window.
+   * Drift is a share: a changed `UNIT_MULT` or a moved column moves every
+   * cell by the same factor, so the number it pushes over a ceiling grows
+   * with the window.
+   *
+   * The first version of this rule was a 1% share, and for dwelling counts
+   * that is too loose to catch the fault it exists for. Under a 1,000x drift
+   * the SA2 ceiling of 100,000 is crossed only by cells whose TRUE figure is
+   * above 100 units in a month, and that is a small minority of SA2 months —
+   * so a drifted download could have been ACCEPTED with every other cell
+   * written a thousand times too large, which is a wrong column reaching a
+   * client's page. At a count of three, a 22,000-cell window refuses on the
+   * fourth over-ceiling cell, which is what drift of any real extent
+   * produces, while one or two publisher typos are dropped and named.
+   *
+   * The production parser before this refused on the FIRST such cell, which
+   * is what turned one publisher value into a nine-hour livelock. Three is
+   * the smallest allowance that ends the livelock for an isolated artefact
+   * and the tightest that keeps drift detection close to what it was.
    */
-  maxImplausibleShare: 0.01,
+  maxIsolatedImplausibleCells: 3,
 } as const;
 
 // ─── The dataflow catalogue ─────────────────────────────────────────────────
@@ -562,10 +577,59 @@ export interface ApprovalRow {
   areaCode: string;
   period: string;
   buildingType: ApprovalsBuildingType;
-  /** Dwelling units approved. Null where the ABS published none. */
+  /**
+   * Dwelling units approved, NET OF AMENDMENTS — so negative in a month when
+   * previously approved dwellings were cancelled or revised down. Null where
+   * the ABS published none.
+   */
   dwellingUnits: number | null;
-  /** Dollars of building approved, where the flow carries a value measure. */
+  /** Dollars of building approved, net of amendments, where the flow carries a value measure. */
   value: number | null;
+}
+
+/** Does this row carry a published negative on either measure? */
+export const carriesNetNegative = (r: ApprovalRow): boolean =>
+  (r.dwellingUnits !== null && r.dwellingUnits < 0) || (r.value !== null && r.value < 0);
+
+/**
+ * The order a window's rows are written in: every row carrying a negative
+ * FIRST, then the rest.
+ *
+ * ## Why an order is part of the fix
+ *
+ * The walk derives its next window from the register's own edges —
+ * `oldest` is `min(period)` over the table — and the loader writes a window
+ * in batches of five hundred, throwing on the first batch that fails. So a
+ * batch refused half-way through a window leaves the rows before it committed,
+ * `oldest` moves to the window's first month, and the planner steps below a
+ * window it never finished. Nothing ever asks for those rows again. That is
+ * a hole in the register, and a hole reads to every report as data.
+ *
+ * Until `20261217000000_approvals_admit_net_amendments.sql` is applied the
+ * table refuses a negative on its own CHECK, and the code that admits
+ * negatives ships on merge while that migration is dispatched by hand. In the
+ * gap, a window containing a negative would have punched a hole. Written
+ * first, the negative-bearing rows are the FIRST request of the window: a table
+ * that still refuses them refuses before any other row commits, the register
+ * stays exactly where it was, and the next tick asks again. Once the migration
+ * lands the whole window writes. The order makes the two changes safe to
+ * deploy in either sequence.
+ *
+ * Stable within each group, so the order is otherwise the parse's own.
+ *
+ * It does NOT make a window atomic. A transient failure part-way through the
+ * non-negative rows still commits the batches before it, as it always has;
+ * that is recorded in `docs/operations/SESSION_HANDOFF_2026-09-23.md` as a
+ * defect of its own rather than papered over here.
+ */
+export function approvalsWriteOrder(rows: ReadonlyArray<ApprovalRow>): {
+  first: ApprovalRow[];
+  then: ApprovalRow[];
+} {
+  const first: ApprovalRow[] = [];
+  const then: ApprovalRow[] = [];
+  for (const r of rows) (carriesNetNegative(r) ? first : then).push(r);
+  return { first, then };
 }
 
 /*
@@ -937,11 +1001,10 @@ export function parseAbsBuildingApprovals(
        * is nulled and named, never a reason to refuse a series*, where one
        * $7,000 cell refused 444 localities.
        *
-       * So an isolated implausible cell is DROPPED and COUNTED, and the
-       * refusal is kept for what it was written for — systematic drift, which
-       * is many cells rather than one. `maxImplausibleShare` is the boundary
-       * between the two, and it is deliberately small: at 1% a genuinely
-       * drifted column still refuses, because drift moves every cell.
+       * So an isolated implausible cell is DROPPED and NAMED, and the refusal
+       * is kept for what it was written for — systematic drift, which is many
+       * cells rather than one. `maxIsolatedImplausibleCells` is the boundary
+       * between the two.
        */
       const ceiling = isValue
         ? ABS_BA_PLAUSIBILITY.maxValuePerAreaMonth[rowKind]
@@ -967,17 +1030,16 @@ export function parseAbsBuildingApprovals(
   }
 
   /*
-   * Systematic drift still refuses. The share is measured against the cells
-   * the guard actually judged, so a small window and a large one are held to
-   * the same standard, and the message NAMES examples rather than a count —
-   * a bare number sends nobody to a remedy.
+   * Systematic drift still refuses. See `maxIsolatedImplausibleCells` for why
+   * the allowance is a count: an artefact does not grow with the window and
+   * drift does. The message NAMES examples rather than a count alone — a bare
+   * number sends nobody to a remedy.
    */
-  if (cellsRead > 0
-    && implausible.length / cellsRead > ABS_BA_PLAUSIBILITY.maxImplausibleShare) {
+  if (implausible.length > ABS_BA_PLAUSIBILITY.maxIsolatedImplausibleCells) {
     throw new Error(
       `${implausible.length} of ${cellsRead} ABS building-approvals cells are outside their `
-      + `magnitude ceiling (over ${ABS_BA_PLAUSIBILITY.maxImplausibleShare * 100}%), which is a `
-      + `column read wrongly rather than a publisher amendment — refused. `
+      + `magnitude ceiling (more than ${ABS_BA_PLAUSIBILITY.maxIsolatedImplausibleCells}), which is a `
+      + `column read wrongly rather than a publisher artefact — refused. `
       + `For example: ${implausible.slice(0, 3).join('; ')}`,
     );
   }

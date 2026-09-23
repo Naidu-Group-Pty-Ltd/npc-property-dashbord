@@ -1632,6 +1632,28 @@ walk with no walker), and the register now deepens itself hourly — measured
 over two consecutive ticks at the head of this entry. Nothing here is waiting
 on a deploy.
 
+**And that last sentence stopped being true 87 minutes after it was written.**
+From 12:20 UTC on 22 Sep every hourly tick asked the ABS for 2025-07 → 2025-09
+and was refused on one cell — *"the ABS building-approvals count for Ulverstone
+2025-08 reads -5 dwelling units … refused"* — seventeen consecutive ticks by
+04:20 UTC on 23 Sep, one message every time, read from `function_logs`, with
+`oldest` frozen at 2025-10. ABS approvals are net of AMENDMENTS, so the -5 is
+the publisher's own figure. Two layers refused it — the parser's sign check
+and the table's own `CHECK (dwelling_units >= 0)` — and a third fault waited
+behind them: the loader commits a window in batches, so lifting the first
+refusal without the second would have committed part of the window and let
+the walk step past the rest of it for ever. The fix for all three, and for the
+drift allowance the first attempt loosened, is on
+`claude/adoring-hopper-g02tdt` and **is waiting on a deploy**: a merge (which
+ships the parser and loader) and one hand-dispatched migration,
+`20261217000000_approvals_admit_net_amendments.sql`, in either order.
+`docs/operations/SESSION_HANDOFF_2026-09-23.md` carries the evidence, the
+order-independence argument and what was executed on a real PostgreSQL to
+check it. Until it ships, production's Supply section keeps its old wording —
+it says *"The publisher has released 10 of the 12 months"* and calls the total
+a floor, when the ABS released all twelve and two are simply not held yet —
+and it states nothing year-on-year.
+
 W3.3 needs no register at all, for the reason its own entry gives: there is no
 ABS projection at SA2 to load. The Bureau publishes four projection flows over
 one `REGION` dimension of 23 codes — 8 states, 1 national, 14 capital-city or
