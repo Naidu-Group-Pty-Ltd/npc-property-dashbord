@@ -226,7 +226,9 @@ Either way the register is never left holding part of a window.
    `APPROVALS_READBACK`. Expect `negative=` greater than zero once 2025-08 is
    in. Over its first seven months the register grew by **exactly 4,934 rows
    a month** (4,934 → 19,736 → 34,538 over one, four and seven months). A
-   window that fell short of that is the signature of §6's defect.
+   window that fell short of that is the signature of §6's defect. (That
+   check stays useful after §6's fix: a shortfall should now be repaired by
+   the next tick instead of persisting.)
 
 **What to expect, and when.** 33 months are owed below 2025-10 (floor
 `2023-01`), which is **11 windows, one per hourly tick**:
@@ -244,7 +246,23 @@ stalled.)
 
 ---
 
-## 6 · Open defect, recorded and not fixed: a transient failure mid-window still leaves a hole
+## 6 · A transient failure mid-window left a hole — fixed on the branch by remedy 1, PENDING merge
+
+**Status, later on 23 Sep.** The owner approved closing this ("items 4, 5 &
+6"), and remedy 1 is implemented on `claude/adoring-hopper-g02tdt`. It is
+**not merged or deployed**, so production still steps below `min(period)`
+until it is. The walk now steps below the oldest month the sync ledger PROVES
+was written whole (`vouchedOldest`), so a half-written window is asked for
+again. It needs no schema change and no new object. The rule for older rows
+turned out not to need `page_window`: every approvals success row since the
+stage was born (6ba3a5e, 21 Sep) carries `area_kind`, `first_period`,
+`latest_period` and a period count, and a count equal to the span is a window
+with no gap. The one thing the remedy did not anticipate is that **the ledger
+outlives the rows it describes**. `20261215030000` emptied the table on
+22 Sep, and the two success rows written before it still vouch for
+2026-05 → 2026-07. So a success row older than every stamp the table holds is
+set aside. The design, the simulation that checks it and its limits are in
+`docs/reports/SUPPLY_EVIDENCE.md` §15. The analysis below is kept as written.
 
 `approvalsWriteOrder` closes the hole for the **negative** class only. It does
 **not** make a window atomic. If a batch fails part-way through the
@@ -418,7 +436,11 @@ and a merged commit each describe what was meant to happen.
 6. **Look at a delivered document's Supply section** after the fifth window,
    when it first states a year-on-year change. If the property is in NSW, that
    same document can settle §9's land-use question.
-7. **Consider §6's remedy 1 as a separate, small change.**
+7. ~~Consider §6's remedy 1 as a separate, small change.~~ Implemented on the
+   branch (§6 status). It is PENDING the owner's merge confirmation and a
+   deploy. The proof by effect is the first sync row carrying
+   `oldest_vouched`, `windows_vouching` and `windows_stale`. On production's
+   timeline, expect `windows_stale: 2`: the two pre-cleanup rows.
 
 ---
 

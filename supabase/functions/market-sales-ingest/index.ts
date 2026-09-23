@@ -53,9 +53,16 @@ import {
   type ComposedKey,
 } from '../_shared/reports/market/openData/absDataStructure.pure.ts';
 import {
+  APPROVALS_LEDGER_READ_LIMIT,
+  APPROVALS_LEDGER_SELECT,
   approvalsPage,
+  completedWindowOf,
   pagesToCover,
   planApprovalsWork,
+  vouchedOldest,
+  type ApprovalsLedgerEntry,
+  type CompletedApprovalsWindow,
+  type VouchedEdge,
 } from '../_shared/reports/market/openData/absApprovalsPaging.pure.ts';
 
 /**
@@ -558,43 +565,6 @@ Deno.serve(async (req) => {
       const startPeriod = typeof body.startPeriod === 'string' ? body.startPeriod : '2018-01';
 
       /*
-       * The query is NARROWED at the source, from the publisher's own data
-       * structure. Measured from CI on 21 Sep 2026: `/all` at SA2 grain is
-       * past 5 GB and still running after sixty seconds, and ONE month of LGA
-       * data is 61.8 MB — because the download is the whole cube (every
-       * building type including hotels, factories and offices, every measure,
-       * all three series estimates) of which this loader keeps Original
-       * estimates of three residential types on two measures.
-       *
-       * Shrinking the period cannot shrink a cube that is wide rather than
-       * long, so the lever is the key. It is composed from the structure the
-       * ABS publishes rather than typed, for the reason the dataflow is
-       * discovered rather than named: an SDMX key is POSITIONAL, and one
-       * written against the wrong positions returns a plausible, wrong slice
-       * under an HTTP 200.
-       *
-       * A structure that cannot be read costs nothing — the fallback is
-       * `/all`, which is what shipped, so this can only improve a load or
-       * leave it alone.
-       */
-      let keyNarrowing: ComposedKey = { key: 'all', narrowed: [], unnarrowed: [] };
-      try {
-        const dsdRes = await fetch(absDataStructureUrl(choice.flow), {
-          headers: { 'User-Agent': UA, Accept: 'application/vnd.sdmx.structure+json;version=1.0,application/xml,*/*' },
-        });
-        if (!dsdRes.ok) throw new Error(`answered ${dsdRes.status}`);
-        keyNarrowing = composeApprovalsKey(parseDataStructure(await dsdRes.text()));
-      } catch (error) {
-        keyNarrowing = {
-          key: 'all',
-          narrowed: [],
-          unnarrowed: [{
-            dimension: '(the whole structure)',
-            reason: error instanceof Error ? error.message : String(error),
-          }],
-        };
-      }
-      /*
        * ONE PAGE per invocation, newest first.
        *
        * Measured from CI on 21 Sep 2026: at SA2 grain with the query
@@ -618,22 +588,35 @@ Deno.serve(async (req) => {
        * page 0, which asks FORWARD, and the register never deepened past one
        * window. See `planApprovalsWork`.
        */
-      const { data: frontierRow } = await supabase
+      /*
+       * Every read below that FAILS refuses the run. A failed read is not an
+       * empty one: read as "no rows" it re-establishes a frontier the table
+       * already has, and read as "no proof" it re-walks a register that is
+       * already whole. Refused, nothing is asked of the ABS and the next tick
+       * reads again. (These two discarded their errors until 23 Sep 2026.)
+       */
+      const { data: frontierRow, error: frontierError } = await supabase
         .from('market_building_approvals')
         .select('period, loaded_at')
         .eq('area_kind', choice.areaKind)
         .order('period', { ascending: false })
         .limit(1)
         .maybeSingle();
-      const { data: oldestRow } = await supabase
+      if (frontierError) {
+        throw new Error(`the supply register's newest month could not be read (${frontierError.message}) — refused; nothing was asked of the ABS`);
+      }
+      const { data: oldestRow, error: oldestError } = await supabase
         .from('market_building_approvals')
         .select('period')
         .eq('area_kind', choice.areaKind)
         .order('period', { ascending: true })
         .limit(1)
         .maybeSingle();
+      if (oldestError) {
+        throw new Error(`the supply register's oldest month could not be read (${oldestError.message}) — refused; nothing was asked of the ABS`);
+      }
       const frontier = typeof frontierRow?.period === 'string' ? frontierRow.period : null;
-      const oldest = typeof oldestRow?.period === 'string' ? oldestRow.period : null;
+      const tableOldest = typeof oldestRow?.period === 'string' ? oldestRow.period : null;
       const frontierLoadedAt = typeof frontierRow?.loaded_at === 'string'
         ? frontierRow.loaded_at.slice(0, 7)
         : null;
@@ -644,8 +627,63 @@ Deno.serve(async (req) => {
        * register converge on a cadence rather than on somebody's bookkeeping.
        */
       const explicitPage = Number.isInteger(body.page) ? Number(body.page) : null;
+
+      /*
+       * What the table's rows PROVE, which is less than what they are.
+       *
+       * `min(period)` says which months have rows, and a window a run died
+       * part-way through has rows. Stepping below it is how a half-written
+       * window became a hole nothing ever asked for again. Only the sync
+       * ledger says which months were written WHOLE — this stage inserts its
+       * success row after the last batch commits, never before — so the walk
+       * steps below the bottom of the unbroken run of months completed writes
+       * vouch for, down from the frontier. A success row older than every
+       * stamp the table still holds describes rows that have since gone, and
+       * vouches for nothing. See `vouchedOldest`.
+       *
+       * The ledger is read as a projection of a few fields: a success row's
+       * whole `detail` runs to kilobytes, and the worker's memory is the
+       * resource that answered `546`.
+       */
+      let edge: VouchedEdge | null = null;
+      let stalestLoadedAt: string | null = null;
+      if (explicitPage === null) {
+        const { data: stalestRow, error: stalestError } = await supabase
+          .from('market_building_approvals')
+          .select('loaded_at')
+          .eq('area_kind', choice.areaKind)
+          .order('loaded_at', { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        if (stalestError) {
+          throw new Error(`the supply register's oldest load stamp could not be read (${stalestError.message}) — refused; nothing was asked of the ABS`);
+        }
+        stalestLoadedAt = typeof stalestRow?.loaded_at === 'string' ? stalestRow.loaded_at : null;
+        const { data: ledgerRows, error: ledgerError } = await supabase
+          .from('market_sales_sync')
+          .select(APPROVALS_LEDGER_SELECT)
+          .eq('detail->>stage', 'approvals')
+          .eq('detail->>area_kind', choice.areaKind)
+          .not('detail->>latest_period', 'is', null)
+          .order('id', { ascending: false })
+          .limit(APPROVALS_LEDGER_READ_LIMIT);
+        if (ledgerError) {
+          throw new Error(`the sync ledger could not be read (${ledgerError.message}), so which windows were written whole is unknown — refused; nothing was asked of the ABS`);
+        }
+        const completed = ((ledgerRows ?? []) as ApprovalsLedgerEntry[])
+          .map((row) => completedWindowOf(row, choice.areaKind))
+          .filter((w): w is CompletedApprovalsWindow => w !== null);
+        edge = vouchedOldest({ frontier, tableOldest, stalestLoadedAt, completed });
+      }
       const planned = explicitPage === null
-        ? planApprovalsWork({ frontier, oldest, asOf, floor: REGISTER_FLOOR_PERIOD, frontierLoadedAt })
+        ? planApprovalsWork({
+          frontier,
+          oldest: edge!.oldest,
+          heldOldest: tableOldest,
+          asOf,
+          floor: REGISTER_FLOOR_PERIOD,
+          frontierLoadedAt,
+        })
         : null;
       const pageIndex = explicitPage ?? 0;
       const page = explicitPage === null
@@ -658,9 +696,10 @@ Deno.serve(async (req) => {
         : approvalsPage(explicitPage, asOf, frontier);
 
       /*
-       * Nothing owed: current to the frontier and complete to the floor. The
-       * publisher is asked NOTHING — a settled run is one table read, which
-       * is what makes a frequent schedule free rather than wasteful.
+       * Nothing owed: current to the frontier and PROVEN complete to the
+       * floor. No data is requested — a settled run reads the catalogue and
+       * four facts from its own tables, which is what makes a frequent
+       * schedule free rather than wasteful.
        */
       if (planned?.kind === 'settled' && typeof body.startPeriod !== 'string') {
         const detail = {
@@ -668,13 +707,59 @@ Deno.serve(async (req) => {
           settled: true,
           flow: dataflowRef(choice.flow),
           frontier,
-          oldest,
+          // The edge the walk trusts, and the two facts it was derived from —
+          // so a settled row says what it rests on rather than only that it is.
+          oldest: edge?.oldest ?? null,
+          oldest_in_table: tableOldest,
+          ledger_oldest: edge?.ledgerOldest ?? null,
+          windows_vouching: edge?.windowsVouching ?? null,
+          windows_stale: edge?.windowsStale ?? null,
+          stalest_loaded_at: stalestLoadedAt,
           register_floor: REGISTER_FLOOR_PERIOD,
           windows_remaining: 0,
           because: planned.because,
         };
         await supabase.from('market_sales_sync').insert({ detail });
         return json({ success: true, ...detail });
+      }
+
+      /*
+       * The query is NARROWED at the source, from the publisher's own data
+       * structure. Measured from CI on 21 Sep 2026: `/all` at SA2 grain is
+       * past 5 GB and still running after sixty seconds, and ONE month of LGA
+       * data is 61.8 MB — because the download is the whole cube (every
+       * building type including hotels, factories and offices, every measure,
+       * all three series estimates) of which this loader keeps Original
+       * estimates of three residential types on two measures.
+       *
+       * Shrinking the period cannot shrink a cube that is wide rather than
+       * long, so the lever is the key. It is composed from the structure the
+       * ABS publishes rather than typed, for the reason the dataflow is
+       * discovered rather than named: an SDMX key is POSITIONAL, and one
+       * written against the wrong positions returns a plausible, wrong slice
+       * under an HTTP 200.
+       *
+       * A structure that cannot be read costs nothing — the fallback is
+       * `/all`, which is what shipped, so this can only improve a load or
+       * leave it alone. It is read HERE, after the settled check, because a
+       * settled run asks for no data and so has no query to narrow.
+       */
+      let keyNarrowing: ComposedKey = { key: 'all', narrowed: [], unnarrowed: [] };
+      try {
+        const dsdRes = await fetch(absDataStructureUrl(choice.flow), {
+          headers: { 'User-Agent': UA, Accept: 'application/vnd.sdmx.structure+json;version=1.0,application/xml,*/*' },
+        });
+        if (!dsdRes.ok) throw new Error(`answered ${dsdRes.status}`);
+        keyNarrowing = composeApprovalsKey(parseDataStructure(await dsdRes.text()));
+      } catch (error) {
+        keyNarrowing = {
+          key: 'all',
+          narrowed: [],
+          unnarrowed: [{
+            dimension: '(the whole structure)',
+            reason: error instanceof Error ? error.message : String(error),
+          }],
+        };
       }
 
       // An explicit window from an operator overrides the page arithmetic,
@@ -689,7 +774,8 @@ Deno.serve(async (req) => {
         : narrowedApprovalsUrl(choice.flow, window.startPeriod, keyNarrowing.key, window.endPeriod);
       console.log(
         `[market-sales-ingest] approvals: ${dataflowRef(choice.flow)} key=${keyNarrowing.key} `
-        + `page=${pageIndex} ${window.startPeriod}→${window.endPeriod ?? 'open'} frontier=${frontier ?? 'none'}`,
+        + `page=${pageIndex} ${window.startPeriod}→${window.endPeriod ?? 'open'} frontier=${frontier ?? 'none'} `
+        + `proven=${edge?.oldest ?? 'none'} held=${tableOldest ?? 'none'}`,
       );
 
       const res = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'text/csv,*/*' } });
@@ -742,6 +828,14 @@ Deno.serve(async (req) => {
         states: parsed.states,
         rows_skipped: parsed.skipped,
         rows_written: written,
+        // What makes this row PROOF, read back by `completedWindowOf`: the
+        // exact months written (a gap inside a window is named rather than
+        // spanned) and the stamp every one of those rows carries, so a later
+        // run can tell a write whose rows survive from one whose rows have
+        // since been deleted. Written after the last batch commits and never
+        // before — that ordering is the whole guarantee.
+        period_list: parsed.periods,
+        rows_loaded_at: loadedAt,
         // A cell dropped for magnitude is named HERE, because "dropped and
         // named" means an operator can read the name. The parse carried the
         // list and nothing recorded it.
@@ -761,7 +855,13 @@ Deno.serve(async (req) => {
         // the decision rather than only its result.
         work: planned?.kind ?? 'operator_page',
         because: planned?.because ?? `operator named page ${pageIndex}`,
-        oldest_before: oldest,
+        oldest_before: tableOldest,
+        // The edge the planner stepped below, and what it rests on.
+        oldest_vouched: edge?.oldest ?? null,
+        ledger_oldest: edge?.ledgerOldest ?? null,
+        windows_vouching: edge?.windowsVouching ?? null,
+        windows_stale: edge?.windowsStale ?? null,
+        stalest_loaded_at: stalestLoadedAt,
         page_window: `${window.startPeriod}→${window.endPeriod ?? 'open'}`,
         page_judged_against: window.minPeriods,
         frontier_before: frontier,
@@ -770,7 +870,19 @@ Deno.serve(async (req) => {
           : Math.max(0, pagesToCover(parsed.latestPeriod, REGISTER_FLOOR_PERIOD) - (pageIndex + 1)),
         register_floor: REGISTER_FLOOR_PERIOD,
       };
-      await supabase.from('market_sales_sync').insert({ detail });
+      /*
+       * This row is the proof the next run reads, so its absence is said out
+       * loud. It costs nothing worse than one repeated window — an unproven
+       * window is asked for again, never stepped past — but "why did the walk
+       * read that window twice" should be answerable from the log.
+       */
+      const { error: ledgerWriteError } = await supabase.from('market_sales_sync').insert({ detail });
+      if (ledgerWriteError) {
+        console.error(
+          `[market-sales-ingest] approvals: ${detail.page_window} was written whole but its success row was not `
+          + `recorded (${ledgerWriteError.message}); the next run will read that window again`,
+        );
+      }
       return json({ success: true, ...detail });
     }
 

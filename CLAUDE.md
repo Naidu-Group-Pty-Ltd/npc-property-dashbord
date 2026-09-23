@@ -2211,6 +2211,25 @@ window is never half written by a sign**: `approvalsWriteOrder` writes the
 negative-bearing rows first, so a table that still refuses them refuses before
 anything commits, and the code and the migration ship in either order.
 
+**Rows are not proof, and the walk now steps below what the ledger PROVES**
+(§15 of the same doc). A window a run died part-way through has rows and is
+not whole, so `min(period)` walked past a half-written window and left a hole
+that nothing asked for again. `vouchedOldest` takes the edge from the sync
+ledger instead: the stage inserts its success row after the last batch
+commits, and the edge is the bottom of the unbroken run, down from the
+frontier, that completed writes vouch for. The result is that a half-written
+window, or a month a slipped release skipped at the top, is **asked for
+again**. The cost of a missing proof is one re-read, never a hole. Two rules
+bite. **The ledger outlives the rows it describes**: `20261215030000` emptied
+the table on 22 Sep and two success rows still vouch for what it deleted, so
+a success row older than every `loaded_at` the table holds is set aside
+(`rows_loaded_at` names the stamp; older rows use their insert time). And
+**every read the planner uses refuses the run when it fails**, because a
+failed read taken as "no rows" re-establishes a frontier the table already
+has. A simulation of 30% part-way failures, slipped releases and table clears
+settles over no hole under the new rule and over holes on most seeds under the
+old one. The second result is how the test shows it can see the defect.
+
 **The national pipeline was asked for, and the answer is a measurement.**
 Read [`NATIONAL_PIPELINE_EVIDENCE.md`](./docs/reports/NATIONAL_PIPELINE_EVIDENCE.md)
 before touching `_shared/planning/nationalPipeline.pure.ts`,
