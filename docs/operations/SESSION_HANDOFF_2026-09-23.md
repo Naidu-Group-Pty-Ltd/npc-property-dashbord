@@ -216,6 +216,11 @@ Either way the register is never left holding part of a window.
 
 ## 5 · Shipping it, and proving it by effect
 
+**Status, 23 Sep.** Steps 1–4 are done for #2736; §0 has the ticks. Step 5,
+the read-back, has **not** been run, so it is PENDING. Step 4's reasoning
+describes the planner as #2736 shipped it. Since #2737 the walk steps below the
+edge the sync ledger proves rather than below `min(period)` (§6).
+
 1. **Owner:** confirm the merge of this branch's pull request (the PR is
    open; merging waits for the owner, under §1).
 2. **After the merge**, confirm the `Deploy Supabase functions` run on that
@@ -262,18 +267,18 @@ stalled.)
 
 ---
 
-## 6 · A transient failure mid-window left a hole — fixed on the branch by remedy 1, PENDING merge
+## 6 · A transient failure mid-window left a hole — fixed by remedy 1, shipped on #2737
 
 **Status, later on 23 Sep.** The owner approved closing this ("items 4, 5 &
-6"), and remedy 1 is implemented on `claude/adoring-hopper-g02tdt`. It is
-**not merged or deployed**, so production still steps below `min(period)`
-until it is. The walk now steps below the oldest month the sync ledger PROVES
-was written whole (`vouchedOldest`), so a half-written window is asked for
-again. It needs no schema change and no new object. The rule for older rows
-turned out not to need `page_window`: every approvals success row since the
-stage was born (6ba3a5e, 21 Sep) carries `area_kind`, `first_period`,
-`latest_period` and a period count, and a count equal to the span is a window
-with no gap. The one thing the remedy did not anticipate is that **the ledger
+6"), and remedy 1 shipped on #2737 (merged as `16364001c`, deployed 10:49
+UTC). Until then production stepped below `min(period)`. The first tick on the
+new code is the 11:20 UTC one (§13). The walk now steps below the oldest month
+the sync ledger PROVES was written whole (`vouchedOldest`), so a half-written
+window is asked for again. It needs no schema change and no new object. The
+rule for older rows turned out not to need `page_window`: every approvals
+success row since the stage was born (6ba3a5e, 21 Sep) carries `area_kind`,
+`first_period`, `latest_period` and a period count, and a count equal to the
+span is a window with no gap. The one thing the remedy did not anticipate is that **the ledger
 outlives the rows it describes**. `20261215030000` emptied the table on
 22 Sep, and the two success rows written before it still vouch for
 2026-05 → 2026-07. So a success row older than every stamp the table holds is
@@ -483,7 +488,7 @@ and a merged commit each describe what was meant to happen.
 
 ## 13 · Items 4–6, on #2737
 
-- **Item 4 — built and specced, not deployed.** The walk's lower edge comes
+- **Item 4 — shipped on #2737, deployed 10:49 UTC.** The walk's lower edge comes
   from windows the ledger vouches for (§6's remedy 1). Its proof by effect is
   the first sync row after deploy carrying `oldest_vouched`,
   `windows_vouching` and `windows_stale`; on production's timeline expect
