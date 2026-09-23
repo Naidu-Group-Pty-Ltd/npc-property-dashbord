@@ -15,6 +15,8 @@ import {
   parseProjectionFile,
   projectionFileByKey,
   projectionIngested,
+  qldMainPage as readQldMainPage,
+  qldYearOf,
   readFirstInterval,
   readHistoricProjected,
   readJumpOffYear,
@@ -288,6 +290,217 @@ describe('Victoria — Victoria in Future 2023, LGAs', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Queensland
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The Main page as CI printed it (run 35833636513): title rows, contents, Notes, Caution, Disclaimer. */
+function qldMainPage(opts: { base?: string | null; boundaries?: string | null; subtitle?: string; extra?: Cell[][] } = {}): Cell[][] {
+  const rows: Cell[][] = [
+    [null, null, null, null, null, null, null, null, 'Queensland Government'],
+    [],
+    [null, 'Queensland Government population projections, 2025 edition'],
+    [],
+    [null, 'Projected population (medium series), by statistical area'],
+    [null, opts.subtitle ?? 'Statistical areas level 2 (SA2), SA3 and SA4'],
+    [null, '2021 to 2046'],
+    [], [], [],
+    [null, 'Contents'], [null, 'Tables'], [null, 1, 'Data'], [],
+    [null, 'Notes'], [],
+  ];
+  if (opts.boundaries !== null) rows.push([null, opts.boundaries ?? 'Boundaries are based on the Australian Statistical Geography Standard (ASGS) Edition 3, 2021.']);
+  if (opts.base !== null) rows.push([null, opts.base ?? '2021 data are final estimates.']);
+  rows.push([null, 'All data are at 30 June.'], [], [null, 'Caution'], [],
+    [null, 'These population projections are not targets.'], [], [null, 'Disclaimer'],
+    [null, 'All data and information in this workbook are believed to be accurate.'], ...(opts.extra ?? []));
+  return rows;
+}
+
+const QLD_YEARS = [2026, 2031, 2036, 2041, 2046];
+
+/** The SA2 Data sheet as CI printed it: title, years with the base as `2021 (b)`, the labels with `— persons —`. */
+function qldSa2Data(opts: {
+  n?: number; title?: string; total?: number | 'sum' | null; measure?: string;
+  secondBlock?: 'after-a-gap' | 'adjacent'; base?: Cell;
+} = {}): Cell[][] {
+  const n = opts.n ?? 546;
+  const second = opts.secondBlock;
+  const gap = second === 'after-a-gap' ? [null] : [];
+  const sa2s = Array.from({ length: n }, (_, i): Cell[] => {
+    const base = 1000 + i;
+    return [301, 'Brisbane - East', 30101, 'Capalaba', 301011001 + i, i === 0 ? 'Alexandra Hills' : `Area ${i}`,
+      base, ...QLD_YEARS.map((_, k) => base + (k + 1) * 10.25), ...(second ? [...gap, ...QLD_YEARS.map(() => 1.5)] : [])];
+  });
+  const sum = sa2s.reduce((acc, r) => acc + (r[6] as number), 0);
+  const total = opts.total === undefined || opts.total === 'sum' ? sum : opts.total;
+  return [
+    [opts.title ?? 'Projected population (medium series), by statistical area level 2 (SA2), SA3 and SA4, Queensland, 2021 to 2046',
+      null, null, null, null, null, 'At 30 June'],
+    [null, null, null, null, null, null, opts.base ?? '2021 (b)', ...QLD_YEARS, ...(second ? [...gap, ...QLD_YEARS] : [])],
+    ['SA4 code (a)', 'SA4 (a)', 'SA3 code (a)', 'SA3 (a)', 'SA2 code (a)', 'SA2 (a)', opts.measure ?? '— persons —',
+      ...(second ? [null, null, null, null, null, ...gap, '— per cent —'] : [])],
+    ...sa2s,
+    ...(total === null ? [] : [['Queensland', null, null, null, null, null, total, ...QLD_YEARS.map(() => sum * 1.1)]]),
+    [],
+    ['(a) Boundaries are based on the ASGS Edition 3.'],
+    ['(b) 2021 final estimated resident population.'],
+    ['All data are at 30 June'],
+    [],
+    ['Source: Queensland Government Statistician’s Office, Queensland Government population projections, 2025 edition'],
+  ];
+}
+
+const QLD_COUNCILS = ['Aurukun', 'Balonne', 'Brisbane', 'Central Highlands (Qld)',
+  ...Array.from({ length: 73 }, (_, i) => `Council ${i}`)];
+
+/** One LGA series sheet as CI printed it: title, a label row, the years, `— persons —`, then councils and footnotes. */
+function qldLgaSheet(series: 'medium' | 'low' | 'high', opts: {
+  title?: string; baseShift?: Record<string, number>; drop?: number; total?: number | 'sum' | null; label?: string;
+} = {}): Cell[][] {
+  const lift = { medium: 1, low: 0.9, high: 1.1 }[series];
+  const councils = QLD_COUNCILS.slice(0, QLD_COUNCILS.length - (opts.drop ?? 0));
+  const rows = councils.map((name, i): Cell[] => {
+    const base = (name === 'Brisbane' ? 1262968 : 1130 + i * 37) + (opts.baseShift?.[name] ?? 0);
+    return [name, base, ...QLD_YEARS.map((_, k) => base * (1 + (k + 1) * 0.02 * lift))];
+  });
+  const sum = rows.reduce((acc, r) => acc + (r[1] as number), 0);
+  const total = opts.total === undefined || opts.total === 'sum' ? sum : opts.total;
+  return [
+    [opts.title ?? `Projected population (${series} series), by local government area (LGA), Queensland, 2021 to 2046`],
+    [],
+    [opts.label ?? 'Local Government Area (a)', 'At 30 June'],
+    [null, '2021 (b)', ...QLD_YEARS],
+    [null, '— persons —'],
+    ...rows,
+    ...(total === null ? [] : [['Queensland', total, ...QLD_YEARS.map(() => sum * 1.2)]]),
+    [],
+    ['(a) Boundaries are based on local government areas as at 2021.'],
+    ['(b) 2021 final estimated resident population.'],
+    [],
+    ['Source: Queensland Government Statistician’s Office, Queensland Government population projections, 2025 edition'],
+  ];
+}
+
+function qldLgaSheets(opts: Partial<Record<'medium' | 'low' | 'high', Parameters<typeof qldLgaSheet>[1]>> & { main?: Cell[][] } = {}): Record<string, Cell[][]> {
+  return {
+    'Main page': opts.main ?? qldMainPage({ subtitle: 'Local government areas' }),
+    'Medium series': qldLgaSheet('medium', opts.medium),
+    'Low series': qldLgaSheet('low', opts.low),
+    'High series': qldLgaSheet('high', opts.high),
+  };
+}
+
+describe('Queensland — the Statistician\'s regions tables', () => {
+  it('reads a base year printed with its footnote marker, and nothing that is not a year', () => {
+    expect(qldYearOf('2021 (b)')).toBe(2021);
+    expect(qldYearOf(2026)).toBe(2026);
+    expect(qldYearOf('2046')).toBe(2046);
+    expect(qldYearOf('2021 to 2046')).toBeNull();
+    expect(qldYearOf('2021–2046')).toBeNull();
+    expect(qldYearOf('— persons —')).toBeNull();
+  });
+
+  it('takes the base from the Main page\'s own sentence, and refuses a page that no longer says it', () => {
+    expect(qldMainPage({})).toBeDefined();
+    const read = readQldMainPage(qldMainPage(), 'qld_sa2');
+    expect(read).toEqual({
+      release: 'Queensland Government population projections, 2025 edition',
+      base: 2021,
+      boundaries: 'Boundaries are based on the Australian Statistical Geography Standard (ASGS) Edition 3, 2021.',
+    });
+    expect(() => readQldMainPage(qldMainPage({ base: null }), 'qld_sa2')).toThrow(/no longer states which year's data are final estimates/);
+  });
+
+  it('loads every SA2 by its ASGS 2021 code, the medium series, the base and each projected year', async () => {
+    const p = await parse('qld_sa2', { 'Main page': qldMainPage(), Data: qldSa2Data() });
+    expect(p.release).toBe('Queensland Government population projections, 2025 edition');
+    expect(p.series).toEqual(['Medium series']);
+    expect(p.base).toBe(2021);
+    expect(p.horizon).toBe(2046);
+    expect(p.areas).toBe(546);
+    const alexandra = p.rows.filter((r) => r.area === 'Alexandra Hills');
+    expect(alexandra.map((r) => [r.year, r.year_kind])).toEqual([
+      [2021, 'base'], [2026, 'projected'], [2031, 'projected'], [2036, 'projected'], [2041, 'projected'], [2046, 'projected'],
+    ]);
+    expect(alexandra[0]).toMatchObject({ state: 'QLD', area_kind: 'sa2', area_code: '301011001', area_token: 'ALEXANDRA HILLS', value: 1000 });
+    expect(alexandra[1].value).toBeCloseTo(1010.25, 6);
+    // 546 SA2s starting 1,000 … 1,545 add to 694,785 — and the fixture's own total is that sum.
+    expect(p.declined).toEqual(['Queensland on "Data" (the state, not an area — the 2021 total, 694,785, the areas were checked against)']);
+    expect(guardProjectionRows(p.rows).ok).toBe(true);
+  });
+
+  it('never reads a second block of years as persons, whether a gap separates it or not', async () => {
+    for (const secondBlock of ['after-a-gap', 'adjacent'] as const) {
+      const p = await parse('qld_sa2', { 'Main page': qldMainPage(), Data: qldSa2Data({ secondBlock }) });
+      const alexandra = p.rows.filter((r) => r.area === 'Alexandra Hills');
+      expect(alexandra.map((r) => r.year), secondBlock).toEqual([2021, ...QLD_YEARS]);
+      expect(alexandra.every((r) => r.value >= 1000), secondBlock).toBe(true);
+    }
+  });
+
+  it('refuses where the areas do not add to the publisher\'s own state total', async () => {
+    await expect(parse('qld_sa2', { 'Main page': qldMainPage(), Data: qldSa2Data({ total: 999 }) }))
+      .rejects.toThrow(/add to .* and the publisher's own Queensland total is 999 — a total was read as an area, or an area was missed/);
+  });
+
+  it('refuses SA2 codes it cannot tie to the edition the reader resolves against', async () => {
+    await expect(parse('qld_sa2', { 'Main page': qldMainPage({ boundaries: 'Boundaries are based on the ASGS.' }), Data: qldSa2Data() }))
+      .rejects.toThrow(/does not state that its boundaries are the ASGS 2021 edition/);
+    await expect(parse('qld_sa2', { 'Main page': qldMainPage({ boundaries: null }), Data: qldSa2Data() }))
+      .rejects.toThrow(/"no statement"/);
+  });
+
+  it('refuses a table whose measure is not persons, whose title names no series, or that does not print the stated base', async () => {
+    await expect(parse('qld_sa2', { 'Main page': qldMainPage(), Data: qldSa2Data({ measure: '— per cent —' }) }))
+      .rejects.toThrow(/does not print "persons" under its first year/);
+    await expect(parse('qld_sa2', { 'Main page': qldMainPage(), Data: qldSa2Data({ title: 'Projected population, by SA2' }) }))
+      .rejects.toThrow(/title does not name its series/);
+    await expect(parse('qld_sa2', { 'Main page': qldMainPage({ base: '2016 data are final estimates.' }), Data: qldSa2Data() }))
+      .rejects.toThrow(/does not print 2016, the year the Main page states its final estimates for/);
+  });
+
+  it('refuses a read too short to be the whole file', async () => {
+    await expect(parse('qld_sa2', { 'Main page': qldMainPage(), Data: qldSa2Data({ n: 120 }) }))
+      .rejects.toThrow(/named 120 areas, fewer than the 500/);
+  });
+
+  it('loads all three council series, each named by its sheet AND its own title', async () => {
+    const p = await parse('qld_lga', qldLgaSheets());
+    expect(p.series).toEqual(['Medium series', 'Low series', 'High series']);
+    expect(p.base).toBe(2021);
+    expect(p.horizon).toBe(2046);
+    expect(p.areas).toBe(77);
+    const brisbane = p.rows.filter((r) => r.area === 'Brisbane');
+    expect(brisbane).toHaveLength(18);
+    expect(new Set(brisbane.filter((r) => r.year_kind === 'base').map((r) => r.value))).toEqual(new Set([1262968]));
+    const highlands = p.rows.find((r) => r.area === 'Central Highlands (Qld)');
+    expect(highlands).toMatchObject({ area_kind: 'lga', area_token: 'CENTRAL HIGHLANDS', area_code: 'CENTRAL HIGHLANDS' });
+    expect(p.declined).toHaveLength(3);
+    expect(p.declined.every((d) => /^Queensland on "(Medium|Low|High) series" \(the state, not an area/.test(d))).toBe(true);
+    expect(guardProjectionRows(p.rows).ok).toBe(true);
+  });
+
+  it('refuses a sheet whose own title names a different series from its name', async () => {
+    await expect(parse('qld_lga', qldLgaSheets({ low: { title: 'Projected population (high series), by LGA' } })))
+      .rejects.toThrow(/the "Low series" sheet is titled .* — the sheet and its own title name different series/);
+  });
+
+  it('refuses where a council starts from a different estimate in two series — one sheet was misread', async () => {
+    await expect(parse('qld_lga', qldLgaSheets({ high: { baseShift: { Balonne: 40 }, total: null } })))
+      .rejects.toThrow(/Balonne starts from 1207 in the High series and from 1167 in the Low series — an estimate is one figure in every series/);
+  });
+
+  it('refuses sheets that name different numbers of councils', async () => {
+    await expect(parse('qld_lga', qldLgaSheets({ low: { drop: 2 } })))
+      .rejects.toThrow(/name different numbers of councils \(Medium series 77, Low series 75, High series 77\)/);
+  });
+
+  it('refuses a council sheet whose first column is not headed "Local Government Area"', async () => {
+    await expect(parse('qld_lga', qldLgaSheets({ medium: { label: 'Region' } })))
+      .rejects.toThrow(/does not head its first column "Local Government Area"/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tasmania
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -366,6 +579,16 @@ describe('readable is not republishable', () => {
     expect(projectionIngested('NSW')).toBe(true);
   });
 
+  it('loads Queensland under the licence stated for the product, and records why the site\'s default does not govern', () => {
+    for (const key of ['qld_sa2', 'qld_lga']) {
+      const f = file(key);
+      expect(f.licence, key).toBe('Creative Commons Attribution 4.0 International');
+      expect(f.licenceEvidence, key).toMatch(/data\.qld\.gov\.au dataset ebb088ed-45fc-46ee-9054-3607476bec42/);
+      expect(f.licenceEvidence, key).toMatch(/specific licence terms applied to a product prevail over its default/);
+    }
+    expect(projectionIngested('QLD')).toBe(true);
+  });
+
   it('carries the copyright notice the file supplies on every row, beside the licence', async () => {
     const withNotice = [...nswNotes, ['© State of New South Wales and Department of Planning, Housing and Infrastructure 2024']];
     const p = await parse('nsw_lga', {
@@ -400,6 +623,18 @@ describe('readable is not republishable', () => {
       await expect(parse('nsw_lga', { Notes: [...nswNotes, [line]], 'Total population': lgaTable() }), line)
         .rejects.toThrow(/states terms of its own that restricts/);
     }
+  });
+
+  it('judges a notice that also states terms — "© … All rights reserved" is a restriction wherever it sits', async () => {
+    await expect(parse('nsw_lga', { Notes: [...nswNotes, ['© State of New South Wales 2024. All rights reserved.']], 'Total population': lgaTable() }))
+      .rejects.toThrow(/states terms of its own that restricts/);
+    await expect(parse('nsw_lga', { Notes: [...nswNotes, ['© State of New South Wales 2024. Licensed CC BY-NC 4.0.']], 'Total population': lgaTable() }))
+      .rejects.toThrow(/states terms of its own that restricts/);
+    // A notice that states the declared licence affirms it, and still travels as the notice.
+    const p = await parse('nsw_lga', {
+      Notes: [...nswNotes, ['© State of New South Wales 2024. Licensed under CC BY 4.0.']], 'Total population': lgaTable(),
+    });
+    expect(new Set(p.rows.map((r) => r.licence))).toEqual(new Set(['CC BY 4.0 (test) — © State of New South Wales 2024. Licensed under CC BY 4.0.']));
   });
 
   it('refuses terms that name no licence the file was declared under, so somebody reads them', async () => {

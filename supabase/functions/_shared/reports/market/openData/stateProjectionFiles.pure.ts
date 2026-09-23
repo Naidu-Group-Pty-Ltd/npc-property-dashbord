@@ -5,13 +5,14 @@
  * ── Written against what CI printed, never against memory ─────────────────
  *
  * Every layout below is the one `state-projection-liveness` described from CI
- * on 23 Sep 2026 (run 35827597400, job 107072665157): the sheet names, the row
- * the header sits on, where the publisher states which years are history and
- * which are projected, and which rows are totals rather than areas. Where a
- * fact about a file is not in that output it is not assumed here — it is read
- * from the workbook at load time and the load REFUSES if the workbook does not
- * say it. A parser that guesses a layout loads a plausible wrong table, and a
- * projection table is read by a client as a statement about their suburb.
+ * on 23 Sep 2026 (run 35827597400, job 107072665157; Queensland's in run
+ * 35833636513): the sheet names, the row the header sits on, where the
+ * publisher states which years are history and which are projected, and which
+ * rows are totals rather than areas. Where a fact about a file is not in that
+ * output it is not assumed here — it is read from the workbook at load time
+ * and the load REFUSES if the workbook does not say it. A parser that guesses
+ * a layout loads a plausible wrong table, and a projection table is read by a
+ * client as a statement about their suburb.
  *
  * ── The base year is the publisher's statement, never an inference ───────
  *
@@ -29,6 +30,10 @@
  *    2022"*. The table prints 2021, 2026, 2031 and 2036, so 2021 is the
  *    newest estimate it prints and everything after the stated jump-off is
  *    projected.
+ *  - Queensland's Statistician says it on each workbook's Main page: *"2021
+ *    data are final estimates"*, and prints that year as `2021 (b)` — the
+ *    footnote the statement hangs on. The parser takes the base from the
+ *    sentence and requires the header to print it.
  *  - Tasmania's Treasury does not print the sentence, and its components table
  *    states it structurally: the first interval is `2023-2028` and its
  *    start-of-interval population is the base. The parser reads the base from
@@ -39,10 +44,13 @@
  * ── Every series is loaded, none defaulted ───────────────────────────────
  *
  * Tasmania publishes Medium, High and Low in three files, and all three are
- * here: loading one would be the choice `choices[0]` made for the ABS. NSW
- * publishes its high and low series for the state as a whole only, so its SA2
- * and LGA files carry the one series its own file name calls **main**.
- * Victoria in Future publishes one series, named by its edition (`VIF2023`).
+ * here: loading one would be the choice `choices[0]` made for the ABS.
+ * Queensland publishes all three for its councils in one file, a sheet each,
+ * and the medium series alone for its SA2s — so the SA2 rows are the medium
+ * series and say so, and the council rows carry all three. NSW publishes its
+ * high and low series for the state as a whole only, so its SA2 and LGA files
+ * carry the one series its own file name calls **main**. Victoria in Future
+ * publishes one series, named by its edition (`VIF2023`).
  *
  * ── What is refused ──────────────────────────────────────────────────────
  *
@@ -59,7 +67,7 @@ import { projectionAreaToken, type ProjectionLoadRow } from './projectionLoad.pu
 import type { ProjectionState } from './stateProjectionPublishers.pure.ts';
 import { cellText, headText, type Grid, type GridCell } from './xlsxSheet.pure.ts';
 
-export type ProjectionFileKey = 'nsw_sa2' | 'nsw_lga' | 'vic_lga' | 'tas_medium' | 'tas_high' | 'tas_low';
+export type ProjectionFileKey = 'nsw_sa2' | 'nsw_lga' | 'vic_lga' | 'tas_medium' | 'tas_high' | 'tas_low' | 'qld_sa2' | 'qld_lga';
 
 export interface ProjectionParse {
   rows: ProjectionLoadRow[];
@@ -352,6 +360,266 @@ function parseVic(grids: Readonly<Record<string, Grid>>, sourceUrl: string, lice
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Queensland — the Government Statistician's regions tables, 2021 to 2046
+// ─────────────────────────────────────────────────────────────────────────────
+
+const QLD_PUBLISHER = 'the Queensland Government Statistician’s Office';
+/** The state's own row, where a table prints one — never an area of the grain. */
+const QLD_TOTAL = /^(queensland\b|total\b|qld\b)/i;
+/** A table's own title names its series: "Projected population (medium series), …". */
+const QLD_SERIES = /\((low|medium|high)[ -]series\b/i;
+
+/**
+ * A Queensland header year. The base column is printed `2021 (b)` — the year
+ * and the footnote the publisher hangs its statement on — so a reader that
+ * took only a bare year would skip exactly the column that says where the
+ * projection starts.
+ */
+export function qldYearOf(v: GridCell | undefined): number | null {
+  if (typeof v === 'number') return yearOf(v);
+  const m = /^(\d{4})(\s*\([a-z]\))?$/i.exec(cellText(v));
+  return m ? yearOf(Number(m[1])) : null;
+}
+
+/**
+ * The first row, in the first twelve, that carries a run of at least
+ * `minYears` consecutive, strictly increasing year cells at or after
+ * `fromCol` — and ONLY that run. The SA2 sheet declares 125 columns around
+ * the twelve CI saw printed, and a second block of years further along (a
+ * change, a growth rate) must never be read as persons: the run ends at the
+ * first cell that is not a later year.
+ */
+export function qldYearHeader(grid: Grid, fromCol: number, minYears: number): YearHeader | null {
+  for (let r = 0; r < Math.min(grid.length, 12); r++) {
+    const row = grid[r] ?? [];
+    let c = fromCol;
+    while (c < row.length && qldYearOf(row[c]) === null) c++;
+    const years: Array<{ col: number; year: number }> = [];
+    for (; c < row.length; c++) {
+      const y = qldYearOf(row[c]);
+      if (y === null || (years.length > 0 && y <= years[years.length - 1].year)) break;
+      years.push({ col: c, year: y });
+    }
+    if (years.length >= minYears) return { row: r, years };
+  }
+  return null;
+}
+
+/** The measure is printed under the first year (`— persons —`); a table that says anything else is a different table. */
+function qldMeasureIsPersons(grid: Grid, header: YearHeader): boolean {
+  const col = header.years[0].col;
+  return [header.row + 1, header.row + 2].some((r) => /^\W*persons\W*$/i.test(cellText(grid[r]?.[col])));
+}
+
+interface QldMainPage {
+  release: string;
+  /** The year the publisher states its data are final estimates for — the base. */
+  base: number;
+  /** "Boundaries are based on …", verbatim, or null where the page states none. */
+  boundaries: string | null;
+}
+
+/**
+ * What the workbook's Main page states: the edition, and which year's data
+ * are FINAL ESTIMATES (*"2021 data are final estimates …"*) — the population
+ * the projection starts from. Refused where it states neither: the base is
+ * the publisher's word, never an inference from which column comes first.
+ */
+export function qldMainPage(grid: Grid | undefined, file: ProjectionFileKey): QldMainPage {
+  const lines = sheetText(grid ?? []).split('\n');
+  const release = lines.find((l) => /^Queensland Government\b.*\bprojections?\b/i.test(l));
+  if (!release) refuse(file, 'the Main page does not name the edition ("Queensland Government … projections")');
+  const stated = lines.map((l) => /^(\d{4}) data are final estimate/i.exec(l)).find((m) => m !== null);
+  if (!stated) refuse(file, 'the Main page no longer states which year\'s data are final estimates, so the base is unknown');
+  const boundaries = lines.find((l) => /^Boundaries are based on\b/i.test(l)) ?? null;
+  return { release, base: Number(stated[1]), boundaries };
+}
+
+/** A table's series, from its own title — `(medium series)` → `Medium series`. */
+function qldSeriesOf(title: string, file: ProjectionFileKey, sheet: string): string {
+  const m = QLD_SERIES.exec(title);
+  if (!m) refuse(file, `the "${sheet}" sheet's title does not name its series (${JSON.stringify(title.slice(0, 90))})`);
+  return `${m[1][0].toUpperCase()}${m[1].slice(1).toLowerCase()} series`;
+}
+
+/**
+ * The publisher's own state total, where the table prints one, against the
+ * areas read. A total read as an area, or a region read as one, adds its
+ * whole population a second time; an area skipped takes its own away. The
+ * base year is an estimate printed in whole persons, so the areas must add to
+ * the total within half a person each.
+ */
+function qldCheckTotal(file: ProjectionFileKey, sheet: string, base: number, areas: number, sum: number, total: number | null): void {
+  if (total === null) return;
+  if (Math.abs(sum - total) > Math.max(1, areas * 0.5)) {
+    refuse(file, `the ${areas} areas on "${sheet}" add to ${Math.round(sum).toLocaleString('en-AU')} for ${base}, and the publisher's `
+      + `own Queensland total is ${Math.round(total).toLocaleString('en-AU')} — a total was read as an area, or an area was missed`);
+  }
+}
+
+const totalLine = (sheet: string, label: string, base: number, total: number | undefined) =>
+  `${label} on "${sheet}" (the state, not an area${total !== undefined ? ` — the ${base} total, ${Math.round(total).toLocaleString('en-AU')}, the areas were checked against` : ''})`;
+
+/**
+ * The SA2 file. Rows are keyed by the publisher's ASGS 2021 SA2 CODE, which is
+ * the first rung the reader asks by, so the Main page must say its boundaries
+ * are the 2021 edition the platform resolves a coordinate against: the same
+ * nine digits under another edition can describe a different area.
+ */
+function parseQldSa2(grids: Readonly<Record<string, Grid>>, sourceUrl: string, licence: string): ProjectionParse {
+  const file: ProjectionFileKey = 'qld_sa2';
+  const sheet = 'Data';
+  const main = qldMainPage(grids['Main page'], file);
+  if (!main.boundaries || !/\b2021\b|\bedition 3\b/i.test(main.boundaries)) {
+    refuse(file, 'the Main page does not state that its boundaries are the ASGS 2021 edition the reader resolves SA2s against '
+      + `(${JSON.stringify((main.boundaries ?? 'no statement').slice(0, 120))})`);
+  }
+  const table = grids[sheet];
+  const series = qldSeriesOf(cellText(table?.[0]?.[0]), file, sheet);
+
+  let labelRow = -1;
+  for (let r = 0; r < Math.min(table.length, 12) && labelRow < 0; r++) {
+    if ((table[r] ?? []).some((c) => /^SA2 code\b/i.test(cellText(c)))) labelRow = r;
+  }
+  if (labelRow < 0) refuse(file, `the "${sheet}" sheet has no "SA2 code" column heading`);
+  const labels = table[labelRow];
+  const codeCol = labels.findIndex((c) => /^SA2 code\b/i.test(cellText(c)));
+  const nameCol = labels.findIndex((c) => /^SA2\b(?!\s*code)/i.test(cellText(c)));
+  if (nameCol < 0) refuse(file, `the "${sheet}" sheet names no SA2 column beside its SA2 code`);
+
+  const header = qldYearHeader(table, Math.max(codeCol, nameCol) + 1, 5);
+  if (!header) refuse(file, `the "${sheet}" sheet has no row of years after its SA2 columns`);
+  if (!qldMeasureIsPersons(table, header)) refuse(file, `the "${sheet}" sheet does not print "persons" under its first year`);
+  if (!header.years.some((y) => y.year === main.base)) {
+    refuse(file, `the "${sheet}" sheet does not print ${main.base}, the year the Main page states its final estimates for`);
+  }
+  const projected = header.years.map((y) => y.year).filter((y) => y > main.base);
+  if (projected.length === 0) refuse(file, `no printed year follows the stated base ${main.base}`);
+
+  const spec: RowSpec = {
+    state: 'QLD', release: main.release, series, areaKind: 'sa2', publisher: QLD_PUBLISHER, sourceUrl, licence,
+  };
+  const rows: ProjectionLoadRow[] = [];
+  const declined: string[] = [];
+  const codes = new Set<string>();
+  let areas = 0;
+  let sum = 0;
+  let total: number | null = null;
+  for (let r = Math.max(header.row, labelRow) + 1; r < table.length; r++) {
+    const row = table[r];
+    if (!row) continue;
+    const code = cellText(row[codeCol]);
+    const name = cellText(row[nameCol]);
+    const label = row.slice(0, nameCol + 1).map(cellText).find((t) => t !== '') ?? '(unnamed)';
+    const values = valuesOf(row, header);
+    if (values.size === 0) {
+      // A note, a heading or a blank line carries no figure and is no row of
+      // the table; an SA2 that carries none is an area declined, by name.
+      if (/^\d{9}$/.test(code)) declined.push(`${name || code} (no figures)`);
+      continue;
+    }
+    if (!/^3\d{8}$/.test(code)) {
+      if (QLD_TOTAL.test(label) && total === null) {
+        total = values.get(main.base) ?? null;
+        declined.push(totalLine(sheet, label, main.base, values.get(main.base)));
+      } else {
+        declined.push(`${label} (no Queensland SA2 code — a total, not an area)`);
+      }
+      continue;
+    }
+    if (name === '') refuse(file, `SA2 ${code} carries figures and no name`);
+    if (codes.has(code)) refuse(file, `SA2 ${code} is printed twice`);
+    codes.add(code);
+    areas += 1;
+    sum += values.get(main.base) ?? 0;
+    rows.push(...rowsForArea(spec, { name, code, token: projectionAreaToken('sa2', name) }, values, main.base, projected));
+  }
+  qldCheckTotal(file, sheet, main.base, areas, sum, total);
+  return { rows, release: main.release, series: [series], base: main.base, horizon: Math.max(...projected), areas, declined };
+}
+
+/** The LGA file's three series, one sheet each, named by the sheet and by its own title. */
+const QLD_LGA_SHEETS = ['Medium series', 'Low series', 'High series'] as const;
+
+/**
+ * The LGA file: three series over the same councils. The base is an
+ * ESTIMATE, so it is the same figure in every series — a council whose base
+ * differs between two sheets was read from the wrong column or the wrong row,
+ * and the file is refused rather than loaded with one series misaligned.
+ */
+function parseQldLga(grids: Readonly<Record<string, Grid>>, sourceUrl: string, licence: string): ProjectionParse {
+  const file: ProjectionFileKey = 'qld_lga';
+  const main = qldMainPage(grids['Main page'], file);
+  const rows: ProjectionLoadRow[] = [];
+  const declined: string[] = [];
+  const seriesRead: string[] = [];
+  const councilsBySeries = new Map<string, number>();
+  const baseByCouncil = new Map<string, { value: number; series: string }>();
+  let horizon = 0;
+
+  for (const sheet of QLD_LGA_SHEETS) {
+    const table = grids[sheet];
+    const series = qldSeriesOf(cellText(table?.[0]?.[0]), file, sheet);
+    if (series !== sheet) {
+      refuse(file, `the "${sheet}" sheet is titled ${JSON.stringify(cellText(table[0][0]).slice(0, 90))} — the sheet and its own title name different series`);
+    }
+    const header = qldYearHeader(table, 1, 5);
+    if (!header) refuse(file, `the "${sheet}" sheet has no row of years`);
+    if (!table.slice(0, header.row + 1).some((row) => /^Local Government Area\b/i.test(cellText(row?.[0])))) {
+      refuse(file, `the "${sheet}" sheet does not head its first column "Local Government Area"`);
+    }
+    if (!qldMeasureIsPersons(table, header)) refuse(file, `the "${sheet}" sheet does not print "persons" under its first year`);
+    if (!header.years.some((y) => y.year === main.base)) {
+      refuse(file, `the "${sheet}" sheet does not print ${main.base}, the year the Main page states its final estimates for`);
+    }
+    const projected = header.years.map((y) => y.year).filter((y) => y > main.base);
+    if (projected.length === 0) refuse(file, `no printed year on "${sheet}" follows the stated base ${main.base}`);
+
+    const spec: RowSpec = {
+      state: 'QLD', release: main.release, series, areaKind: 'lga', publisher: QLD_PUBLISHER, sourceUrl, licence,
+    };
+    let councils = 0;
+    let sum = 0;
+    let total: number | null = null;
+    for (let r = header.row + 1; r < table.length; r++) {
+      const row = table[r];
+      if (!row) continue;
+      const name = cellText(row[0]);
+      const values = valuesOf(row, header);
+      if (values.size === 0) continue; // a note, a heading or a blank line: no figure, no row of the table
+      if (name === '') refuse(file, `row ${r + 1} of "${sheet}" carries figures and no council`);
+      if (QLD_TOTAL.test(name)) {
+        if (total === null) total = values.get(main.base) ?? null;
+        declined.push(totalLine(sheet, name, main.base, values.get(main.base)));
+        continue;
+      }
+      const base = values.get(main.base);
+      if (base === undefined) refuse(file, `${name} on "${sheet}" prints no ${main.base} estimate`);
+      const seen = baseByCouncil.get(name);
+      if (seen && Math.abs(seen.value - base) > 0.5) {
+        refuse(file, `${name} starts from ${base} in the ${series} and from ${seen.value} in the ${seen.series} — `
+          + 'an estimate is one figure in every series, so a sheet was misread');
+      }
+      baseByCouncil.set(name, { value: base, series });
+      councils += 1;
+      sum += base;
+      const token = projectionAreaToken('lga', name);
+      rows.push(...rowsForArea(spec, { name, code: token, token }, values, main.base, projected));
+    }
+    qldCheckTotal(file, sheet, main.base, councils, sum, total);
+    councilsBySeries.set(series, councils);
+    seriesRead.push(series);
+    horizon = Math.max(horizon, ...projected);
+  }
+
+  const counts = [...councilsBySeries.values()];
+  if (new Set(counts).size > 1) {
+    refuse(file, `the series sheets name different numbers of councils (${[...councilsBySeries].map(([s, n]) => `${s} ${n}`).join(', ')}) — one sheet was misread`);
+  }
+  return { rows, release: main.release, series: seriesRead, base: main.base, horizon, areas: counts[0] ?? 0, declined };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tasmania — Treasury's population projections, one main output file per series
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -461,6 +729,30 @@ const NSW_LICENCE_EVIDENCE = 'planning.nsw.gov.au/copyright-and-disclaimer ("Unl
   + 'the workbook states no terms of its own and carries the notice that page asks for — read from CI 23 Sep 2026 '
   + '(run 35831008944)';
 
+/**
+ * Read from CI on 23 Sep 2026 (runs 35831008944 and 35833636513), and the
+ * order matters. The Statistician's own site states a RESTRICTIVE default —
+ * no part "may be reproduced or re-used for any commercial purpose without
+ * written permission" — and then that "where specific licence terms are
+ * applied through or via this website to material including a particular
+ * product those licence terms shall prevail". This product has specific
+ * terms: the Queensland Government's open data portal publishes it as
+ * "Queensland Government population projections: Regions" (dataset
+ * ebb088ed-45fc-46ee-9054-3607476bec42, publisher Treasury) under Creative
+ * Commons Attribution 4.0, with its resource pointing at the very page that
+ * links both workbooks. So the product's licence governs, and the site's
+ * default does not — the same ranking the planning registers answer to: a
+ * licence stated for the product outranks one stated for the site, while a
+ * restriction stated IN the file outranks both, which `parseProjectionFile`
+ * holds at load time.
+ */
+const QLD_LICENCE = 'Creative Commons Attribution 4.0 International';
+const QLD_LICENCE_EVIDENCE = 'data.qld.gov.au dataset ebb088ed-45fc-46ee-9054-3607476bec42 ("Queensland Government '
+  + 'population projections: Regions", publisher Treasury, licence Creative Commons Attribution 4.0, resource '
+  + 'qgso.qld.gov.au/statistics/theme/population/population-projections/regions); qgso.qld.gov.au\'s copyright page states '
+  + 'that specific licence terms applied to a product prevail over its default — read from CI 23 Sep 2026 '
+  + '(runs 35831008944, 35833636513)';
+
 export const PROJECTION_FILES: readonly ProjectionFile[] = [
   {
     key: 'nsw_sa2',
@@ -495,6 +787,32 @@ export const PROJECTION_FILES: readonly ProjectionFile[] = [
       + '("VIF2023 LGA Population Household Dwelling Projections to 2036"), read from CI 23 Sep 2026',
     minAreas: 75,
     parse: (g, url, licence) => parseVic(g, url, licence),
+  },
+  {
+    key: 'qld_sa2',
+    state: 'QLD',
+    publisher: QLD_PUBLISHER,
+    url: 'https://www.qgso.qld.gov.au/issues/5281/qld-population-projections-regions-tables-sa2s-sa3s-sa4s-qld-med-series-2021-2046.xlsx',
+    sheets: ['Main page', 'Data'],
+    licence: QLD_LICENCE,
+    licenceEvidence: QLD_LICENCE_EVIDENCE,
+    // CI read the Data sheet to its footnotes at row 557; a read naming
+    // fewer than 500 SA2s was cut short.
+    minAreas: 500,
+    parse: (g, url, licence) => parseQldSa2(g, url, licence),
+  },
+  {
+    key: 'qld_lga',
+    state: 'QLD',
+    publisher: QLD_PUBLISHER,
+    url: 'https://www.qgso.qld.gov.au/issues/5281/qld-population-projections-regions-tables-lgas-qld-low-med-high-series-2021-2046.xlsx',
+    sheets: ['Main page', ...QLD_LGA_SHEETS],
+    licence: QLD_LICENCE,
+    licenceEvidence: QLD_LICENCE_EVIDENCE,
+    // Queensland has 77 local government areas; CI read each series sheet to
+    // its footnotes at row 87.
+    minAreas: 70,
+    parse: (g, url, licence) => parseQldLga(g, url, licence),
   },
   ...(['Medium', 'High', 'Low'] as const).map((s): ProjectionFile => ({
     key: `tas_${s.toLowerCase()}` as ProjectionFileKey,
@@ -540,18 +858,25 @@ export function suppliedNotice(grids: Readonly<Record<string, Grid>>): string | 
  * Words with which a workbook states terms of its OWN. A licence here is read
  * from the publisher, and a site's licence is stated "unless otherwise stated"
  * — so what a file says about its own terms is held against the licence read
- * for it (`termsAgreeWith`). The copyright notice itself is not a statement of
- * terms, and is left out.
+ * for it (`termsAgreeWith`). A bare copyright notice (`© Government of
+ * Tasmania`) states no terms and matches nothing here.
  */
 export const OWN_TERMS = /licen[cs]e[ds]?\b|creative commons|\bcc[ -]?by\b|all rights reserved|permission|may not be (reproduced|copied|used|distributed)|terms (of use|and conditions)/i;
 
-/** Every cell of the sheets read that states terms of the file's own, verbatim. */
+/**
+ * Every cell of the sheets read that states terms of the file's own, verbatim
+ * — INCLUDING a cell that opens as a copyright notice. `© State of X. All
+ * rights reserved.` and `© State of X 2025. Licensed CC BY-NC` are notices and
+ * statements of terms at once, and a cell is judged by what it says rather
+ * than by how it starts: excluding every cell that opens with `©` would let a
+ * restriction through precisely where publishers write one.
+ */
 export function statedTerms(grids: Readonly<Record<string, Grid>>): string[] {
   const out: string[] = [];
   for (const grid of Object.values(grids)) {
     for (const row of grid) for (const c of row ?? []) {
       const t = cellText(c);
-      if (t !== '' && !NOTICE.test(t) && OWN_TERMS.test(t)) out.push(t);
+      if (t !== '' && OWN_TERMS.test(t)) out.push(t);
     }
   }
   return out;

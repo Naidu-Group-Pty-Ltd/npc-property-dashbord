@@ -50,9 +50,11 @@ declare
     ["market-sales-refresh-projections-nsw-sa2",    "5 18 3 * *",  {"stage": "projections", "file": "nsw_sa2"}],
     ["market-sales-refresh-projections-nsw-lga",    "10 18 3 * *", {"stage": "projections", "file": "nsw_lga"}],
     ["market-sales-refresh-projections-vic-lga",    "15 18 3 * *", {"stage": "projections", "file": "vic_lga"}],
-    ["market-sales-refresh-projections-tas-medium", "20 18 3 * *", {"stage": "projections", "file": "tas_medium"}],
-    ["market-sales-refresh-projections-tas-high",   "25 18 3 * *", {"stage": "projections", "file": "tas_high"}],
-    ["market-sales-refresh-projections-tas-low",    "30 18 3 * *", {"stage": "projections", "file": "tas_low"}]
+    ["market-sales-refresh-projections-qld-sa2",    "20 18 3 * *", {"stage": "projections", "file": "qld_sa2"}],
+    ["market-sales-refresh-projections-qld-lga",    "25 18 3 * *", {"stage": "projections", "file": "qld_lga"}],
+    ["market-sales-refresh-projections-tas-medium", "30 18 3 * *", {"stage": "projections", "file": "tas_medium"}],
+    ["market-sales-refresh-projections-tas-high",   "35 18 3 * *", {"stage": "projections", "file": "tas_high"}],
+    ["market-sales-refresh-projections-tas-low",    "40 18 3 * *", {"stage": "projections", "file": "tas_low"}]
   ]'::jsonb;
   j jsonb;
   jid bigint;
