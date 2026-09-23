@@ -459,9 +459,9 @@ would write, because it is the same code.
 | **VIC** | Victoria in Future 2023 (`VIF2023`) | LGA | VIF2023 | 2021 → 2036 | 80 LGAs / 320 rows · 1 declined (the state) | **CC BY 4.0, read** |
 | **QLD** | Queensland Government population projections, 2025 edition | SA2 · LGA | Medium (SA2) · Medium, Low, High (LGA) | 2021 → 2046 | 546 SA2s / 3,276 rows · 78 LGAs / 1,404 rows · 3 declined (the state total on each series sheet, which the councils add to) | **CC BY 4.0, read** |
 | **TAS** | Treasury 2024 projections | LGA | Medium · High · Low | 2023 → 2053 | 29 LGAs / 899 rows per series · 1 declined (the state) | **terms read, not accepted** — the owner's decision (§9.2) |
-| **SA** | catalogue: 2016-based (2019); current: January 2024 release, in the archive | SA2 · LGA | medium · high (current) | 2021 → 2041 (current) | catalogue copy **declined — superseded**; current edition described, **terms not yet read** (§9.4) | CC BY (catalogue copy); current: © notice only |
+| **SA** | catalogue: 2016-based (2019); current: January 2024 release, in the archive | SA2 · LGA | medium · high (current) | 2021 → 2041 (current) | catalogue copy **declined — superseded**; current edition **declined — licence** (§9.4) | CC BY (catalogue copy); current: *"All rights reserved"* (the edition's report) |
 | **WA** | WA Tomorrow Report 12 | SA2 | bands | — | **declined — licence** (§9.4) | Custom (Active Acceptance) |
-| **ACT** | catalogue: by District (2015–2041); current: 2025–2065 | district (≈ SA3) | — | 2015 → 2041 (catalogue) | catalogue copy **declined — superseded**; current edition named, being described (§9.4) | CC BY 4.0 (catalogue copy); current: not yet read |
+| **ACT** | catalogue: by District (2015–2041); current: 2025–2065 | district = SA3 · SA2 | — | 2025 → 2065 (current) | catalogue copy **declined — superseded**; current edition **declined — licence** (§9.4) | CC BY 4.0 (catalogue copy); current: *"no part may be reproduced … without written permission"* (the workbook) |
 | **NT** | NTPOP 2024 | SA3 (the publisher's own footnote) | — | 2021 → 2051 (Summary) | **declined — licence** (§9.4) | none expressly provided for the 2024 release |
 
 ### 9.1 · What each base is read from
@@ -649,11 +649,23 @@ What each parser holds the file to, beyond the shared gate:
   … published … in 2019"*, which is the publisher's own statement that the
   catalogue copy is superseded. Nine near-empty SA2s are merged into
   neighbours, and the notes list both sides of every merge (NSW's collapsed
-  SA2s, in another publisher's words). **What blocks the load is the terms**:
-  the workbooks say *"© Department of Trade and Investment, Government of South
-  Australia, 2024"* and nothing about reuse — a notice is silence about terms —
-  and the edition's report did not download. The next run reads the edition's
-  two reports and the terms pages the archive holds for its hosts.
+  SA2s, in another publisher's words). **And it is declined for its
+  licence**, read on 23 Sep (run 35844188766): the workbooks say *"©
+  Department of Trade and Investment, Government of South Australia, 2024"*
+  and nothing about reuse; the edition's own report — *Local Area SA2 and LGA
+  Population Projections for South Australia, 2021 to 2041* — says *"©
+  Government of South Australia. Published March 2024. **All rights
+  reserved.**"*; the planning portal's terms page (archived 2022, before this
+  edition existed) says *"This work is licensed under a Creative Commons
+  Attribution 3.0 Australia Licence"*; and the publisher's own site
+  (`dti.sa.gov.au`) permits reproduction with acknowledgement but *"must not
+  be altered without the permission of the copyright owner"* — no Creative
+  Commons grant. A restriction stated for the edition outranks a licence
+  stated for the site — the rule the loader already applies inside a file —
+  so the current edition is not loaded. What would change it is the
+  publisher's own licence for the workbooks, which its notes invite queries
+  about (`DTI.PlanningInformation@sa.gov.au`); the parsers would take an hour,
+  because the layout is already described.
 - **Western Australia — a licence.** WA Tomorrow Report 12 publishes SA2
   forecasts, and the catalogue states its licence as *Custom (Active
   Acceptance)*: reuse requires accepting terms this platform has not accepted
@@ -668,9 +680,20 @@ What each parser holds the file to, beyond the shared gate:
   refuses CI) names what supersedes it: *ACT Population Projections
   2025-2065*, at Territory, **district** (*"as approximated by the Australian
   Bureau of Statistics (ABS) Statistical Area Level 3"*) and suburb level, as
-  one workbook. The next run describes that workbook and reads its terms. A
-  district edition, like the NT's regions, would be read through an SA3 rung
-  the reader does not yet have.
+  one workbook — read through the archive on 23 Sep (capture `20260101045907`,
+  run 35844188766): fourteen sheets, the districts in *Table 2* by their ABS
+  SA3 names (ten, with an *ACT Total*), the suburbs in *Table 6* by SA2 name
+  (with district subtotals and *Total - ACT*), 2025 to 2065 every year. **And
+  it is declined for its licence, stated in the file itself**: *"© Australian
+  Capital Territory, Canberra, August 2025. This work is copyright. Apart from
+  any use permitted under the Copyright Act 1968, no part may be reproduced by
+  any process without written permission from the Chief Minister, Treasury
+  and Economic Development Directorate, ACT Government."* The Treasury's own
+  copyright pages say the same in other words (*"in unaltered form only, for
+  your personal use or for non-commercial use within your organisation"*),
+  and `act.gov.au`'s CC BY 4.0 governs *"unless stated otherwise"* — which
+  this workbook does. The route to it is the written permission the notice
+  names.
 - **The Northern Territory — declined for its licence.** The 2024 edition's
   workbooks are on `treasury.nt.gov.au`, which answers CI with a Cloudflare
   challenge (HTTP 403, *"Just a moment..."* — a challenge, not a refusal,
@@ -695,6 +718,15 @@ What each parser holds the file to, beyond the shared gate:
   stating a licence for the 2024 release (a person can read its projections
   page in a browser, which Cloudflare does not challenge), or the catalogue
   record adding it.
+
+**Every jurisdiction now has a measured answer** (23 Sep 2026): three load
+under CC BY 4.0 read from their publishers (NSW, Victoria, Queensland); one
+waits on the owner's reading of a product-specific grant (Tasmania); and four
+are declined for their licences — WA's *Custom (Active Acceptance)*, SA's
+*"All rights reserved"*, the ACT's *"no part may be reproduced … without
+written permission"* and the NT's default that forbids reuse where no Creative
+Commons licence is expressly provided. None of the four is a statement about
+the data, and each names the permission that would change it.
 
 Each of these keeps its jurisdiction's `not_loaded` sentence and its route to
 the publisher, because the reader is still owed where the figure is.

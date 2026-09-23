@@ -496,10 +496,13 @@ and a merged commit each describe what was meant to happen.
   the catalogue's CC Attribution record reaches only the superseded 2019
   release, and the NT Government's copyright statement forbids reuse without
   an expressly provided Creative Commons licence. **South Australia's and the
-  ACT's current editions were found** — SA's January 2024 release (SA2 and
-  council, medium and high) through the archive, the ACT's 2025–2065 by
-  district (≈ SA3) — and neither loads until its terms are read; SA's
-  workbooks carry only a © notice. See `FORWARD_DEMAND_EVIDENCE.md` §9.
+  ACT's current editions were found and read, and both are declined for their
+  licences**: SA's January 2024 release (through the archive) is published
+  with a report saying *"All rights reserved"*, and the ACT's 2025–2065
+  workbook says *"no part may be reproduced by any process without written
+  permission"*. Every jurisdiction now has a measured answer: three load, one
+  is the owner's decision, four are declined for licences — each naming the
+  permission that would change it. See `FORWARD_DEMAND_EVIDENCE.md` §9.4.
 - **Item 6b — South Australia's zone is read** from the Planning and Design
   Code's own layer (`JURISDICTION_PLANNING_COVERAGE.md` §3.6); WA's is readable
   and licence-restricted; the NT's is challenged.

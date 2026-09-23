@@ -2433,13 +2433,16 @@ edition REPLACES the assumption set rather than adding
 to it, which is why this is not QTRIP's "the edition is the one that answers":
 South Australia's catalogue edition is 2016-based and the ACT's 2015-based,
 both superseded by editions their publishers print elsewhere, so both catalogue
-copies are declined rather than printed as the jurisdiction's view today — the
-current editions were then found (SA's January 2024 release through the
-archive, the ACT's 2025–2065 by district ≈ SA3) and neither loads until its
-terms are read. WA's SA2 forecasts are *Custom (Active Acceptance)*, and the
-NT's 2024 edition carries no licence while the NT Government forbids reuse
-*"for any purpose whatsoever"* without an expressly provided Creative Commons
-one — so both are declined for their licence. And **a batch never splits an area** — a
+copies are declined rather than printed as the jurisdiction's view today — and
+their current editions, found and read (SA's January 2024 release through the
+archive, the ACT's 2025–2065 by district = SA3), are declined for their
+licences: SA's edition report says *"All rights reserved"* and the ACT's
+workbook forbids reproduction *"without written permission"*. WA's SA2
+forecasts are *Custom (Active Acceptance)*, and the NT's 2024 edition carries
+no licence while the NT Government forbids reuse *"for any purpose
+whatsoever"* without an expressly provided Creative Commons one. **A
+restriction stated for the edition outranks a licence stated for the site**,
+the same ranking the loader applies inside a file. And **a batch never splits an area** — a
 failed batch would otherwise leave an area holding half a series under a new
 edition, which the reader, preferring the edition that reaches furthest, would
 print as the projection; the prune follows every batch and keeps to its own
