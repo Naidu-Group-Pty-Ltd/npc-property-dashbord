@@ -1915,25 +1915,49 @@ export function InvestmentReportGenerator() {
 
                   <Separator />
 
-                  {/* URL Input */}
+                  {/* URL Extraction */}
                   <div className="space-y-3">
-                    <Label htmlFor="propertyUrl" className="flex items-center gap-2">
-                      <Link className="h-4 w-4" />
-                      Property Listing URL
-                    </Label>
-                    <Input
-                      id="propertyUrl"
-                      value={propertyUrl}
-                      onChange={(e) => setPropertyUrl(e.target.value)}
-                      placeholder="https://www.domain.com.au/property/..."
-                      disabled={isScraping}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Paste a URL from Domain, REA, or other property listing sites. Click "Scrape URL" to extract property details.
-                    </p>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <Label htmlFor="propertyUrl" className="flex items-center gap-2">
+                        <Link className="h-4 w-4 text-primary" />
+                        Property Listing URL
+                      </Label>
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-primary">
+                        <Sparkles className="h-3 w-3" />
+                        Auto-fills the form
+                      </span>
+                    </div>
+                    <div className="relative">
+                      <Globe className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        id="propertyUrl"
+                        value={propertyUrl}
+                        onChange={(e) => setPropertyUrl(e.target.value)}
+                        placeholder="https://www.domain.com.au/property/..."
+                        disabled={isScraping}
+                        className="h-12 pl-10 pr-24"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={handlePasteUrl}
+                        disabled={isScraping}
+                        className="absolute right-1.5 top-1/2 h-8 -translate-y-1/2 gap-1.5 rounded-lg px-2.5 text-xs"
+                      >
+                        <ClipboardPaste className="h-3.5 w-3.5" />
+                        Paste
+                      </Button>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs leading-5 text-muted-foreground">
+                      <span>Paste a link from</span>
+                      <span className="rounded-md border border-border/70 bg-background/60 px-1.5 py-0.5 font-medium text-foreground/80">Domain</span>
+                      <span className="rounded-md border border-border/70 bg-background/60 px-1.5 py-0.5 font-medium text-foreground/80">REA</span>
+                      <span>or any other listing site — click "Extract URL" and the details fill themselves in.</span>
+                    </div>
                   </div>
 
-                  {/* Scrape Button - Moved to top right after URL input */}
+                  {/* Extract Button */}
                   <div className="flex gap-3">
                     <Button
                       onClick={handleScrapeUrlOnly}
@@ -1945,17 +1969,17 @@ export function InvestmentReportGenerator() {
                       {isScraping ? (
                         <>
                           <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          Scraping...
+                          Extracting...
                         </>
                       ) : urlScrapedData ? (
                         <>
                           <Link className="h-4 w-4 mr-2" />
-                          Re-Scrape URL
+                          Re-extract URL
                         </>
                       ) : (
                         <>
                           <Link className="h-4 w-4 mr-2" />
-                          Scrape URL
+                          Extract URL
                         </>
                       )}
                     </Button>
@@ -1969,7 +1993,7 @@ export function InvestmentReportGenerator() {
                           <AlertCircle className="h-4 w-4" />
                         </span>
                         <div className="space-y-1">
-                          <p className="text-sm font-semibold text-destructive">Scraping Failed</p>
+                          <p className="text-sm font-semibold text-destructive">Extraction Failed</p>
                           <p className="text-sm leading-6 text-destructive/80">{scrapeError}</p>
                         </div>
                       </div>
@@ -1999,7 +2023,7 @@ export function InvestmentReportGenerator() {
                           ? 'text-sm font-semibold text-warning'
                           : 'text-sm font-semibold text-success'}
                         >
-                          {caution ? 'Scraped' : '✓ Scraped'}: <strong>{urlScrapedData.propertyAddress}</strong>
+                          {caution ? 'Extracted' : '✓ Extracted'}: <strong>{urlScrapedData.propertyAddress}</strong>
                         </p>
                         {caution ? (
                           <div className="mt-1 space-y-1">
