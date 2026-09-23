@@ -775,11 +775,11 @@ export function InvestmentReportGenerator() {
 
       if (startError) {
         console.error('Scrape function error:', startError);
-        throw new Error(startError.message || 'Failed to scrape property listing');
+        throw new Error(startError.message || 'Failed to extract the property listing');
       }
 
       if (!startData?.success || !startData?.jobId) {
-        throw new Error(startData?.error || 'Failed to start scraping job');
+        throw new Error(startData?.error || 'Failed to start the extraction job');
       }
 
       const pollIntervalMs = 5000;
@@ -888,10 +888,10 @@ export function InvestmentReportGenerator() {
 
     } catch (error) {
       console.error('Error scraping URL:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Failed to scrape property listing';
+      const errorMessage = error instanceof Error ? error.message : 'Failed to extract the property listing';
       setScrapeError(errorMessage);
       toast({
-        title: "Scraping Failed",
+        title: "Extraction Failed",
         description: errorMessage,
         variant: "destructive",
       });
@@ -904,8 +904,8 @@ export function InvestmentReportGenerator() {
   const handleGenerateFromUrl = async () => {
     if (!urlScrapedData) {
       toast({
-        title: "Scrape Required",
-        description: "Please scrape a URL first before generating a report.",
+        title: "Extraction Required",
+        description: "Please extract a URL first before generating a report.",
         variant: "destructive",
       });
       return;
@@ -1025,7 +1025,7 @@ export function InvestmentReportGenerator() {
         action: 'insert',
         data: {
           property_address: propertyAddress,
-          report_content: 'Generating report from scraped listing...',
+          report_content: 'Generating report from extracted listing...',
           status: 'pending',
           report_scope: 'address',
           generated_by: user?.id ?? null,
