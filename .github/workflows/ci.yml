@@ -591,6 +591,22 @@ jobs:
       # from the prime while the ledger said their version had run.
       - name: A migration version names exactly one file
         run: node scripts/security/check-migration-version-collisions.mjs
+      # A migration declared withdrawn in MIGRATION_WITHDRAWN.json stays in the
+      # tree as history, and three readers act on the declaration: drift reports
+      # it as WITHDRAWN instead of NOT APPLIED, "Apply a migration" refuses it,
+      # and Mission Control stops counting it as a hole that holds back every
+      # later file. An entry that names nothing checkable would silence all three.
+      - name: A withdrawn migration names what stays absent
+        run: node scripts/security/check-migration-withdrawals.mjs
+      # The migration ledger is written by whatever APPLIES a migration and by
+      # nothing else. A migration runs on every database it is delivered to, so
+      # one that edits the ledger edits rows it does not own: 20260921100000
+      # deleted five rows to make the prime's record match the prime, and on the
+      # clones the same DELETE met four different ledgers and left the Quick
+      # Send columns present on two and absent on two, decided by delivery
+      # order rather than by anyone.
+      - name: A migration never writes the migration ledger
+        run: node scripts/security/check-migration-ledger-writes.mjs
       # A migration this deployment has already RUN must not change here. Mission
       # Control decides what a clone may be sent by asking whether the prime's
       # ledger holds the file's BYTES — 690 of 1,002 files clear that way against

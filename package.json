@@ -163,6 +163,8 @@
     "security:activity-entity-types": "node scripts/security/check-activity-entity-types.mjs",
     "security:migrations": "node scripts/security/check-migration-security.mjs",
     "security:migration-versions": "node scripts/security/check-migration-version-collisions.mjs",
+    "security:migration-withdrawals": "node scripts/security/check-migration-withdrawals.mjs",
+    "security:migration-ledger-writes": "node scripts/security/check-migration-ledger-writes.mjs",
     "security:error-disclosure": "node scripts/security/check-error-disclosure.mjs",
     "security:mass-assignment": "node scripts/security/check-mass-assignment.mjs",
     "security:baseline-invariants": "node scripts/security/check-baseline-invariants.mjs",
