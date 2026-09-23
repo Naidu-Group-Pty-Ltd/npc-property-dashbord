@@ -938,6 +938,90 @@ async function northernTerritoryWorkbook(): Promise<void> {
   }
 }
 
+/**
+ * South Australia's CURRENT edition, read through the archive. The 23 Sep
+ * afternoon run found it there: *Population Projections for South Australia
+ * and Regions, 2021 to 2051* — council and SA2 workbooks in the medium and
+ * high series, captured 13 Nov 2025 — while `plan.sa.gov.au` refuses CI. SA
+ * was declined because the catalogue's edition is 2016-based; that decline
+ * holds only for the catalogue copy, so the current edition is read the way
+ * a parser would need it, and its terms where the edition states them: the
+ * workbooks' own lines, and the edition's report on its opening and closing
+ * pages. Each file is asked for by its capture's own address, because the
+ * archive's index is the part that fails.
+ */
+const SA_CURRENT_EDITION: ReadonlyArray<{ timestamp: string; url: string; label: string }> = [
+  { timestamp: '20251113050053', url: 'https://plan.sa.gov.au/__data/assets/excel_doc/0005/1344893/Population-projections-by-local-government-area-2021-2041-medium-series.xlsx', label: 'SA — LGA, medium series' },
+  { timestamp: '20251113050052', url: 'https://plan.sa.gov.au/__data/assets/excel_doc/0004/1344892/Population-projections-by-local-government-area-2021-2041-high-series.xlsx', label: 'SA — LGA, high series' },
+  { timestamp: '20251113050053', url: 'https://plan.sa.gov.au/__data/assets/excel_doc/0007/1344895/Population-projections-by-statistical-area-level-2-2021-2041-medium-series.xlsx', label: 'SA — SA2, medium series' },
+  { timestamp: '20251113050053', url: 'https://plan.sa.gov.au/__data/assets/excel_doc/0006/1344894/Population-projections-by-statistical-area-level-2-2021-2041-high-series.xlsx', label: 'SA — SA2, high series' },
+];
+const SA_EDITION_REPORT = {
+  timestamp: '20250321091532',
+  url: 'https://plan.sa.gov.au/__data/assets/pdf_file/0011/1344971/Local-Area-SA2-and-LGA-Population-Projections-for-South-Australia,-2021-to-2041.pdf',
+};
+
+async function southAustraliaCurrentEdition(): Promise<void> {
+  for (const f of SA_CURRENT_EDITION) {
+    if (budgetLeft() < 45_000) { skippedForBudget.push(`${f.label} — ${f.url}`); break; }
+    console.log(`\n    DESCRIBING (${f.label}) — archive ${f.timestamp}`);
+    console.log(`      url        ${f.url}`);
+    const got = await download(originalBytesUrl({ timestamp: f.timestamp, original: f.url }));
+    console.log(`      archive    ${got.note}${got.type ? ` · ${got.type}` : ''}`);
+    if (!got.bytes || looksLikeHtml(got.bytes)) continue;
+    describeWorkbook(got.bytes);
+    try {
+      const names = (await readXlsxSheets(got.bytes, [])).sheetNames;
+      const read = await readXlsxSheets(got.bytes, names);
+      const rights = names.flatMap((n) => gridLines(read.grids[n]).filter((l) => LICENCE_WORDS.test(l)).map((l) => `${n}: ${l}`));
+      console.log(`      lines about rights anywhere in the workbook: ${rights.length === 0 ? '(none)' : ''}`);
+      for (const l of [...new Set(rights)].slice(0, 16)) console.log(`        ${clip(l, 400)}`);
+      const firstSheet = names[0];
+      if (firstSheet) {
+        const lines = gridLines(read.grids[firstSheet]);
+        console.log(`      "${firstSheet}", its first ${Math.min(lines.length, 40)} of ${lines.length} line(s)`);
+        for (const l of lines.slice(0, 40)) console.log(`        ${clip(l, 300)}`);
+      }
+    } catch (err) {
+      console.log(`      not read by the loader's reader — ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  if (budgetLeft() < 60_000) { skippedForBudget.push(`SA edition report — ${SA_EDITION_REPORT.url}`); return; }
+  const report = await download(originalBytesUrl({ timestamp: SA_EDITION_REPORT.timestamp, original: SA_EDITION_REPORT.url }));
+  if (!report.bytes) { console.log(`      the edition's report (${SA_EDITION_REPORT.timestamp}): ${report.note}`); return; }
+  try {
+    const lines = await pdfText(report.bytes);
+    printWithContext(`the edition's report (archive ${SA_EDITION_REPORT.timestamp}) — ${report.note}, read from its opening and closing pages`, lines, LICENCE_WORDS, 2, 5, 40);
+  } catch (err) {
+    console.log(`      the edition's report is not readable as a PDF: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/**
+ * The Northern Territory's terms, wherever the archive holds them. Its
+ * workbook states none, and every copyright page asked by name refused CI with
+ * no capture behind it (23 Sep) — so the archive's index is asked which
+ * copyright or disclaimer pages it DOES hold for the Treasury and the NT
+ * Government, and the newest capture of each is read.
+ */
+async function northernTerritoryTerms(): Promise<void> {
+  for (const host of ['treasury.nt.gov.au', 'nt.gov.au']) {
+    const q = cdxUrl({ urlPattern: `${host}/*`, filters: ['original:.*([Cc]opyright|[Dd]isclaimer|[Tt]erms).*', 'mimetype:text/html'], from: '2022', limit: 200 });
+    const got = await ask(q, 'application/json');
+    if (got.networkError !== null || got.status !== 200) { console.log(`      ${host}: archive index ${got.networkError ?? `HTTP ${got.status}`}`); continue; }
+    let caps: WaybackCapture[];
+    try { caps = parseCdxJson(got.body); } catch (err) { console.log(`      ${host}: archive index unreadable — ${err instanceof Error ? err.message : String(err)}`); continue; }
+    const newest = new Map<string, WaybackCapture>();
+    for (const c of caps) if (!newest.has(c.original) || newest.get(c.original)!.timestamp < c.timestamp) newest.set(c.original, c);
+    console.log(`      ${host}: ${caps.length} capture(s) of ${newest.size} copyright, disclaimer or terms page(s)`);
+    for (const c of [...newest.values()].sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 3)) {
+      const page = await download(originalBytesUrl(c));
+      if (!page.bytes) { console.log(`        ${c.timestamp} ${c.original} → ${page.note}`); continue; }
+      printWithContext(`${c.original} (archive ${c.timestamp})`, pageLines(new TextDecoder().decode(page.bytes)), LICENCE_WORDS, 1, 3, 24);
+    }
+  }
+}
+
 async function main(): Promise<void> {
   h('THE LOADER, RUN DRY — every projection file through the parser production would use');
   console.log('  Fetched the way the loader fetches, read by readXlsxSheets, parsed by');
@@ -976,6 +1060,12 @@ async function main(): Promise<void> {
 
   console.log('\n  The Northern Territory\'s 2024 edition, read for a parser and for its terms');
   await northernTerritoryWorkbook();
+
+  console.log('\n  The Northern Territory\'s terms, wherever the archive holds them');
+  await northernTerritoryTerms();
+
+  console.log('\n  South Australia\'s current edition, through the archive (plan.sa.gov.au refuses CI)');
+  await southAustraliaCurrentEdition();
 
   console.log('\n  The ACT\'s own description of its district projections (which year is the base?)');
   {
