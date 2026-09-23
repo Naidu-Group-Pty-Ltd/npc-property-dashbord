@@ -459,10 +459,10 @@ would write, because it is the same code.
 | **VIC** | Victoria in Future 2023 (`VIF2023`) | LGA | VIF2023 | 2021 → 2036 | 80 LGAs / 320 rows · 1 declined (the state) | **CC BY 4.0, read** |
 | **QLD** | Queensland Government population projections, 2025 edition | SA2 · LGA | Medium (SA2) · Medium, Low, High (LGA) | 2021 → 2046 | 546 SA2s / 3,276 rows · 78 LGAs / 1,404 rows · 3 declined (the state total on each series sheet, which the councils add to) | **CC BY 4.0, read** |
 | **TAS** | Treasury 2024 projections | LGA | Medium · High · Low | 2023 → 2053 | 29 LGAs / 899 rows per series · 1 declined (the state) | **terms read, not accepted** — the owner's decision (§9.2) |
-| **SA** | 2016-based, released 2019, on data.sa.gov.au | SA2 · LGA | not described | 2016 → 2041 | **declined — superseded** (§9.4) | CC BY (catalogue) |
+| **SA** | catalogue: 2016-based (2019); current: 2021 to 2051, in the archive | SA2 · LGA | medium · high (current) | 2021 → 2041 (current) | catalogue copy **declined — superseded**; current edition being described (§9.4) | CC BY (catalogue copy); current: not yet read |
 | **WA** | WA Tomorrow Report 12 | SA2 | bands | — | **declined — licence** (§9.4) | Custom (Active Acceptance) |
 | **ACT** | Projections by District (2015–2041) | district | — | 2015 → 2041 | **declined — superseded** (§9.4) | CC BY 4.0 |
-| **NT** | NTPOP 2024 | SA3 (the ABS's own names) | — | — | **reached through the archive, not yet read for a parser** (§9.4) | not yet read |
+| **NT** | NTPOP 2024 | SA3 (the publisher's own footnote) | — | 2021 → 2051 (Summary) | **reached through the archive; terms unreadable from CI** (§9.4) | not yet read |
 
 ### 9.1 · What each base is read from
 
@@ -631,11 +631,21 @@ What each parser holds the file to, beyond the shared gate:
 
 ### 9.4 · What is declined, and why each is a different reason
 
-- **South Australia — a superseded edition.** The catalogue's *Population
-  Projections for SA* is CC BY and publishes SA2 and LGA workbooks, but it is
-  the 2016-based edition released in 2019. The Department's current edition
-  is on `plan.sa.gov.au`, which refuses CI; the archive's index answered 503
-  (busy) on every ask, and is asked again with a retry. **A superseded
+- **South Australia — the catalogue's copy is superseded; the current
+  edition is in the archive.** The catalogue's *Population Projections for SA*
+  is CC BY and publishes SA2 and LGA workbooks, but it is the 2016-based
+  edition released in 2019. The Department's current edition is on
+  `plan.sa.gov.au`, which refuses CI; the archive's index answered 503 on the
+  first asks and, on 23 Sep (run 35839178118), listed 22 projection URLs on
+  that host — among them *Population Projections for South Australia and
+  Regions, 2021 to 2051*, published as council and SA2 workbooks in the
+  **medium and high** series (2021–2041; no low series at that grain),
+  captured 13 Nov 2025, with the edition's report *Local Area SA2 and LGA
+  Population Projections for South Australia, 2021 to 2041*. The decline
+  stands only for the catalogue copy. The current workbooks are being
+  described, and their terms read, through the archive (the next run) —
+  which is how Victoria in Future is already read, so the loader needs no new
+  route to reach them. **A superseded
   projection is not the publisher's projection**: a projection is the
   publisher's current assumption set, and a newer edition replaces those
   assumptions rather than adding to them, so printing the older one under the
@@ -659,16 +669,20 @@ What each parser holds the file to, beyond the shared gate:
   `treasury.nt.gov.au`, which answers CI with a Cloudflare challenge (HTTP 403,
   *"Just a moment..."* — a challenge, not a refusal,
   `JURISDICTION_PLANNING_COVERAGE.md`'s rule). The archive holds the main
-  workbook (capture `20251121111355`, 257,800 bytes), and its region sheets are
-  the ABS's own **SA3** names — Darwin City, Darwin Suburbs, Litchfield,
-  Palmerston, Alice Springs, Barkly, Daly–Tiwi–West Arnhem, East Arnhem,
-  Katherine — in blocks by Aboriginal status and sex. No parser is written
-  until three things are read: which block is total persons, which year the
-  publisher states as the base, and the terms, which the catalogue record
-  (the 2019 release) does not speak for. The next run asks for that capture by
-  its own address, because the archive's index — not the capture — is what
-  failed on 23 Sep. Loading it would also need the reader's first SA3 rung
-  (`report_geography` already carries `sa3_name`).
+  workbook (capture `20251121111355`, 257,800 bytes), read on 23 Sep by the
+  capture's own address when the index would not answer (run 35839178118).
+  The publisher settles the grain in its own footnote — *"Regions correspond to
+  the Statistical Areas 3 (SA3) geographical classification of the Australian
+  Bureau of Statistics"* — and each region sheet ends on a *"<region>
+  population"* block after the Aboriginal and non-Aboriginal ones; the
+  Summary opens on *"Estimated Resident Population"* for 2021 and runs to
+  2051. **The terms are the blocker, and they are not ours to read yet**: the
+  workbook states none, and the Treasury's copyright and disclaimer pages and
+  the NT Government's copyright page all answer CI 403 with no capture behind
+  them. The next run asks the archive which terms pages it holds for either
+  host. Loading it would also need the reader's first SA3 rung
+  (`report_geography` already carries `sa3_name`), which is not built until
+  something writes an SA3 row.
 
 Each of these keeps its jurisdiction's `not_loaded` sentence and its route to
 the publisher, because the reader is still owed where the figure is.
