@@ -1029,8 +1029,10 @@ async function describeForParser(bytes: Uint8Array): Promise<void> {
   for (const n of names.slice(0, 12)) {
     const lines = gridLines(read.grids[n]);
     if (/note|content|read ?me|about|info|cover|licen|copyright|intro/i.test(n)) {
+      // South Australia's SA2 notes run to 103 lines, and the table of merged
+      // SA2s and the neighbours they joined sits past line 60.
       console.log(`      "${n}", all ${lines.length} line(s)`);
-      for (const l of lines.slice(0, 60)) console.log(`        ${clip(l, 320)}`);
+      for (const l of lines.slice(0, 130)) console.log(`        ${clip(l, 320)}`);
     } else {
       printFilledRows(`"${n}"`, read.grids[n]);
     }
