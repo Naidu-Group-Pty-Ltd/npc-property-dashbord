@@ -75,6 +75,7 @@ import {
   beginCompassTemplate,
   flowColumn,
   label,
+  type BlockDef,
   type FlowItem,
   type PageDef,
   type TableRowDef,
@@ -381,7 +382,11 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     { label: 'Loan amount', value: '{{financials.loanAmount | currency}}', note: 'At settlement' },
     { label: 'Cash on cash', value: '{{financials.cashOnCash | percent}}', note: 'Year one' },
     { label: 'Total cost', value: '{{financials.totalCost | currency}}', note: 'Including acquisition costs' },
-    { label: 'Annual repayment', value: '{{financials.annualRepayment | currency}}', note: 'P&I, modelled rate' },
+    // Year one, whatever the loan: `annualRepayment` is the ledger's own first
+    // year, which on an interest-only loan is interest only — so "P&I" was a
+    // false caption on every such report (the 18 Annabelle Crescent row reads
+    // $77,480, exactly 6.5% of $1,192,000).
+    { label: 'Annual repayment', value: '{{financials.annualRepayment | currency}}', note: 'Year one, modelled rate' },
     // Was `financials.breakEvenRent`, which no column supplies and no
     // derivation can honestly reach. `netYield` is stored on every scored
     // report and is the figure a reader wants beside the gross.
@@ -394,6 +399,61 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   // twelve for a console, five for a position strip. Supplying more than it
   // asks for would silently drop them.
   const dashboardKpis = allKpis.slice(0, kpiCapacity());
+  /*
+   * The same band for a buyer who will LIVE in the property.
+   *
+   * An owner-occupier's copy withholds every figure that describes a letting
+   * (`audienceContent.pure.ts`): the rent, the yields, the weekly position,
+   * cash on cash, the vacancy allowance. The investor band leads with four of
+   * those, so on a four-figure master it would close up around the price
+   * alone. This band leads with what a home buyer weighs instead — what it
+   * costs, what it costs to borrow, what it costs each year — every one a
+   * figure the projection already publishes, in the words the investor band
+   * already uses for it, so one figure never carries two labels. Chosen by
+   * `report.ownerOccupier`, which only an owner-occupier's projection sets,
+   * so every other document draws exactly the band it always did.
+   */
+  const kpiByLabel = (label: string) => {
+    const found = allKpis.find((k) => k.label === label);
+    if (!found) throw new Error(`No KPI labelled ${label}`);
+    return found;
+  };
+  const ownerOccupierKpis = [
+    kpiByLabel('Purchase price'),
+    kpiByLabel('Annual repayment'),
+    kpiByLabel('Total cost'),
+    kpiByLabel('Loan amount'),
+    { label: 'Deposit', value: '{{financials.deposit | currency}}', note: 'Cash at exchange' },
+    kpiByLabel('Interest rate'),
+    kpiByLabel('Capital growth'),
+  ];
+  const OWNER_OCCUPIER = 'report && report.ownerOccupier';
+  /*
+   * Both bands at ONE position, as mutually exclusive variants — never two
+   * items stacked. Stacked, every master would declare the second band's
+   * height as well, and the room left for the body's first page is computed
+   * from declared heights at compose time (`bodyOpening`), so the investor's
+   * dashboard would lose that room on every master for a band it never
+   * draws. One slot, the taller variant's height and rows; the flow gives
+   * back what the drawn one does not use. Not `oneOf`, which keeps only the
+   * first block of each variant and no `rows` — a band that lost its rows
+   * could no longer give back a row of tiles a report does not fill.
+   */
+  const investorBand = kpis(dashboardKpis);
+  const ownerBand = kpis(ownerOccupierKpis);
+  const taller = ownerBand.height > investorBand.height ? ownerBand : investorBand;
+  const asBlocks = (b: BlockDef | BlockDef[]): BlockDef[] => (Array.isArray(b) ? b : [b]);
+  const dashboardBand: FlowItem = {
+    ...taller,
+    height: taller.height,
+    ...(taller.rows
+      ? { rows: { ...taller.rows, height: Math.max(investorBand.rows?.height ?? 0, ownerBand.rows?.height ?? 0) } }
+      : {}),
+    block: (y: number) => [
+      ...asBlocks(investorBand.block(y)).map((b) => ({ ...b, conditional: `!(${OWNER_OCCUPIER})` })),
+      ...asBlocks(ownerBand.block(y)).map((b) => ({ ...b, conditional: OWNER_OCCUPIER })),
+    ],
+  };
 
   /*
    * The plates that followed the property and the thesis pages lead the front
@@ -472,7 +532,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   // The dashboard: the Financial Analysis and the Snapshot (and `composite`).
   const dashboardItems: FlowItem[] = [
     verdictItem(),
-    kpis(dashboardKpis),
+    dashboardBand,
     ...(splitSnapshot ? [] : [
       {
         ...table({

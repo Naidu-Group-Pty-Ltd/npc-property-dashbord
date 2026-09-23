@@ -111,6 +111,14 @@ describe('what it declines to say', () => {
     expect(md).not.toContain('single-dwelling purchase');
   });
 
+  it('agrees the verb with the use the table names, not with how many it names', () => {
+    const one = (use: string): string => composeStrategicRead(record({
+      site: { ...SITE, landUse: { ...SITE.landUse!, additional: [{ use, standing: 'prohibited' }] } },
+    }), HEADING);
+    expect(one('secondary dwellings')).toContain('and secondary dwellings are prohibited.');
+    expect(one('multi dwelling housing')).toContain('and multi dwelling housing is prohibited.');
+  });
+
   it('says a table was not retrieved rather than implying what may be built', () => {
     const md = composeStrategicRead(record({ site: { landUse: null, pipeline: null } }), HEADING);
     expect(md).toContain('No land use table was retrieved for this property');

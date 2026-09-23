@@ -1775,6 +1775,31 @@ fork alone: **the document being PRODUCED decides**, and keying it on the row
 being READ would hand a Snapshot's prompt a Compass parent with no modelling in
 it. Shipped as seed **v14** plus the active-master refresh.
 
+## Who a report is written for — investor, owner-occupier or both
+
+Read [`docs/reports/AUDIENCE.md`](./docs/reports/AUDIENCE.md) before touching
+`_shared/reports/investment/audienceContent.pure.ts`,
+`_shared/reports/location/ownerOccupierLens.pure.ts`, the `audience` option on
+`projectInvestmentReport`, or the dashboard's two KPI bands in the Investment
+masters. `tierContent.pure.ts` decides which QUESTION a document answers; the
+audience decides who it answers it FOR, chosen on the report page's export
+panel and applied once, above the choice of presentation. Three rules bite.
+**It decides what is PUBLISHED, never what is COMPUTED** — an owner-occupier's
+copy withholds every figure that describes a letting (the rent, the yields,
+the weekly position, a landlord's insurance, the investor cost total) and
+prints everything true of both as the record holds it; an owner-occupier's
+cash flow is a different model and no figure is recalculated to fake one.
+**A mixed section is never cut into** — only the four sections whose whole
+subject is a letting leave, named by section id through the registry, and two
+tenant headings that speak to a buyer as well are kept by name. And **the
+investor is byte-identical**: the body, the projection and every master draw
+exactly what they drew before, which is what lets the choice reach all stored
+reports at once. The owner-occupier's section is composed from the record and
+nothing else — the Census only where `isCensusProjectionSource` recognises it,
+a commute only to this property's own centre, no count that saturates, no
+rating. The prose the model wrote is still the investor's; framing it needs a
+stored audience, which is a migration for the owner to approve.
+
 ## The Compass prompt was 96% a different report
 
 Read the header of

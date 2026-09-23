@@ -1927,7 +1927,7 @@ function rowPeriod(row: MarketFactRow): string | null {
 
 /** A percentage row's figure as a number, or null. */
 function percentOf(row: MarketFactRow | null): number | null {
-  if (!row) return null;
+  if (!row || row.value === null) return null;
   const m = /^\s*(−|-)?\s*(\d+(?:\.\d+)?)\s*%/.exec(row.value);
   if (!m) return null;
   return Number(m[2]) * (m[1] ? -1 : 1);
@@ -1960,6 +1960,58 @@ function assetLine(rec: StrategyRecord): string | null {
 }
 
 /**
+ * What a land use table says about the residential uses this platform asks
+ * about, in one sentence — or null where it names none of them.
+ *
+ * "Under <instrument>, as read on <date>, a dwelling house is permitted with
+ * development consent, and secondary dwellings and dual occupancies are
+ * prohibited." Exported because two sections state it — the Due Diligence
+ * document's strategic read and the owner-occupier's view — and one sentence
+ * written twice is how the two come to say different things about one table.
+ * The permitted additional uses are returned beside it rather than folded in:
+ * what a permission means is each caller's own paragraph.
+ */
+export function landUseStanding(table: NonNullable<StrategySite['landUse']>): {
+  sentence: string | null;
+  dwellingStated: boolean;
+  dwellingPermitted: boolean;
+  prohibited: string[];
+  permitted: string[];
+} {
+  const dwelling = table.dwellingHouse === 'permitted_with_consent'
+    ? 'a dwelling house is permitted with development consent'
+    : table.dwellingHouse === 'permitted_without_consent'
+      ? 'a dwelling house is permitted without development consent'
+      : table.dwellingHouse === 'prohibited'
+        ? 'a dwelling house is prohibited'
+        : null;
+  const prohibited = table.additional.filter((a) => a.standing === 'prohibited').map((a) => a.use);
+  const permitted = table.additional
+    .filter((a) => a.standing === 'permitted_with_consent' || a.standing === 'permitted_without_consent')
+    .map((a) => a.use);
+  /*
+   * The verb agrees with the NOUN, not with the count. A land use table names
+   * its uses in the plural — "secondary dwellings", "dual occupancies" — so
+   * one of them is still "are"; only the mass nouns ("multi dwelling
+   * housing", "seniors housing", "shop top housing") take "is". Counting
+   * printed "secondary dwellings is prohibited" wherever a table named one.
+   */
+  const verb = prohibited.length === 1 && /\bhousing$/i.test(prohibited[0]) ? 'is' : 'are';
+  const said = [
+    dwelling,
+    prohibited.length ? `${listUses(prohibited)} ${verb} prohibited` : null,
+  ].filter((x): x is string => x !== null);
+  return {
+    sentence: said.length ? `${table.anchor} ${said.join(', and ')}.` : null,
+    dwellingStated: dwelling !== null,
+    dwellingPermitted: table.dwellingHouse === 'permitted_with_consent'
+      || table.dwellingHouse === 'permitted_without_consent',
+    prohibited,
+    permitted,
+  };
+}
+
+/**
  * What kind of purchase the land use table makes this.
  *
  * Drawn from the TABLE, never from the land's size or the zone's name — the
@@ -1977,30 +2029,14 @@ function purchaseKind(rec: StrategyRecord): string | null {
     return `**What kind of purchase this is.** ${asset} No land use table was retrieved for this property, so `
       + 'nothing here says what may or may not be added to it — the council\'s planning certificate settles that.';
   }
-  const dwelling = table.dwellingHouse === 'permitted_with_consent'
-    ? 'a dwelling house is permitted with development consent'
-    : table.dwellingHouse === 'permitted_without_consent'
-      ? 'a dwelling house is permitted without development consent'
-      : table.dwellingHouse === 'prohibited'
-        ? 'a dwelling house is prohibited'
-        : null;
-  const prohibited = table.additional.filter((a) => a.standing === 'prohibited').map((a) => a.use);
-  const permitted = table.additional
-    .filter((a) => a.standing === 'permitted_with_consent' || a.standing === 'permitted_without_consent')
-    .map((a) => a.use);
-  const said = [
-    dwelling,
-    prohibited.length ? `${listUses(prohibited)} ${prohibited.length === 1 ? 'is' : 'are'} prohibited` : null,
-  ].filter((x): x is string => x !== null);
-  if (!said.length && !permitted.length) {
+  const { sentence, dwellingStated, dwellingPermitted, prohibited, permitted } = landUseStanding(table);
+  if (!sentence && !permitted.length) {
     return asset
       ? `**What kind of purchase this is.** ${asset} The land use table that was retrieved does not name the `
         + 'residential uses this report asks about, so it settles nothing here — the council\'s planning certificate does.'
       : null;
   }
-  const standing = said.length ? `${table.anchor} ${said.join(', and ')}.` : '';
-  const dwellingPermitted = table.dwellingHouse === 'permitted_with_consent'
-    || table.dwellingHouse === 'permitted_without_consent';
+  const standing = sentence ?? '';
   const consequence = permitted.length
     ? `The table permits ${listUses(permitted)} with consent. A permission in the table is not an approval: whether `
       + 'this site could take one is a question for a planning professional with the survey in hand, and no value '
@@ -2012,7 +2048,7 @@ function purchaseKind(rec: StrategyRecord): string | null {
   return [
     `**What kind of purchase this is.** ${[asset, standing, consequence].filter(Boolean).join(' ')}`,
     '',
-    `*${dwelling ? `${table.caveat} ` : ''}${table.limit}*`,
+    `*${dwellingStated ? `${table.caveat} ` : ''}${table.limit}*`,
   ].join('\n');
 }
 
