@@ -956,10 +956,6 @@ const SA_CURRENT_EDITION: ReadonlyArray<{ timestamp: string; url: string; label:
   { timestamp: '20251113050053', url: 'https://plan.sa.gov.au/__data/assets/excel_doc/0007/1344895/Population-projections-by-statistical-area-level-2-2021-2041-medium-series.xlsx', label: 'SA — SA2, medium series' },
   { timestamp: '20251113050053', url: 'https://plan.sa.gov.au/__data/assets/excel_doc/0006/1344894/Population-projections-by-statistical-area-level-2-2021-2041-high-series.xlsx', label: 'SA — SA2, high series' },
 ];
-const SA_EDITION_REPORT = {
-  timestamp: '20250321091532',
-  url: 'https://plan.sa.gov.au/__data/assets/pdf_file/0011/1344971/Local-Area-SA2-and-LGA-Population-Projections-for-South-Australia,-2021-to-2041.pdf',
-};
 
 async function southAustraliaCurrentEdition(): Promise<void> {
   for (const f of SA_CURRENT_EDITION) {
@@ -969,57 +965,128 @@ async function southAustraliaCurrentEdition(): Promise<void> {
     const got = await download(originalBytesUrl({ timestamp: f.timestamp, original: f.url }));
     console.log(`      archive    ${got.note}${got.type ? ` · ${got.type}` : ''}`);
     if (!got.bytes || looksLikeHtml(got.bytes)) continue;
-    describeWorkbook(got.bytes);
-    try {
-      const names = (await readXlsxSheets(got.bytes, [])).sheetNames;
-      const read = await readXlsxSheets(got.bytes, names);
-      const rights = names.flatMap((n) => gridLines(read.grids[n]).filter((l) => LICENCE_WORDS.test(l)).map((l) => `${n}: ${l}`));
-      console.log(`      lines about rights anywhere in the workbook: ${rights.length === 0 ? '(none)' : ''}`);
-      for (const l of [...new Set(rights)].slice(0, 16)) console.log(`        ${clip(l, 400)}`);
-      const firstSheet = names[0];
-      if (firstSheet) {
-        const lines = gridLines(read.grids[firstSheet]);
-        console.log(`      "${firstSheet}", its first ${Math.min(lines.length, 40)} of ${lines.length} line(s)`);
-        for (const l of lines.slice(0, 40)) console.log(`        ${clip(l, 300)}`);
-      }
-    } catch (err) {
-      console.log(`      not read by the loader's reader — ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-  if (budgetLeft() < 60_000) { skippedForBudget.push(`SA edition report — ${SA_EDITION_REPORT.url}`); return; }
-  const report = await download(originalBytesUrl({ timestamp: SA_EDITION_REPORT.timestamp, original: SA_EDITION_REPORT.url }));
-  if (!report.bytes) { console.log(`      the edition's report (${SA_EDITION_REPORT.timestamp}): ${report.note}`); return; }
-  try {
-    const lines = await pdfText(report.bytes);
-    printWithContext(`the edition's report (archive ${SA_EDITION_REPORT.timestamp}) — ${report.note}, read from its opening and closing pages`, lines, LICENCE_WORDS, 2, 5, 40);
-  } catch (err) {
-    console.log(`      the edition's report is not readable as a PDF: ${err instanceof Error ? err.message : String(err)}`);
+    await describeForParser(got.bytes);
   }
 }
 
 /**
- * The Northern Territory's terms, wherever the archive holds them. Its
- * workbook states none, and every copyright page asked by name refused CI with
- * no capture behind it (23 Sep) — so the archive's index is asked which
- * copyright or disclaimer pages it DOES hold for the Treasury and the NT
- * Government, and the newest capture of each is read.
+ * A publisher's terms, wherever the archive holds them. Asked of the archive's
+ * index because the pages are refused by name: the NT's copyright pages
+ * answered CI 403 with no capture at the addresses tried, and the index held
+ * three under other addresses (23 Sep). The newest capture of each copyright,
+ * disclaimer or terms page is read, with the lines around every rights line.
  */
-async function northernTerritoryTerms(): Promise<void> {
-  for (const host of ['treasury.nt.gov.au', 'nt.gov.au']) {
-    const q = cdxUrl({ urlPattern: `${host}/*`, filters: ['original:.*([Cc]opyright|[Dd]isclaimer|[Tt]erms).*', 'mimetype:text/html'], from: '2022', limit: 200 });
+async function archivedTermsPages(hosts: readonly string[]): Promise<void> {
+  for (const host of hosts) {
+    if (budgetLeft() < 30_000) { skippedForBudget.push(`terms pages — ${host}`); break; }
+    const q = cdxUrl({ urlPattern: `${host}/*`, filters: ['original:.*([Cc]opyright|[Dd]isclaimer|[Tt]erms|[Ll]icen[cs]e).*', 'mimetype:text/html'], from: '2022', limit: 200 });
     const got = await ask(q, 'application/json');
     if (got.networkError !== null || got.status !== 200) { console.log(`      ${host}: archive index ${got.networkError ?? `HTTP ${got.status}`}`); continue; }
     let caps: WaybackCapture[];
     try { caps = parseCdxJson(got.body); } catch (err) { console.log(`      ${host}: archive index unreadable — ${err instanceof Error ? err.message : String(err)}`); continue; }
     const newest = new Map<string, WaybackCapture>();
     for (const c of caps) if (!newest.has(c.original) || newest.get(c.original)!.timestamp < c.timestamp) newest.set(c.original, c);
-    console.log(`      ${host}: ${caps.length} capture(s) of ${newest.size} copyright, disclaimer or terms page(s)`);
+    console.log(`      ${host}: ${caps.length} capture(s) of ${newest.size} copyright, disclaimer, terms or licence page(s)`);
     for (const c of [...newest.values()].sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 3)) {
       const page = await download(originalBytesUrl(c));
       if (!page.bytes) { console.log(`        ${c.timestamp} ${c.original} → ${page.note}`); continue; }
       printWithContext(`${c.original} (archive ${c.timestamp})`, pageLines(new TextDecoder().decode(page.bytes)), LICENCE_WORDS, 1, 3, 24);
     }
   }
+}
+
+/** Every filled row's cells with their columns — the first `head` and the last `tail` — and the widest column any row reaches. */
+function printFilledRows(label: string, grid: Grid, head = 6, tail = 10): void {
+  const filled = grid.map((row, r) => ({ r, row })).filter(({ row }) => row && row.some((c) => cellText(c) !== ''));
+  const widest = Math.max(0, ...filled.map(({ row }) => row.reduce<number>((m, c, i) => (cellText(c) !== '' ? i : m), 0)));
+  console.log(`      ${label}: ${filled.length} filled rows, the widest reaching column ${columnName(widest)}`);
+  const shown = filled.length <= head + tail ? filled : [...filled.slice(0, head), ...filled.slice(-tail)];
+  let last = -1;
+  for (const { r, row } of shown) {
+    if (last >= 0 && r !== last + 1 && shown.length < filled.length) console.log('        …');
+    const cells = row.map((c, i) => ({ i, t: cellText(c) })).filter((x) => x.t !== '');
+    console.log(`        ${String(r + 1).padStart(5)}  ${cells.map((x) => `${columnName(x.i)} ${clip(x.t, 60)}`).join(' ¦ ')}`);
+    last = r;
+  }
+}
+
+/**
+ * A workbook through the loader's own reader: every sheet, its filled rows at
+ * both ends with every cell and its column, the whole text of any notes-like
+ * sheet, and every line about rights. What a parser is written against.
+ */
+async function describeForParser(bytes: Uint8Array): Promise<void> {
+  let names: string[];
+  let read;
+  try {
+    names = (await readXlsxSheets(bytes, [])).sheetNames;
+    read = await readXlsxSheets(bytes, names);
+  } catch (err) {
+    console.log(`      not read by the loader's reader — ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
+  console.log(`      sheets (${names.length}): ${names.join(' | ')}`);
+  for (const n of names.slice(0, 12)) {
+    const lines = gridLines(read.grids[n]);
+    if (/note|content|read ?me|about|info|cover|licen|copyright|intro/i.test(n)) {
+      console.log(`      "${n}", all ${lines.length} line(s)`);
+      for (const l of lines.slice(0, 60)) console.log(`        ${clip(l, 320)}`);
+    } else {
+      printFilledRows(`"${n}"`, read.grids[n]);
+    }
+  }
+  const rights = names.flatMap((n) => gridLines(read.grids[n]).filter((l) => LICENCE_WORDS.test(l)).map((l) => `${n}: ${l}`));
+  console.log(`      lines about rights anywhere in the workbook: ${rights.length === 0 ? '(none)' : ''}`);
+  for (const l of [...new Set(rights)].slice(0, 16)) console.log(`        ${clip(l, 400)}`);
+}
+
+/**
+ * South Australia's terms. Its current workbooks carry "© Department of Trade
+ * and Investment, Government of South Australia, 2024" and nothing about
+ * reuse, and a notice is silence about terms. So the edition's two reports are
+ * read on their opening and closing pages — a Government report states its
+ * licence there — by their captures' own addresses, and the archive is asked
+ * for the terms pages it holds for the publisher's hosts.
+ */
+const SA_EDITION_REPORTS: ReadonlyArray<{ timestamp: string; url: string }> = [
+  { timestamp: '20250321091532', url: 'https://plan.sa.gov.au/__data/assets/pdf_file/0011/1344971/Local-Area-SA2-and-LGA-Population-Projections-for-South-Australia,-2021-to-2041.pdf' },
+  { timestamp: '20250321091524', url: 'https://plan.sa.gov.au/__data/assets/pdf_file/0005/1236767/Population-Projections-for-South-Australia-and-Regions-2021-to-2051-Summary.pdf' },
+];
+
+async function southAustraliaTerms(): Promise<void> {
+  for (const r of SA_EDITION_REPORTS) {
+    if (budgetLeft() < 60_000) { skippedForBudget.push(`SA report — ${r.url}`); break; }
+    let got = await download(originalBytesUrl({ timestamp: r.timestamp, original: r.url }));
+    if (!got.bytes) got = await download(originalBytesUrl({ timestamp: r.timestamp, original: r.url }));
+    if (!got.bytes) { console.log(`      ${r.url} (${r.timestamp}): ${got.note}`); continue; }
+    try {
+      const lines = await pdfText(got.bytes);
+      printWithContext(`${r.url.split('/').pop()} (archive ${r.timestamp}) — ${got.note}`, lines, LICENCE_WORDS, 2, 6, 40);
+    } catch (err) {
+      console.log(`      ${r.url} is not readable as a PDF: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  await archivedTermsPages(['plan.sa.gov.au', 'www.sa.gov.au', 'www.dti.sa.gov.au']);
+}
+
+/**
+ * The ACT's CURRENT edition, named by the Treasury's own page (archived
+ * 13 Dec 2025): *ACT Population Projections 2025-2065*, at Territory,
+ * district ("as approximated by the ABS Statistical Area Level 3") and suburb
+ * level. The catalogue's 2015-based edition is superseded by it, so it is the
+ * one a loader would read: described through the loader's own reader, and
+ * its terms read where the Treasury publishes them.
+ */
+const ACT_CURRENT_WORKBOOK = 'https://www.treasury.act.gov.au/__data/assets/excel_doc/0008/2911319/ACT-Population-Projections-2025-2065-Workbook.xlsx';
+
+async function actCurrentEdition(): Promise<void> {
+  const got = await fetchLikeTheLoader(ACT_CURRENT_WORKBOOK);
+  if (got.bytes === null) { console.log(`      NOT FETCHED — ${got.why}`); }
+  else {
+    console.log(`      fetched ${got.bytes.length.toLocaleString('en-AU')} bytes via ${got.via}`);
+    await describeForParser(got.bytes);
+  }
+  await archivedTermsPages(['www.treasury.act.gov.au', 'www.act.gov.au']);
 }
 
 async function main(): Promise<void> {
@@ -1062,10 +1129,16 @@ async function main(): Promise<void> {
   await northernTerritoryWorkbook();
 
   console.log('\n  The Northern Territory\'s terms, wherever the archive holds them');
-  await northernTerritoryTerms();
+  await archivedTermsPages(['treasury.nt.gov.au', 'nt.gov.au']);
 
   console.log('\n  South Australia\'s current edition, through the archive (plan.sa.gov.au refuses CI)');
   await southAustraliaCurrentEdition();
+
+  console.log('\n  South Australia\'s terms: the edition\'s reports, and the terms pages the archive holds');
+  await southAustraliaTerms();
+
+  console.log('\n  The ACT\'s current edition (2025-2065), and its terms');
+  await actCurrentEdition();
 
   console.log('\n  The ACT\'s own description of its district projections (which year is the base?)');
   {

@@ -459,10 +459,10 @@ would write, because it is the same code.
 | **VIC** | Victoria in Future 2023 (`VIF2023`) | LGA | VIF2023 | 2021 → 2036 | 80 LGAs / 320 rows · 1 declined (the state) | **CC BY 4.0, read** |
 | **QLD** | Queensland Government population projections, 2025 edition | SA2 · LGA | Medium (SA2) · Medium, Low, High (LGA) | 2021 → 2046 | 546 SA2s / 3,276 rows · 78 LGAs / 1,404 rows · 3 declined (the state total on each series sheet, which the councils add to) | **CC BY 4.0, read** |
 | **TAS** | Treasury 2024 projections | LGA | Medium · High · Low | 2023 → 2053 | 29 LGAs / 899 rows per series · 1 declined (the state) | **terms read, not accepted** — the owner's decision (§9.2) |
-| **SA** | catalogue: 2016-based (2019); current: 2021 to 2051, in the archive | SA2 · LGA | medium · high (current) | 2021 → 2041 (current) | catalogue copy **declined — superseded**; current edition being described (§9.4) | CC BY (catalogue copy); current: not yet read |
+| **SA** | catalogue: 2016-based (2019); current: January 2024 release, in the archive | SA2 · LGA | medium · high (current) | 2021 → 2041 (current) | catalogue copy **declined — superseded**; current edition described, **terms not yet read** (§9.4) | CC BY (catalogue copy); current: © notice only |
 | **WA** | WA Tomorrow Report 12 | SA2 | bands | — | **declined — licence** (§9.4) | Custom (Active Acceptance) |
-| **ACT** | Projections by District (2015–2041) | district | — | 2015 → 2041 | **declined — superseded** (§9.4) | CC BY 4.0 |
-| **NT** | NTPOP 2024 | SA3 (the publisher's own footnote) | — | 2021 → 2051 (Summary) | **reached through the archive; terms unreadable from CI** (§9.4) | not yet read |
+| **ACT** | catalogue: by District (2015–2041); current: 2025–2065 | district (≈ SA3) | — | 2015 → 2041 (catalogue) | catalogue copy **declined — superseded**; current edition named, being described (§9.4) | CC BY 4.0 (catalogue copy); current: not yet read |
+| **NT** | NTPOP 2024 | SA3 (the publisher's own footnote) | — | 2021 → 2051 (Summary) | **declined — licence** (§9.4) | none expressly provided for the 2024 release |
 
 ### 9.1 · What each base is read from
 
@@ -632,57 +632,69 @@ What each parser holds the file to, beyond the shared gate:
 ### 9.4 · What is declined, and why each is a different reason
 
 - **South Australia — the catalogue's copy is superseded; the current
-  edition is in the archive.** The catalogue's *Population Projections for SA*
-  is CC BY and publishes SA2 and LGA workbooks, but it is the 2016-based
-  edition released in 2019. The Department's current edition is on
-  `plan.sa.gov.au`, which refuses CI; the archive's index answered 503 on the
-  first asks and, on 23 Sep (run 35839178118), listed 22 projection URLs on
-  that host — among them *Population Projections for South Australia and
-  Regions, 2021 to 2051*, published as council and SA2 workbooks in the
-  **medium and high** series (2021–2041; no low series at that grain),
-  captured 13 Nov 2025, with the edition's report *Local Area SA2 and LGA
-  Population Projections for South Australia, 2021 to 2041*. The decline
-  stands only for the catalogue copy. The current workbooks are being
-  described, and their terms read, through the archive (the next run) —
-  which is how Victoria in Future is already read, so the loader needs no new
-  route to reach them. **A superseded
-  projection is not the publisher's projection**: a projection is the
-  publisher's current assumption set, and a newer edition replaces those
-  assumptions rather than adding to them, so printing the older one under the
-  publisher's name states a view it has since abandoned. This is deliberately
-  NOT QTRIP's rule (*the edition is the one that answers*): an older edition
-  of a register of projects still lists things that were true when it was
-  published, while an older projection's figures are the publisher's replaced
-  opinion about the future.
+  edition is in the archive, and its terms are not yet read.** The
+  catalogue's *Population Projections for SA* is CC BY, but it is the
+  2016-based edition released in 2019. The Department's current edition is on
+  `plan.sa.gov.au`, which refuses CI; on 23 Sep the archive listed it (run
+  35839178118) and the next run read its workbooks through the captures' own
+  addresses (run 35841453910): *Population Projections for South Australian
+  Local Government Areas, 2021-41, January 2024 release* and its SA2
+  counterpart, from the Department of Trade and Investment, in the **medium and
+  high** series (no low series at that grain). Each is two sheets — notes, and
+  one table of `Series | LGA code | LGA name | 2021 … 2041` or `Series |
+  Region | SA2 Code | SA2 Name | 2021 … 2041` (165 SA2 rows). The notes state
+  the base in words — *"including the baseline 2021 Census population"* — and
+  the boundaries — *"the Australian Statistical Geography Standard, 2021
+  Edition"* — and that *"these projections replace the population projections
+  … published … in 2019"*, which is the publisher's own statement that the
+  catalogue copy is superseded. Nine near-empty SA2s are merged into
+  neighbours, and the notes list both sides of every merge (NSW's collapsed
+  SA2s, in another publisher's words). **What blocks the load is the terms**:
+  the workbooks say *"© Department of Trade and Investment, Government of South
+  Australia, 2024"* and nothing about reuse — a notice is silence about terms —
+  and the edition's report did not download. The next run reads the edition's
+  two reports and the terms pages the archive holds for its hosts.
 - **Western Australia — a licence.** WA Tomorrow Report 12 publishes SA2
   forecasts, and the catalogue states its licence as *Custom (Active
   Acceptance)*: reuse requires accepting terms this platform has not accepted
   and cannot accept by fetching. It is the finding `WA_LICENCE_NOTE` records
   for the zone layer, from the same publisher.
-- **The ACT — a superseded edition.** Its only projection by area in the
-  catalogue is *ACT Population Projections by District (2015 - 2041)*, which
-  its own description says *"are based upon actual values obtained in 2015,
-  and estimates obtained for 2016"* — a base two censuses old. Its CC BY 4.0
-  licence is not in question; its currency is.
-- **The Northern Territory — reached, not yet read.** The catalogue still
-  names the 2019 release; the 2024 edition's workbooks are on
-  `treasury.nt.gov.au`, which answers CI with a Cloudflare challenge (HTTP 403,
-  *"Just a moment..."* — a challenge, not a refusal,
-  `JURISDICTION_PLANNING_COVERAGE.md`'s rule). The archive holds the main
+- **The ACT — the catalogue's copy is superseded, and the current edition is
+  named.** Its only projection by area in the catalogue is *ACT Population
+  Projections by District (2015 - 2041)*, which its own description says *"are
+  based upon actual values obtained in 2015, and estimates obtained for
+  2016"* — a base two censuses old. Its CC BY 4.0 licence is not in question;
+  its currency is. The Treasury's own page (archived 13 Dec 2025; the live page
+  refuses CI) names what supersedes it: *ACT Population Projections
+  2025-2065*, at Territory, **district** (*"as approximated by the Australian
+  Bureau of Statistics (ABS) Statistical Area Level 3"*) and suburb level, as
+  one workbook. The next run describes that workbook and reads its terms. A
+  district edition, like the NT's regions, would be read through an SA3 rung
+  the reader does not yet have.
+- **The Northern Territory — declined for its licence.** The 2024 edition's
+  workbooks are on `treasury.nt.gov.au`, which answers CI with a Cloudflare
+  challenge (HTTP 403, *"Just a moment..."* — a challenge, not a refusal,
+  `JURISDICTION_PLANNING_COVERAGE.md`'s rule), and the archive holds the main
   workbook (capture `20251121111355`, 257,800 bytes), read on 23 Sep by the
   capture's own address when the index would not answer (run 35839178118).
-  The publisher settles the grain in its own footnote — *"Regions correspond to
-  the Statistical Areas 3 (SA3) geographical classification of the Australian
-  Bureau of Statistics"* — and each region sheet ends on a *"<region>
-  population"* block after the Aboriginal and non-Aboriginal ones; the
-  Summary opens on *"Estimated Resident Population"* for 2021 and runs to
-  2051. **The terms are the blocker, and they are not ours to read yet**: the
-  workbook states none, and the Treasury's copyright and disclaimer pages and
-  the NT Government's copyright page all answer CI 403 with no capture behind
-  them. The next run asks the archive which terms pages it holds for either
-  host. Loading it would also need the reader's first SA3 rung
-  (`report_geography` already carries `sa3_name`), which is not built until
-  something writes an SA3 row.
+  The layout is settled — the publisher's own footnote says *"Regions correspond
+  to the Statistical Areas 3 (SA3) geographical classification of the
+  Australian Bureau of Statistics"*, each region sheet ends on a *"<region>
+  population"* block after the Aboriginal and non-Aboriginal ones, and the
+  Summary opens on 2021 estimated resident population and runs to 2051 — and
+  the licence is not. The workbook states no terms. The catalogue's *NT
+  Population Projections* record says *Creative Commons Attribution*, but its
+  resources are the 2019 release and a 2017 update: it was last touched in
+  2021 and does not reach the 2024 file, and the 2019 release it does cover is
+  superseded. And the NT Government's copyright statement (nt.gov.au, archived
+  14 May 2026; run 35841453910) is explicit: *"No part of this website may be
+  reproduced or reused for any purpose whatsoever, apart from: fair dealing …
+  or where expressly provided under a Creative Commons licence."* Nothing
+  expressly provides one for the 2024 release, so it is declined — WA's
+  reason, from a different sentence. What would change it: the Treasury
+  stating a licence for the 2024 release (a person can read its projections
+  page in a browser, which Cloudflare does not challenge), or the catalogue
+  record adding it.
 
 Each of these keeps its jurisdiction's `not_loaded` sentence and its route to
 the publisher, because the reader is still owed where the figure is.

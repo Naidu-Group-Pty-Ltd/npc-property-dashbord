@@ -491,10 +491,15 @@ and a merged commit each describe what was meant to happen.
   table (78 councils, 1,404 rows, three series — adding to the publisher's own
   state total), under CC BY 4.0 read from the Queensland catalogue and from
   the council workbook's own link to the deed. **Tasmania's terms are read and
-  are the owner's decision** (§12 step 4). **The NT's 2024 workbook is
-  reached** through the archive and its regions are ABS SA3s; its base, its
-  total-persons block and its terms are not read yet. See
-  `FORWARD_DEMAND_EVIDENCE.md` §9.
+  are the owner's decision** (§12 step 4). **The NT is declined for its
+  licence**: its 2024 workbook (ABS SA3 regions, 2021 base) states no terms,
+  the catalogue's CC Attribution record reaches only the superseded 2019
+  release, and the NT Government's copyright statement forbids reuse without
+  an expressly provided Creative Commons licence. **South Australia's and the
+  ACT's current editions were found** — SA's January 2024 release (SA2 and
+  council, medium and high) through the archive, the ACT's 2025–2065 by
+  district (≈ SA3) — and neither loads until its terms are read; SA's
+  workbooks carry only a © notice. See `FORWARD_DEMAND_EVIDENCE.md` §9.
 - **Item 6b — South Australia's zone is read** from the Planning and Design
   Code's own layer (`JURISDICTION_PLANNING_COVERAGE.md` §3.6); WA's is readable
   and licence-restricted; the NT's is challenged.
