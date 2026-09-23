@@ -37,9 +37,10 @@
  * because it is the same code.
  *
  * Then the questions the load still owes an answer to: the licence each
- * publisher states, where Queensland puts its files, what the Northern
- * Territory's 2024 edition holds, the ACT's own description of its base year,
- * and whether South Australia's newer edition is in the archive.
+ * publisher states, what Queensland's workbooks and product page say, what
+ * the Northern Territory's 2024 edition holds and under what terms, the ACT's
+ * own description of its base year and where its current edition is, and
+ * whether South Australia's newer edition is in the archive.
  *
  * ## The exit code
  *
@@ -990,9 +991,44 @@ async function main(): Promise<void> {
     }
   }
 
+  /*
+   * The ACT's catalogue edition is 2015-based, and its own description points
+   * at the Treasury's site for "a full list of all projections". Declining the
+   * ACT as superseded is only honest if the edition that supersedes it is
+   * named, so the pages it points at are read for the current edition, its
+   * base and its files. Its districts are SA3-shaped, so a current district
+   * edition would share the reader rung the NT's regions need.
+   */
+  console.log('\n  Where the ACT puts its CURRENT projections (the catalogue edition is 2015-based)');
+  for (const page of [
+    'https://apps.treasury.act.gov.au/demography/projections/act',
+    'https://www.treasury.act.gov.au/snapshot/demography/act',
+  ]) {
+    const got = await readPage(page);
+    if (!got) { console.log(`      ${page} not read`); continue; }
+    const lines = pageLines(got.body).filter((l) => /projection|district|base year|jump-off|licen[cs]e|creative commons|©/i.test(l));
+    const links = [...got.body.matchAll(/<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)]
+      .map((m) => ({ href: new URL(unescapeXml(m[1]), page).toString(), text: m[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() }))
+      .filter((l) => /\.(xlsx?|csv|zip|pdf)(\?|$)/i.test(l.href) || /projection/i.test(`${l.href} ${l.text}`));
+    console.log(`      ${page} via ${got.via} — ${lines.length} line(s) naming a projection, a district or terms; ${links.length} link(s)`);
+    for (const l of lines.slice(0, 18)) console.log(`        ${clip(l, 260)}`);
+    for (const l of links.slice(0, 24)) console.log(`        link  ${clip(l.text, 70).padEnd(70)} ${l.href}`);
+  }
+
   console.log('\n  Whether South Australia\'s newer edition is in the archive (plan.sa.gov.au refuses CI)');
   {
-    const q = cdxUrl({ urlPattern: 'plan.sa.gov.au/*', filters: ['original:.*[Pp]rojection.*'], limit: 400 });
+    /*
+     * Narrowed twice on 23 Sep: a regex over every URL the archive holds for
+     * the whole host answered 503 on one run and died unanswered inside the
+     * 30 s timeout on the next. Workbooks only, and only captures from 2022 —
+     * the edition that supersedes the 2016-based one cannot be older.
+     */
+    const q = cdxUrl({
+      urlPattern: 'plan.sa.gov.au/*',
+      filters: ['mimetype:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+      from: '2022',
+      limit: 400,
+    });
     const got = await ask(q, 'application/json');
     if (got.networkError === null && got.status === 200) {
       try {
