@@ -50,9 +50,12 @@
  * rule for the same reason: a guide that carries no figure can be written in
  * advance and still be true, and a spec rejects any that creeps in.
  *
- * **Nothing is `ingested: true`.** Every entry is false, truthfully, and a
- * test asserts it — so the day one is loaded, the flag and the sentence
- * change together rather than one of them being forgotten.
+ * **`ingested` is derived, never typed.** It was `false` on all eight,
+ * truthfully, until the register had a loader. It is now whether
+ * `PROJECTION_FILES` holds a file for the jurisdiction whose licence has
+ * been READ from its publisher (`projectionIngested`) — so the flag, the
+ * sentence and the loader cannot disagree, and a file whose licence is still
+ * unread counts for nothing, because the loader refuses it.
  *
  * Deno-compatible: no `@/` aliases, explicit `.ts` extensions.
  */
@@ -62,6 +65,7 @@ import {
   PROJECTION_GRAIN_LABEL,
   type ProjectionGrain,
 } from './absPopulationProjections.pure.ts';
+import { projectionIngested } from './stateProjectionFiles.pure.ts';
 
 /** A jurisdiction's own forward projection, and what form it takes. */
 export interface ForwardDemandPublisher {
@@ -78,7 +82,7 @@ export interface ForwardDemandPublisher {
    * conservative value is `publication`.
    */
   form: 'structured' | 'publication';
-  /** Whether this platform reads it today. */
+  /** Whether this platform's loader reads it — derived from `PROJECTION_FILES`, never typed. */
   ingested: boolean;
   /** Where a reader goes to see it themselves. */
   url: string;
@@ -96,57 +100,57 @@ export const FORWARD_DEMAND_PUBLISHERS: Readonly<Record<string, ForwardDemandPub
     publisher: 'the NSW Department of Planning, Housing and Infrastructure',
     product: 'the NSW population projections',
     form: 'publication',
-    ingested: false,
+    ingested: projectionIngested('NSW'),
     url: 'https://www.planning.nsw.gov.au/research-and-demography/population-projections',
   },
   VIC: {
     publisher: 'the Victorian Department of Transport and Planning',
     product: 'Victoria in Future',
     form: 'publication',
-    ingested: false,
+    ingested: projectionIngested('VIC'),
     url: 'https://www.planning.vic.gov.au/guides-and-resources/data-and-insights/victoria-in-future',
   },
   QLD: {
     publisher: 'the Queensland Government Statistician’s Office',
     product: 'the Queensland Government population projections',
     form: 'publication',
-    ingested: false,
+    ingested: projectionIngested('QLD'),
     url: 'https://www.qgso.qld.gov.au/statistics/theme/population/population-projections',
   },
   SA: {
     publisher: 'the South Australian Department for Housing and Urban Development',
     product: 'the South Australian population projections',
     form: 'publication',
-    ingested: false,
+    ingested: projectionIngested('SA'),
     url: 'https://plan.sa.gov.au/',
   },
   WA: {
     publisher: 'the Western Australian Planning Commission',
     product: 'WA Tomorrow',
     form: 'publication',
-    ingested: false,
+    ingested: projectionIngested('WA'),
     url: 'https://www.wa.gov.au/organisation/department-of-planning-lands-and-heritage',
   },
   TAS: {
     publisher: 'the Tasmanian Department of Treasury and Finance',
     product: 'the Tasmanian population projections',
     form: 'publication',
-    ingested: false,
-    url: 'https://www.treasury.tas.gov.au/economy/population',
+    ingested: projectionIngested('TAS'),
+    url: 'https://www.treasury.tas.gov.au/economy-site/Pages/2023-Population-projections-for-Tasmania-and-its-Local-Government-Areas.aspx',
   },
   ACT: {
     publisher: 'the ACT Chief Minister, Treasury and Economic Development Directorate',
     product: 'the ACT population projections',
     form: 'publication',
-    ingested: false,
+    ingested: projectionIngested('ACT'),
     url: 'https://www.treasury.act.gov.au/',
   },
   NT: {
     publisher: 'the Northern Territory Department of Treasury and Finance',
     product: 'the Northern Territory population projections',
     form: 'publication',
-    ingested: false,
-    url: 'https://treasury.nt.gov.au/',
+    ingested: projectionIngested('NT'),
+    url: 'https://treasury.nt.gov.au/dtf/economic-group/population-projections',
   },
 };
 
@@ -241,19 +245,22 @@ export function forwardDemandCoverageNote(
    * reader who cannot get the figure from this report is entitled to know
    * where it is, which is the half `programmeCoverageNote` exists for.
    */
-  const route = pub
-    ? ` Forward projections for this jurisdiction are published by ${pub.publisher} as `
-      + `${pub.product}, which this report does not read; they can be read at ${pub.url}.`
-    : ' No forward projection publisher is named for this jurisdiction in this report, '
-      + 'which is a limit of this report rather than a finding about the area.';
   /*
    * Where the jurisdiction's projection IS held, "which this report does not
    * read" is false — the register was read and answered for somewhere else.
-   * The route is still owed; only that clause is not.
+   * The route is still owed; only that clause is not. The same holds for a
+   * jurisdiction this platform's loader reads: on a deployment that has not
+   * run it yet the sentence before says so, and the clause would claim the
+   * platform does not read what it does.
    */
   const heldRoute = pub
     ? ` The projection is published by ${pub.publisher} as ${pub.product} and can be read at ${pub.url}.`
-    : route;
+    : ' No forward projection publisher is named for this jurisdiction in this report, '
+      + 'which is a limit of this report rather than a finding about the area.';
+  const route = pub && !pub.ingested
+    ? ` Forward projections for this jurisdiction are published by ${pub.publisher} as `
+      + `${pub.product}, which this report does not read; they can be read at ${pub.url}.`
+    : heldRoute;
 
   switch (availability.kind) {
     case 'projected':

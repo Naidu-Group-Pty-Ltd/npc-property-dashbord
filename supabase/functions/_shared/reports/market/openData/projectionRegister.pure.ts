@@ -160,11 +160,18 @@ export function readingFromRows(rows: readonly ProjectionRow[]): PopulationProje
  * them, because that is how every jurisdiction presents its own tables and a
  * reader comparing this page with the publisher's should find the same years.
  */
-export function projectionColumns(reading: PopulationProjectionReading, max = 6): number[] {
+export function projectionColumns(reading: PopulationProjectionReading, max = 6, asOfYear: number | null = null): number[] {
   const years = [...new Set(reading.series.flatMap((s) => s.points.map((p) => p.year)))].sort((a, b) => a - b);
   const baseYears = new Set(reading.series.flatMap((s) => s.points.filter((p) => p.base).map((p) => p.year)));
   const base = years.find((y) => baseYears.has(y)) ?? null;
-  const projected = years.filter((y) => !baseYears.has(y));
+  const allProjected = years.filter((y) => !baseYears.has(y));
+  // A projected year already behind the report is not forward demand: a
+  // 2022 figure in a 2026 report invites comparison with a history the table
+  // does not print. The base stays — it is the estimate the projection starts
+  // from — and where EVERY projected year is behind, the table is printed
+  // whole rather than emptied, because an edition's horizon is still a fact.
+  const ahead = asOfYear === null ? allProjected : allProjected.filter((y) => y >= asOfYear);
+  const projected = ahead.length > 0 ? ahead : allProjected;
   if (projected.length === 0) return base === null ? [] : [base];
   const horizon = projected[projected.length - 1];
   const quinquennial = projected.filter((y) => (horizon - y) % 5 === 0);
@@ -192,8 +199,8 @@ const dayOf = (iso: string) => (/^\d{4}-\d{2}-\d{2}/.exec(iso)?.[0] ?? iso);
  * bound what it may say. Never called for an absence — the absence sentence
  * is `forwardDemandCoverageNote`'s, and the two never appear together.
  */
-export function projectionTableBlock(reading: PopulationProjectionReading): string {
-  const cols = projectionColumns(reading);
+export function projectionTableBlock(reading: PopulationProjectionReading, asOfYear: number | null = null): string {
+  const cols = projectionColumns(reading, 6, asOfYear);
   const baseYears = new Set(reading.series.flatMap((s) => s.points.filter((p) => p.base).map((p) => p.year)));
   const header = cols.map((y) => (baseYears.has(y) ? `${y} (estimated base)` : `${y}`));
   const rows = reading.series.map((s) => {
@@ -233,7 +240,13 @@ export function projectionTableBlock(reading: PopulationProjectionReading): stri
  * and `no_area_resolved` is about the subject's inputs.
  */
 export type ProjectionRegisterRead =
-  | { kind: 'reading'; reading: PopulationProjectionReading; askedAt: ProjectionAreaKind }
+  | {
+    kind: 'reading';
+    reading: PopulationProjectionReading;
+    askedAt: ProjectionAreaKind;
+    /** The year the register was read in — a projected year before it is not printed as forward. */
+    readYear?: number;
+  }
   | {
     kind: 'absent';
     absence: 'no_area_resolved' | 'none_for_area' | 'not_loaded' | 'unavailable';
@@ -267,7 +280,7 @@ export function availabilityOfRead(read: ProjectionRegisterRead): ForwardDemandA
  * ask may not say the deployment holds nothing.
  */
 export function forwardDemandStatement(read: ProjectionRegisterRead | null | undefined, state: string | null): string {
-  if (read && read.kind === 'reading') return projectionTableBlock(read.reading);
+  if (read && read.kind === 'reading') return projectionTableBlock(read.reading, read.readYear ?? null);
   const availability = read ? availabilityOfRead(read) : null;
   return forwardDemandCoverageNote(availability ?? { kind: 'not_read' }, state);
 }

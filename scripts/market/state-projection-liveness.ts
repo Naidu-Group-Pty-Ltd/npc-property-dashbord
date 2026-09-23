@@ -24,6 +24,23 @@
  *   3. the publisher's own product page (`FORWARD_DEMAND_PUBLISHERS.url`),
  *      where every one of them actually puts the workbooks.
  *
+ * ## Third pass: the loader, run dry
+ *
+ * Once a parser exists, describing a file is no longer the question — whether
+ * THE PARSER reads it is. So the run opens by fetching every file in
+ * `PROJECTION_FILES` the way the loader does (the publisher, then the
+ * archive's newest capture that loads), running the loader's own
+ * `readXlsxSheets` → `parseProjectionFile` → `guardProjectionRows` over it,
+ * and printing what it WOULD write: the edition, the series, the base, the
+ * horizon, the areas, every declined row and a few areas' figures. It writes
+ * nothing. What it proves about a file is what production would write,
+ * because it is the same code.
+ *
+ * Then the questions the load still owes an answer to: the licence each
+ * publisher states, where Queensland puts its files, what the Northern
+ * Territory's 2024 edition holds, the ACT's own description of its base year,
+ * and whether South Australia's newer edition is in the archive.
+ *
  * ## The exit code
  *
  * `abs-register-liveness`' rule. A publisher that does not answer, 404s, or
@@ -69,6 +86,9 @@ import {
   type VolumeDataset,
 } from '../../supabase/functions/_shared/reports/market/openData/salesVolumePublishers.pure.ts';
 import { readZipDirectoryFromTail, memberDataStart, ZIP_TAIL_BYTES } from '../../supabase/functions/_shared/gtfsFeed.pure.ts';
+import { PROJECTION_FILES, parseProjectionFile, type ProjectionFile } from '../../supabase/functions/_shared/reports/market/openData/stateProjectionFiles.pure.ts';
+import { guardProjectionRows } from '../../supabase/functions/_shared/reports/market/openData/projectionLoad.pure.ts';
+import { readXlsxSheets, cellText, type Grid } from '../../supabase/functions/_shared/reports/market/openData/xlsxSheet.pure.ts';
 
 const FETCH_MS = 30_000;
 const DOWNLOAD_MS = 90_000;
@@ -511,7 +531,193 @@ async function socrataMetadata(domain: string, id: string): Promise<void> {
   }
 }
 
+/** A workbook the way the loader fetches one: the publisher, then the archive's newest capture that loads. */
+async function fetchLikeTheLoader(url: string): Promise<{ bytes: Uint8Array; via: string } | { bytes: null; why: string }> {
+  const isZip = (b: Uint8Array | null): b is Uint8Array => b !== null && b.length >= 4 && b[0] === 0x50 && b[1] === 0x4b;
+  const got = await download(url);
+  if (isZip(got.bytes)) return { bytes: got.bytes, via: `publisher (${got.note})` };
+  const index = await ask(cdxUrl({ urlPattern: url, limit: 200 }), 'application/json');
+  if (index.networkError !== null || index.status !== 200) {
+    return { bytes: null, why: `publisher ${got.note}; archive index ${index.networkError ?? `HTTP ${index.status}`}` };
+  }
+  let captures: WaybackCapture[];
+  try { captures = parseCdxJson(index.body); } catch (err) {
+    return { bytes: null, why: `publisher ${got.note}; archive index unreadable — ${err instanceof Error ? err.message : String(err)}` };
+  }
+  for (const c of [...captures].sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 4)) {
+    const copy = await download(originalBytesUrl(c));
+    if (isZip(copy.bytes)) return { bytes: copy.bytes, via: `archive ${c.timestamp} (publisher: ${got.note})` };
+  }
+  return { bytes: null, why: `publisher ${got.note}; the archive holds ${captures.length} capture(s), none of the newest four loads` };
+}
+
+const LICENCE_WORDS = /©|licen[cs]e|creative commons|cc[ -]by|attribution|copyright|reproduc|permission|terms of use/i;
+
+/** Every line of a sheet that speaks about rights, in full — the licence is read, never assumed. */
+function printRightsLines(label: string, grid: Grid | undefined, all = false): void {
+  if (!grid) return;
+  const lines: string[] = [];
+  for (const row of grid) for (const c of row ?? []) {
+    const t = cellText(c);
+    if (t !== '' && (all || LICENCE_WORDS.test(t))) lines.push(t);
+  }
+  console.log(`      ${label}: ${lines.length === 0 ? '(no line speaks about rights)' : ''}`);
+  for (const l of lines.slice(0, 16)) console.log(`        ${l.length > 400 ? `${l.slice(0, 399)}…` : l}`);
+}
+
+async function dryRun(file: ProjectionFile): Promise<string> {
+  console.log(`\n    ${file.key} — ${file.state} · ${file.url}`);
+  if (budgetLeft() < 60_000) { skippedForBudget.push(`dry run ${file.key}`); return 'not run (budget)'; }
+  const got = await fetchLikeTheLoader(file.url);
+  if (got.bytes === null) { console.log(`      NOT FETCHED — ${got.why}`); return 'not fetched'; }
+  console.log(`      fetched    ${got.bytes.length.toLocaleString('en-AU')} bytes via ${got.via}`);
+  const began = Date.now();
+  let read;
+  try {
+    read = await readXlsxSheets(got.bytes, file.sheets);
+  } catch (err) {
+    console.log(`      REFUSED READING — ${err instanceof Error ? err.message : String(err)}`);
+    return 'read refused';
+  }
+  const readMs = Date.now() - began;
+  console.log(`      sheets     ${read.sheetNames.join(' | ')}`);
+  console.log(`      read       ${file.sheets.join(', ')} in ${readMs} ms (${file.sheets.map((n) => `${n}: ${read.grids[n].filter(Boolean).length} rows`).join(', ')})`);
+  for (const n of file.sheets) printRightsLines(`rights lines in "${n}"`, read.grids[n], /readme/i.test(n));
+  let parsed;
+  try {
+    parsed = parseProjectionFile(file, read.grids, file.url, file.licence ?? '(dry run — licence not yet read)');
+  } catch (err) {
+    console.log(`      REFUSED PARSING — ${err instanceof Error ? err.message : String(err)}`);
+    return 'parse refused';
+  }
+  const guard = guardProjectionRows(parsed.rows);
+  console.log(`      release    ${parsed.release}`);
+  console.log(`      series     ${parsed.series.join(' | ')}`);
+  console.log(`      base       ${parsed.base ?? '(none printed)'} · horizon ${parsed.horizon}`);
+  console.log(`      areas      ${parsed.areas} (floor ${file.minAreas}) · rows ${parsed.rows.length.toLocaleString('en-AU')} · parsed in ${Date.now() - began - readMs} ms`);
+  console.log(`      gate       ${guard.ok ? `PASSES — ${guard.areaKinds.join(', ')} · ${guard.firstYear}–${guard.lastYear}` : `REFUSES — ${guard.reason}`}`);
+  console.log(`      licence    ${file.licence ?? 'NOT YET READ'} — ${file.licenceEvidence}`);
+  console.log(`      declined   ${parsed.declined.length}${parsed.declined.length > 0 ? ` — ${parsed.declined.slice(0, 12).join(' · ')}` : ''}`);
+  const byArea = new Map<string, typeof parsed.rows>();
+  for (const r of parsed.rows) byArea.set(r.area_code, [...(byArea.get(r.area_code) ?? []), r]);
+  const sample = [...byArea.values()];
+  const show = [...sample.slice(0, 3), ...sample.slice(-2)];
+  for (const rows of show) {
+    const b = rows.find((r) => r.year_kind === 'base');
+    const h = rows.filter((r) => r.year_kind === 'projected').sort((a, c) => a.year - c.year);
+    const last = h[h.length - 1];
+    console.log(`        ${rows[0].area.padEnd(40).slice(0, 40)} token ${rows[0].area_token.slice(0, 28).padEnd(28)} `
+      + `${b ? `${b.year} ${Math.round(b.value).toLocaleString('en-AU')} (base)` : '(no base)'} → ${last ? `${last.year} ${Math.round(last.value).toLocaleString('en-AU')}` : '(no projection)'}`);
+  }
+  return guard.ok ? `would write ${parsed.rows.length} rows for ${parsed.areas} areas` : 'gate refuses';
+}
+
+/** Strip a page to its visible lines. */
+function pageLines(html: string): string[] {
+  return html
+    .replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<\/(p|div|li|h\d|tr|section|footer)>|<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&copy;/g, '©').replace(/&#169;/g, '©')
+    .split('\n').map((l) => l.replace(/\s+/g, ' ').trim()).filter((l) => l !== '');
+}
+
+/** What a publisher's own site says about reusing what it publishes. */
+async function rightsPages(origin: string): Promise<void> {
+  const home = await readPage(`${origin}/`);
+  if (!home) { console.log(`      ${origin}/ not read`); return; }
+  const hrefs = [...home.body.matchAll(/<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)]
+    .map((m) => ({ href: m[1], text: m[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() }))
+    .filter((l) => /copyright|disclaimer|licen[cs]|terms/i.test(`${l.href} ${l.text}`));
+  const urls = [...new Set(hrefs.map((l) => new URL(l.href, `${origin}/`).toString()))].slice(0, 3);
+  console.log(`      ${origin}/ via ${home.via} · rights links: ${urls.length === 0 ? 'none' : urls.join(' | ')}`);
+  for (const u of urls) {
+    const page = await readPage(u);
+    if (!page) continue;
+    const lines = pageLines(page.body).filter((l) => LICENCE_WORDS.test(l));
+    console.log(`      ${u} (via ${page.via}) — ${lines.length} line(s) about rights`);
+    for (const l of lines.slice(0, 10)) console.log(`        ${l.length > 300 ? `${l.slice(0, 299)}…` : l}`);
+  }
+}
+
 async function main(): Promise<void> {
+  h('THE LOADER, RUN DRY — every projection file through the parser production would use');
+  console.log('  Fetched the way the loader fetches, read by readXlsxSheets, parsed by');
+  console.log('  parseProjectionFile and held to guardProjectionRows. Nothing is written.');
+  const dry: Array<{ key: string; outcome: string }> = [];
+  for (const file of PROJECTION_FILES) dry.push({ key: file.key, outcome: await dryRun(file) });
+
+  h('WHAT THE LOAD STILL NEEDS ANSWERED');
+  console.log('\n  The licence each publisher states for reuse');
+  await rightsPages('https://www.planning.nsw.gov.au');
+  await rightsPages('https://www.treasury.tas.gov.au');
+
+  console.log('\n  Where Queensland puts its projection files (the first walk found none one level down)');
+  for (const page of [
+    'https://www.qgso.qld.gov.au/statistics/theme/population/population-projections/regions',
+    'https://www.qgso.qld.gov.au/statistics/theme/population/population-projections/state',
+  ]) {
+    const got = await readPage(page);
+    if (!got) continue;
+    const links = [...got.body.matchAll(/<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)]
+      .map((m) => ({ href: new URL(m[1], page).toString(), text: m[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() }))
+      .filter((l) => /\.(xlsx?|csv|zip)(\?|$)|\/issues\/|download|attachment/i.test(l.href));
+    console.log(`      ${page} via ${got.via} — ${links.length} file-like link(s)`);
+    for (const l of links.slice(0, 20)) console.log(`        ${l.text.slice(0, 80).padEnd(80)} ${l.href}`);
+  }
+
+  console.log('\n  The Northern Territory\'s 2024 edition (the catalogue still names 2019)');
+  await describe('https://treasury.nt.gov.au/pms/economy/population-projections/NTPOP-2024-Release.xlsx', 'NTPOP 2024 release');
+  await describe('https://treasury.nt.gov.au/pms/economy/population-projections/NTPOP-2024-Release-NTG-defined-regional-areas.xlsx', 'NTPOP 2024 release — NTG defined regional areas');
+
+  console.log('\n  The ACT\'s own description of its district projections (which year is the base?)');
+  {
+    const got = await ask('https://www.data.act.gov.au/api/views/e72a-8ng2.json');
+    if (got.networkError === null && got.status === 200) {
+      try {
+        const v = JSON.parse(got.body) as { name?: string; description?: string; license?: { name?: string } };
+        console.log(`      ${v.name ?? '(no name)'} · ${v.license?.name ?? '(no licence)'}`);
+        for (const l of (v.description ?? '(no description)').split(/\n+/).slice(0, 12)) console.log(`        ${l.slice(0, 300)}`);
+      } catch { console.log(`      200 but not JSON — ${JSON.stringify(got.body.slice(0, 80))}`); }
+    } else {
+      console.log(`      ${got.networkError ?? `HTTP ${got.status}`}`);
+    }
+  }
+
+  console.log('\n  Whether South Australia\'s newer edition is in the archive (plan.sa.gov.au refuses CI)');
+  {
+    const q = cdxUrl({ urlPattern: 'plan.sa.gov.au/*', filters: ['original:.*[Pp]rojection.*'], limit: 400 });
+    const got = await ask(q, 'application/json');
+    if (got.networkError === null && got.status === 200) {
+      try {
+        const caps = parseCdxJson(got.body);
+        const newest = new Map<string, WaybackCapture>();
+        for (const c of caps) if (!newest.has(c.original) || newest.get(c.original)!.timestamp < c.timestamp) newest.set(c.original, c);
+        console.log(`      ${caps.length} capture(s) of ${newest.size} distinct URL(s) naming a projection`);
+        for (const c of [...newest.values()].sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 25)) {
+          console.log(`        ${c.timestamp}  ${c.mimetype.padEnd(24).slice(0, 24)} ${c.original}`);
+        }
+      } catch (err) { console.log(`      archive index unreadable — ${err instanceof Error ? err.message : String(err)}`); }
+    } else {
+      console.log(`      archive index ${got.networkError ?? `HTTP ${got.status}`}`);
+    }
+  }
+
+  h('DRY RUN — READ');
+  for (const d of dry) kv(d.key, d.outcome);
+
+  if (budgetLeft() < 7 * 60_000) {
+    h('THE CATALOGUE SURVEY WAS NOT RUN THIS PASS');
+    console.log(`  ${Math.round(budgetLeft() / 1000)} s of the budget remained — too little for eight catalogues,`);
+    console.log('  so it was skipped rather than cut short. Its last complete reading is in');
+    console.log('  FORWARD_DEMAND_EVIDENCE.md §9; this is a gap in this run, not a change.');
+    kv('time spent', `${Math.round((Date.now() - startedAt) / 1000)} s of a ${BUDGET_MS / 1000} s budget`);
+    return;
+  }
+  await survey();
+}
+
+async function survey(): Promise<void> {
   h('What does each state and territory publish as its own population projection?');
   console.log('  The ABS projects to capital city or rest of state and no finer, so forward');
   console.log('  demand at a property\'s own area is a per-jurisdiction register. This asks');

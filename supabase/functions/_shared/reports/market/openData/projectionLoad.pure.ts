@@ -135,5 +135,34 @@ export function projectionBatches<T>(rows: readonly T[], size = 500): T[][] {
   return out;
 }
 
+/**
+ * Upsert batches that never split an AREA across two requests.
+ *
+ * A batch that fails leaves the batches before it written. Cut at a fixed
+ * row count, that can leave one area holding its base and half its projected
+ * years under a new edition — and the reader, which prefers the edition that
+ * reaches furthest, would print that half-written series as the projection.
+ * Cut at area boundaries, a failure leaves every area either whole or
+ * untouched. An area larger than `size` gets a batch of its own.
+ */
+export function projectionBatchesByArea(rows: readonly ProjectionLoadRow[], size = 500): ProjectionLoadRow[][] {
+  const byArea = new Map<string, ProjectionLoadRow[]>();
+  for (const r of rows) {
+    const k = [r.area_kind, r.area_code].join('\u0001');
+    byArea.set(k, [...(byArea.get(k) ?? []), r]);
+  }
+  const out: ProjectionLoadRow[][] = [];
+  let current: ProjectionLoadRow[] = [];
+  for (const group of byArea.values()) {
+    if (current.length > 0 && current.length + group.length > size) {
+      out.push(current);
+      current = [];
+    }
+    current.push(...group);
+  }
+  if (current.length > 0) out.push(current);
+  return out;
+}
+
 /** The table's own key, for `upsert(..., { onConflict })`. */
 export const PROJECTION_CONFLICT_KEY = 'state,release,series,measure,area_kind,area_code,year';

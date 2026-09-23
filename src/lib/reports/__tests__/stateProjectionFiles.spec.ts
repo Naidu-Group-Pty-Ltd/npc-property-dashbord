@@ -1,0 +1,386 @@
+/**
+ * The projection loader's two halves that can be proven without a publisher:
+ * the one-sheet xlsx reader, and each jurisdiction's parser against a
+ * workbook laid out the way CI measured the real one (run 35827597400, 23 Sep
+ * 2026). The real files are proven by the dry run in
+ * `state-projection-liveness`, which runs these same parsers over them.
+ */
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import * as XLSX from 'xlsx';
+import { describe, expect, it } from 'vitest';
+import {
+  PROJECTION_FILES,
+  parseProjectionFile,
+  projectionFileByKey,
+  projectionIngested,
+  readFirstInterval,
+  readHistoricProjected,
+  readJumpOffYear,
+  type ProjectionFile,
+} from '../../../../supabase/functions/_shared/reports/market/openData/stateProjectionFiles.pure';
+import {
+  columnIndex,
+  parseSharedStrings,
+  parseSheetXml,
+  readXlsxSheets,
+  unescapeXml,
+} from '../../../../supabase/functions/_shared/reports/market/openData/xlsxSheet.pure';
+import {
+  guardProjectionRows,
+  projectionBatchesByArea,
+  type ProjectionLoadRow,
+} from '../../../../supabase/functions/_shared/reports/market/openData/projectionLoad.pure';
+
+type Cell = string | number | null;
+
+function workbook(sheets: Record<string, Cell[][]>, opts: { widenTo?: Record<string, string> } = {}): Uint8Array {
+  const wb = XLSX.utils.book_new();
+  for (const [name, rows] of Object.entries(sheets)) {
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    if (opts.widenTo?.[name]) ws['!ref'] = opts.widenTo[name];
+    XLSX.utils.book_append_sheet(wb, ws, name);
+  }
+  return new Uint8Array(XLSX.write(wb, { type: 'array', bookType: 'xlsx', compression: true }) as ArrayBuffer);
+}
+
+const file = (key: string): ProjectionFile => {
+  const f = projectionFileByKey(key);
+  if (!f) throw new Error(`no file ${key}`);
+  return f;
+};
+
+const years = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => from + i);
+
+async function parse(key: string, sheets: Record<string, Cell[][]>) {
+  const f = file(key);
+  const read = await readXlsxSheets(workbook(sheets), f.sheets);
+  return parseProjectionFile(f, read.grids, f.url, 'CC BY 4.0 (test)');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The reader
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('the one-sheet xlsx reader', () => {
+  it('reads only the cells that carry a value, whatever range the sheet declares', async () => {
+    // Victoria in Future declares A1:XCE1884 over six columns of data; a
+    // narrower declared range stands in here only so the WRITER stays quick.
+    const bytes = workbook({ Wide: [['LGA code', 'LGA', 2021], ['20110', 'Alpine (S)', 13150]] }, { widenTo: { Wide: 'A1:CZ500' } });
+    const read = await readXlsxSheets(bytes, ['Wide']);
+    expect(read.grids.Wide).toHaveLength(2);
+    expect(read.grids.Wide[1]).toEqual(['20110', 'Alpine (S)', 13150]);
+  });
+
+  it('refuses a sheet the workbook does not hold, naming the ones it does', async () => {
+    const bytes = workbook({ Notes: [['x']], 'Total population': [['y']] });
+    await expect(readXlsxSheets(bytes, ['Totals'])).rejects.toThrow(/holds no sheet named "Totals" \(it holds "Notes", "Total population"\)/);
+  });
+
+  it('resolves a sheet whose name differs only by surrounding space — Tasmania\'s trailing one', async () => {
+    const bytes = workbook({ 'LGADetailedComponents5yr ': [['a']] });
+    const read = await readXlsxSheets(bytes, ['LGADetailedComponents5yr']);
+    expect(read.grids.LGADetailedComponents5yr[0]).toEqual(['a']);
+  });
+
+  it('refuses bytes that are not a zip, rather than parsing a web page as a workbook', async () => {
+    await expect(readXlsxSheets(new TextEncoder().encode('<!DOCTYPE html>Just a moment...'), ['x'])).rejects.toThrow(/not a zip archive/);
+  });
+
+  it('reads shared, inline, formula, boolean and error cells, and treats an error as no figure', () => {
+    const shared = parseSharedStrings('<sst><si><t>SA2</t></si><si><r><t>Acacia</t></r><r><t xml:space="preserve"> Gardens</t></r><rPh><t>x</t></rPh></si></sst>');
+    expect(shared).toEqual(['SA2', 'Acacia Gardens']);
+    const grid = parseSheetXml(
+      '<sheetData><row r="7"><c r="A7" t="s"><v>0</v></c><c r="B7"><v>2021</v></c><c r="C7" s="3"/></row>'
+        + '<row r="8"><c r="A8" t="s"><v>1</v></c><c r="B8"><f>SUM(1,2)</f><v>3929</v></c><c r="C8" t="e"><v>#N/A</v></c>'
+        + '<c r="D8" t="inlineStr"><is><t>note &amp; more</t></is></c><c r="E8" t="b"><v>1</v></c></row></sheetData>',
+      shared,
+    );
+    expect(grid[6]).toEqual(['SA2', 2021]);
+    expect(grid[7][0]).toBe('Acacia Gardens');
+    expect(grid[7][1]).toBe(3929);
+    expect(grid[7][2]).toBeUndefined();
+    expect(grid[7][3]).toBe('note & more');
+    expect(grid[7][4]).toBe(true);
+  });
+
+  it('refuses a shared-string index the table does not hold', () => {
+    expect(() => parseSheetXml('<row r="1"><c r="A1" t="s"><v>5</v></c></row>', ['only'])).toThrow(/names shared string 5 of 1/);
+  });
+
+  it('counts columns the way a spreadsheet does', () => {
+    expect(columnIndex('A')).toBe(0);
+    expect(columnIndex('Z')).toBe(25);
+    expect(columnIndex('AA')).toBe(26);
+    expect(columnIndex('XCE')).toBe(16_306);
+    expect(unescapeXml('&#8364; &#x2014;&lt;&amp;')).toBe('€ —<&');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The statements each parser reads the base from
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('the base year is the publisher\'s statement', () => {
+  it('reads NSW\'s own sentence', () => {
+    expect(readHistoricProjected('Historic (2001-2021) and projected (2022-2041) population, by SA2')).toEqual({
+      historicTo: 2021, projectedFrom: 2022, projectedTo: 2041,
+    });
+    expect(readHistoricProjected('Projected population, by SA2')).toBeNull();
+  });
+
+  it('reads Victoria in Future\'s stated jump-off', () => {
+    expect(readJumpOffYear('The base data for the calculation of these Victoria in Future projections is the '
+      + 'Estimated Resident Population (ERP) as at 30 June 2022 (published in March 2023 in ABS Regional Population)')).toBe(2022);
+    expect(readJumpOffYear('Projections for LGAs')).toBeNull();
+  });
+
+  it('reads Tasmania\'s first interval', () => {
+    expect(readFirstInterval([['LGA demographic components'], ['Values as at 30 June'], [null, '2023-2028', '2028-2033']])).toBe(2023);
+    expect(readFirstInterval([['nothing here']])).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// New South Wales
+// ─────────────────────────────────────────────────────────────────────────────
+
+const nswNotes: Cell[][] = [
+  ['2024 NSW Common Planning Assumption Projections'],
+  ['Population Projections for year ending 30 June'],
+  ['2024 NSW Population Projections'],
+  ['Two additional series – “high” and “low” projections - are also available'],
+];
+
+function nswTable(label: string, rows: Array<[string, number]>): Cell[][] {
+  const ys = years(2001, 2041);
+  return [
+    ['2024 NSW Common Planning Assumption Projections'],
+    [],
+    [`${label} Population Projections`],
+    [],
+    ['Historic (2001-2021) and projected (2022-2041) population'],
+    ['Return to Index tab'],
+    [label, ...ys],
+    ...rows.map(([name, start]) => [name, ...ys.map((y, i) => start + i * 10)]),
+  ];
+}
+
+describe('New South Wales — SA2 and LGA workbooks', () => {
+  const sa2Areas: Array<[string, number]> = Array.from({ length: 520 }, (_, i) => [`Area ${String(i).padStart(3, '0')}`, 1000 + i]);
+
+  it('loads the base and every projected year, and none of the history before the base', async () => {
+    const p = await parse('nsw_sa2', {
+      Notes: nswNotes,
+      'Collapsed SA2s': [['Collapsed SA2s based on ASGS 2021'], [], ['Collapsed SA2', 'SA2_NAME_2021', 'Estimated Resident Population'],
+        ['Austral - Greendale - Badgerys Creek', 'Austral - Greendale', 12554], ['Austral - Greendale - Badgerys Creek', 'Badgerys Creek', 23]],
+      'Total population': nswTable('SA2', [['Acacia Gardens', 1952], ['Austral - Greendale - Badgerys Creek', 9211], ...sa2Areas]),
+    });
+    expect(p.release).toBe('2024 NSW Population Projections');
+    expect(p.series).toEqual(['Main series']);
+    expect(p.base).toBe(2021);
+    expect(p.horizon).toBe(2041);
+    const acacia = p.rows.filter((r) => r.area === 'Acacia Gardens');
+    expect(acacia.map((r) => r.year)).toEqual(years(2021, 2041));
+    expect(acacia.filter((r) => r.year_kind === 'base').map((r) => r.year)).toEqual([2021]);
+    expect(acacia.every((r) => r.area_kind === 'sa2' && r.area_token === 'ACACIA GARDENS' && r.area_code === 'ACACIA GARDENS')).toBe(true);
+    expect(guardProjectionRows(p.rows).ok).toBe(true);
+  });
+
+  it('answers each SA2 a collapsed area combines with the area the publisher projected', async () => {
+    const p = await parse('nsw_sa2', {
+      Notes: nswNotes,
+      'Collapsed SA2s': [['Collapsed SA2', 'SA2_NAME_2021', 'ERP'],
+        ['Austral - Greendale - Badgerys Creek', 'Austral - Greendale', 12554], ['Austral - Greendale - Badgerys Creek', 'Badgerys Creek', 23]],
+      'Total population': nswTable('SA2', [['Austral - Greendale - Badgerys Creek', 9211], ...sa2Areas]),
+    });
+    const badgerys = p.rows.filter((r) => r.area_token === 'BADGERYS CREEK');
+    expect(badgerys.length).toBe(21);
+    expect(new Set(badgerys.map((r) => r.area))).toEqual(new Set(['Austral - Greendale - Badgerys Creek']));
+    // The collapsed name is not an ASGS SA2, so it is not written as one.
+    expect(p.rows.some((r) => r.area_token === 'AUSTRAL GREENDALE BADGERYS CREEK')).toBe(false);
+  });
+
+  it('refuses a collapsed area the population table does not hold', async () => {
+    await expect(parse('nsw_sa2', {
+      Notes: nswNotes,
+      'Collapsed SA2s': [['Collapsed SA2', 'SA2_NAME_2021', 'ERP'], ['Nowhere - Else', 'Nowhere', 1]],
+      'Total population': nswTable('SA2', sa2Areas),
+    })).rejects.toThrow(/names "Nowhere - Else", which the population table does not hold/);
+  });
+
+  it('refuses a sheet that no longer says which years are history', async () => {
+    const table = nswTable('SA2', sa2Areas);
+    table[4] = ['Population, by SA2'];
+    await expect(parse('nsw_sa2', {
+      Notes: nswNotes, 'Collapsed SA2s': [['Collapsed SA2', 'SA2_NAME_2021'], ['A', 'Area 000']], 'Total population': table,
+    })).rejects.toThrow(/no longer states which years are historic/);
+  });
+
+  it('refuses an edition the Notes do not name', async () => {
+    await expect(parse('nsw_lga', {
+      Notes: [['Population projections']],
+      'Total population': nswTable('Local Government Area', [['Albury', 45265]]),
+    })).rejects.toThrow(/does not name the edition/);
+  });
+
+  it('declines a state total by name, and refuses a read too short to be the whole file', async () => {
+    const lgas: Array<[string, number]> = Array.from({ length: 125 }, (_, i) => [`Council ${i}`, 5000 + i]);
+    const p = await parse('nsw_lga', {
+      Notes: nswNotes,
+      'Total population': nswTable('Local Government Area', [['New South Wales', 6_400_000], ['Bayside (NSW)', 150_000], ...lgas]),
+    });
+    expect(p.declined).toEqual(['New South Wales (a total, not an area)']);
+    expect(p.rows.find((r) => r.area === 'Bayside (NSW)')?.area_token).toBe('BAYSIDE');
+    await expect(parse('nsw_lga', {
+      Notes: nswNotes, 'Total population': nswTable('Local Government Area', lgas.slice(0, 40)),
+    })).rejects.toThrow(/named 40 areas, fewer than the 120/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Victoria
+// ─────────────────────────────────────────────────────────────────────────────
+
+const vicContents: Cell[][] = [
+  ['Victoria in Future (VIF) population and household projections'],
+  ['September 2023'],
+  [],
+  ['VIF2023_LGA_Pop_Hhold_Dwelling_Projections_to_2036.xlsx'],
+];
+const vicNotes: Cell[][] = [
+  ['Explanatory Notes for VIF Projections'],
+  ['Base data'],
+  ['The base data for the calculation of these Victoria in Future projections is the Estimated Resident Population (ERP) as at 30 June 2022 (published in March 2023).'],
+];
+function vicTable(n: number): Cell[][] {
+  return [
+    [], ['Victoria in Future (VIF) 2023'], ['September 2023'], [], [], ['Estimated Resident Population'], ['Local Government Areas'], [], [],
+    ['LGA code', 'LGA', 2021, 2026, 2031, 2036],
+    [null, 'Victoria', 6547820, 7181630, 7802500, 8427080],
+    ...Array.from({ length: n }, (_, i): Cell[] => [String(20110 + i * 10), i === 0 ? 'Alpine (S)' : `Council ${i} (C)`, 13150 + i, 13410 + i, 13690 + i, 13960 + i]),
+  ];
+}
+
+describe('Victoria — Victoria in Future 2023, LGAs', () => {
+  it('reads the stated jump-off, marks the newest printed estimate as the base, and projects the rest', async () => {
+    const p = await parse('vic_lga', { Contents: vicContents, 'Explanatory Notes': vicNotes, Total_Population: vicTable(79) });
+    expect(p.release).toBe('Victoria in Future (VIF) population and household projections, September 2023');
+    expect(p.series).toEqual(['VIF2023']);
+    expect(p.base).toBe(2021);
+    expect(p.horizon).toBe(2036);
+    const alpine = p.rows.filter((r) => r.area === 'Alpine (S)');
+    expect(alpine.map((r) => [r.year, r.year_kind])).toEqual([[2021, 'base'], [2026, 'projected'], [2031, 'projected'], [2036, 'projected']]);
+    expect(alpine[0].area_code).toBe('20110');
+    expect(alpine[0].area_token).toBe('ALPINE');
+    expect(p.declined).toEqual(['Victoria (no LGA code — a total, not an area)']);
+    expect(guardProjectionRows(p.rows).ok).toBe(true);
+  });
+
+  it('refuses a workbook whose notes no longer state the base', async () => {
+    await expect(parse('vic_lga', { Contents: vicContents, 'Explanatory Notes': [['Base data'], ['See the website.']], Total_Population: vicTable(79) }))
+      .rejects.toThrow(/no longer state the base Estimated Resident Population year/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tasmania
+// ─────────────────────────────────────────────────────────────────────────────
+
+const tasLgas = Array.from({ length: 29 }, (_, i) => (i === 0 ? "Break O'Day" : `Council ${i}`));
+
+function tasSheets(opts: { baseDisagrees?: boolean } = {}): Record<string, Cell[][]> {
+  const ys = years(2001, 2073);
+  const value = (i: number, y: number) => 7000 + i * 100 + (y - 2001);
+  const components: Cell[][] = [['LGA demographic components, 5-year intervals'], ['Values as at 30 June'], [null, '2023-2028', '2028-2033']];
+  tasLgas.forEach((name, i) => {
+    components.push([name]);
+    components.push(['Start-of-interval population', value(i, 2023) - 0.000001 + (opts.baseDisagrees && i === 3 ? 500 : 0), value(i, 2028)]);
+    components.push(['Births', 227.2, 224.8]);
+  });
+  return {
+    ReadMe: [['Population projections for Tasmania and its Local Government Areas, 2024'], [], ['This workbook contains the medium series.'], [], ['© Government of Tasmania']],
+    Totals: [
+      ['Estimated and projected total population'], ['Values as at 30 June'], [null, ...ys],
+      ['Tasmania', ...ys.map((y) => 570000 + y)],
+      ...tasLgas.map((name, i): Cell[] => [name, ...ys.map((y) => value(i, y))]),
+    ],
+    'LGADetailedComponents5yr ': components,
+  };
+}
+
+describe('Tasmania — one main output file per series', () => {
+  it('takes the base from the components table and checks Totals against it', async () => {
+    const p = await parse('tas_medium', tasSheets());
+    expect(p.release).toBe('Population projections for Tasmania and its Local Government Areas, 2024');
+    expect(p.series).toEqual(['Medium series']);
+    expect(p.base).toBe(2023);
+    expect(p.horizon).toBe(2073);
+    expect(p.declined).toEqual(['Tasmania (the state, not an LGA)']);
+    const bod = p.rows.filter((r) => r.area === "Break O'Day");
+    expect(bod[0]).toMatchObject({ year: 2023, year_kind: 'base', area_kind: 'lga' });
+    expect(bod.every((r) => r.year >= 2023)).toBe(true);
+    expect(guardProjectionRows(p.rows).ok).toBe(true);
+  });
+
+  it('refuses where Totals and the publisher\'s own components table disagree on the base', async () => {
+    await expect(parse('tas_high', tasSheets({ baseDisagrees: true }))).rejects.toThrow(/the base column was misread/);
+  });
+
+  it('declares all three series, so none is chosen for the reader', () => {
+    const tas = PROJECTION_FILES.filter((f) => f.state === 'TAS');
+    expect(tas.map((f) => f.key).sort()).toEqual(['tas_high', 'tas_low', 'tas_medium']);
+    expect(new Set(tas.map((f) => f.url)).size).toBe(3);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// What may be loaded at all
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('readable is not republishable', () => {
+  it('names where every declared licence was read, and marks the unread ones unread', () => {
+    for (const f of PROJECTION_FILES) {
+      expect(f.licenceEvidence.length, f.key).toBeGreaterThan(20);
+      if (f.licence === null) expect(f.licenceEvidence, f.key).toMatch(/not yet read/);
+      else expect(f.licenceEvidence, f.key).toMatch(/read from CI/);
+    }
+  });
+
+  it('counts a jurisdiction as ingested only where a file with a read licence exists', () => {
+    for (const s of ['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'ACT', 'NT']) {
+      expect(projectionIngested(s), s).toBe(PROJECTION_FILES.some((f) => f.state === s && f.licence !== null));
+    }
+  });
+
+  it('refuses in the loader, before any fetch, a file whose licence is unread', () => {
+    const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../../../supabase/functions/market-sales-ingest/index.ts'), 'utf8');
+    const stage = source.slice(source.indexOf("if (stage === 'projections')"));
+    const refusal = stage.indexOf('if (file.licence === null)');
+    const fetchAt = stage.indexOf('fetchProjectionWorkbook(file)');
+    expect(refusal).toBeGreaterThan(0);
+    expect(fetchAt).toBeGreaterThan(refusal);
+  });
+});
+
+describe('a batch never splits an area', () => {
+  const r = (area: string, year: number): ProjectionLoadRow => ({
+    state: 'NSW', release: 'r', series: 's', measure: 'persons', area_kind: 'sa2', area_code: area, area, area_token: area,
+    year, year_kind: year === 2021 ? 'base' : 'projected', value: 1, publisher: 'p', source_url: 'u', licence: 'l',
+  });
+
+  it('keeps each area whole, even where that leaves a batch short', () => {
+    const rows = ['A', 'B', 'C'].flatMap((a) => years(2021, 2041).map((y) => r(a, y)));
+    const batches = projectionBatchesByArea(rows, 50);
+    expect(batches.map((b) => b.length)).toEqual([42, 21]);
+    for (const b of batches) {
+      for (const a of new Set(b.map((x) => x.area))) expect(b.filter((x) => x.area === a)).toHaveLength(21);
+    }
+  });
+
+  it('gives an area larger than a batch a batch of its own', () => {
+    const rows = [...years(2021, 2041).map((y) => r('A', y)), r('B', 2021)];
+    expect(projectionBatchesByArea(rows, 10).map((b) => b.length)).toEqual([21, 1]);
+  });
+});

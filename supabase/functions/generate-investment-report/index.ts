@@ -3711,8 +3711,10 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             suburb: geoOutcome.row.suburb,
             state: geoOutcome.row.state,
             // The SA2 the verified coordinate falls in — the finest rung the
-            // forward-demand register is asked by, and a code, not a name.
+            // forward-demand register is asked by: the code, and the ABS's own
+            // name for it, because New South Wales keys its projections by name.
             sa2_code: geoOutcome.row.sa2_code,
+            sa2_name: geoOutcome.row.sa2_name,
           };
           console.log(
             `🗺️ Geography resolved before the gate: ${geoOutcome.status}`
@@ -4533,6 +4535,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       const forwardDemandProjection = await readProjectionRegister(supabase, {
         state: (trustedStateForForwardDemand(subjectGeography, abbreviateState) ?? null) as ProjectionState | null,
         sa2Code: typeof subjectGeography?.sa2_code === 'string' ? subjectGeography.sa2_code : null,
+        sa2Name: typeof subjectGeography?.sa2_name === 'string' ? subjectGeography.sa2_name : null,
         trustedSuburb: marketSuburb,
         cadastreLga: enhancedData.planningData?.parcel?.status === 'ok'
           && typeof enhancedData.planningData?.parcel?.lga === 'string'
@@ -4889,7 +4892,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     if (subjectGeography === null && reportId && supabaseClient) {
       const { data: geoRow, error: geoError } = await supabaseClient
         .from('report_geography')
-        .select('postcode, status, suburb, state, sa2_code')
+        .select('postcode, status, suburb, state, sa2_code, sa2_name')
         .eq('report_id', reportId)
         .maybeSingle();
       if (geoError) {

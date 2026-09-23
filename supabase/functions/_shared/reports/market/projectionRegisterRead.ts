@@ -11,9 +11,13 @@
  * plausible neighbour.
  *
  * **The finest grain that answers wins, and the grain travels.** SA2 by the
- * publisher's code first, then the publisher's suburb, then the council area,
- * and the reading carries the grain it was read at so the page can say
- * whether it describes the property's area or a region it sits in.
+ * publisher's code first, then SA2 by NAME, then the publisher's suburb, then
+ * the council area, and the reading carries the grain it was read at so the
+ * page can say whether it describes the property's area or a region it sits
+ * in. The name rung exists because New South Wales keys its SA2 projections
+ * by the ASGS 2021 SA2 NAME and publishes no code (measured from CI, 23 Sep
+ * 2026); the name the property's SA2 is asked by is the ABS's own
+ * (`report_geography.sa2_name`), and both sides go through the one token rule.
  *
  * **Four absences, four sentences.** A read that FAILED is not a row that is
  * ABSENT: `unavailable` is ours, `not_loaded` is this deployment's (nothing is
@@ -37,6 +41,8 @@ export interface ProjectionRegisterQuery {
   state: ProjectionState | null;
   /** The SA2 code resolved from the verified coordinate (`report_geography.sa2_code`). */
   sa2Code: string | null;
+  /** The same SA2's ABS name (`report_geography.sa2_name`), for a publisher that keys by name. */
+  sa2Name?: string | null;
   /** The resolved suburb (`report_geography.suburb`). */
   trustedSuburb: string | null;
   /** The council area the cadastre returned, where one did. */
@@ -58,6 +64,8 @@ function rungsFor(query: ProjectionRegisterQuery): Array<{ areaKind: ProjectionA
   const rungs: Array<{ areaKind: ProjectionAreaKind; column: 'area_code' | 'area_token'; value: string }> = [];
   const sa2 = query.sa2Code?.trim() ?? '';
   if (/^\d{9}$/.test(sa2)) rungs.push({ areaKind: 'sa2', column: 'area_code', value: sa2 });
+  const sa2Name = query.sa2Name?.trim() ?? '';
+  if (sa2Name !== '') rungs.push({ areaKind: 'sa2', column: 'area_token', value: projectionAreaToken('sa2', sa2Name) });
   const suburb = query.trustedSuburb?.trim() ?? '';
   if (suburb !== '') rungs.push({ areaKind: 'suburb', column: 'area_token', value: projectionAreaToken('suburb', suburb) });
   const lga = query.cadastreLga?.trim() ?? '';
@@ -95,7 +103,7 @@ export async function readProjectionRegister(supabase: any, query: ProjectionReg
         .limit(ROW_CEILING);
       if (error) throw new Error(`population_projections read failed: ${error.message}`);
       const reading = readingFromRows((data ?? []) as ProjectionRow[]);
-      if (reading) return { kind: 'reading', reading, askedAt: rung.areaKind };
+      if (reading) return { kind: 'reading', reading, askedAt: rung.areaKind, readYear: new Date().getUTCFullYear() };
     }
     const loaded = await jurisdictionHasRows(supabase, query.state);
     return { kind: 'absent', absence: loaded ? 'none_for_area' : 'not_loaded', askedAt: rungs[0].areaKind };

@@ -35,6 +35,7 @@ import {
   isOurRequestFault,
 } from '@/lib/reports/../../../supabase/functions/_shared/reports/market/openData/absDataStructure.pure';
 import { regionalTrendBlocks } from '@/lib/reports/../../../supabase/functions/_shared/reports/regionalPromptBlocks.pure';
+import { PROJECTION_FILES } from '../../../../supabase/functions/_shared/reports/market/openData/stateProjectionFiles.pure';
 import {
   FORWARD_DEMAND_PUBLISHERS,
   assessForwardDemand,
@@ -400,7 +401,9 @@ describe('a projection is not a measurement, and the type says so', () => {
   it('states no growth rate, no year and no population anywhere in the module', () => {
     // The `planningControlGuide` rule: a guide explains a control and carries
     // no figure, which is what lets it be written in advance and stay true.
-    const prose = source.match(/'[^']{20,}'/g) ?? [];
+    // A URL is an address, not prose: Tasmania's measured page carries its
+    // edition's year in its path, and that states nothing about the area.
+    const prose = (source.match(/'[^']{20,}'/g) ?? []).filter((l) => !/^'https?:\/\//.test(l));
     for (const line of prose) {
       expect(line, line).not.toMatch(/\b(19|20)\d{2}\b/);
       expect(line, line).not.toMatch(/\d+(\.\d+)?\s*%/);
@@ -411,7 +414,7 @@ describe('a projection is not a measurement, and the type says so', () => {
 describe('W3.3’s word is "everywhere"', () => {
   const JURISDICTIONS = ['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'ACT', 'NT'] as const;
 
-  it('names a publisher and a product for all eight, and reads none of them', () => {
+  it('names a publisher and a product for all eight, and says it reads exactly the ones its loader does', () => {
     /*
      * The acceptance is that "no forward projection" is replaced EVERYWHERE
      * rather than in one state. Loading one jurisdiction replaces the sentence
@@ -424,9 +427,11 @@ describe('W3.3’s word is "everywhere"', () => {
       expect(pub.publisher.length, j).toBeGreaterThan(12);
       expect(pub.product.length, j).toBeGreaterThan(8);
       expect(pub.url, j).toMatch(/^https:\/\//);
-      // Truthfully false, all eight. The day one is loaded, the flag and the
-      // sentence change together rather than one being forgotten.
-      expect(pub.ingested, j).toBe(false);
+      // Derived, never typed: true exactly where the loader holds a file for
+      // the jurisdiction whose licence has been read from its publisher. The
+      // day one is loaded, the flag and the sentence change together rather
+      // than one being forgotten.
+      expect(pub.ingested, j).toBe(PROJECTION_FILES.some((f) => f.state === j && f.licence !== null));
     }
     expect(Object.keys(FORWARD_DEMAND_PUBLISHERS).sort()).toEqual([...JURISDICTIONS].sort());
   });

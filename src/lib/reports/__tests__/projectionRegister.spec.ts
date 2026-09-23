@@ -257,11 +257,14 @@ describe('the generator reads the register by trusted geography, stores it and p
     const call = generator.slice(at, at + 700);
     expect(call).toMatch(/state: \(trustedStateForForwardDemand\(subjectGeography, abbreviateState\)/);
     expect(call).toMatch(/sa2Code: typeof subjectGeography\?\.sa2_code === 'string'/);
+    // New South Wales keys its SA2 projections by the ABS SA2 NAME, so the name travels too.
+    expect(call).toMatch(/sa2Name: typeof subjectGeography\?\.sa2_name === 'string'/);
     expect(call).toMatch(/trustedSuburb: marketSuburb/);
     expect(call).toMatch(/parcel\?\.lga/);
     // The SA2 code travels from the resolution and from the stored-row fallback.
     expect(generator).toMatch(/sa2_code: geoOutcome\.row\.sa2_code/);
-    expect(generator).toMatch(/\.select\('postcode, status, suburb, state, sa2_code'\)/);
+    expect(generator).toMatch(/sa2_name: geoOutcome\.row\.sa2_name/);
+    expect(generator).toMatch(/\.select\('postcode, status, suburb, state, sa2_code, sa2_name'\)/);
   });
 
   it('stores the whole answer and pins it through the one composer', () => {

@@ -100,6 +100,9 @@ import {
 } from '../_shared/reports/market/openData/vicVpsrCatalogue.pure.ts';
 import { SA_LSG_ARCHIVE_FLOOR, SA_LSG_ARCHIVE_PATTERN, SA_LSG_FILE, SA_LSG_LICENCE, SA_LSG_SOURCE_LABEL, parseSaLsgStats, rankOfSaFileName } from '../_shared/reports/market/openData/saLsgStats.pure.ts';
 import { type RankedFile, type WaybackCapture, archivePageUrl, capturedAtIso, cdxUrl, newestByRank, originalBytesUrl, parseCdxJson, rankedCaptures, rankedFiles } from '../_shared/reports/market/openData/waybackMirror.pure.ts';
+import { PROJECTION_FILES, parseProjectionFile, projectionFileByKey, type ProjectionFile } from '../_shared/reports/market/openData/stateProjectionFiles.pure.ts';
+import { PROJECTION_CONFLICT_KEY, guardProjectionRows, projectionBatchesByArea } from '../_shared/reports/market/openData/projectionLoad.pure.ts';
+import { readXlsxSheets } from '../_shared/reports/market/openData/xlsxSheet.pure.ts';
 
 /**
  * Load the open-data sales registers into `market_sales_medians` — the
@@ -132,6 +135,14 @@ import { type RankedFile, type WaybackCapture, archivePageUrl, capturedAtIso, cd
  *  - `sa`   — the South Australian quarterly suburb workbooks through the
  *    archive likewise, the newest quarter and the growth horizons by
  *    default or the quarters named in `periods`.
+ *  - `projections` — ONE jurisdiction's population projection workbook per
+ *    invocation (`file`: `nsw_sa2`, `nsw_lga`, `vic_lga`, `tas_medium`,
+ *    `tas_high`, `tas_low`) into `population_projections`: the publisher
+ *    first, the archive's newest loadable capture where the publisher
+ *    refuses this egress, one sheet inflated rather than the workbook, the
+ *    load gate in `projectionLoad.pure.ts`, and whole areas per batch. A file
+ *    whose licence has not been read from its publisher is refused, because
+ *    readable is not republishable.
  *  - `probe` — asks whether each publisher and the archive answer from
  *    here, and writes nothing.
  *
@@ -191,6 +202,44 @@ async function archiveIndex(urlPattern: string, from?: string): Promise<WaybackC
     }
     throw new Error(`the Wayback CDX index answered ${res.status} for ${urlPattern}${attempt ? ' (twice)' : ''}`);
   }
+}
+
+/**
+ * A projection workbook's bytes: the publisher's own file where it answers
+ * this egress, otherwise the archive's newest capture that LOADS — the index
+ * can list a capture its store answers 404 for, so a capture is taken only
+ * once its bytes are a workbook. Victoria's and the Northern Territory's
+ * publishers challenge every scripted client (measured from CI 23 Sep 2026),
+ * and `data.sa.gov.au` answers production a 403 it does not answer CI.
+ */
+async function fetchProjectionWorkbook(file: ProjectionFile): Promise<{
+  bytes: Uint8Array; sourceUrl: string; via: 'publisher' | 'archive'; capturedAt: string | null; publisherAnswer: string;
+}> {
+  const isZip = (b: Uint8Array) => b.length >= 4 && b[0] === 0x50 && b[1] === 0x4b;
+  let publisherAnswer: string;
+  try {
+    const res = await fetch(file.url, { headers: { 'User-Agent': UA, Accept: '*/*' } });
+    if (res.ok) {
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      if (isZip(bytes)) return { bytes, sourceUrl: file.url, via: 'publisher', capturedAt: null, publisherAnswer: `HTTP ${res.status}` };
+      publisherAnswer = `HTTP ${res.status} with ${bytes.length} bytes that are not a workbook`;
+    } else {
+      await res.body?.cancel();
+      publisherAnswer = `HTTP ${res.status}`;
+    }
+  } catch (err) {
+    publisherAnswer = `network: ${err instanceof Error ? err.message : String(err)}`;
+  }
+  const captures = (await archiveIndex(file.url)).sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  for (const capture of captures.slice(0, 4)) {
+    const res = await fetch(originalBytesUrl(capture), { headers: { 'User-Agent': UA, Accept: '*/*' } });
+    if (!res.ok) { await res.body?.cancel(); continue; }
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    if (isZip(bytes)) {
+      return { bytes, sourceUrl: archivePageUrl(capture), via: 'archive', capturedAt: capturedAtIso(capture.timestamp), publisherAnswer };
+    }
+  }
+  throw new Error(`${file.key}: the publisher answered ${publisherAnswer} and the archive holds no capture of ${file.url} that loads — refused`);
 }
 
 function firstGrid(workbook: XLSX.WorkBook): Grid {
@@ -1403,13 +1452,72 @@ Deno.serve(async (req) => {
       return json({ success: true, ...detail });
     }
 
+    /*
+     * One jurisdiction's own population projection, one workbook per call.
+     *
+     * The forward-demand register (`FORWARD_DEMAND_EVIDENCE.md` §7, §9). The
+     * parser for each file is written against the layout CI printed, and the
+     * dry run in `state-projection-liveness` runs THIS parser over the real
+     * file, so what CI proves is what this writes. Nothing here scores: a
+     * projection is an assumption set applied to a base, not a measurement.
+     */
+    if (stage === 'projections') {
+      const key = String(body.file ?? '');
+      const file = projectionFileByKey(key);
+      if (!file) return json({ success: false, error: `file must be one of ${PROJECTION_FILES.map((f) => f.key).join(', ')}` }, 400);
+      if (file.licence === null) {
+        throw new Error(`${file.key}: the publisher's licence for this file has not been read (${file.licenceEvidence}) — readable is not republishable, refused`);
+      }
+      const got = await fetchProjectionWorkbook(file);
+      const read = await readXlsxSheets(got.bytes, file.sheets);
+      const parsed = parseProjectionFile(file, read.grids, got.sourceUrl, file.licence);
+      const guard = guardProjectionRows(parsed.rows);
+      if (!guard.ok) throw new Error(`${file.key}: ${guard.reason} — refused`);
+
+      const areaKinds = guard.areaKinds;
+      let written = 0;
+      for (const batch of projectionBatchesByArea(guard.rows)) {
+        const { error } = await supabase
+          .from('population_projections')
+          .upsert(batch.map((r) => ({ ...r, loaded_at: loadedAt })), { onConflict: PROJECTION_CONFLICT_KEY });
+        if (error) throw new Error(`population_projections upsert failed after ${written} rows: ${error.message}`);
+        written += batch.length;
+      }
+      // Rows of THIS edition and series that the run did not write are ones
+      // the publisher no longer prints — pruned only after every batch
+      // landed, and never with a RETURNING projection (SANCTIONS_LIST_LOADING).
+      for (const series of parsed.series) {
+        for (const kind of areaKinds) {
+          const { error } = await supabase
+            .from('population_projections')
+            .delete()
+            .eq('state', file.state)
+            .eq('release', parsed.release)
+            .eq('series', series)
+            .eq('area_kind', kind)
+            .lt('loaded_at', loadedAt);
+          if (error) throw new Error(`population_projections prune failed: ${error.message}`);
+        }
+      }
+      const detail = {
+        stage, file: file.key, state: file.state, publisher: file.publisher, release: parsed.release, series: parsed.series,
+        via: got.via, source_url: got.sourceUrl, captured_at: got.capturedAt, publisher_answer: got.publisherAnswer,
+        bytes: got.bytes.length, licence: file.licence, base: parsed.base, horizon: parsed.horizon,
+        areas: parsed.areas, area_kinds: areaKinds, rows_written: written,
+        declined_count: parsed.declined.length, declined: parsed.declined.slice(0, 20),
+        remaining: PROJECTION_FILES.filter((f) => f.key !== file.key).map((f) => f.key),
+      };
+      await supabase.from('market_sales_sync').insert({ detail });
+      return json({ success: true, ...detail });
+    }
+
     // The list is the branches above, and it is written out because this is
     // what a caller sees when it names a stage that does not exist. It went
     // stale the moment `vic_volume` was added and answered a 400 that read as
     // a rejected argument rather than as a deployment that had not landed yet.
     return json({
       success: false,
-      error: 'stage must be "qld", "nsw", "abs", "approvals", "vic", "vic_volume", "vic_discover", "sa" or "probe"',
+      error: 'stage must be "qld", "nsw", "abs", "approvals", "vic", "vic_volume", "vic_discover", "sa", "projections" or "probe"',
     }, 400);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

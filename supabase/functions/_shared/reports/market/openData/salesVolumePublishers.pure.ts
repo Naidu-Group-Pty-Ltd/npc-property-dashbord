@@ -925,9 +925,14 @@ export function volumeRemedyClause(state: string | null | undefined): string | n
  * entries are current as of the 23 Sep run; the flag is kept so the next
  * instrument change has somewhere to be declared.
  *
- * 23 Sep's WA count was 204 against 22 Sep's 203, under the same reading. A
- * relevance search over a live index drifts by a dataset; the READING did
- * not move, which is what a re-measurement is asked to confirm.
+ * 23 Sep's first WA count was 204 against 22 Sep's 203, and it was first
+ * written up here as a relevance search drifting by a dataset. It was not.
+ * The corrected instrument (`attributedRead`) printed *"203 distinct — 1
+ * found only by harvest search, 1 it also returned from WA's own list"*: the
+ * 204th was ONE dataset counted twice, once from each route, which is the
+ * same fault Tasmania's six-against-five exposed. The count is 203, the
+ * reading did not move, and a re-measurement confirmed it by effect rather
+ * than by the explanation first offered for it.
  */
 export const MEASURED_VOLUME_COVERAGE: Readonly<Record<VolumeGapState, VolumeCoverage>> = {
   /*
