@@ -47,6 +47,7 @@ import { COMPASS_40_SECTIONS } from '@/lib/reports/compassSectionRegistry';
 import { SAMPLE_REPORT_DATA } from '@/lib/templateLibrary/sampleReportData';
 import { contentPolicyFor } from '../../../supabase/functions/_shared/reports/investment/tierContent.pure';
 import { REPORT_TIERS } from '../../../supabase/functions/_shared/reports/investment/sectionRegistry.pure';
+import { frontMatterFlagsFor } from '../../../supabase/functions/_shared/reports/investment/tierPageSequence.pure';
 
 /** Words per section come from the registry; nothing here picks a length. */
 const wordsOf = (text: string): string[] => text.split(/\s+/).filter(Boolean);
@@ -187,6 +188,10 @@ export function investmentGeometryDocuments(): GeometryDocument[] {
       standfirst: policy.standfirst ?? data.report?.standfirst,
       drawsFinancialModelling: policy.financialModelling,
       companionNote: policy.companionNote ?? data.report?.companionNote,
+      // How the front matter is drawn, exactly as the projection publishes it —
+      // without these the gate measures the typed pages and never the summary
+      // page that flows into the body.
+      ...frontMatterFlagsFor(tier),
     };
     data.tier = tier;
     return { tier, data };

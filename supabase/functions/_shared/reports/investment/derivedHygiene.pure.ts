@@ -41,6 +41,7 @@ import {
   mergeAdjacentDuplicateHeadings,
 } from './sectionFolding.pure.ts';
 import { stripPromptRulesBlocks } from './promptLeakage.pure.ts';
+import { withdrawGlanceStrips } from './glanceWithdrawal.pure.ts';
 
 const PLACEHOLDER_CELL = /^(?:n\/?a|tbd|to be determined|not available|not provided|unknown|—|-|–)\.?$/i;
 
@@ -758,7 +759,23 @@ export function presentStoredMarkdown(
    * what lets this sit in front of every stored report ever written.
    */
   const deleaked = stripPromptRulesBlocks(markdown);
-  const body = deleaked.removed ? deleaked.markdown : markdown;
+  const prompted = deleaked.removed ? deleaked.markdown : markdown;
+  /*
+   * The at-a-glance strip is not presented, on any stored document.
+   *
+   * The owner read five delivered reports and asked for it to go
+   * "throughout": it restated each section's prose in shorthand, filed its
+   * findings under categories the model chose (8.6% growth under "Watch"),
+   * and its "Proceed with caution" contradicted a verdict page that said BUY.
+   * The summary is made once, at the front, from the record; each section
+   * opens with its finding instead. See `glanceWithdrawal.pure.ts`.
+   *
+   * Before the brace scrub, so a well-formed strip is withdrawn whole rather
+   * than read as markup to repair; a malformed one is still the brace
+   * scrub's to remove.
+   */
+  const unglanced = withdrawGlanceStrips(prompted);
+  const body = unglanced.withdrawn ? unglanced.markdown : prompted;
   const braces = scrubUnresolvedBraces(body);
   const resolved = braces.repaired.length || braces.stripped.length ? braces.markdown : body;
   /*

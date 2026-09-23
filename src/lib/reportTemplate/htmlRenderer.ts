@@ -18,6 +18,8 @@ import { resolvePageOutputPolicy, resolvePageRenderPlan, shouldRenderPageBackgro
 import { shouldRenderBlock } from './renderVisibility';
 import { applyNarrativePlan, planNarrative } from './narrativePlan';
 import { closeDroppedBlocks } from './closeDroppedBlocks';
+import { layoutFlowColumn } from './flowLayout';
+import { flowFactsFor } from './flowFacts';
 import {
   NARRATIVE_GEOMETRY_KEY, NARRATIVE_NOTES_KEY, resolveMarkdownBlockContent,
 } from './blocks/markdownBlockContent';
@@ -774,9 +776,14 @@ function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, temp
   if (renderNativeBlocks) {
     // A dropped block leaves no hole: the blocks under it in its column move
     // up to where it began. Never in the editor. See `closeDroppedBlocks`.
+    // A FLOWING page goes further: its column is re-stacked from what draws,
+    // so a block that draws fewer of its declared rows gives the difference
+    // back too. See `flowLayout.ts`.
     const laid = editorMode
       ? page.blocks
-      : closeDroppedBlocks(page.blocks, (b) => !blockDrawsContent(b, blockCtxBase, blockCtx), isFurniture);
+      : (page as { flow?: boolean }).flow === true
+        ? layoutFlowColumn(page.blocks, flowFactsFor(blockCtxBase, blockCtx))
+        : closeDroppedBlocks(page.blocks, (b) => !blockDrawsContent(b, blockCtxBase, blockCtx), isFurniture);
     for (const authored of sortBlocksForPaint(laid)) {
       const block = healPartMarker(authored, healedPart);
       if (!shouldRenderBlock(block, ctxBase)) continue;

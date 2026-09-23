@@ -1649,30 +1649,21 @@ Why this property earns a top-quartile rating.
 {{pictograph: 3/10 | label=Renter share | sub=3 in 10 dwellings are tenanted | icon=person | cols=10}}
 \`\`\`
 
-15. AT-A-GLANCE STRIP — 3-4 cell editorial strip that opens a chapter. Each cell:
-    "<symbol> <text>". Symbols: ✓ strength, ⚠ watch, ▲ trend up, ▼ trend down, ◆ metric, ★ verdict.
-    Use ONCE at the very top of each chapter (right after the H2) to compress the
-    "TL;DR" so the reader doesn't have to wade through prose to find the verdict.
-    Format: \`{{glance: ✓ Strong fundamentals | ⚠ Vacancy uptick | ◆ Yield 4.8% | ★ Buy with caveats}}\`
-\`\`\`
-{{glance: ✓ Top-quartile growth | ⚠ Body-corporate fees rising | ◆ Median $1.18M | ★ Hold 7-10y}}
-\`\`\`
-
-16. INLINE SPARKLINE — tiny chart that flows next to prose. Use inside a sentence
+15. INLINE SPARKLINE — tiny chart that flows next to prose. Use inside a sentence
     to show a trend ("yields ~~[4.2,4.4,4.6,4.5,4.8]~~ now 4.8%"). 5-12 numbers ideal.
     Format: \`~~[v1,v2,v3,…]~~\`
 \`\`\`
 Median values have climbed steadily ~~[820,860,910,980,1050,1180]~~ over six years.
 \`\`\`
 
-17. DONUT / RING — composition chart for mixes (tenure, demographics, capital
+16. DONUT / RING — composition chart for mixes (tenure, demographics, capital
     allocation, expense shares). Center number is the headline slice.
     Format: \`{{donut: SliceA value, SliceB value, … | title=… | center=58% | centerSub=Owner-occupied}}\`
 \`\`\`
 {{donut: Owner-occupied 58, Renter 32, Other 10 | title=Tenure mix | center=58% | centerSub=Owner-occupied}}
 \`\`\`
 
-18. SUBURB TILES — small-multiples grid that reads like a faux-choropleth. Use
+17. SUBURB TILES — small-multiples grid that reads like a faux-choropleth. Use
     for "this suburb + 3-7 adjacent suburbs" comparisons. \`int=0..1\` shades the
     tile (higher = stronger). \`sub\` lives in quotes.
     Format: \`{{tiles: Label value sub="…" int=0.7, Label value sub="…" int=0.5 | title=… | cols=4}}\`
@@ -1680,24 +1671,24 @@ Median values have climbed steadily ~~[820,860,910,980,1050,1180]~~ over six yea
 {{tiles: Hawthorn $1.42M sub="↑ 6.4% YoY" int=0.85, Kew $1.61M sub="↑ 5.1% YoY" int=0.70, Camberwell $1.28M sub="↑ 4.8% YoY" int=0.60, Glen Iris $1.19M sub="↑ 3.2% YoY" int=0.45 | title=Adjacent suburbs · median house | cols=4}}
 \`\`\`
 
-19. MARGIN MICRO-CHART — editorial sidenote with a tiny sparkline. Use to flag
+18. MARGIN MICRO-CHART — editorial sidenote with a tiny sparkline. Use to flag
     a single supporting datum without breaking prose flow. Keep \`note\` to one line.
     Format: \`{{margin: Title | spark=v1,v2,v3,… | note=One-line context | label=Context}}\`
 \`\`\`
 {{margin: Median rent, last six quarters | spark=v1,v2,v3,v4,v5,v6 | note=One line of context, from the figures in this report. | label=Rental watch}}
 \`\`\`
 
-20. TIMELINE RIBBON — infrastructure / delivery pipeline. Use instead of a list
+19. TIMELINE RIBBON — infrastructure / delivery pipeline. Use instead of a list
     of projects and timing windows.
     Format: \`{{timeline: Existing "Station access", 0-2y "Road upgrade", 3-5y "Hospital stage", 5y+ "Town centre renewal" | title=Infrastructure pipeline}}\`
 
-21. BIG-NUMBER KPI STRIPS — when a sentence says "median grew from X to Y" or
+20. BIG-NUMBER KPI STRIPS — when a sentence says "median grew from X to Y" or
     compares 3 headline metrics, use stat blocks / gauges / bars rather than prose.
     Use \`::: stat\` for a single in-flow number, \`{{bars}}\` for X vs suburb vs metro,
     and \`~~[…]~~\` beside any trend sentence.
 
 VISUAL-FIRST RULES (CRITICAL):
-- Every chapter MUST open with a \`{{glance: …}}\` strip immediately after the H2.
+- Every chapter OPENS WITH ITS FINDING: the first sentence after the H2 states the chapter's conclusion for this purchase in plain words, and the evidence follows it. No summary strip, no key of tagged phrases, no "At a glance" list and no \`{{glance: …}}\` directive — the document's one summary is the executive summary at the front, drawn from the record.
 - **At most 2 visualisations per chapter**, drawn from the full library
   (gauge / bars / quadrant / pictograph / donut / tiles / heatmap / wheel /
   waterfall / margin / timeline / stat / inline sparkline), each showing data
@@ -1881,7 +1872,7 @@ ${previousSections.substring(Math.max(0, previousSections.length - 6000))}
  2. Follow the exact markdown formatting with ## for main section headings and ### for subsections
 3. Use tables ONLY when a visual shortcode cannot express the data. Prefer \`{{bars}}\`, \`{{heatmap}}\`, \`{{donut}}\`, \`{{tiles}}\`, \`{{timeline}}\`, \`{{gauge}}\`, \`{{pictograph}}\`, and inline \`~~[…]~~\` sparklines over tables or long paragraphs.
 4. NEVER follow a visual, table or data point with a paragraph explaining it. State the finding in the sentence that INTRODUCES the data, then show the data, then move on. Do not write ${EDITORIAL_LABELS.map((l) => `"${l}"`).join(', ')} — not as a heading, not as a bold lead-in, not as a bare line. There is no permitted number of these.
-5. Lead each section with a \`{{glance: …}}\` strip carrying the section's own findings — not a description of what the section will cover.
+5. Open each section with ONE plain sentence that states its finding for this purchase — the conclusion first, then the evidence for it. Not a description of what the section will cover, and never a summary list, a tagged key, an "At a glance" block or a \`{{glance: …}}\` directive.
 6. Be thorough and accurate, but compress prose aggressively; every paragraph must add a fact that is not already on the page.
 7. Start immediately with the first section heading - no preamble
 8. Use contextual comparisons (e.g., "30% above the state average") to make numbers meaningful

@@ -130,6 +130,7 @@ import { gradedDetailLine, gradedLine, publishableGrade } from './reports/invest
 import { OVERALL_GRADE_UNAVAILABLE } from './reports/market/scoringInputPolicy.pure.ts';
 import { DOCUMENT_IDENTITY, documentTitleForTier } from './reports/investment/tierIdentity.pure.ts';
 import { contentPolicyFor } from './reports/investment/tierContent.pure.ts';
+import { frontMatterFlagsFor } from './reports/investment/tierPageSequence.pure.ts';
 
 /** Loose row shape — the caller passes the `investment_reports` row as stored. */
 export interface InvestmentReportRowLike {
@@ -1030,6 +1031,20 @@ export function projectInvestmentReport(
   put(report, 'standfirst', policy.standfirst);
   put(report, 'companionNote', policy.companionNote ?? undefined);
   put(report, 'drawsFinancialModelling', policy.financialModelling);
+  /*
+   * How the front matter is drawn: one page that flows into the body, or the
+   * page sequence a stored pre-tier report was written for. And what that
+   * page carries beyond the verdict and the figures, read from the SAME rules
+   * that decide the typed pages (`tierPageSequence.pure.ts`), so the summary
+   * cannot carry a section the tier keeps in its prose: the property where
+   * "The property" page would have been kept, the scorecard where "The
+   * assessment" would have been (the Compass alone — every derived tier
+   * places the score breakdown in its markdown).
+   */
+  const frontMatter = frontMatterFlagsFor(tier);
+  put(report, 'continuousFrontMatter', frontMatter.continuousFrontMatter);
+  put(report, 'drawsPropertyIdentity', frontMatter.drawsPropertyIdentity);
+  put(report, 'frontScorecard', frontMatter.frontScorecard);
 
   /*
    * What the tier may publish.
