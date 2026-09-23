@@ -559,7 +559,7 @@ describe('readable is not republishable', () => {
   it('names where every declared licence was read, and marks the unread ones unread', () => {
     for (const f of PROJECTION_FILES) {
       expect(f.licenceEvidence.length, f.key).toBeGreaterThan(20);
-      if (f.licence === null) expect(f.licenceEvidence, f.key).toMatch(/not yet read/);
+      if (f.licence === null) expect(f.licenceEvidence, f.key).toMatch(/not yet (read|accepted)/);
       else expect(f.licenceEvidence, f.key).toMatch(/read from CI/);
     }
   });
@@ -600,6 +600,16 @@ describe('readable is not republishable', () => {
     ]));
     const tas = await parse('tas_low', tasSheets());
     expect(new Set(tas.rows.map((r) => r.licence))).toEqual(new Set(['CC BY 4.0 (test) — © Government of Tasmania']));
+  });
+
+  it('reads a notice the publisher split over two cells whole, and never joins a footnote to it', () => {
+    // Queensland's council workbook, as CI read it (run 35836681636).
+    expect(suppliedNotice({ 'Main page': [['https://creativecommons.org/licenses/by/4.0'], ['© The State of Queensland'], ['(Queensland Treasury) 2026']] }))
+      .toBe('© The State of Queensland (Queensland Treasury) 2026');
+    expect(suppliedNotice({ Notes: [['© The State of Queensland', '(Queensland Treasury) 2026']] }))
+      .toBe('© The State of Queensland (Queensland Treasury) 2026');
+    expect(suppliedNotice({ Notes: [['© Government of Tasmania'], ['(a) Boundaries are based on 2021 local government areas.']] }))
+      .toBe('© Government of Tasmania');
   });
 
   it('leaves the licence alone where the file supplies no notice', async () => {

@@ -136,13 +136,14 @@ import { readXlsxSheets } from '../_shared/reports/market/openData/xlsxSheet.pur
  *    archive likewise, the newest quarter and the growth horizons by
  *    default or the quarters named in `periods`.
  *  - `projections` — ONE jurisdiction's population projection workbook per
- *    invocation (`file`: `nsw_sa2`, `nsw_lga`, `vic_lga`, `tas_medium`,
- *    `tas_high`, `tas_low`) into `population_projections`: the publisher
+ *    invocation (`file`: any key of `PROJECTION_FILES` — NSW's SA2 and LGA
+ *    files, Victoria in Future's LGA file, Queensland's SA2 and LGA files and
+ *    Tasmania's three series) into `population_projections`: the publisher
  *    first, the archive's newest loadable capture where the publisher
  *    refuses this egress, one sheet inflated rather than the workbook, the
  *    load gate in `projectionLoad.pure.ts`, and whole areas per batch. A file
- *    whose licence has not been read from its publisher is refused, because
- *    readable is not republishable.
+ *    with no licence this platform has accepted is refused before anything is
+ *    fetched, because readable is not republishable.
  *  - `probe` — asks whether each publisher and the archive answer from
  *    here, and writes nothing.
  *
@@ -1466,7 +1467,7 @@ Deno.serve(async (req) => {
       const file = projectionFileByKey(key);
       if (!file) return json({ success: false, error: `file must be one of ${PROJECTION_FILES.map((f) => f.key).join(', ')}` }, 400);
       if (file.licence === null) {
-        throw new Error(`${file.key}: the publisher's licence for this file has not been read (${file.licenceEvidence}) — readable is not republishable, refused`);
+        throw new Error(`${file.key}: no licence this platform has accepted is declared for this file (${file.licenceEvidence}) — readable is not republishable, refused`);
       }
       const got = await fetchProjectionWorkbook(file);
       const read = await readXlsxSheets(got.bytes, file.sheets);

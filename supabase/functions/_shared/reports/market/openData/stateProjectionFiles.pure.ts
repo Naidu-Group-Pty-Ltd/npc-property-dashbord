@@ -31,9 +31,9 @@
  *    newest estimate it prints and everything after the stated jump-off is
  *    projected.
  *  - Queensland's Statistician says it on each workbook's Main page: *"2021
- *    data are final estimates"*, and prints that year as `2021 (b)` — the
- *    footnote the statement hangs on. The parser takes the base from the
- *    sentence and requires the header to print it.
+ *    data are final estimated resident population (ERP)."*, and prints that
+ *    year as `2021 (b)` — the footnote the statement hangs on. The parser
+ *    takes the base from the sentence and requires the header to print it.
  *  - Tasmania's Treasury does not print the sentence, and its components table
  *    states it structurally: the first interval is `2023-2028` and its
  *    start-of-interval population is the base. The parser reads the base from
@@ -90,12 +90,14 @@ export interface ProjectionFile {
   /** The sheets the parser reads; nothing else in the workbook is inflated. */
   sheets: readonly string[];
   /**
-   * The licence the PUBLISHER states for this file, as read, or null where it
-   * has not been read. A null refuses the load: readable is not
-   * republishable, and a projection table goes into a client's PDF.
+   * The licence the PUBLISHER states for this file, as read, or null where no
+   * licence has been read that this platform has accepted — terms not yet
+   * read, or read and turning on a decision not yet made. A null refuses the
+   * load: readable is not republishable, and a projection table goes into a
+   * client's PDF.
    */
   licence: string | null;
-  /** Where the licence was read, so the claim can be checked again. */
+  /** Where the licence was read — or what was read and why it is not accepted — so the claim can be checked again. */
   licenceEvidence: string;
   /** The fewest areas a complete read of this file names — below it, the read was cut short. */
   minAreas: number;
@@ -421,9 +423,10 @@ interface QldMainPage {
 
 /**
  * What the workbook's Main page states: the edition, and which year's data
- * are FINAL ESTIMATES (*"2021 data are final estimates …"*) — the population
- * the projection starts from. Refused where it states neither: the base is
- * the publisher's word, never an inference from which column comes first.
+ * are FINAL ESTIMATES (*"2021 data are final estimated resident population
+ * (ERP)."*) — the population the projection starts from. Refused where it
+ * states neither: the base is the publisher's word, never an inference from
+ * which column comes first.
  */
 export function qldMainPage(grid: Grid | undefined, file: ProjectionFileKey): QldMainPage {
   const lines = sheetText(grid ?? []).split('\n');
@@ -707,7 +710,33 @@ function parseTas(
 // The files
 // ─────────────────────────────────────────────────────────────────────────────
 
-const NOT_YET_READ = 'not yet read from the publisher — the load refuses until it is';
+/**
+ * Tasmania's terms, read from CI on 23 Sep 2026 (run 35836681636) where its
+ * own workbook points — and NOT accepted here, because they turn on a reading
+ * this repository should not make by itself.
+ *
+ * The product's quick guide: "You are free to reproduce the projections in
+ * published work, or use them as an input into your own analysis, provided you
+ * identify and credit them as Tasmanian Treasury 2024 projections." The final
+ * report: "Excerpts of this publication may be reproduced, with appropriate
+ * acknowledgement, as permitted under the Copyright Act 1968." And the
+ * Tasmanian Government's site notice — whose only readable copy is a 2011
+ * archive capture, the live page refusing CI — licenses reproduction "for
+ * non-commercial purposes only" unless a site indicates that specific
+ * information may be used commercially.
+ *
+ * The guide's grant names published work and a credit, and does not name
+ * commercial use. Whether a report prepared for a paying client is "published
+ * work" under it is a reading of terms, and the owner's decision; until it is
+ * made the loader refuses Tasmania before any fetch, exactly as it did while
+ * the terms were unread. If it is accepted, the credit the guide asks for is
+ * the credit the page must print.
+ */
+const TAS_TERMS_EVIDENCE = 'terms read from CI 23 Sep 2026 (run 35836681636) and not yet accepted: the quick guide grants '
+  + 'reproduction "in published work … provided you identify and credit them as Tasmanian Treasury 2024 projections"; '
+  + 'the Tasmanian Government\'s site notice (a 2011 archive capture; the live page refuses CI) licenses reproduction '
+  + '"for non-commercial purposes only" unless a site indicates commercial use — refused until the owner decides whether '
+  + 'a report for a paying client is published work under the guide\'s grant';
 
 /**
  * Read from CI on 23 Sep 2026 (run 35831008944), from the site that serves
@@ -730,28 +759,33 @@ const NSW_LICENCE_EVIDENCE = 'planning.nsw.gov.au/copyright-and-disclaimer ("Unl
   + '(run 35831008944)';
 
 /**
- * Read from CI on 23 Sep 2026 (runs 35831008944 and 35833636513), and the
- * order matters. The Statistician's own site states a RESTRICTIVE default —
- * no part "may be reproduced or re-used for any commercial purpose without
- * written permission" — and then that "where specific licence terms are
- * applied through or via this website to material including a particular
- * product those licence terms shall prevail". This product has specific
- * terms: the Queensland Government's open data portal publishes it as
- * "Queensland Government population projections: Regions" (dataset
- * ebb088ed-45fc-46ee-9054-3607476bec42, publisher Treasury) under Creative
- * Commons Attribution 4.0, with its resource pointing at the very page that
- * links both workbooks. So the product's licence governs, and the site's
- * default does not — the same ranking the planning registers answer to: a
- * licence stated for the product outranks one stated for the site, while a
- * restriction stated IN the file outranks both, which `parseProjectionFile`
- * holds at load time.
+ * Read from CI on 23 Sep 2026 (runs 35831008944, 35833636513 and
+ * 35836681636), and the order matters. The Statistician's own site states a
+ * RESTRICTIVE default — no part "may be reproduced or re-used for any
+ * commercial purpose without written permission" — and then that "where
+ * specific licence terms are applied through or via this website to material
+ * including a particular product those licence terms shall prevail". This
+ * product has specific terms, stated twice: the Queensland Government's open
+ * data portal publishes it as "Queensland Government population projections:
+ * Regions" (dataset ebb088ed-45fc-46ee-9054-3607476bec42, publisher Treasury)
+ * under Creative Commons Attribution 4.0, with its resource pointing at the
+ * very page that links both workbooks; and the council workbook's own Main
+ * page links the deed (`https://creativecommons.org/licenses/by/4.0`) beside
+ * "© The State of Queensland (Queensland Treasury) 2026". The SA2 workbook is
+ * the same product and edition and states no terms of its own. So the
+ * product's licence governs, and the site's default does not — the ranking the
+ * planning registers answer to: a licence stated for the product outranks one
+ * stated for the site, while a restriction stated IN the file outranks both,
+ * which `parseProjectionFile` holds at load time. The product page itself
+ * states no licence (CI read it: only the site's footer notice).
  */
 const QLD_LICENCE = 'Creative Commons Attribution 4.0 International';
 const QLD_LICENCE_EVIDENCE = 'data.qld.gov.au dataset ebb088ed-45fc-46ee-9054-3607476bec42 ("Queensland Government '
   + 'population projections: Regions", publisher Treasury, licence Creative Commons Attribution 4.0, resource '
-  + 'qgso.qld.gov.au/statistics/theme/population/population-projections/regions); qgso.qld.gov.au\'s copyright page states '
-  + 'that specific licence terms applied to a product prevail over its default — read from CI 23 Sep 2026 '
-  + '(runs 35831008944, 35833636513)';
+  + 'qgso.qld.gov.au/statistics/theme/population/population-projections/regions); the council workbook\'s Main page '
+  + 'links creativecommons.org/licenses/by/4.0 beside "© The State of Queensland (Queensland Treasury) 2026"; '
+  + 'qgso.qld.gov.au\'s copyright page states that specific licence terms applied to a product prevail over its '
+  + 'default — read from CI 23 Sep 2026 (runs 35831008944, 35833636513, 35836681636)';
 
 export const PROJECTION_FILES: readonly ProjectionFile[] = [
   {
@@ -809,8 +843,8 @@ export const PROJECTION_FILES: readonly ProjectionFile[] = [
     sheets: ['Main page', ...QLD_LGA_SHEETS],
     licence: QLD_LICENCE,
     licenceEvidence: QLD_LICENCE_EVIDENCE,
-    // Queensland has 77 local government areas; CI read each series sheet to
-    // its footnotes at row 87.
+    // CI read 78 areas on each series sheet (run 35836681636), and they add to
+    // the publisher's own Queensland total; fewer than 70 was cut short.
     minAreas: 70,
     parse: (g, url, licence) => parseQldLga(g, url, licence),
   },
@@ -821,7 +855,7 @@ export const PROJECTION_FILES: readonly ProjectionFile[] = [
     url: `https://www.treasury.tas.gov.au/Documents/2024-population-projections-${s}-series-Main-output-file.xlsx`,
     sheets: ['ReadMe', 'Totals', TAS_COMPONENTS],
     licence: null,
-    licenceEvidence: NOT_YET_READ,
+    licenceEvidence: TAS_TERMS_EVIDENCE,
     minAreas: 25,
     parse: (g, url, licence) => parseTas(g, url, licence, { file: `tas_${s.toLowerCase()}` as ProjectionFileKey, series: `${s} series` }),
   })),
@@ -835,20 +869,37 @@ export function projectionFileByKey(key: string): ProjectionFile | null {
 const NOTICE = /^(©|\(c\)\s|copyright\s*©)/i;
 
 /**
+ * A notice's own continuation, where a publisher set it over two cells —
+ * Queensland's council workbook puts "© The State of Queensland" in one cell
+ * and "(Queensland Treasury) 2026" in the next (CI, run 35836681636). Only a
+ * parenthetical, optionally followed by a year, is a continuation: a footnote
+ * like "(a) Boundaries are based on …" is not.
+ */
+const NOTICE_CONTINUATION = /^\([^()]+\)(\s+\d{4})?\.?$/;
+
+/**
  * The copyright notice the publisher SUPPLIES with a file — the first cell, in
- * the order the sheets were read, that opens with `©`, verbatim — or null.
+ * the order the sheets were read, that opens with `©`, verbatim, joined to its
+ * continuation where the publisher split it (the next cell in the row, or the
+ * cell below) — or null.
  *
  * CC BY 4.0 §3(a)(1)(A)(ii) asks a reuser to retain "a copyright notice" where
  * the licensor supplies one with the material, so the notice travels with
  * every row the file writes and reaches the page beside the licence. It is
  * READ from the file, never typed: a typed notice is one nobody checks against
- * the next edition.
+ * the next edition. And it is read WHOLE: half a notice names the owner and
+ * drops the agency and the year the publisher asked to be credited.
  */
 export function suppliedNotice(grids: Readonly<Record<string, Grid>>): string | null {
   for (const grid of Object.values(grids)) {
-    for (const row of grid) for (const c of row ?? []) {
-      const t = cellText(c);
-      if (NOTICE.test(t)) return t;
+    for (let r = 0; r < grid.length; r++) {
+      const row = grid[r] ?? [];
+      for (let c = 0; c < row.length; c++) {
+        const t = cellText(row[c]);
+        if (!NOTICE.test(t)) continue;
+        const rest = [cellText(row[c + 1]), cellText(grid[r + 1]?.[c])].find((x) => NOTICE_CONTINUATION.test(x));
+        return rest ? `${t} ${rest}` : t;
+      }
     }
   }
   return null;

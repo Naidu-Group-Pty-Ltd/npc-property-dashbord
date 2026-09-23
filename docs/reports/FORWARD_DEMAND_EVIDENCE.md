@@ -444,8 +444,9 @@ deployment, for the same reason.
 ## 9 · The loaders, jurisdiction by jurisdiction (23 September 2026)
 
 Every parser is written against the layout `state-projection-liveness`
-printed for the real file from CI (run 35827597400), and every one is then
-**run dry in CI over the real file** on every build (run 35831008944 onward):
+printed for the real file from CI (run 35827597400; Queensland's in run
+35833636513), and every one is then **run dry in CI over the real file** on
+every build (run 35831008944 onward; Queensland's from run 35836681636):
 the probe fetches each declared file the way the loader does — the publisher,
 then the archive's newest capture that loads — and runs the loader's own
 `readXlsxSheets` → `parseProjectionFile` → `guardProjectionRows` over it,
@@ -456,12 +457,12 @@ would write, because it is the same code.
 | --- | --- | --- | --- | --- | --- | --- |
 | **NSW** | 2024 NSW Population Projections | SA2 · LGA | Main series | 2021 → 2041 | 622 SA2s / 13,482 rows · 129 LGAs / 2,709 rows · 0 declined | **CC BY 4.0, read** |
 | **VIC** | Victoria in Future 2023 (`VIF2023`) | LGA | VIF2023 | 2021 → 2036 | 80 LGAs / 320 rows · 1 declined (the state) | **CC BY 4.0, read** |
-| **TAS** | Treasury 2024 projections | LGA | Medium · High · Low | 2023 → 2053 | 29 LGAs / 899 rows per series · 1 declined (the state) | **not read — refused** |
-| **QLD** | QGSO regions tables, 2021–2046 | SA2/SA3/SA4 (medium) · LGA (low, medium, high) | — | — | being described (§9.3) | — |
+| **QLD** | Queensland Government population projections, 2025 edition | SA2 · LGA | Medium (SA2) · Medium, Low, High (LGA) | 2021 → 2046 | 546 SA2s / 3,276 rows · 78 LGAs / 1,404 rows · 3 declined (the state total on each series sheet, which the councils add to) | **CC BY 4.0, read** |
+| **TAS** | Treasury 2024 projections | LGA | Medium · High · Low | 2023 → 2053 | 29 LGAs / 899 rows per series · 1 declined (the state) | **terms read, not accepted** — the owner's decision (§9.2) |
 | **SA** | 2016-based, released 2019, on data.sa.gov.au | SA2 · LGA | not described | 2016 → 2041 | **declined — superseded** (§9.4) | CC BY (catalogue) |
 | **WA** | WA Tomorrow Report 12 | SA2 | bands | — | **declined — licence** (§9.4) | Custom (Active Acceptance) |
 | **ACT** | Projections by District (2015–2041) | district | — | 2015 → 2041 | **declined — superseded** (§9.4) | CC BY 4.0 |
-| **NT** | NTPOP 2024 | — | — | — | **not reached** (§9.4) | — |
+| **NT** | NTPOP 2024 | SA3 (the ABS's own names) | — | — | **reached through the archive, not yet read for a parser** (§9.4) | not yet read |
 
 ### 9.1 · What each base is read from
 
@@ -476,6 +477,11 @@ inference**:
 - **Victoria in Future** says it in its Explanatory Notes: the projections
   start from the ERP *"as at 30 June 2022"*. The table prints 2021, 2026, 2031
   and 2036, so 2021 is the newest printed estimate and the rest is projected.
+- **Queensland** says it on each workbook's Main page: *"2021 data are final
+  estimated resident population (ERP)."* The header prints that year as
+  `2021 (b)` — the footnote the sentence hangs on — which a reader taking only
+  bare years would have skipped, so the parser reads a year with its footnote
+  marker and requires the header to print the year the sentence names.
 - **Tasmania** does not print the sentence and states it structurally: the
   components table's first interval is `2023-2028`, and its start-of-interval
   population is the base. The parser then checks the Totals sheet against it
@@ -484,7 +490,11 @@ inference**:
 
 NSW's SA2 and LGA files carry the one series their own name calls **main**
 (high and low exist for the state only); Tasmania's three series are three
-files and all three are declared, so none is chosen for the reader.
+files and all three are declared, so none is chosen for the reader; and
+Queensland publishes its SA2s in the medium series alone and its councils in
+all three, a sheet each — so the SA2 rows say they are the medium series, and
+each council sheet must name the same series in its sheet name AND its own
+title, or the file is refused.
 
 ### 9.2 · Readable is not republishable
 
@@ -503,15 +513,44 @@ files and all three are declared, so none is chosen for the reader.
 - **Victoria** — the Victorian catalogue's own record of the dataset
   (`4912723f-…`, *"VIF2023 LGA Population Household Dwelling Projections to
   2036"*) states CC BY 4.0.
-- **Tasmania** — the ReadMe says *"© Government of Tasmania"* and nothing
-  about reuse. **A notice is silence about terms**, not a grant of them, so the
-  load stays refused. The first run could not read the Treasury's own rights
-  page for a reason that was ours — the probe followed the link with its
-  `&amp;` still in it, and SharePoint answered 404 to a URL nobody published —
-  and the Tasmanian Government's copyright page answered 403. The probe now
-  decodes the link, follows the ReadMe's own hyperlink to the Treasury's
-  projections page and reads the Final Report's opening and closing pages,
-  where a Treasury report states its terms.
+- **Queensland** — the Statistician's copyright page states a RESTRICTIVE
+  default (*"no part may be reproduced or re-used for any commercial purpose
+  without written permission"*) and, before it, that *"where specific licence
+  terms are applied through or via this website to material including a
+  particular product those licence terms shall prevail"*. This product's terms
+  are stated twice: the Queensland catalogue publishes *"Queensland Government
+  population projections: Regions"* (dataset `ebb088ed-…`, publisher Treasury)
+  under CC BY 4.0 with its resource pointing at the page that links both
+  workbooks, and the council workbook's own Main page links
+  `https://creativecommons.org/licenses/by/4.0` beside *"© The State of
+  Queensland (Queensland Treasury) 2026"*. The SA2 workbook is the same product
+  and edition and states no terms of its own; the product page states none
+  either (only the site's footer notice). A licence stated for the product
+  outranks one stated for the site, and a restriction stated in the file would
+  outrank both.
+- **Tasmania — the terms are read, and they are a decision, not a finding.**
+  The ReadMe says *"© Government of Tasmania"* and nothing about reuse, and a
+  notice is silence about terms, so the probe followed the ReadMe's own link to
+  the Treasury's page and read both documents it links (run 35836681636):
+  - the **quick guide**: *"You are free to reproduce the projections in
+    published work, or use them as an input into your own analysis, provided
+    you identify and credit them as Tasmanian Treasury 2024 projections."*
+  - the **final report**: *"Excerpts of this publication may be reproduced,
+    with appropriate acknowledgement, as permitted under the Copyright Act
+    1968."*
+  - the **Tasmanian Government's site notice** — whose only readable copy is a
+    2011 archive capture, the live page refusing CI — licenses reproduction
+    *"for non-commercial purposes only"* unless *"it is indicated on a website
+    that specific information may be used for commercial purposes"*.
+
+  The guide's grant is real and specific to the product; it names published
+  work and a credit, and it does not name commercial use. Whether a report
+  prepared for a paying client is "published work" under it is a reading of
+  terms, so it is put to the owner rather than decided here. Until it is
+  decided the loader refuses Tasmania before any fetch — the same refusal as
+  while the terms were unread, with a different reason recorded
+  (`licenceEvidence`). If the grant is accepted, the credit it asks for
+  (*"Tasmanian Treasury 2024 projections"*) is the credit the page must print.
 
 Two rules hold the licence at load time, not only at declaration:
 
@@ -540,18 +579,55 @@ Two rules hold the licence at load time, not only at declaration:
   row's `licence` reads, for NSW, *"Creative Commons Attribution 4.0
   International — © State of New South Wales and Department of Planning,
   Housing and Infrastructure 2024"*, which is what the page's source line
-  prints.
+  prints. **A notice is read whole**: Queensland's council workbook sets
+  *"© The State of Queensland"* in one cell and *"(Queensland Treasury) 2026"*
+  in the next, and half a notice names the owner while dropping the agency and
+  the year the publisher asked to be credited. A parenthetical — optionally
+  followed by a year — beside or below the notice is joined to it; a footnote
+  such as *"(a) Boundaries are based on …"* is not.
 
 ### 9.3 · Queensland
 
-QGSO publishes both grains a report can use, and the links are the
-publisher's own (the regions page, read from CI): an SA2/SA3/SA4 table in the
-medium series and an LGA table in the low, medium and high series, both
-2021–2046 (issue 5281). The 23 September run found the links and had no
-description of the files; the next run describes both and reads QGSO's
-copyright page. No parser exists until those descriptions do — a parser written
-against a layout typed from memory is the defect this programme stopped
-shipping.
+The Statistician publishes both grains a report can use, as issue 5281 of the
+2025 edition (the links are the publisher's own, read from its regions page):
+an SA2 table in the medium series and a council table in the low, medium and
+high series, both 2021–2046. The first run found the links, the second
+described both files, and the parsers were written against that description
+and then run dry over the real files (run 35836681636):
+
+| file | read | areas | rows | declined |
+| --- | --- | --- | --- | --- |
+| `qld_sa2` — SA2, medium series | publisher, 180,842 bytes | 546 | 3,276 (2021 base + 5 projected years) | 0 |
+| `qld_lga` — councils, three series | publisher, 1,026,322 bytes | 78 | 1,404 (78 × 6 years × 3 series) | 3 — the *Queensland* row on each sheet |
+
+What each parser holds the file to, beyond the shared gate:
+
+- **The SA2 codes must be the edition the reader resolves.** Rows are keyed by
+  the publisher's nine-digit SA2 code — the reader's first rung — and the same
+  nine digits under another ASGS edition can describe a different area, so the
+  Main page must state its boundaries are the 2021 edition. It does:
+  *"Boundaries are based on Edition 3 (2021) of the Australian Statistical
+  Geography Standard (ASGS)."* A code that is not nine digits beginning with
+  3 is declined by name, never loaded.
+- **Only the first run of years is read.** The SA2 sheet declares 125 columns
+  (`A1:DU560`) around the twelve it prints; CI read every filled cell and the
+  widest row reaches column L. A second block of years out to the right — a
+  change, a growth rate — would otherwise be read as persons, so the header
+  run ends at the first cell that is not a later year, and the measure under
+  its first year must read *persons*.
+- **The councils must add to the state.** Each council sheet ends with the
+  state's own row (*Queensland*, 5,215,814 in 2021), and the 78 councils must
+  add to it within half a person each — a total read as an area, or an area
+  missed, refuses the file. They do. The SA2 sheet prints no state total, so
+  that check does not run there; its floor (500 of 546) and the code rule do.
+- **An estimate is one figure in every series.** The 2021 base is an
+  estimate, so a council whose base differs between two series sheets means a
+  sheet was misread, and the file is refused rather than loaded with one
+  series misaligned. Brisbane starts from 1,262,968 in all three.
+- **78, not 77.** The table names 78 areas, not the 77 councils the state is
+  usually described as having; the parser loads what the publisher printed,
+  and the check against the publisher's own total is what says the 78 are the
+  whole state and nothing more.
 
 ### 9.4 · What is declined, and why each is a different reason
 
@@ -578,11 +654,21 @@ shipping.
   its own description says *"are based upon actual values obtained in 2015,
   and estimates obtained for 2016"* — a base two censuses old. Its CC BY 4.0
   licence is not in question; its currency is.
-- **The Northern Territory — not reached.** The catalogue still names the 2019
-  release; the 2024 edition's two workbooks are on `treasury.nt.gov.au`, which
-  answers CI with a Cloudflare challenge (HTTP 403, *"Just a moment..."* — a
-  challenge, not a refusal, `JURISDICTION_PLANNING_COVERAGE.md`'s rule). The
-  archive's index timed out and answered 503; it is asked again with a retry.
+- **The Northern Territory — reached, not yet read.** The catalogue still
+  names the 2019 release; the 2024 edition's workbooks are on
+  `treasury.nt.gov.au`, which answers CI with a Cloudflare challenge (HTTP 403,
+  *"Just a moment..."* — a challenge, not a refusal,
+  `JURISDICTION_PLANNING_COVERAGE.md`'s rule). The archive holds the main
+  workbook (capture `20251121111355`, 257,800 bytes), and its region sheets are
+  the ABS's own **SA3** names — Darwin City, Darwin Suburbs, Litchfield,
+  Palmerston, Alice Springs, Barkly, Daly–Tiwi–West Arnhem, East Arnhem,
+  Katherine — in blocks by Aboriginal status and sex. No parser is written
+  until three things are read: which block is total persons, which year the
+  publisher states as the base, and the terms, which the catalogue record
+  (the 2019 release) does not speak for. The next run asks for that capture by
+  its own address, because the archive's index — not the capture — is what
+  failed on 23 Sep. Loading it would also need the reader's first SA3 rung
+  (`report_geography` already carries `sa3_name`).
 
 Each of these keeps its jurisdiction's `not_loaded` sentence and its route to
 the publisher, because the reader is still owed where the figure is.
@@ -607,11 +693,12 @@ is, labelled as the base.
 
 The function first, then the table (`20261218000000`), then the monthly jobs
 (`20261218010000`, the 3rd of each month from 18:05 UTC, one file per job five
-minutes apart — the loader's one-heavy-workbook rule). The approvals register's
-first run answered HTTP 400 in five milliseconds because its table and job
-landed before the function knew the stage (`20261214000000`), so this order is
-not a preference. A green cron tick is not a delivered request: each file's
+minutes apart — the loader's one-heavy-workbook rule), then the first loads
+(`20261218020000`, the five files with a licence read: NSW's two, Victoria's
+and Queensland's two). The approvals register's first run answered HTTP 400 in
+five milliseconds because its table and job landed before the function knew
+the stage (`20261214000000`), so this order is not a preference. A green cron tick is not a delivered request: each file's
 load is proved by its own `market_sales_sync` row — `file`, `rows_written`,
 `via`, `licence`, `base`, `horizon`, `declined` — and a report's reading by its
-source line. **None of that has happened yet**, and until it has, NSW and
-Victoria read `not_loaded` on every report and say so.
+source line. **None of that has happened yet**, and until it has, NSW,
+Victoria and Queensland read `not_loaded` on every report and say so.

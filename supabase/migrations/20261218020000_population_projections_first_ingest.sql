@@ -9,26 +9,35 @@
 -- from the PRODUCTION egress can only fail there, and discovering it on the
 -- 3rd of next month is strictly worse than discovering it now.
 --
--- Three files, the three whose licence has been read from their publisher:
+-- Five files, the five whose licence has been read from their publisher:
 --
 --   * `nsw_sa2` and `nsw_lga` — the 2024 NSW Population Projections, CC BY 4.0
 --     from the Department's own copyright page;
 --   * `vic_lga` — Victoria in Future 2023, CC BY 4.0 from the Victorian
 --     catalogue's record of the dataset. Its publisher answers CI with a
 --     Cloudflare challenge, so this is also the first measurement of whether
---     the production egress is answered or sent to the archive.
+--     the production egress is answered or sent to the archive;
+--   * `qld_sa2` and `qld_lga` — the Queensland Government population
+--     projections, 2025 edition, CC BY 4.0 from the Queensland catalogue's
+--     record of the product and from the council workbook's own link to the
+--     licence deed. The archive holds no capture of the SA2 workbook, so if
+--     the production egress is refused where CI was answered, that load
+--     fails and says so rather than finding a copy.
 --
--- Tasmania's three series are NOT fired here: the loader refuses a file whose
--- licence is unread before it fetches anything, and the monthly job already
--- writes that refusal to `market_sales_sync` where an operator looks. Firing it
--- here would prove only that a refusal the dry run already exercises is still
--- a refusal.
+-- Tasmania's three series are NOT fired here: their terms have been read and
+-- turn on a decision the owner has not yet made (whether a report for a paying
+-- client is "published work" under the Treasury's grant —
+-- FORWARD_DEMAND_EVIDENCE.md §9.2), so the loader refuses them before it
+-- fetches anything, and the monthly job writes that refusal to
+-- `market_sales_sync` where an operator looks. Firing it here would prove only
+-- that a refusal the dry run already exercises is still a refusal.
 --
 -- Each call posts ONE stage and returns — `net.http_post` queues the request,
 -- and each lands in its own edge-function invocation, which is the loader's
--- one-heavy-workbook-per-invocation rule. Three concurrent loads write three
--- disjoint slices (NSW SA2, NSW LGA, Victorian LGA), so nothing they write can
--- collide.
+-- one-heavy-workbook-per-invocation rule. Five concurrent loads write five
+-- disjoint slices (NSW SA2, NSW LGA, Victorian LGA, Queensland SA2,
+-- Queensland LGA — each keyed by its own state and area kind, and each prune
+-- keeps to its own), so nothing they write can collide.
 --
 -- It is safe to apply more than once. `population_projections` is keyed on the
 -- publisher's own (state, release, series, measure, area_kind, area_code, year),
@@ -60,13 +69,16 @@
 --          detail->>'rows_written' rows, detail->>'areas' areas,
 --          detail->>'via' via, detail->>'base' base, detail->>'horizon' horizon
 --   from public.market_sales_sync
---   where detail->>'stage' = 'projections' order by created_at desc limit 6;
+--   where detail->>'stage' = 'projections' order by created_at desc limit 10;
 --
--- The dry run in CI (run 35831008944) read 13,482 rows for 622 NSW SA2s,
--- 2,709 rows for 129 NSW LGAs and 320 rows for 80 Victorian LGAs; production's
--- `rows_written` should agree with those to the row, and a disagreement is a
--- finding about the file production fetched.
+-- The dry run in CI (run 35836681636) read 13,482 rows for 622 NSW SA2s,
+-- 2,709 rows for 129 NSW LGAs, 320 rows for 80 Victorian LGAs, 3,276 rows for
+-- 546 Queensland SA2s and 1,404 rows for 78 Queensland LGAs (three series);
+-- production's `rows_written` should agree with those to the row, and a
+-- disagreement is a finding about the file production fetched.
 
 select public.market_sales_refresh('{"stage": "projections", "file": "nsw_sa2"}'::jsonb);
 select public.market_sales_refresh('{"stage": "projections", "file": "nsw_lga"}'::jsonb);
 select public.market_sales_refresh('{"stage": "projections", "file": "vic_lga"}'::jsonb);
+select public.market_sales_refresh('{"stage": "projections", "file": "qld_sa2"}'::jsonb);
+select public.market_sales_refresh('{"stage": "projections", "file": "qld_lga"}'::jsonb);

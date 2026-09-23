@@ -609,7 +609,7 @@ async function dryRun(file: ProjectionFile): Promise<string> {
   for (const n of file.sheets) printRightsLines(`rights lines in "${n}"`, read.grids[n], /readme/i.test(n));
   let parsed;
   try {
-    parsed = parseProjectionFile(file, read.grids, file.url, file.licence ?? '(dry run — licence not yet read)');
+    parsed = parseProjectionFile(file, read.grids, file.url, file.licence ?? '(dry run — no licence accepted)');
   } catch (err) {
     console.log(`      REFUSED PARSING — ${err instanceof Error ? err.message : String(err)}`);
     return 'parse refused';
@@ -620,7 +620,7 @@ async function dryRun(file: ProjectionFile): Promise<string> {
   console.log(`      base       ${parsed.base ?? '(none printed)'} · horizon ${parsed.horizon}`);
   console.log(`      areas      ${parsed.areas} (floor ${file.minAreas}) · rows ${parsed.rows.length.toLocaleString('en-AU')} · parsed in ${Date.now() - began - readMs} ms`);
   console.log(`      gate       ${guard.ok ? `PASSES — ${guard.areaKinds.join(', ')} · ${guard.firstYear}–${guard.lastYear}` : `REFUSES — ${guard.reason}`}`);
-  console.log(`      licence    ${file.licence ?? 'NOT YET READ'} — ${file.licenceEvidence}`);
+  console.log(`      licence    ${file.licence ?? 'NONE ACCEPTED — the loader refuses'} — ${file.licenceEvidence}`);
   console.log(`      declined   ${parsed.declined.length}${parsed.declined.length > 0 ? ` — ${parsed.declined.slice(0, 12).join(' · ')}` : ''}`);
   const byArea = new Map<string, typeof parsed.rows>();
   for (const r of parsed.rows) byArea.set(r.area_code, [...(byArea.get(r.area_code) ?? []), r]);
@@ -884,8 +884,22 @@ async function queenslandProductTerms(): Promise<void> {
  */
 async function northernTerritoryWorkbook(): Promise<void> {
   const url = 'https://treasury.nt.gov.au/pms/economy/population-projections/NTPOP-2024-Release.xlsx';
-  const got = await fetchLikeTheLoader(url);
-  if (got.bytes === null) { console.log(`      NOT FETCHED — ${got.why}`); return; }
+  let got = await fetchLikeTheLoader(url);
+  if (got.bytes === null) {
+    /*
+     * The archive's INDEX is the least reliable thing this probe asks: the
+     * second 23 Sep run lost it to "fetch failed" three times running, while
+     * the first had found this file's capture (20251121111355). A capture's
+     * own address needs no index, so the one already measured is asked for
+     * directly — a probe that reads the file, where the loader would have
+     * said the index was down.
+     */
+    const known = await download(originalBytesUrl({ timestamp: '20251121111355', original: url }));
+    const isZip = known.bytes !== null && known.bytes.length >= 4 && known.bytes[0] === 0x50 && known.bytes[1] === 0x4b;
+    console.log(`      the loader's route: ${got.why}`);
+    if (!isZip || known.bytes === null) { console.log(`      the known capture 20251121111355: ${known.note} — NOT FETCHED`); return; }
+    got = { bytes: known.bytes, via: 'archive 20251121111355, asked by its own address (the index did not answer)' };
+  }
   console.log(`      fetched ${got.bytes.length.toLocaleString('en-AU')} bytes via ${got.via}`);
   let names: string[];
   let read;

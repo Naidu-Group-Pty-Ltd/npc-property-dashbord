@@ -439,16 +439,26 @@ and a merged commit each describe what was meant to happen.
    year-on-year change.
 3. **#2737 (items 4–6)** — §13. The owner confirms the merge; then the
    migrations `20261218000000` (the table), `20261218010000` (the monthly
-   jobs) and `20261218020000` (the first NSW and Victorian loads, fired once)
-   are dispatched through `apply-migration.yml`, in that order and only after
-   the deploy that ships `market-sales-ingest`'s `projections` stage — the
-   approvals register's first run answered 400 because its table landed before
-   its loader did (`20261214000000`). Then prove each load through
+   jobs) and `20261218020000` (the first NSW, Victorian and Queensland loads,
+   fired once) are dispatched through `apply-migration.yml`, in that order and
+   only after the deploy that ships `market-sales-ingest`'s `projections`
+   stage — the approvals register's first run answered 400 because its table
+   landed before its loader did (`20261214000000`). Then prove each load through
    `query_logs` (log inspection, permitted — no SQL): the stage prints one line
    per file, `[market-sales-ingest] projections <file>: <n> rows for <n> areas
    via <publisher|archive> …`, and `<n> rows` should equal the CI dry run's
-   13,482 (NSW SA2), 2,709 (NSW LGA) and 320 (VIC LGA). A refusal prints
-   `projections refused/failed:` with its reason instead.
+   13,482 (NSW SA2), 2,709 (NSW LGA), 320 (VIC LGA), 3,276 (QLD SA2) and
+   1,404 (QLD LGA, three series). A refusal prints `projections
+   refused/failed:` with its reason instead.
+4. **Owner: Tasmania's terms** (`FORWARD_DEMAND_EVIDENCE.md` §9.2). The
+   Treasury's quick guide grants reproduction *"in published work … provided
+   you identify and credit them as Tasmanian Treasury 2024 projections"*; the
+   Tasmanian Government's site notice (2011 archive copy — the live page
+   refuses CI) licenses *"non-commercial purposes only"* unless a site says
+   otherwise. Is a report prepared for a paying client "published work" under
+   the guide's grant? Yes → declare the licence (the parsers already pass the
+   dry run: 29 councils, 899 rows per series) and print the credit the guide
+   asks for; no → Tasmania stays refused, as now.
 
 ---
 
@@ -476,8 +486,15 @@ and a merged commit each describe what was meant to happen.
   licence has not been read is refused before any fetch, a file that states
   terms of its own is refused at parse, and the notice a file supplies is
   carried on every row. SA and the ACT are declined as superseded editions,
-  WA for its licence, the NT is not reached, and Queensland's two tables are
-  being described by the next CI run. See `FORWARD_DEMAND_EVIDENCE.md` §9.
+  WA for its licence. **Queensland loads** (run 35836681636's dry run): the
+  2025 edition's SA2 table (546 SA2s, 3,276 rows, medium series) and council
+  table (78 councils, 1,404 rows, three series — adding to the publisher's own
+  state total), under CC BY 4.0 read from the Queensland catalogue and from
+  the council workbook's own link to the deed. **Tasmania's terms are read and
+  are the owner's decision** (§12 step 4). **The NT's 2024 workbook is
+  reached** through the archive and its regions are ABS SA3s; its base, its
+  total-persons block and its terms are not read yet. See
+  `FORWARD_DEMAND_EVIDENCE.md` §9.
 - **Item 6b — South Australia's zone is read** from the Planning and Design
   Code's own layer (`JURISDICTION_PLANNING_COVERAGE.md` §3.6); WA's is readable
   and licence-restricted; the NT's is challenged.
