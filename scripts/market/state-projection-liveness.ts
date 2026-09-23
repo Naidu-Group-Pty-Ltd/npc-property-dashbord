@@ -127,7 +127,10 @@ interface Fetched { status: number; body: string; ms: number; networkError: stri
 async function ask(url: string, accept = 'application/json'): Promise<Fetched> {
   let got = await askOnce(url, accept);
   if (!/^https:\/\/web\.archive\.org\/cdx\//.test(url)) return got;
-  for (let attempt = 1; attempt <= 2 && [429, 503, 504].includes(got.status); attempt += 1) {
+  // A shed load answers 429/503/504; a dropped connection answers nothing at
+  // all — the 23 Sep run lost South Australia's archive question to a bare
+  // "fetch failed", which is the same congestion by another route.
+  for (let attempt = 1; attempt <= 2 && (got.networkError !== null || [429, 503, 504].includes(got.status)); attempt += 1) {
     await new Promise((r) => setTimeout(r, 5_000 * attempt));
     got = await askOnce(url, accept);
   }
@@ -772,12 +775,151 @@ async function tasmaniaTerms(): Promise<void> {
     if (!got.bytes) { console.log(`      ${r.url} → ${got.note}`); continue; }
     try {
       const lines = await pdfText(got.bytes);
-      const rights = lines.filter((l) => LICENCE_WORDS.test(l));
-      console.log(`      ${r.text || r.url} — ${got.note}, ${lines.length} line(s) read from its opening and closing pages, ${rights.length} about rights`);
-      for (const l of rights.slice(0, 14)) console.log(`        ${l.length > 300 ? `${l.slice(0, 299)}…` : l}`);
+      printWithContext(`${r.text || r.url} — ${got.note}, read from its opening and closing pages`, lines, LICENCE_WORDS, 2, 6, 40);
     } catch (err) {
       console.log(`      ${r.url} — ${got.note}, not readable as a PDF: ${err instanceof Error ? err.message : String(err)}`);
     }
+  }
+}
+
+const clip = (t: string, n: number) => (t.length > n ? `${t.slice(0, n - 1)}…` : t);
+
+/** A zero-based column index as a spreadsheet names it (0 → A, 26 → AA). */
+function columnName(i: number): string {
+  let n = i + 1;
+  let out = '';
+  while (n > 0) { const r = (n - 1) % 26; out = String.fromCharCode(65 + r) + out; n = Math.floor((n - 1) / 26); }
+  return out;
+}
+
+/**
+ * Every line matching `re`, WITH the lines around it. A rights statement is a
+ * sentence, and a PDF or a page breaks sentences across lines: the 23 Sep run
+ * printed Tasmania's quick guide as "You are free to reproduce the projections
+ * in published work, or use them as an input into your own" and stopped, which
+ * is the half of the sentence that grants and none of the half that conditions.
+ */
+function printWithContext(label: string, lines: readonly string[], re: RegExp, before = 2, after = 5, max = 48): void {
+  const hits = lines.map((l, i) => (re.test(l) ? i : -1)).filter((i) => i >= 0);
+  const keep = new Set<number>();
+  for (const i of hits) for (let k = Math.max(0, i - before); k <= Math.min(lines.length - 1, i + after); k++) keep.add(k);
+  console.log(`      ${label} — ${lines.length} line(s), ${hits.length} about rights`);
+  let last = -2;
+  let printed = 0;
+  for (const i of [...keep].sort((a, b) => a - b)) {
+    if (printed >= max) { console.log('        … (cut at the print ceiling)'); break; }
+    if (i !== last + 1) console.log('        ·');
+    console.log(`        ${re.test(lines[i]) ? '»' : ' '} ${clip(lines[i], 320)}`);
+    last = i;
+    printed += 1;
+  }
+}
+
+/** Every non-empty cell of a sheet, one per line, in reading order. */
+const gridLines = (grid: Grid | undefined): string[] =>
+  (grid ?? []).flatMap((row) => (row ?? []).map((c) => cellText(c)).filter((t) => t !== ''));
+
+/**
+ * Queensland's workbooks as the parser reads them: the Main page in full —
+ * the edition, the "final estimates" sentence the base comes from, the
+ * boundary edition the SA2 codes belong to, the disclaimer — and each table's
+ * first and last filled rows with EVERY cell and its column, because the SA2
+ * sheet declares 125 columns around the twelve the describer printed and a
+ * second block of years out to the right would be read as persons by a parser
+ * that never looked.
+ */
+async function queenslandWorkbooks(): Promise<void> {
+  for (const key of ['qld_sa2', 'qld_lga'] as const) {
+    const file = PROJECTION_FILES.find((f) => f.key === key);
+    const bytes = fetchedFiles.get(key);
+    if (!file || !bytes) { console.log(`      ${key}: not fetched by the dry run, so not read`); continue; }
+    let read;
+    try { read = await readXlsxSheets(bytes, file.sheets); } catch (err) {
+      console.log(`      ${key}: ${err instanceof Error ? err.message : String(err)}`);
+      continue;
+    }
+    const main = gridLines(read.grids['Main page']);
+    console.log(`\n      ${key} — "Main page", all ${main.length} line(s)`);
+    for (const l of main.slice(0, 60)) console.log(`        ${clip(l, 400)}`);
+    for (const name of file.sheets.filter((n) => n !== 'Main page')) {
+      const grid = read.grids[name];
+      const filled = grid.map((row, r) => ({ r, row })).filter(({ row }) => row && row.some((c) => cellText(c) !== ''));
+      const widest = Math.max(0, ...filled.map(({ row }) => row.reduce<number>((m, c, i) => (cellText(c) !== '' ? i : m), 0)));
+      console.log(`      ${key} — "${name}": ${filled.length} filled rows, the widest reaching column ${columnName(widest)}`);
+      for (const { r, row } of [...filled.slice(0, 5), ...filled.slice(-9)]) {
+        const cells = row.map((c, i) => ({ i, t: cellText(c) })).filter((x) => x.t !== '');
+        console.log(`        ${String(r + 1).padStart(4)}  ${cells.map((x) => `${columnName(x.i)} ${clip(x.t, 70)}`).join(' ¦ ')}`);
+      }
+    }
+  }
+}
+
+/**
+ * Where Queensland applies terms to THIS product. The Statistician's
+ * copyright page defers to "specific licence terms … applied through or via
+ * this website to material including a particular product", so the product
+ * page is the first place those terms would be written.
+ */
+async function queenslandProductTerms(): Promise<void> {
+  for (const url of [
+    'https://www.qgso.qld.gov.au/statistics/theme/population/population-projections/regions',
+    'https://www.qgso.qld.gov.au/copyright',
+  ]) {
+    const page = await readPage(url);
+    if (!page) { console.log(`      ${url} not read`); continue; }
+    printWithContext(`${url} (via ${page.via})`, pageLines(page.body), LICENCE_WORDS, 1, 3, 30);
+  }
+}
+
+/**
+ * The Northern Territory's 2024 workbook, read for a parser and for its
+ * terms. The 23 Sep run found its region sheets are the ABS's own SA3 names
+ * (Darwin City, Darwin Suburbs, Litchfield, Palmerston, Alice Springs,
+ * Barkly, Daly-Tiwi-West Arnhem, East Arnhem, Katherine), in blocks by
+ * Aboriginal status and sex, and a footnote beginning "Regions correspond
+ * to …" that decides what grain that is. This prints the Summary and the
+ * footnotes whole, every block title of one region sheet, and every line in
+ * the workbook that speaks about rights — then the Treasury's own copyright
+ * page, through the archive where Cloudflare refuses CI.
+ */
+async function northernTerritoryWorkbook(): Promise<void> {
+  const url = 'https://treasury.nt.gov.au/pms/economy/population-projections/NTPOP-2024-Release.xlsx';
+  const got = await fetchLikeTheLoader(url);
+  if (got.bytes === null) { console.log(`      NOT FETCHED — ${got.why}`); return; }
+  console.log(`      fetched ${got.bytes.length.toLocaleString('en-AU')} bytes via ${got.via}`);
+  let names: string[];
+  let read;
+  try {
+    names = (await readXlsxSheets(got.bytes, [])).sheetNames;
+    read = await readXlsxSheets(got.bytes, names);
+  } catch (err) {
+    console.log(`      not read — ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
+  const summary = names.find((n) => /^summary$/i.test(n.trim()));
+  if (summary) {
+    const lines = gridLines(read.grids[summary]);
+    console.log(`      "${summary}", all ${lines.length} line(s)`);
+    for (const l of lines.slice(0, 80)) console.log(`        ${clip(l, 400)}`);
+  }
+  const region = names.find((n) => /^darwin city/i.test(n.trim())) ?? names[2];
+  if (region) {
+    const grid = read.grids[region];
+    console.log(`      "${region}" — every row whose first cell is text and not an age group, and every cell right of the table`);
+    grid.forEach((row, r) => {
+      const a = cellText(row?.[0]);
+      const texts = (row ?? []).map((c, i) => ({ i, t: cellText(c) })).filter((x) => x.t !== '' && (x.i > 6 || (x.i === 0 && !/^\d|^total$|^85 and over$/i.test(x.t))));
+      if (a === '' && texts.length === 0) return;
+      if (texts.length > 0) console.log(`        ${String(r + 1).padStart(4)}  ${texts.map((x) => `${columnName(x.i)} ${clip(x.t, 200)}`).join(' ¦ ')}`);
+    });
+  }
+  const rights = names.flatMap((n) => gridLines(read.grids[n]).filter((l) => LICENCE_WORDS.test(l)).map((l) => `${n}: ${l}`));
+  console.log(`      lines about rights anywhere in the workbook: ${rights.length === 0 ? '(none)' : ''}`);
+  for (const l of [...new Set(rights)].slice(0, 20)) console.log(`        ${clip(l, 400)}`);
+  for (const page of ['https://treasury.nt.gov.au/copyright', 'https://treasury.nt.gov.au/disclaimer', 'https://nt.gov.au/page/copyright']) {
+    const got = await readPage(page);
+    if (!got) { console.log(`      ${page} not read`); continue; }
+    printWithContext(`${page} (via ${got.via})`, pageLines(got.body), LICENCE_WORDS, 1, 3, 24);
   }
 }
 
@@ -797,9 +939,11 @@ async function main(): Promise<void> {
   console.log('\n  Tasmania\'s terms, where its own workbook points');
   await tasmaniaTerms();
 
-  console.log('\n  Queensland\'s own projection tables, described for a parser (links read by the 23 Sep run)');
-  await describe('https://www.qgso.qld.gov.au/issues/5281/qld-population-projections-regions-tables-sa2s-sa3s-sa4s-qld-med-series-2021-2046.xlsx', 'QGSO — SA2, SA3 and SA4, medium series');
-  await describe('https://www.qgso.qld.gov.au/issues/5281/qld-population-projections-regions-tables-lgas-qld-low-med-high-series-2021-2046.xlsx', 'QGSO — LGAs, low, medium and high series');
+  console.log('\n  Queensland\'s workbooks as the parser reads them (the dry run\'s own bytes)');
+  await queenslandWorkbooks();
+
+  console.log('\n  Queensland\'s terms for this product, where its copyright page says they would be written');
+  await queenslandProductTerms();
 
   console.log('\n  Where Queensland puts its projection files (the first walk found none one level down)');
   for (const page of [
@@ -815,9 +959,8 @@ async function main(): Promise<void> {
     for (const l of links.slice(0, 20)) console.log(`        ${l.text.slice(0, 80).padEnd(80)} ${l.href}`);
   }
 
-  console.log('\n  The Northern Territory\'s 2024 edition (the catalogue still names 2019)');
-  await describe('https://treasury.nt.gov.au/pms/economy/population-projections/NTPOP-2024-Release.xlsx', 'NTPOP 2024 release');
-  await describe('https://treasury.nt.gov.au/pms/economy/population-projections/NTPOP-2024-Release-NTG-defined-regional-areas.xlsx', 'NTPOP 2024 release — NTG defined regional areas');
+  console.log('\n  The Northern Territory\'s 2024 edition, read for a parser and for its terms');
+  await northernTerritoryWorkbook();
 
   console.log('\n  The ACT\'s own description of its district projections (which year is the base?)');
   {
