@@ -2413,7 +2413,7 @@ checked against its own Totals sheet, Queensland's *"2021 data are final
 estimated resident population (ERP)"* against a header that prints the year as
 `2021 (b)` — because an estimate printed under a forward heading is this
 register's worst failure. **Readable is not republishable**: a file whose
-licence is unread is refused BEFORE the fetch,
+licence is unread, or read and not accepted, is refused BEFORE the fetch,
 and what a file says about its own terms is held against the licence read for
 it — `termsAgreeWith` refuses a restriction whatever else is said, accepts a
 statement that NAMES the declared licence (the file is the best evidence of

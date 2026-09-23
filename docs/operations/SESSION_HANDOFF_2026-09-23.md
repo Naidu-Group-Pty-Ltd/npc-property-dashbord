@@ -472,37 +472,39 @@ and a merged commit each describe what was meant to happen.
 - **Item 5 — done.** Tasmania publishes no sub-state count of residential
   sales, read from its whole list (982 datasets, 5 naming a sale, none
   countable); WA's "204" was one dataset counted twice.
-- **Item 6a — the projection register has loaders.** Six files (NSW SA2 and
-  LGA, Victoria in Future 2023 LGA, Tasmania's three series) are parsed by
-  code written against the layouts CI printed, through a one-sheet xlsx
-  reader, and each file's LOADER RUNS DRY IN CI over the real file on every
-  build. Run 35831008944's dry run: **all six pass the gate** — NSW 622 SA2s /
-  13,482 rows and 129 LGAs / 2,709 rows, Victoria 80 LGAs / 320 rows (read
-  through the archive — the publisher answers CI with a Cloudflare
-  challenge), Tasmania 29 LGAs / 899 rows per series. **NSW's licence is
-  read** (CC BY 4.0, from `planning.nsw.gov.au/copyright-and-disclaimer`), so
-  NSW and Victoria load; **Tasmania is refused** until its terms are read
-  (its ReadMe carries a © notice and nothing about reuse). A file whose
-  licence has not been read is refused before any fetch, a file that states
-  terms of its own is refused at parse, and the notice a file supplies is
-  carried on every row. SA and the ACT are declined as superseded editions,
-  WA for its licence. **Queensland loads** (run 35836681636's dry run): the
-  2025 edition's SA2 table (546 SA2s, 3,276 rows, medium series) and council
-  table (78 councils, 1,404 rows, three series — adding to the publisher's own
-  state total), under CC BY 4.0 read from the Queensland catalogue and from
-  the council workbook's own link to the deed. **Tasmania's terms are read and
-  are the owner's decision** (§12 step 4). **The NT is declined for its
-  licence**: its 2024 workbook (ABS SA3 regions, 2021 base) states no terms,
-  the catalogue's CC Attribution record reaches only the superseded 2019
-  release, and the NT Government's copyright statement forbids reuse without
-  an expressly provided Creative Commons licence. **South Australia's and the
-  ACT's current editions were found and read, and both are declined for their
-  licences**: SA's January 2024 release (through the archive) is published
-  with a report saying *"All rights reserved"*, and the ACT's 2025–2065
-  workbook says *"no part may be reproduced by any process without written
-  permission"*. Every jurisdiction now has a measured answer: three load, one
-  is the owner's decision, four are declined for licences — each naming the
-  permission that would change it. See `FORWARD_DEMAND_EVIDENCE.md` §9.4.
+- **Item 6a — the projection register has loaders, and every jurisdiction
+  has a measured answer.** Eight files are declared, each parsed by code
+  written against the layout CI printed for the real file, through a
+  one-sheet xlsx reader, and each file's LOADER RUNS DRY IN CI over the real
+  file on every build (from run 35831008944; Queensland's from 35836681636):
+  - **NSW loads** — 622 SA2s / 13,482 rows and 129 LGAs / 2,709 rows, under
+    CC BY 4.0 read from `planning.nsw.gov.au/copyright-and-disclaimer`.
+  - **Victoria loads** — 80 LGAs / 320 rows, read through the archive (the
+    publisher answers CI with a Cloudflare challenge), under CC BY 4.0 read
+    from the Victorian catalogue's record of the dataset.
+  - **Queensland loads** — the 2025 edition's SA2 table (546 SA2s, 3,276
+    rows, medium series) and council table (78 councils, 1,404 rows, three
+    series — adding to the publisher's own state total), under CC BY 4.0 read
+    from the Queensland catalogue and from the council workbook's own link to
+    the deed.
+  - **Tasmania is the owner's decision** (§12 step 4). Its three series pass
+    the dry run (29 LGAs / 899 rows per series) and its terms are read; the
+    loader refuses it before any fetch until the decision is made.
+  - **Four are declined for their licences**, each naming the permission that
+    would change it: WA (*Custom (Active Acceptance)*); South Australia, whose
+    January 2024 release — read through the archive, the catalogue's copy
+    being the superseded 2016-based edition — is published with a report
+    saying *"All rights reserved"*; the ACT, whose 2025–2065 workbook — the
+    catalogue's copy being the superseded 2015-based edition — says *"no part
+    may be reproduced by any process without written permission"*; and the
+    NT, whose 2024 workbook (ABS SA3 regions, 2021 base) states no terms while
+    the catalogue's CC Attribution record reaches only the superseded 2019
+    release and the NT Government's copyright statement forbids reuse without
+    an expressly provided Creative Commons licence.
+
+  A file whose licence has not been accepted is refused before any fetch, a
+  file that states terms of its own is refused at parse, and the notice a
+  file supplies is carried on every row. See `FORWARD_DEMAND_EVIDENCE.md` §9.
 - **Item 6b — South Australia's zone is read** from the Planning and Design
   Code's own layer (`JURISDICTION_PLANNING_COVERAGE.md` §3.6); WA's is readable
   and licence-restricted; the NT's is challenged.

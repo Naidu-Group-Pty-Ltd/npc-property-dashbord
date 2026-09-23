@@ -631,8 +631,8 @@ What each parser holds the file to, beyond the shared gate:
 
 ### 9.4 · What is declined, and why each is a different reason
 
-- **South Australia — the catalogue's copy is superseded; the current
-  edition is in the archive, and its terms are not yet read.** The
+- **South Australia — the catalogue's copy is superseded, and the current
+  edition, read through the archive, is declined for its licence.** The
   catalogue's *Population Projections for SA* is CC BY, but it is the
   2016-based edition released in 2019. The Department's current edition is on
   `plan.sa.gov.au`, which refuses CI; on 23 Sep the archive listed it (run
@@ -672,8 +672,9 @@ What each parser holds the file to, beyond the shared gate:
   and cannot accept by fetching. It is the finding `WA_LICENCE_NOTE` records
   for the zone layer, from the same publisher.
 - **The ACT — the catalogue's copy is superseded, and the current edition is
-  named.** Its only projection by area in the catalogue is *ACT Population
-  Projections by District (2015 - 2041)*, which its own description says *"are
+  declined for its licence.** Its only projection by area in the catalogue is
+  *ACT Population Projections by District (2015 - 2041)*, which its own
+  description says *"are
   based upon actual values obtained in 2015, and estimates obtained for
   2016"* — a base two censuses old. Its CC BY 4.0 licence is not in question;
   its currency is. The Treasury's own page (archived 13 Dec 2025; the live page

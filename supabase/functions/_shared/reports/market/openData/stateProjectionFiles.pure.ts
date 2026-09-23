@@ -986,7 +986,7 @@ export function licenceWithNotice(licence: string, notice: string | null): strin
 export function parseProjectionFile(
   file: ProjectionFile, grids: Readonly<Record<string, Grid>>, sourceUrl: string, licence: string,
 ): ProjectionParse {
-  // Held against the DECLARED licence. A file whose licence is unread never
+  // Held against the DECLARED licence. A file with no accepted licence never
   // reaches here in production — the loader refuses it before the fetch — and
   // the CI dry run parses it to show what it holds, printing its rights lines
   // beside the result rather than refusing to look.
@@ -1007,9 +1007,10 @@ export function parseProjectionFile(
 /**
  * Whether this platform's loader reads a jurisdiction's own projection: a
  * file is declared for it AND that file's licence has been read from its
- * publisher. `FORWARD_DEMAND_PUBLISHERS.ingested` is this, derived rather
- * than typed, so the flag, the sentence and the loader cannot disagree — and a
- * file whose licence is unread counts for nothing, because the loader refuses
+ * publisher and accepted. `FORWARD_DEMAND_PUBLISHERS.ingested` is this,
+ * derived rather than typed, so the flag, the sentence and the loader cannot
+ * disagree — and a file with no accepted licence (unread, or read and not
+ * accepted, as Tasmania's is) counts for nothing, because the loader refuses
  * it.
  */
 export function projectionIngested(state: string): boolean {

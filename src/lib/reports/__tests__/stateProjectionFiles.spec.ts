@@ -674,8 +674,8 @@ describe('readable is not republishable', () => {
     expect(suppliedNotice({ Notes: [['Copyright is reserved by nobody in particular']] })).toBeNull();
   });
 
-  it('holds no terms against a file whose licence is unread — the loader refused it before the fetch', async () => {
-    // The CI dry run parses an unread file to show what it holds; production never reaches the parse.
+  it('holds no terms against a file with no accepted licence — the loader refused it before the fetch', async () => {
+    // The CI dry run parses such a file to show what it holds; production never reaches the parse.
     const sheets = tasSheets();
     sheets.ReadMe = [...sheets.ReadMe, ['All rights reserved.']];
     await expect(parse('tas_medium', sheets)).resolves.toMatchObject({ areas: 29 });
@@ -683,7 +683,7 @@ describe('readable is not republishable', () => {
     expect(termsAgreeWith('A licence nobody declared a pattern for', ['Licensed under it.']).ok).toBe(false);
   });
 
-  it('schedules exactly the declared files, and first-loads only the ones whose licence is read', () => {
+  it('schedules exactly the declared files, and first-loads only the ones whose licence is accepted', () => {
     const migrations = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../supabase/migrations');
     const filesIn = (sql: string) => [...sql.matchAll(/"stage":\s*"projections",\s*"file":\s*"([a-z_0-9]+)"/g)].map((m) => m[1]);
     /*
@@ -703,7 +703,7 @@ describe('readable is not republishable', () => {
     for (const key of fired) expect(file(key).licence, key).not.toBeNull();
   });
 
-  it('refuses in the loader, before any fetch, a file whose licence is unread', () => {
+  it('refuses in the loader, before any fetch, a file with no accepted licence', () => {
     const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../../../supabase/functions/market-sales-ingest/index.ts'), 'utf8');
     const stage = source.slice(source.indexOf("if (stage === 'projections')"));
     const refusal = stage.indexOf('if (file.licence === null)');

@@ -53,9 +53,9 @@
  * **`ingested` is derived, never typed.** It was `false` on all eight,
  * truthfully, until the register had a loader. It is now whether
  * `PROJECTION_FILES` holds a file for the jurisdiction whose licence has
- * been READ from its publisher (`projectionIngested`) — so the flag, the
- * sentence and the loader cannot disagree, and a file whose licence is still
- * unread counts for nothing, because the loader refuses it.
+ * been READ from its publisher and accepted (`projectionIngested`) — so the
+ * flag, the sentence and the loader cannot disagree, and a file with no
+ * accepted licence counts for nothing, because the loader refuses it.
  *
  * Deno-compatible: no `@/` aliases, explicit `.ts` extensions.
  */
