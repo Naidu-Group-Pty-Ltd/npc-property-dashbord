@@ -638,10 +638,28 @@ Four things the move then found, each pre-existing:
   Supply Pipeline` — and that is now what is asserted, which the equality
   never checked.
 
-**W2.3 · Rebuild page 5 and page 37.**
-p5 either carries a real risk register or is removed and its dashboard given the
-room; p37's five-column, one-row table is restructured.
-*Accept:* no content page below a declared fill floor (see W2.4).
+**W2.3 · ~~Rebuild page 5 and page 37.~~ ANSWERED ON MEASUREMENT — both
+halves were closed by other work, and its acceptance pointed at an item that
+was itself withdrawn.**
+
+As written: *p5 either carries a real risk register or is removed and its
+dashboard given the room; p37's five-column, one-row table is restructured.
+Accept: no content page below a declared fill floor (see W2.4).*
+
+Three things about that, all of them below in W2.4's own measurement rather
+than asserted here. **The acceptance criterion cites W2.4, which is
+withdrawn** — a floor that does not exist cannot be cleared, so the entry
+could never have been closed on its own terms. **Page 5's 28% is the Risk
+Register divider** whose withheld-register callout was fixed on `main` on
+19 Sep. And the five-column table is page **36**, not 37, closed by the
+Monitoring rewrite; pages 4, 37 and the cover are master-fixed and correctly
+sparse, which the ink-extent instrument shows and the character-count one
+could not.
+
+So the pages named here were a SYMPTOM of content defects that are now fixed,
+and rebuilding them would have been work aimed at an instrument's error. What
+survives is W2.4's instrument — ink extent rather than character count — for
+the next regeneration to be measured with.
 
 **W2.4 · ~~A page-fill floor.~~ WITHDRAWN — there is no packing defect, and
 the two measurements that said otherwise were both mine.**
@@ -1603,10 +1621,16 @@ were **approved 21 Sep 2026 and are committed** (`6ba3a5e`:
 `20261213010000_market_building_approvals_refresh.sql`, plus 130 lines in
 `market-sales-ingest`). Both migrations carry an `@effect:` probe — the table
 must exist in `pg_class`, the job in `cron.job` — because this register is
-asserted by effect and never by configuration. What remains is APPLICATION and
-a first ingest, which is a deploy rather than authorship: nothing further can
-be written here to advance it, and `20261213000000` is absent from the applied
-ledger (1,012 versions, latest `20261211000000`).
+asserted by effect and never by configuration.
+
+**This paragraph used to end "what remains is APPLICATION and a first ingest …
+`20261213000000` is absent from the applied ledger", and that is no longer
+true.** It was applied on 22 Sep, the first ingest ran, three defects behind
+green signals were found and closed (the page bound measured on the wire
+rather than in the worker; an SA4 filed as `sa2` and an SA3 as `lga`; and a
+walk with no walker), and the register now deepens itself hourly — measured
+over two consecutive ticks at the head of this entry. Nothing here is waiting
+on a deploy.
 
 W3.3 needs no register at all, for the reason its own entry gives: there is no
 ABS projection at SA2 to load. The Bureau publishes four projection flows over
