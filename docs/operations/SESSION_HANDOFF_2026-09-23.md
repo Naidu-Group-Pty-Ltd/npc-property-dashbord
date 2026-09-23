@@ -370,7 +370,10 @@ for these expressions in 15 and 17.
   (`A_PREMIUM_DOCUMENT.md` §9). A pending measurement with a trigger: the next
   delivered Compass for a property whose land-use table prohibits
   *Residential accommodation* as a group.
-- **W3.5, Tasmania.** `data.tas.gov.au` does not resolve from this egress.
+- ~~**W3.5, Tasmania.** `data.tas.gov.au` does not resolve from this egress.~~
+  **Closed 23 Sep** (item 5): read from the harvest's own records — 982
+  datasets across its 14 government publishers, in full, none carrying a
+  count. `SALES_VOLUME_COVERAGE.md` §4.4.
 - **Owner decisions the plan deliberately does not take:** whether the 21
   `market_sources` rows are seeded; whether the nine pre-19-Sep reports are
   regenerated (**the owner has said no**); and Risk. It needs a construction

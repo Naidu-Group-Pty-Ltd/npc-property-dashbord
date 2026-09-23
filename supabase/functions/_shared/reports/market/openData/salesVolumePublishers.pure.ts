@@ -871,7 +871,9 @@ export function volumeRemedyClause(state: string | null | undefined): string | n
 // ---------------------------------------------------------------------------
 
 /**
- * The readings, measured 22 September 2026 from CI.
+ * The readings, measured from CI — WA, the NT and the ACT on 22 September
+ * 2026, Tasmania on 23 September, when the same run re-measured the other
+ * three and every one of their readings held.
  *
  * A constant and not a live lookup, for `amenity_register`'s reason and
  * `nationalPipeline`'s: a per-report round trip would spend a request to
@@ -885,14 +887,17 @@ export function volumeRemedyClause(state: string | null | undefined): string | n
  *                                phrasings matched — corroborated
  *   ACT  `no_count_published`    index of **378** read through SOCRATA,
  *                                none of the five matched — corroborated
- *   TAS  `catalogue_unavailable` `data.tas.gov.au` does not resolve, and
- *                                its one harvest-attributed dataset carries
- *                                no count — OURS
+ *   TAS  `no_count_published`    no catalogue of its own: **982** datasets,
+ *                                every one its 14 government publishers list
+ *                                in the Commonwealth catalogue, read in full;
+ *                                5 name a sale and none carries a count —
+ *                                corroborated by the search of the same index
  *
- * Three of the four are therefore a real limit of what is published, and one
- * is a gap in this repository. Keeping them apart is the whole point: a
- * reader is told *"no count is published"* only where that was established,
- * and *"this could not be established"* where the failure is ours.
+ * All four are therefore a real limit of what is published. That took two
+ * instruments, and the distinction they kept is the point: a reader is told
+ * *"no count is published"* only where that was established, and *"this
+ * could not be established"* where the failure is ours — which is what
+ * Tasmania read, correctly, until the probe could find where it publishes.
  *
  * ── The ACT's reading changed when the instrument did ────────────────────
  *
@@ -902,13 +907,27 @@ export function volumeRemedyClause(state: string | null | undefined): string | n
  * `no_count_published` over an index of 378. Tasmania was re-measured by the
  * same run and did not move, because its host still does not resolve.
  *
+ * ── Tasmania's reading changed when the instrument did, too ─────────────
+ *
+ * `data.tas.gov.au` answers ENOTFOUND. The fix was never a second typed
+ * host: the harvest's own records name Tasmania's publishers and the hosts
+ * their files are served from, and none of those eight hosts answers as a
+ * searchable catalogue (two are map-layer directories, and neither names a
+ * sales layer). So the Commonwealth catalogue IS Tasmania's index, and the
+ * reading is taken from everything its government lists there rather than
+ * from a relevance search — `harvest_enumeration`, whose sentence says so.
+ *
  * That is why `VOLUME_READING_IS_CURRENT` exists: a reading stored against
  * an instrument that has since been replaced is the *asserted by
  * configuration rather than by effect* trap the retention purge and the
  * verification self-test both answer to, and it is the kind of staleness
  * nobody notices because the constant still reads plausibly. All four
- * entries are current as of this run; the flag is kept so the next
+ * entries are current as of the 23 Sep run; the flag is kept so the next
  * instrument change has somewhere to be declared.
+ *
+ * 23 Sep's WA count was 204 against 22 Sep's 203, under the same reading. A
+ * relevance search over a live index drifts by a dataset; the READING did
+ * not move, which is what a re-measurement is asked to confirm.
  */
 export const MEASURED_VOLUME_COVERAGE: Readonly<Record<VolumeGapState, VolumeCoverage>> = {
   /*
@@ -921,11 +940,13 @@ export const MEASURED_VOLUME_COVERAGE: Readonly<Record<VolumeGapState, VolumeCov
   WA: { kind: 'medians_only', searched: 203, inventory: 2911 },
   NT: { kind: 'no_count_published', searched: 0, inventory: 1075 },
   ACT: { kind: 'no_count_published', searched: 0, inventory: 378 },
-  TAS: {
-    kind: 'catalogue_unavailable',
-    reason: 'data.tas.gov.au does not resolve from this egress, and its one harvest-attributed '
-      + 'dataset carries no count',
-  },
+  /*
+   * `searched` is the ENUMERATED list's own count — the probe's line
+   * `datasets naming a sale  5 of 982`. The run's sentence first said 6,
+   * folding in the search's one attributed find; `attributedRead` is why it
+   * no longer can.
+   */
+  TAS: { kind: 'no_count_published', searched: 5, inventory: 982, route: 'harvest_enumeration' },
 };
 
 /**
@@ -1090,9 +1111,11 @@ export function parseSocrataCatalogue(text: string): VolumeCatalogueParse {
 /**
  * Which measured readings were taken with the CURRENT instrument.
  *
- * All four, as of 22 Sep 2026: the run that added the Socrata reader and the
- * find/absence asymmetry re-measured every jurisdiction, and the ACT moved
- * from `catalogue_unavailable` to `no_count_published` as a result.
+ * All four, as of 23 Sep 2026: the run that added harvest discovery and the
+ * enumeration route re-measured every jurisdiction. Tasmania moved from
+ * `catalogue_unavailable` to `no_count_published` as a result — the second
+ * reading to move when the instrument did, after the ACT's on 22 Sep — and
+ * the other three held.
  *
  * Kept although nothing is `false` today, because the point is to have
  * somewhere for the NEXT instrument change to be declared. A reading stored
@@ -1454,4 +1477,65 @@ export interface EnumeratedPublisher {
  */
 export function enumerationComplete(publishers: readonly EnumeratedPublisher[]): boolean {
   return publishers.length > 0 && publishers.every((p) => p.declared > 0 && p.read >= p.declared);
+}
+
+/**
+ * The read an assessment is handed: every attributed dataset once, and the
+ * number its absence sentence states.
+ *
+ * Two faults, both visible in the 23 Sep 2026 run's own output for Tasmania:
+ *
+ *  - **A dataset both routes returned was counted twice.** The attributed
+ *    list was the jurisdiction's datasets CONCATENATED with the harvest's,
+ *    and its length was the count. Where the jurisdiction's list is itself
+ *    read from the harvest — the enumeration route — the relevance search
+ *    and the enumeration ask the SAME index, so one dataset can arrive by
+ *    both, under one id.
+ *  - **The enumeration's sentence counted what the enumeration did not
+ *    find.** It reads *"of the 982 datasets its own publishers list …, read
+ *    in full, N name a sale"* — a statement about that list — and the run
+ *    printed N = 6 beside its own line `datasets naming a sale  5 of 982`,
+ *    because the search's one attributed find was folded into the number.
+ *    The search is the CORROBORATING question on that route (it is what
+ *    "and the search of the same index" names), not part of the list.
+ *
+ * So every attributed dataset still reaches the ranking — a find needs one
+ * endpoint that answered — and the number is the one its sentence describes:
+ * the enumeration's on the enumeration route, every distinct dataset
+ * otherwise.
+ */
+export interface AttributedRead {
+  parse: Extract<VolumeCatalogueParse, { kind: 'catalogue' }>;
+  /** Attributed harvest datasets the jurisdiction's own list did not already hold. */
+  harvestOnly: VolumeDataset[];
+  /** Attributed harvest datasets that WERE already in the jurisdiction's own list. */
+  overlap: number;
+}
+
+export function attributedRead(args: {
+  /** The jurisdiction's own list, already attributed. */
+  own: readonly VolumeDataset[];
+  /** The harvest search's finds, already attributed. */
+  harvest: readonly VolumeDataset[];
+  route?: VolumeRoute;
+}): AttributedRead {
+  const ownIds = new Set<string>();
+  const ownDistinct: VolumeDataset[] = [];
+  for (const d of args.own) {
+    if (ownIds.has(d.id)) continue;
+    ownIds.add(d.id);
+    ownDistinct.push(d);
+  }
+  const harvestIds = new Set<string>();
+  const harvestOnly: VolumeDataset[] = [];
+  let overlap = 0;
+  for (const d of args.harvest) {
+    if (harvestIds.has(d.id)) continue;
+    harvestIds.add(d.id);
+    if (ownIds.has(d.id)) overlap += 1;
+    else harvestOnly.push(d);
+  }
+  const datasets = [...ownDistinct, ...harvestOnly];
+  const total = args.route === 'harvest_enumeration' ? ownDistinct.length : datasets.length;
+  return { parse: { kind: 'catalogue', total, datasets }, harvestOnly, overlap };
 }

@@ -56,6 +56,7 @@ import {
   VOLUME_SCORED_STATES,
   assessVolumeCoverage,
   attributableTo,
+  attributedRead,
   catalogueAnswered,
   SOCRATA_PORTALS,
   judgeCatalogueReach,
@@ -540,19 +541,31 @@ async function main(): Promise<void> {
      * So each dataset is attributed to this jurisdiction FIRST — trivially
      * for the jurisdiction's own catalogue, by the publisher's own name for
      * the harvest — and only attributed datasets can become a candidate.
+     *
+     * Once each, and counted as its sentence reads (`attributedRead`): on the
+     * enumeration route the list and the search ask the SAME index, so a
+     * dataset can arrive by both, and the sentence's number describes the
+     * enumerated list — the 23 Sep run printed "6 name a sale" beside its own
+     * "5 of 982" for exactly that reason.
      */
-    const attributed: VolumeDataset[] = [
-      ...(ownParse.kind === 'catalogue'
+    const read = attributedRead({
+      own: ownParse.kind === 'catalogue'
         ? ownParse.datasets.filter((d) => attributableTo(d, state, 'own'))
-        : []),
-      ...(harvest.kind === 'catalogue'
+        : [],
+      harvest: harvest.kind === 'catalogue'
         ? harvest.datasets.filter((d) => attributableTo(d, state, 'harvest'))
-        : []),
-    ];
-    const fromHarvest = harvest.kind === 'catalogue'
-      ? harvest.datasets.filter((d) => attributableTo(d, state, 'harvest')).length
-      : 0;
-    kv('attributable to ' + state, `${attributed.length} (${fromHarvest} from the harvest)`);
+        : [],
+      route: ownRead.route,
+    });
+    kv('attributable to ' + state, `${read.parse.datasets.length} distinct — `
+      + `${read.harvestOnly.length} found only by the harvest search`
+      + `${read.overlap > 0 ? `, ${read.overlap} it also returned from ${state}'s own list` : ''}`);
+    for (const d of read.harvestOnly.slice(0, 8)) {
+      console.log(`      harvest  ${d.title}  (${d.organisation ?? 'no publisher'})`);
+    }
+    if (ownRead.route === 'harvest_enumeration') {
+      kv('the sentence counts', `${read.parse.total} — the enumerated list's own; the search corroborates it`);
+    }
 
     /*
      * Corroboration: BOTH must have ANSWERED, and `200 · 0 declared` on every
@@ -560,11 +573,7 @@ async function main(): Promise<void> {
      * five times, which is indistinguishable from a wrong endpoint.
      */
     const corroborated = catalogueAnswered(ownRead.verdict) && catalogueAnswered(harvestRead.verdict);
-    const merged = mergeVolumeReads([{
-      kind: 'catalogue',
-      total: attributed.length,
-      datasets: attributed,
-    }]);
+    const merged = read.parse;
     const coverage = assessVolumeCoverage(
       corroborated ? merged : (ownParse.kind === 'refused' ? ownParse : merged),
       corroborated,

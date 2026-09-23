@@ -63,6 +63,7 @@ import {
   ACADEMIC_PUBLISHER,
   enumerationComplete,
   governmentPublishers,
+  attributedRead,
 } from '../../../../supabase/functions/_shared/reports/market/openData/salesVolumePublishers.pure';
 import { VOLUME_BASELINE_PERIODS } from '../../../../supabase/functions/_shared/reports/market/demandScoring.pure';
 
@@ -764,8 +765,11 @@ describe('a harvest hit is not a statement about a jurisdiction', () => {
 /**
  * The measured readings, and the sentence a client's page carries.
  *
- * Two of the four are a real limit of what is published and two are gaps in
- * this repository. Keeping them apart is the whole point.
+ * All four are now a real limit of what is published — and two of them got
+ * there only when the instrument did (the ACT through Socrata on 22 Sep,
+ * Tasmania through the harvest's own records on 23 Sep). Until then each
+ * read that it could not be established, which was true. Keeping the two
+ * kinds of reading apart is the whole point.
  */
 describe('the measured readings', () => {
   it('records a reading for each of the four and nothing else', () => {
@@ -773,16 +777,44 @@ describe('the measured readings', () => {
   });
 
   /*
-   * WA, the NT and the ACT were established; Tasmania is ours. The ACT moved
-   * from `catalogue_unavailable` once the Socrata reader existed — which is
-   * the whole reason its CKAN 404 was kept and printed rather than replaced
-   * with another guess.
+   * The ACT moved from `catalogue_unavailable` once the Socrata reader
+   * existed — the whole reason its CKAN 404 was kept and printed rather than
+   * replaced with another guess — and Tasmania once the probe read where its
+   * publishers actually publish, rather than typing a second host.
    */
-  it('separates what was established from what this platform could not reach', () => {
+  it('records what each jurisdiction was established to publish', () => {
     expect(MEASURED_VOLUME_COVERAGE.WA.kind).toBe('medians_only');
     expect(MEASURED_VOLUME_COVERAGE.NT.kind).toBe('no_count_published');
     expect(MEASURED_VOLUME_COVERAGE.ACT.kind).toBe('no_count_published');
-    expect(MEASURED_VOLUME_COVERAGE.TAS.kind).toBe('catalogue_unavailable');
+    expect(MEASURED_VOLUME_COVERAGE.TAS.kind).toBe('no_count_published');
+  });
+
+  /*
+   * Tasmania has no catalogue of its own, so its reading is the enumeration
+   * of everything its government lists in the Commonwealth catalogue — and
+   * its sentence must say THAT, not claim a catalogue it does not have.
+   */
+  it('reads Tasmania from its whole list in the Commonwealth catalogue', () => {
+    const tas = MEASURED_VOLUME_COVERAGE.TAS;
+    expect(tas).toEqual({ kind: 'no_count_published', searched: 5, inventory: 982, route: 'harvest_enumeration' });
+    const note = measuredVolumeNote('TAS') as string;
+    expect(note).toContain('of the 982 datasets its own publishers list in the Commonwealth catalogue, read in full, 5 name a sale');
+    expect(note).toMatch(/TAS runs no open-data catalogue of its own/);
+    expect(note).not.toMatch(/across its own catalogue/);
+    expect(note).not.toMatch(/could not be established/);
+  });
+
+  /*
+   * The count is the ENUMERATED list's own. The 23 Sep run's sentence said
+   * 6 beside its own line "datasets naming a sale 5 of 982", because the
+   * relevance search's one attributed find had been folded into a number
+   * describing a list it is not part of.
+   */
+  it('counts the list its sentence describes, not the search that corroborated it', () => {
+    const tas = MEASURED_VOLUME_COVERAGE.TAS;
+    if (tas.kind !== 'no_count_published') return expect.fail('expected no_count_published');
+    expect(tas.searched).toBe(5);
+    expect(tas.searched).not.toBe(6);
   });
 
   /*
@@ -810,6 +842,8 @@ describe('the measured readings', () => {
     expect(act).toContain('378');
     const nt = measuredVolumeNote('NT') as string;
     expect(nt).toContain('1,075');
+    const tas = measuredVolumeNote('TAS') as string;
+    expect(tas).toContain('982');
   });
 
   /*
@@ -845,17 +879,17 @@ describe('the measured readings', () => {
   });
 
   /*
-   * The ACT's and Tasmania's readings were taken before the Socrata reader
-   * existed and before corroboration stopped gating a find, so they are
-   * conservative placeholders awaiting the next probe run rather than
-   * established answers. A measurement stored against an instrument that has
-   * since been replaced is the *asserted by configuration rather than by
-   * effect* trap, so the distinction is asserted rather than promised.
+   * A measurement stored against an instrument that has since been replaced
+   * is the *asserted by configuration rather than by effect* trap, so which
+   * readings the current instrument took is asserted rather than promised.
+   * Two have already moved when the instrument did — the ACT's and
+   * Tasmania's — and both moved from "could not be established" to an
+   * answer, which is the only direction a stale conservative reading may go.
    */
   it('names which readings the current instrument has taken', () => {
     /*
-     * All four, as of the run that added the Socrata reader and the
-     * find/absence asymmetry. Nothing is `false` today and the flag is kept
+     * All four, as of the 23 Sep run that added harvest discovery and the
+     * enumeration route. Nothing is `false` today and the flag is kept
      * anyway, because the point is to have somewhere for the NEXT instrument
      * change to be declared — the assertion below is a ratchet rather than a
      * live measurement of anything, and saying so is better than letting it
@@ -1193,5 +1227,75 @@ describe('reading a jurisdiction whose data is indexed only in the harvest', () 
   it('still refuses an absence nobody corroborated, whatever the route', () => {
     expect(assessVolumeCoverage({ kind: 'catalogue', total: 0, datasets: [] }, false, 1_021, 'harvest_enumeration').kind)
       .toBe('catalogue_unavailable');
+  });
+});
+
+/*
+ * ── What an assessment is handed, and the number its sentence states ─────
+ *
+ * The 23 Sep run printed `datasets naming a sale  5 of 982` and then a
+ * sentence saying "6 name a sale": the relevance search's one attributed
+ * find had been folded into a number describing the enumerated list, and on
+ * that route the list and the search ask the SAME index — so a dataset can
+ * also arrive by both and be counted twice.
+ */
+describe('the read an assessment is handed', () => {
+  const sale = (id: string, over: Partial<VolumeDataset> = {}) =>
+    dataset({ id, title: `Sales dataset ${id}`, organisation: 'Department of Justice (Tasmania)', ...over });
+
+  it('holds a dataset both routes returned once', () => {
+    const r = attributedRead({ own: [sale('a'), sale('b')], harvest: [sale('b'), sale('c')] });
+    expect(r.parse.datasets.map((d) => d.id)).toEqual(['a', 'b', 'c']);
+    expect(r.parse.total).toBe(3);
+    expect(r.overlap).toBe(1);
+    expect(r.harvestOnly.map((d) => d.id)).toEqual(['c']);
+  });
+
+  it('holds a dataset a route returned twice once', () => {
+    const r = attributedRead({ own: [sale('a'), sale('a')], harvest: [sale('c'), sale('c')] });
+    expect(r.parse.datasets.map((d) => d.id)).toEqual(['a', 'c']);
+    expect(r.overlap).toBe(0);
+  });
+
+  it('counts the enumerated list on the enumeration route, and every distinct dataset otherwise', () => {
+    const own = [sale('a'), sale('b'), sale('c'), sale('d'), sale('e')];
+    const harvest = [sale('f')];
+    const enumerated = attributedRead({ own, harvest, route: 'harvest_enumeration' });
+    expect(enumerated.parse.total).toBe(5);
+    expect(enumerated.parse.datasets).toHaveLength(6);
+    const ordinary = attributedRead({ own, harvest });
+    expect(ordinary.parse.total).toBe(6);
+  });
+
+  it('prints the enumeration’s own count in the sentence, as the probe’s line does', () => {
+    const own = [sale('a'), sale('b'), sale('c'), sale('d'), sale('e')];
+    const r = attributedRead({ own, harvest: [sale('f')], route: 'harvest_enumeration' });
+    const note = volumeCoverageNote(assessVolumeCoverage(r.parse, true, 982, 'harvest_enumeration'), 'TAS');
+    expect(note).toContain('of the 982 datasets its own publishers list in the Commonwealth catalogue, read in full, 5 name a sale');
+  });
+
+  /*
+   * The count is narrowed; the ranking is not. A find needs one endpoint
+   * that answered, so a dataset only the search returned — attributed and
+   * saying it carries a count — is still a find on the enumeration route.
+   */
+  it('still ranks what only the search found', () => {
+    const counted = sale('f', {
+      title: 'Residential property sales by suburb',
+      notes: 'Number of sales and median sale price by suburb, quarterly.',
+      resources: [{ id: 'r1', name: 'sales.csv', format: 'CSV', url: 'https://x/sales.csv', datastoreActive: true, size: null }],
+    });
+    const r = attributedRead({ own: [sale('a')], harvest: [counted], route: 'harvest_enumeration' });
+    const judged = judgeVolumeDataset(counted);
+    expect(judged.count).toBe(true);
+    expect(r.parse.datasets.map((d) => d.id)).toContain('f');
+    expect(assessVolumeCoverage(r.parse, true, 982, 'harvest_enumeration').kind).not.toBe('no_count_published');
+  });
+
+  it('is what the probe hands the assessment, with the route the reads were taken by', () => {
+    const probe = readFileSync('scripts/market/sales-volume-liveness.ts', 'utf8');
+    expect(probe).toMatch(/const read = attributedRead\(\{/);
+    expect(probe).toMatch(/route: ownRead\.route,\s*\}\);/);
+    expect(probe).toMatch(/const merged = read\.parse;/);
   });
 });

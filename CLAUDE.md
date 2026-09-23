@@ -2488,8 +2488,8 @@ refused 444 localities), and **a file is anchored on the newest capture
 that LOADS**, because the archive's index can list a capture its store
 answers 404 for.
 
-**Demand cannot score in four jurisdictions, and two of them publish
-nothing to score it with.** Read
+**Demand cannot score in four jurisdictions, and none of them publishes
+anything to score it with.** Read
 [`SALES_VOLUME_COVERAGE.md`](./docs/reports/SALES_VOLUME_COVERAGE.md) before
 touching `_shared/reports/market/openData/salesVolumePublishers.pure.ts`,
 `sales-volume-liveness.ts` or the demand branch of `describeGaps`.
@@ -2506,10 +2506,16 @@ is in it, and `medians_only` / `state_grain_only` are readings rather than
 finds. Measured 22 Sep 2026 from CI: **WA's catalogue holds 2,911 datasets, 203
 matched and attributed, and not one carries a count**; the NT's index holds
 1,075 and matched none of five phrasings; the ACT's holds **378 read through
-SOCRATA** and matched none; only `data.tas.gov.au` does not resolve. **Three
-of the four are settled and the answer is that no sub-state count of
-residential sales is published**; one is OURS, and keeping them apart is the
-point. The ACT got there only because its CKAN 404 was KEPT AND PRINTED
+SOCRATA** and matched none; and on 23 Sep **Tasmania — whose typed
+`data.tas.gov.au` does not resolve — was read from the harvest's own records:
+982 datasets, every one its 14 government publishers list, read in full, 5
+naming a sale and none a count.** **All four are settled and the answer is
+that no sub-state count of residential sales is published**, and until each
+was, it read as OURS — keeping those apart is the point. The first Tasmanian
+sentence said "6 name a sale" beside the probe's own `5 of 982`, because the
+search that corroborates the list had been folded into the list's count;
+`attributedRead` counts what the sentence describes and holds each dataset
+once. The ACT got there only because its CKAN 404 was KEPT AND PRINTED
 rather than replaced with another guess — that 404's own body
 (`{"code":"not_found"}`, a JSON API that does not speak CKAN) is what bought
 the Socrata reader, which projects onto the same `VolumeDataset` shape so one

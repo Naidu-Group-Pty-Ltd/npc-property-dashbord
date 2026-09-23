@@ -1085,16 +1085,18 @@ measure this deployment is entitled to, and it needs four counted periods.
 > datasets, 434 match "property sales" and 2,883 match "land sales" — and not
 > one of the 203 matched and attributed carries a number of sales.** The
 > Northern Territory's index holds 1,075 and matched none of five phrasings;
-> the **ACT's holds 378, read through Socrata**, and matched none. Only
-> Tasmania is unresolved, and it is OURS — `data.tas.gov.au` does not
-> resolve.
+> the **ACT's holds 378, read through Socrata**, and matched none. Tasmania
+> was unresolved on 22 Sep, and it was OURS — `data.tas.gov.au` does not
+> resolve. **Closed 23 Sep:** Tasmania runs no catalogue of its own, so the
+> probe read everything its 14 government publishers list in the Commonwealth
+> catalogue — **982 datasets, in full, 5 naming a sale and none a count**
+> (`SALES_VOLUME_COVERAGE.md` §4.4).
 >
-> **Three of the four are settled, and the answer is that no sub-state count
-> of residential sales is published.** So W3.5's original shape — load counts
-> for four jurisdictions — is answered for three of them by *there is nothing
-> to load*, and blocked for the fourth by our own host rather than by an
-> approval. **That is a better outcome than asking for a table to put nothing
-> in.**
+> **All four are settled, and the answer is that no sub-state count of
+> residential sales is published.** So W3.5's original shape — load counts
+> for four jurisdictions — is answered for every one of them by *there is
+> nothing to load*. **That is a better outcome than asking for a table to put
+> nothing in.**
 >
 > The ACT reached that answer only because its CKAN 404 was **kept and
 > printed** rather than swapped for another guess: the body
@@ -1673,8 +1675,10 @@ count of residential sales at all** — WA's catalogue holds 2,911 datasets of
 which 203 matched and attributed and none carries a count, the NT's 1,075
 matched none of five phrasings, and the ACT's 378 (read through Socrata, after
 its CKAN 404 was kept and printed rather than replaced with another guess)
-matched none either. Only Tasmania is unresolved and the reason is OURS:
-`data.tas.gov.au` does not resolve from this egress. So there is no register
+matched none either. Tasmania was unresolved for a day for a reason that
+was OURS — `data.tas.gov.au` does not resolve — and closed on 23 Sep when the
+probe read the 982 datasets its government lists in the Commonwealth
+catalogue, in full: none carries a count. So there is no register
 to create, no schedule to run and no approval to seek, and Demand's national
 gap is a fact about what Australian publishers publish rather than a fact
 about this deployment. **That is a better outcome than the approval would have
