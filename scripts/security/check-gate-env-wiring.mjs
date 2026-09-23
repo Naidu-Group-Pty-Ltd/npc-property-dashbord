@@ -72,6 +72,17 @@ const CONTRACTS = [
       + 'can satisfy, which stopped every cascade pull request on all three clones at '
       + 'once from 2026-09-17 over a file nothing on that side reads.',
   },
+  {
+    // `npm run migrations:seed-skeletons:check` → scripts/build-migration-seed-skeletons.mjs
+    runMatch: 'migrations:seed-skeletons:check',
+    source: 'scripts/build-migration-seed-skeletons.mjs',
+    env: ['BACKEND_DEPLOYED_BY'],
+    why:
+      'skeletonsAreCarriedNotAuthored stands the seed-skeleton check down where Mission '
+      + 'Control owns the backend, on the object index\'s marker and for its reason: a clone '
+      + 'cannot hold the seeds the manifest describes. Unset it fails closed and asserts a '
+      + 'claim no clone can satisfy.',
+  },
 ];
 
 const indentOf = (text) => text.match(/^ */)[0].length;
