@@ -5,6 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  planningCouncilName,
   OWN_AREA_KINDS,
   PROJECTION_AREA_KINDS,
   PROJECTION_AREA_LABEL,
@@ -247,6 +248,29 @@ describe('one composer for the section and the pin', () => {
   });
 });
 
+describe('the council a projection is asked by', () => {
+  /*
+   * Victoria in Future and Tasmania's Treasury project by council, and only
+   * Queensland's cadastre answers a parcel cell — so a rung that read the
+   * parcel alone would never have found either state's projection.
+   */
+  it('takes the cadastre\'s council first, then the zone layer\'s', () => {
+    expect(planningCouncilName({ parcel: { status: 'ok', lga: 'Isaac Regional' }, zoning: { status: 'ok', lga: 'X', jurisdiction: 'QLD' } })).toBe('Isaac Regional');
+    expect(planningCouncilName({ parcel: { status: 'not_integrated' }, zoning: { status: 'ok', lga: 'WYNDHAM', jurisdiction: 'VIC' } })).toBe('WYNDHAM');
+    expect(planningCouncilName({ zoning: { status: 'ok', lga: 'HOBART', jurisdiction: 'TAS' } })).toBe('HOBART');
+  });
+
+  it('never asks by the ACT\'s division, which is a suburb and not a council', () => {
+    expect(planningCouncilName({ zoning: { status: 'ok', lga: 'PHILLIP', jurisdiction: 'ACT' } })).toBeNull();
+  });
+
+  it('asks by nothing where no layer answered', () => {
+    expect(planningCouncilName(null)).toBeNull();
+    expect(planningCouncilName({ zoning: { status: 'unavailable', note: 'x' } })).toBeNull();
+    expect(planningCouncilName({ zoning: { status: 'ok', lga: '  ', jurisdiction: 'NSW' } })).toBeNull();
+  });
+});
+
 describe('the generator reads the register by trusted geography, stores it and pins it', () => {
   const generator = readFileSync('supabase/functions/generate-investment-report/index.ts', 'utf8');
   const regenerator = readFileSync('supabase/functions/regenerate-report-qualitative/index.ts', 'utf8');
@@ -260,7 +284,9 @@ describe('the generator reads the register by trusted geography, stores it and p
     // New South Wales keys its SA2 projections by the ABS SA2 NAME, so the name travels too.
     expect(call).toMatch(/sa2Name: typeof subjectGeography\?\.sa2_name === 'string'/);
     expect(call).toMatch(/trustedSuburb: marketSuburb/);
-    expect(call).toMatch(/parcel\?\.lga/);
+    // The council comes from the planning answer at the verified point — the
+    // cadastre's, or the zone layer's where no cadastre is read.
+    expect(call).toMatch(/cadastreLga: planningCouncilName\(enhancedData\.planningData\)/);
     // The SA2 code travels from the resolution and from the stored-row fallback.
     expect(generator).toMatch(/sa2_code: geoOutcome\.row\.sa2_code/);
     expect(generator).toMatch(/sa2_name: geoOutcome\.row\.sa2_name/);

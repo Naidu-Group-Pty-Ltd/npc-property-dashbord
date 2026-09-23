@@ -2464,6 +2464,27 @@ states the zone and the overlays"* and that is the certificate's statutory
 name — the rule forbids rating an absence, not a jurisdiction's legal
 vocabulary.
 
+**South Australia's zone is read now, from the Planning and Design Code's own
+layer** (§3.6 of the same doc). The second zone probe ranked the state
+directory's 290 services for the question, and one layer answered both
+points: `Hosted/Code_Amendment__BaseLayers` layer 3, "Code Zones" — Victoria
+Square is *Adelaide Park Lands* (APL) and Prospect *Established
+Neighbourhood* (EN), each taking legal effect on 19 March 2021, the day the
+Code commenced in metropolitan Adelaide. `parseSaZoning` is probed beside NSW,
+VIC, TAS and the ACT. Four rules. **The layer is temporal**, so only a feature
+with no legal or system end date is the zone in force, and a point whose
+features have all ended reads nothing rather than the replaced zone. **The
+licence is the catalogue's** — the service states none, DHUD's *Planning and
+Design Code Zones* on data.sa.gov.au states Creative Commons Attribution, and a
+catalogue outranks silence while a stated restriction would outrank the
+catalogue. **Once a layer is read, a failure to read it is `unavailable`**,
+never the `not_integrated` it replaced, because the two send an operator to
+different remedies. And **`PLANNING_ANSWER_VERSION` is `c6`**: no key changed,
+but a cached `c5` row at a South Australian coordinate withholds the zone the
+layer now answers — the shape did not widen, its content did. Whether the
+PRODUCTION egress reaches `dpti.geohub.sa.gov.au` is unmeasured until the first
+South Australian report after deploy; CI reached it.
+
 **Every state has a reading now, and two of them come through the
 archive** (§10 of the same doc). Victoria's suburb series and South
 Australia's quarterly suburb workbooks are walled at their publishers and

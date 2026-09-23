@@ -151,6 +151,37 @@ export function readingFromRows(rows: readonly ProjectionRow[]): PopulationProje
 }
 
 /**
+ * The council a projection register may be asked by, from the planning
+ * answer at the VERIFIED coordinate — or null.
+ *
+ * The register's LGA rung was written against `planningData.parcel.lga`
+ * alone, which only Queensland's cadastre answers — so Victoria in Future and
+ * Tasmania's Treasury, which project by council, would never have been found
+ * for the states they cover. The zone layer names the council for NSW
+ * (`LGA_NAME`), Victoria (Vicmap's `lga`) and Tasmania (the Local Provisions
+ * Schedule's own name), and it is the same kind of fact as the parcel's: what
+ * the state's own layer answers at the verified point, never a typed suburb or
+ * a token parsed out of an address.
+ *
+ * The cadastre's answer outranks the zone layer's where both exist. The ACT is
+ * refused: it has no councils, and its zoning `lga` is a DIVISION — a suburb —
+ * which asked as a council would find nothing, or worse, a namesake.
+ */
+export function planningCouncilName(planningData: unknown): string | null {
+  const p = (planningData ?? null) as {
+    parcel?: { status?: unknown; lga?: unknown };
+    zoning?: { status?: unknown; lga?: unknown; jurisdiction?: unknown };
+  } | null;
+  const trimmed = (v: unknown) => (typeof v === 'string' && v.trim() !== '' ? v.trim() : null);
+  if (p?.parcel?.status === 'ok') {
+    const lga = trimmed(p.parcel.lga);
+    if (lga) return lga;
+  }
+  if (p?.zoning?.status === 'ok' && p.zoning.jurisdiction !== 'ACT') return trimmed(p.zoning.lga);
+  return null;
+}
+
+/**
  * The years a table shows: the base, then projected years stepping to the
  * horizon, at most `max` columns in all — the horizon is always one of them,
  * because a table that stops short of the publisher's own horizon misreports

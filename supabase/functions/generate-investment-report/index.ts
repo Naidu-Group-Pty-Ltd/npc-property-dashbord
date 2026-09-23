@@ -127,6 +127,7 @@ import { transportCountReading } from '../_shared/transportReading.pure.ts';
 import { readSalesRegister } from '../_shared/reports/market/salesRegisterRead.ts';
 import { readApprovalsRegister } from '../_shared/reports/market/approvalsRegisterRead.ts';
 import { readProjectionRegister } from '../_shared/reports/market/projectionRegisterRead.ts';
+import { planningCouncilName } from '../_shared/reports/market/openData/projectionRegister.pure.ts';
 import type { SalesRegisterState } from '../_shared/reports/market/openData/salesRegister.pure.ts';
 import { describeLandArea } from '../_shared/reports/investment/landAreaScope.pure.ts';
 import { applyDisplayOverrides, buildAnnualCostOverrides, normalisePropertyType, toFiniteNumber } from '../_shared/reports/investment/overrides.pure.ts';
@@ -4537,10 +4538,10 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         sa2Code: typeof subjectGeography?.sa2_code === 'string' ? subjectGeography.sa2_code : null,
         sa2Name: typeof subjectGeography?.sa2_name === 'string' ? subjectGeography.sa2_name : null,
         trustedSuburb: marketSuburb,
-        cadastreLga: enhancedData.planningData?.parcel?.status === 'ok'
-          && typeof enhancedData.planningData?.parcel?.lga === 'string'
-          ? enhancedData.planningData.parcel.lga.trim() || null
-          : null,
+        // The cadastre's council, or the zone layer's where no cadastre is
+        // read — Victoria and Tasmania project by council and have no parcel
+        // cell (`planningCouncilName`).
+        cadastreLga: planningCouncilName(enhancedData.planningData),
       });
       console.log(
         `[forward-demand] ${forwardDemandProjection.kind === 'reading'

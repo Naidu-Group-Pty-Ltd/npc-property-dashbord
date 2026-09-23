@@ -305,6 +305,57 @@ pushed down, the planning code's vocabulary pulled up) and resolves the
 catalogue's MAP VIEWER through its web map to the services it names. See
 §3.6 for what it found.
 
+### 3.6 South Australia — found, and read (23 Sep 2026)
+
+The second pass found it. Ranked for the question, six of the directory's
+290 services were asked (CI run 35827597400), and one carried a layer named
+as a zone: **`Hosted/Code_Amendment__BaseLayers` layer 3, "Code Zones"**.
+It answered both points:
+
+| point | zone | code | id | legal start |
+| --- | --- | --- | --- | --- |
+| Victoria Square, Adelaide | Adelaide Park Lands | APL | Z0302 | 1616112000000 = 19 Mar 2021 |
+| Prospect Road, Prospect | Established Neighbourhood | EN | Z1506 | 1616112000000 = 19 Mar 2021 |
+
+19 March 2021 is the day the Planning and Design Code commenced across
+metropolitan Adelaide, so the layer carries the Code's own zone names and
+codes and the date each took legal effect. Its fields also carry legal and
+system END dates: the layer is temporal, and a replaced zone keeps its row.
+
+**It is read now** (`parseSaZoning`, `buildSaZoningQuery`, probed beside
+NSW, VIC, TAS and the ACT in `planning-data-service`). Four decisions travel
+with it:
+
+- **Only the zone in force is read.** A feature with a legal or system end
+  date is a zone the Code has replaced; where every feature at a point has
+  ended, nothing is read (`none_at_point`), never the replaced zone.
+- **The licence is the catalogue's.** The service states none
+  (`copyrightText` null); the publisher's catalogue entry for this dataset —
+  *Planning and Design Code Zones*, the Department for Housing and Urban
+  Development, data.sa.gov.au — states Creative Commons Attribution. §3.3's
+  rule: a catalogue outranks a service that states nothing, while a stated
+  restriction would outrank the catalogue (Western Australia's case). The
+  reading's licence string names where it was read.
+- **A failed read is `unavailable`, not unintegrated.** The old note
+  described an integration gap; once the layer is read, a refusal from it is
+  a failed retrieval — worth retrying, never cached — and saying
+  `not_integrated` would send an operator to the wrong remedy.
+- **`PLANNING_ANSWER_VERSION` is `c6`.** No key was added, but a `c5` row at a
+  South Australian coordinate says the zone is not integrated where the layer
+  now answers; serving it would withhold the zone for the cache's seven days
+  on exactly the properties this adds it for.
+
+`SA_NOTE` now speaks only for what is still unread — the parcel — and
+`NO_STATE_LAYER_NOTE.SA` for the Code's overlays, which this pass did not
+read. The Code's neighbourhood zones file as residential, a rule SA holds
+alone because NSW's *Neighbourhood Centre* is a centre.
+
+**Unverified, and named:** CI reached `dpti.geohub.sa.gov.au`; the PRODUCTION
+egress has not yet been shown to. `data.sa.gov.au` answers production a 403
+it does not answer CI, so the first South Australian report after deploy is
+the measurement — its `planning-data-service` log line names the zone, or the
+`unavailable` note names the refusal.
+
 ### What is typed, and what is discovered
 
 A **host** is typed; a layer id never is. An ArcGIS service directory
@@ -422,9 +473,9 @@ permitted at all.
 ## 5. What is NOT claimed
 
 - **No layer from SA, WA, NT or ACT's overlay registers is read.** All
-  four remain `not_integrated` / `licence_restricted`, and
+  four remain `not_integrated` / `licence_restricted` for overlays, and
   `OVERLAY_COVERAGE` still records all four as `not_read`. Reachable is
-  not read.
+  not read. South Australia's ZONE is read (§3.6); its overlays are not.
 - **`WA_LICENCE_NOTE` is unchanged, and now measured** (§3.5): WA's zone
   layer answers correctly at a point and every dataset carrying it is listed
   under "Custom (Active Acceptance)". Readable is not republishable.
@@ -433,20 +484,21 @@ permitted at all.
   `silent`, which is not a contradiction and not a defect — but where each
   CC BY grant actually comes from is written down in no file in this
   repository. Open, and cheap: one line beside each constant. See §4.
-- **What WA's folder walk found is printed by the probe and not yet read
-  into this document**, because the next increment needs a service NAME and
-  the walk is what supplies it. WA went from `catalogue_folders_only` to
-  `catalogue_readable` on the second run, so services were found; which of
-  them is the Planning service is the first question of the next
-  increment.
+- **WA's folder walk has been read** (§3.5): it named SLIP's
+  `Property_and_Planning` service, whose zone layers answer correctly at a
+  point and are licensed "Custom (Active Acceptance)". The service is known;
+  the licence is why it is not read.
 - **`amendment_register` is integrated for no jurisdiction.** It is
   declared so the reading says it was not answered rather than omitting
   it — `gradeGaps`' rule.
 - **`major_projects` answers only where the investment programme already
   did** (Queensland's QTRIP). Nothing new was wired for it.
-- **No parser has been verified against an SA, WA or NT response**, which
-  is why no zoning or overlay reading is composed for them. That is the
-  next increment, and it needs the folder walk's output to name a service.
+- **One parser has been verified against a South Australian response and
+  none against WA or the NT.** `parseSaZoning` is written against the two
+  answers CI read (§3.6); WA's zone is readable and deliberately not read
+  (licence); the NT's service is behind a challenge. Whether the PRODUCTION
+  egress reaches `dpti.geohub.sa.gov.au` is unmeasured until the first South
+  Australian report after deploy.
 
 ---
 
