@@ -43,16 +43,28 @@ hourly ticks read back from production say so:
 | tick (UTC) | window asked | answer |
 | --- | --- | --- |
 | 04:20, 05:20 | the stalled window | 422, the refusal §2 describes |
-| 06:20 | 2025-07 → 2025-09 | POST 200, no refusal |
+| 06:20 | 2025-07 → 2025-09 | POST 200 in 7,576 ms, no refusal |
 | 07:20 | 2025-04 → 2025-06 | POST 200 in 11,169 ms, no refusal |
+| 08:20 | 2025-01 → 2025-03 | POST 200 in 11,016 ms |
+| 09:20 | 2024-10 → 2024-12 | POST 200 in 11,274 ms |
+| 10:20 | 2024-07 → 2024-09 | POST 200 in 10,127 ms |
+| 11:20, item 4's code | 2024-04 → 2024-06 | POST 200 in 8,820 ms, no refusal |
 
 These ticks prove **#2736's fix**. Item 4 is the walk's lower edge derived
 from windows the ledger vouches for, rather than from `min(period)` (§6's
 remedy). It shipped on the second pull request, #2737, deployed at 10:49 UTC.
-It changes the walk only where a window was left half-written, and the ticks
-above did not need it. The 08:20, 09:20 and 10:20 ticks (old code) asked
-`2025-01→03`, `2024-10→12` and `2024-07→09`, each POST 200. The first tick on the new code is 11:20 UTC;
-its request line is item 4's first observation in production.
+It changes the walk only where a window was left half-written.
+
+**The 11:20 tick is item 4's first run in production**, and its request line
+shows which code ran, because only the new code logs these two fields:
+`page=0 2024-04→2024-06 frontier=2026-07 proven=2024-07 held=2024-07`.
+`proven` is the edge the ledger vouches for, and `held` is the table's
+`min(period)`. They agree, so completed writes vouch for every month from
+2026-07 down to 2024-07, and no window in that run was left half-written. The
+window asked is the one directly below that edge. It is the same window the
+old rule would have asked, which is what `SUPPLY_EVIDENCE.md` §15 predicts
+when nothing has failed. The counts the logs cannot show (`windows_vouching`
+and `windows_stale` on the sync row) are PENDING in §13.
 §13 has #2737's state.
 
 ---
@@ -430,7 +442,9 @@ for these expressions in 15 and 17.
   `if: ${{ !cancelled() }}`. A run started from an OLDER commit still carries
   the old conditions, so the first push after that commit still waits one
   last time. Use `!cancelled()` for "run even if an earlier step failed", and
-  keep `always()` for steps that take seconds.
+  keep `always()` for steps that take seconds. Measured on #2745: a push at
+  11:13:41 cancelled run 35852556486 by 11:14:02, and the next run started at
+  once.
 
 ---
 
@@ -488,11 +502,15 @@ and a merged commit each describe what was meant to happen.
 
 ## 13 · Items 4–6, on #2737
 
-- **Item 4 — shipped on #2737, deployed 10:49 UTC.** The walk's lower edge comes
-  from windows the ledger vouches for (§6's remedy 1). Its proof by effect is
-  the first sync row after deploy carrying `oldest_vouched`,
-  `windows_vouching` and `windows_stale`; on production's timeline expect
-  `windows_stale: 2`.
+- **Item 4 — shipped on #2737, deployed 10:49 UTC, and its first run is
+  read.** The walk's lower edge comes from windows the ledger vouches for
+  (§6's remedy 1). The 11:20 UTC tick logged `proven=2024-07 held=2024-07`,
+  asked for `2024-04→2024-06` and answered POST 200 in 8,820 ms (§0). The
+  edge the ledger proves is the table's own floor, so every month from 2026-07
+  down to 2024-07 is vouched for, and the walk moved on without re-reading
+  anything. The same run's sync row also carries `windows_vouching` and
+  `windows_stale`. Expect `windows_stale: 2`, the two rows from before
+  `20261215030000`; that part is PENDING below.
 - **Item 5 — done.** Tasmania publishes no sub-state count of residential
   sales, read from its whole list (982 datasets, 5 naming a sale, none
   countable); WA's "204" was one dataset counted twice.
@@ -548,10 +566,15 @@ and a merged commit each describe what was meant to happen.
     `[forward-demand]` log line names the series, area and release).
   - The monthly jobs' first tick, 3 Oct from 18:05 UTC. A job is proved by its
     tick, not by its migration.
-  - Item 4's `oldest_vouched` / `windows_vouching` / `windows_stale`. Every
-    approvals run writes them to `market_sales_sync`, and this session reads
-    logs, not tables. The first run on the new code is the 11:20 UTC tick;
-    its request line and status are the part logs can show.
+  - Item 4's `windows_vouching` / `windows_stale` counts. The edge itself is
+    read: 11:20 logged `proven=2024-07`, which is `oldest_vouched`. The
+    counts are in the 11:20 row of `market_sales_sync` and in the response
+    body, and this session reads logs, not tables.
+  - The walk's first `settled` verdict. If every remaining window writes, the
+    ticks ask `2024-01→03` at 12:20 and step down one window an hour to
+    `2023-01→03` at 16:20, which reaches the floor. The 17:20 tick should
+    then answer `settled` and ask the ABS nothing. That has never been
+    observed (§5's table).
   - Whether production's egress reaches `dpti.geohub.sa.gov.au` (the first
     South Australian report after deploy).
   - The published bundle. This sandbox's egress refuses both
