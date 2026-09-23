@@ -18,6 +18,8 @@ import {
   readFirstInterval,
   readHistoricProjected,
   readJumpOffYear,
+  statedTerms,
+  suppliedNotice,
   type ProjectionFile,
 } from '../../../../supabase/functions/_shared/reports/market/openData/stateProjectionFiles.pure';
 import {
@@ -352,6 +354,53 @@ describe('readable is not republishable', () => {
     for (const s of ['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'ACT', 'NT']) {
       expect(projectionIngested(s), s).toBe(PROJECTION_FILES.some((f) => f.state === s && f.licence !== null));
     }
+  });
+
+  it('loads NSW under the licence its own site states, and names the page it was read from', () => {
+    for (const key of ['nsw_sa2', 'nsw_lga']) {
+      const f = file(key);
+      expect(f.licence, key).toBe('Creative Commons Attribution 4.0 International');
+      expect(f.licenceEvidence, key).toMatch(/planning\.nsw\.gov\.au\/copyright-and-disclaimer/);
+    }
+    expect(projectionIngested('NSW')).toBe(true);
+  });
+
+  it('carries the copyright notice the file supplies on every row, beside the licence', async () => {
+    const withNotice = [...nswNotes, ['© State of New South Wales and Department of Planning, Housing and Infrastructure 2024']];
+    const p = await parse('nsw_lga', {
+      Notes: withNotice,
+      'Total population': nswTable('Local Government Area', Array.from({ length: 125 }, (_, i): [string, number] => [`Council ${i}`, 5000 + i])),
+    });
+    expect(new Set(p.rows.map((r) => r.licence))).toEqual(new Set([
+      'CC BY 4.0 (test) — © State of New South Wales and Department of Planning, Housing and Infrastructure 2024',
+    ]));
+    const tas = await parse('tas_low', tasSheets());
+    expect(new Set(tas.rows.map((r) => r.licence))).toEqual(new Set(['CC BY 4.0 (test) — © Government of Tasmania']));
+  });
+
+  it('leaves the licence alone where the file supplies no notice', async () => {
+    const p = await parse('nsw_lga', {
+      Notes: nswNotes,
+      'Total population': nswTable('Local Government Area', Array.from({ length: 125 }, (_, i): [string, number] => [`Council ${i}`, 5000 + i])),
+    });
+    expect(new Set(p.rows.map((r) => r.licence))).toEqual(new Set(['CC BY 4.0 (test)']));
+  });
+
+  it('refuses a workbook that states terms of its own — the site\'s licence holds only "unless otherwise stated"', async () => {
+    for (const line of [
+      'All rights reserved.',
+      'This work may not be reproduced without the written permission of the Department.',
+      'Licensed under a Creative Commons Attribution-NonCommercial 4.0 licence.',
+    ]) {
+      await expect(parse('nsw_lga', {
+        Notes: [...nswNotes, [line]],
+        'Total population': nswTable('Local Government Area', Array.from({ length: 125 }, (_, i): [string, number] => [`Council ${i}`, 5000 + i])),
+      }), line).rejects.toThrow(/states terms of its own/);
+    }
+    // The notice alone is not a statement of terms.
+    expect(statedTerms({ Notes: [['© Government of Tasmania']] })).toEqual([]);
+    expect(suppliedNotice({ Notes: [['Treasury population projections 2024'], ['© Government of Tasmania']] })).toBe('© Government of Tasmania');
+    expect(suppliedNotice({ Notes: [['Copyright is reserved by nobody in particular']] })).toBeNull();
   });
 
   it('refuses in the loader, before any fetch, a file whose licence is unread', () => {

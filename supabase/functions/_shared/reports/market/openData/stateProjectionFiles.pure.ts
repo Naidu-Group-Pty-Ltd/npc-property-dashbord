@@ -441,6 +441,26 @@ function parseTas(
 
 const NOT_YET_READ = 'not yet read from the publisher — the load refuses until it is';
 
+/**
+ * Read from CI on 23 Sep 2026 (run 35831008944), from the site that serves
+ * both workbooks: the Department's copyright page states that "unless
+ * otherwise stated, all department material available on this website is
+ * licensed under the Creative Commons Attribution 4.0 International (CC BY
+ * 4.0)", and asks attribution in the form "© State of New South Wales and
+ * Department of Planning, Housing and Infrastructure [year of publication]".
+ * Neither workbook states otherwise — the dry run read every line of both —
+ * and each carries exactly that notice on its Notes sheet, which
+ * `suppliedNotice` reads and every row carries. "Unless otherwise stated" is
+ * held at load time too: `parseProjectionFile` refuses a file that states
+ * terms of its own, so a later edition published under different terms is
+ * refused rather than loaded under these.
+ */
+const NSW_LICENCE = 'Creative Commons Attribution 4.0 International';
+const NSW_LICENCE_EVIDENCE = 'planning.nsw.gov.au/copyright-and-disclaimer ("Unless otherwise stated, all department '
+  + 'material available on this website is licensed under the Creative Commons Attribution 4.0 International (CC BY 4.0)"); '
+  + 'the workbook states no terms of its own and carries the notice that page asks for — read from CI 23 Sep 2026 '
+  + '(run 35831008944)';
+
 export const PROJECTION_FILES: readonly ProjectionFile[] = [
   {
     key: 'nsw_sa2',
@@ -448,8 +468,8 @@ export const PROJECTION_FILES: readonly ProjectionFile[] = [
     publisher: NSW_PUBLISHER,
     url: 'https://www.planning.nsw.gov.au/sites/default/files/2024-11/2024-nsw-population-projections-sa2s.xlsx',
     sheets: ['Notes', 'Collapsed SA2s', 'Total population'],
-    licence: null,
-    licenceEvidence: NOT_YET_READ,
+    licence: NSW_LICENCE,
+    licenceEvidence: NSW_LICENCE_EVIDENCE,
     minAreas: 500,
     parse: (g, url, licence) => parseNsw(g, url, licence, { file: 'nsw_sa2', label: /^SA2$/i, areaKind: 'sa2' }),
   },
@@ -459,8 +479,8 @@ export const PROJECTION_FILES: readonly ProjectionFile[] = [
     publisher: NSW_PUBLISHER,
     url: 'https://www.planning.nsw.gov.au/sites/default/files/2024-11/2024-nsw-population-projections-local-government-areas.xlsx',
     sheets: ['Notes', 'Total population'],
-    licence: null,
-    licenceEvidence: NOT_YET_READ,
+    licence: NSW_LICENCE,
+    licenceEvidence: NSW_LICENCE_EVIDENCE,
     minAreas: 120,
     parse: (g, url, licence) => parseNsw(g, url, licence, { file: 'nsw_lga', label: /^Local Government Area$/i, areaKind: 'lga' }),
   },
@@ -493,6 +513,55 @@ export function projectionFileByKey(key: string): ProjectionFile | null {
   return PROJECTION_FILES.find((f) => f.key === key) ?? null;
 }
 
+/** A cell that opens a copyright notice: `©`, `(c)`, or `Copyright ©`. */
+const NOTICE = /^(©|\(c\)\s|copyright\s*©)/i;
+
+/**
+ * The copyright notice the publisher SUPPLIES with a file — the first cell, in
+ * the order the sheets were read, that opens with `©`, verbatim — or null.
+ *
+ * CC BY 4.0 §3(a)(1)(A)(ii) asks a reuser to retain "a copyright notice" where
+ * the licensor supplies one with the material, so the notice travels with
+ * every row the file writes and reaches the page beside the licence. It is
+ * READ from the file, never typed: a typed notice is one nobody checks against
+ * the next edition.
+ */
+export function suppliedNotice(grids: Readonly<Record<string, Grid>>): string | null {
+  for (const grid of Object.values(grids)) {
+    for (const row of grid) for (const c of row ?? []) {
+      const t = cellText(c);
+      if (NOTICE.test(t)) return t;
+    }
+  }
+  return null;
+}
+
+/**
+ * Words with which a workbook states terms of its OWN. A licence here is read
+ * from the publisher's site, and a site's licence is stated "unless otherwise
+ * stated" — so a file that does otherwise state is refused until somebody
+ * reads what it says, rather than loaded under terms that may not be its own.
+ * The copyright notice itself is not a statement of terms, and is left out.
+ */
+export const OWN_TERMS = /licen[cs]e[ds]?\b|creative commons|\bcc[ -]by\b|all rights reserved|permission|may not be (reproduced|copied|used|distributed)|terms (of use|and conditions)/i;
+
+/** Every cell of the sheets read that states terms of the file's own, verbatim. */
+export function statedTerms(grids: Readonly<Record<string, Grid>>): string[] {
+  const out: string[] = [];
+  for (const grid of Object.values(grids)) {
+    for (const row of grid) for (const c of row ?? []) {
+      const t = cellText(c);
+      if (t !== '' && !NOTICE.test(t) && OWN_TERMS.test(t)) out.push(t);
+    }
+  }
+  return out;
+}
+
+/** The licence a row carries: the licence read from the publisher, and the notice the file supplies. */
+export function licenceWithNotice(licence: string, notice: string | null): string {
+  return notice ? `${licence} — ${notice}` : licence;
+}
+
 /**
  * Parse a file's sheets and hold the result to the file's own floor. The one
  * entry point the loader and the CI dry run share, so what CI proves about a
@@ -501,7 +570,12 @@ export function projectionFileByKey(key: string): ProjectionFile | null {
 export function parseProjectionFile(
   file: ProjectionFile, grids: Readonly<Record<string, Grid>>, sourceUrl: string, licence: string,
 ): ProjectionParse {
-  const parsed = file.parse(grids, sourceUrl, licence);
+  const terms = statedTerms(grids);
+  if (terms.length > 0) {
+    refuse(file.key, `the workbook states terms of its own (${JSON.stringify(terms[0].slice(0, 160))}) — the licence `
+      + `read for it (${file.licenceEvidence.slice(0, 80)}) may not describe this file; read what it says before loading it`);
+  }
+  const parsed = file.parse(grids, sourceUrl, licenceWithNotice(licence, suppliedNotice(grids)));
   if (parsed.areas < file.minAreas) {
     refuse(file.key, `the read named ${parsed.areas} areas, fewer than the ${file.minAreas} a complete read of this file names — a truncated read looks exactly like a smaller state`);
   }
