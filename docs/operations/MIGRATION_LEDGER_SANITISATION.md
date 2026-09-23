@@ -103,5 +103,10 @@ merged. Every item marked PENDING below is unperformed.
   live database.
 - Delivery to each clone after the Mission Control deploy.
 - Whether the CRM vault holds `supabase_url`.
-- Lint on the prime changes. ESLint could not load its configuration in the
-  sandbox that made them; CI runs it.
+
+Lint was run on 23 Sep over the 23 changed script and spec files: 0 errors and
+0 warnings. It used the repository's `eslint.config.js`, with its plugins
+installed outside the checkout at the declared ranges, because the sandbox's
+`node_modules` lacked them. A planted `debugger` failed under the same
+invocation, so the configuration was applied. CI runs lint against the
+lockfile.
