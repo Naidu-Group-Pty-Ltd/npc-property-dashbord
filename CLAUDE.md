@@ -79,7 +79,15 @@ those served from opaque Google Drive ids no URL rule can read.
 thresholds are measured (21 labelled production images, 21 correct), and the
 verdict is stored so every surface gets it before the first paint. Decoding is
 **budgeted, not counted** — ~116 ms of CPU each against an Edge Function's
-allowance — and the decoder import is lazy so `resolve` pays nothing.
+allowance — and the decoder import is lazy so `resolve` pays nothing. **The
+budget is in pixels as well as time**: the decoder holds every pixel before it
+downscales (13–17.5 bytes each, measured), and one floor plan too large for a
+worker killed every `op: 'analyse'` run, every five minutes, from at least
+12 Sep to 23 Sep 2026 — 546 on each, and nothing in the function said so. So
+`listingImageDecode.pure.ts` reads the size from the image's own header before
+anything is decoded, and the sweep **stamps a row before it decodes it**,
+because a worker the platform ends cannot be caught and an unstamped row is
+back at the head of a position-ordered queue on the next run.
 
 The other half is a question no single image can answer: **is this photograph
 even of this property?** 3,035 of 4,841 rows are a picture some other listing

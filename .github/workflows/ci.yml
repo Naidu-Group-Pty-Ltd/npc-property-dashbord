@@ -294,6 +294,16 @@ jobs:
       - name: Unit tests (Builder Stock images)
         run: npx vitest run src/lib/__tests__/builderStock
 
+      # The listing photographs' tests sit directly in `src/lib`, where no other
+      # step's filter reaches them — so the thresholds `listingImageVision.test.ts`
+      # calls "the measurement, not an illustration of it" were never measured
+      # here, and neither was the guard that stops one oversized floor plan from
+      # killing the `analyse` sweep on every run (`listingImageDecode.test.ts`).
+      # A bare prefix, for the reason given above: a new test beside them is
+      # picked up without editing this line.
+      - name: Unit tests (listing photographs)
+        run: npx vitest run src/lib/listingImage
+
       # The style contracts live directly in `src/styles` (never under a
       # `__tests__/`), so no other step's filter reaches them. The Builder /
       # Developer portal surfaces step that stood here left with the portal
