@@ -515,11 +515,19 @@ files and all three are declared, so none is chosen for the reader.
 
 Two rules hold the licence at load time, not only at declaration:
 
-- **"Unless otherwise stated" is enforced.** `parseProjectionFile` refuses a
-  workbook that states terms of its own (`statedTerms`: a licence by name,
-  *all rights reserved*, *permission*, *may not be reproduced*, *terms of
-  use*), so a later edition published under different terms at the same URL is
-  refused rather than loaded under the terms read for this one.
+- **What a file says about its own terms is held against the licence read
+  for it** (`termsAgreeWith`), in an order that is the rule. A restriction
+  refuses, whatever else the file says (NonCommercial, NoDerivatives,
+  ShareAlike, *all rights reserved*, *may not be reproduced*). A statement
+  that NAMES the declared licence affirms it — the file is the best evidence
+  of its own terms there is, and the rest of a standard licence statement
+  (*"to view a copy of this licence"*, *"for permission beyond the scope of
+  this licence"*) rides with it. Terms that name no declared licence refuse,
+  so somebody reads them. A file that states nothing is governed by its
+  publisher's "unless otherwise stated". So a later edition published under
+  different terms at the same URL is refused rather than loaded under the
+  terms read for this one — and a file that affirms its own licence, as
+  government workbooks commonly do, is not refused for agreeing.
 - **The notice the file supplies travels with every row.** CC BY 4.0
   §3(a)(1)(A)(ii) asks a reuser to retain a copyright notice the licensor
   supplies; `suppliedNotice` reads it from the workbook (never typed) and every

@@ -2405,10 +2405,12 @@ is the publisher's statement** — NSW's *"Historic (2001-2021) and projected
 checked against its own Totals sheet — because an estimate printed under a
 forward heading is this register's worst failure. **Readable is not
 republishable**: a file whose licence is unread is refused BEFORE the fetch,
-and "unless otherwise stated" is held at load time — `statedTerms` refuses a
-workbook that states terms of its own, and `suppliedNotice` carries the
-file's own © notice onto every row, because CC BY 4.0 asks a reuser to keep
-it. Tasmania's ReadMe says *"© Government of Tasmania"* and nothing about
+and what a file says about its own terms is held against the licence read for
+it — `termsAgreeWith` refuses a restriction whatever else is said, accepts a
+statement that NAMES the declared licence (the file is the best evidence of
+its own terms), and refuses terms that name none — while `suppliedNotice`
+carries the file's own © notice onto every row, because CC BY 4.0 asks a
+reuser to keep it. Tasmania's ReadMe says *"© Government of Tasmania"* and nothing about
 reuse, and **a notice is silence about terms**, so Tasmania stays refused
 until its terms are read. **The edition is the one that answers**: South
 Australia's catalogue edition is 2016-based and the ACT's 2015-based, both

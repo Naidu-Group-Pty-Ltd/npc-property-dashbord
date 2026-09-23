@@ -20,6 +20,7 @@ import {
   readJumpOffYear,
   statedTerms,
   suppliedNotice,
+  termsAgreeWith,
   type ProjectionFile,
 } from '../../../../supabase/functions/_shared/reports/market/openData/stateProjectionFiles.pure';
 import {
@@ -386,21 +387,55 @@ describe('readable is not republishable', () => {
     expect(new Set(p.rows.map((r) => r.licence))).toEqual(new Set(['CC BY 4.0 (test)']));
   });
 
-  it('refuses a workbook that states terms of its own — the site\'s licence holds only "unless otherwise stated"', async () => {
+  const lgaTable = () => nswTable('Local Government Area', Array.from({ length: 125 }, (_, i): [string, number] => [`Council ${i}`, 5000 + i]));
+
+  it('refuses a workbook whose own terms restrict what the licence read for it permits', async () => {
     for (const line of [
       'All rights reserved.',
       'This work may not be reproduced without the written permission of the Department.',
       'Licensed under a Creative Commons Attribution-NonCommercial 4.0 licence.',
+      // A restriction refuses even beside a statement naming the licence.
+      'This work is licensed under CC BY 4.0, except the tables, which are licensed CC BY-NC.',
     ]) {
-      await expect(parse('nsw_lga', {
-        Notes: [...nswNotes, [line]],
-        'Total population': nswTable('Local Government Area', Array.from({ length: 125 }, (_, i): [string, number] => [`Council ${i}`, 5000 + i])),
-      }), line).rejects.toThrow(/states terms of its own/);
+      await expect(parse('nsw_lga', { Notes: [...nswNotes, [line]], 'Total population': lgaTable() }), line)
+        .rejects.toThrow(/states terms of its own that restricts/);
     }
+  });
+
+  it('refuses terms that name no licence the file was declared under, so somebody reads them', async () => {
+    for (const line of [
+      'Reproduction of this material requires the permission of the Department.',
+      'This work is licensed under a Creative Commons Attribution 3.0 Australia licence.',
+    ]) {
+      await expect(parse('nsw_lga', { Notes: [...nswNotes, [line]], 'Total population': lgaTable() }), line)
+        .rejects.toThrow(/names no licence this file was declared under/);
+    }
+  });
+
+  it('loads a workbook whose own statement NAMES the licence read for it — the file is the best evidence of its terms', async () => {
+    const p = await parse('nsw_lga', {
+      Notes: [
+        ...nswNotes,
+        ['This work is licensed under a Creative Commons Attribution 4.0 International licence.'],
+        ['To view a copy of this licence, visit https://creativecommons.org/licenses/by/4.0/'],
+        ['For permission to use material beyond the scope of this licence, contact the Department.'],
+      ],
+      'Total population': lgaTable(),
+    });
+    expect(p.areas).toBe(125);
     // The notice alone is not a statement of terms.
     expect(statedTerms({ Notes: [['© Government of Tasmania']] })).toEqual([]);
     expect(suppliedNotice({ Notes: [['Treasury population projections 2024'], ['© Government of Tasmania']] })).toBe('© Government of Tasmania');
     expect(suppliedNotice({ Notes: [['Copyright is reserved by nobody in particular']] })).toBeNull();
+  });
+
+  it('holds no terms against a file whose licence is unread — the loader refused it before the fetch', async () => {
+    // The CI dry run parses an unread file to show what it holds; production never reaches the parse.
+    const sheets = tasSheets();
+    sheets.ReadMe = [...sheets.ReadMe, ['All rights reserved.']];
+    await expect(parse('tas_medium', sheets)).resolves.toMatchObject({ areas: 29 });
+    expect(termsAgreeWith('Creative Commons Attribution 4.0 International', [])).toEqual({ ok: true });
+    expect(termsAgreeWith('A licence nobody declared a pattern for', ['Licensed under it.']).ok).toBe(false);
   });
 
   it('schedules exactly the declared files, and first-loads only the ones whose licence is read', () => {

@@ -538,12 +538,12 @@ export function suppliedNotice(grids: Readonly<Record<string, Grid>>): string | 
 
 /**
  * Words with which a workbook states terms of its OWN. A licence here is read
- * from the publisher's site, and a site's licence is stated "unless otherwise
- * stated" — so a file that does otherwise state is refused until somebody
- * reads what it says, rather than loaded under terms that may not be its own.
- * The copyright notice itself is not a statement of terms, and is left out.
+ * from the publisher, and a site's licence is stated "unless otherwise stated"
+ * — so what a file says about its own terms is held against the licence read
+ * for it (`termsAgreeWith`). The copyright notice itself is not a statement of
+ * terms, and is left out.
  */
-export const OWN_TERMS = /licen[cs]e[ds]?\b|creative commons|\bcc[ -]by\b|all rights reserved|permission|may not be (reproduced|copied|used|distributed)|terms (of use|and conditions)/i;
+export const OWN_TERMS = /licen[cs]e[ds]?\b|creative commons|\bcc[ -]?by\b|all rights reserved|permission|may not be (reproduced|copied|used|distributed)|terms (of use|and conditions)/i;
 
 /** Every cell of the sheets read that states terms of the file's own, verbatim. */
 export function statedTerms(grids: Readonly<Record<string, Grid>>): string[] {
@@ -555,6 +555,46 @@ export function statedTerms(grids: Readonly<Record<string, Grid>>): string[] {
     }
   }
   return out;
+}
+
+/**
+ * How a statement NAMES each licence this register loads under — by its
+ * title, its short form or its deed's URL. A declared licence with no entry
+ * here can be affirmed by nothing, so any term a file states refuses it.
+ */
+const LICENCE_NAMED: Readonly<Record<string, RegExp>> = {
+  'Creative Commons Attribution 4.0 International':
+    /creative commons attribution 4\.0|\bcc[ -]?by[ -]?4\.0\b|creativecommons\.org\/licenses\/by\/4\.0/i,
+};
+
+/** A term that restricts what the declared licences permit — never compatible with loading. */
+const RESTRICTS = /non-?commercial|no ?derivatives?|share-?alike|all rights reserved|may not be (reproduced|copied|used|distributed)|\bby-(nc|nd|sa)\b/i;
+
+/**
+ * Whether what a workbook says about its own terms agrees with the licence
+ * read for it. Three outcomes, and the order is the rule:
+ *
+ *  1. **A restriction refuses**, whatever else the file says — NonCommercial,
+ *     NoDerivatives, ShareAlike, all rights reserved, may not be reproduced.
+ *  2. **A file that names the declared licence affirms it**, and the other
+ *     lines of a standard licence statement ("to view a copy of this licence",
+ *     "for permission beyond the scope of this licence") ride with it — the
+ *     file is the best evidence of its own terms there is.
+ *  3. **Terms that name no declared licence refuse**, so somebody reads them:
+ *     a file that says "permission" and names nothing is not saying CC BY.
+ *
+ * A file that states no terms at all agrees — the licence read from its
+ * publisher's site governs "unless otherwise stated", and it did not.
+ */
+export function termsAgreeWith(
+  licence: string, terms: readonly string[],
+): { ok: true } | { ok: false; line: string; why: string } {
+  const restricted = terms.find((t) => RESTRICTS.test(t));
+  if (restricted) return { ok: false, line: restricted, why: 'restricts what the licence read for it permits' };
+  if (terms.length === 0) return { ok: true };
+  const named = LICENCE_NAMED[licence];
+  if (named && terms.some((t) => named.test(t))) return { ok: true };
+  return { ok: false, line: terms[0], why: `names no licence this file was declared under (${licence})` };
 }
 
 /** The licence a row carries: the licence read from the publisher, and the notice the file supplies. */
@@ -570,10 +610,16 @@ export function licenceWithNotice(licence: string, notice: string | null): strin
 export function parseProjectionFile(
   file: ProjectionFile, grids: Readonly<Record<string, Grid>>, sourceUrl: string, licence: string,
 ): ProjectionParse {
-  const terms = statedTerms(grids);
-  if (terms.length > 0) {
-    refuse(file.key, `the workbook states terms of its own (${JSON.stringify(terms[0].slice(0, 160))}) — the licence `
-      + `read for it (${file.licenceEvidence.slice(0, 80)}) may not describe this file; read what it says before loading it`);
+  // Held against the DECLARED licence. A file whose licence is unread never
+  // reaches here in production — the loader refuses it before the fetch — and
+  // the CI dry run parses it to show what it holds, printing its rights lines
+  // beside the result rather than refusing to look.
+  if (file.licence !== null) {
+    const verdict = termsAgreeWith(file.licence, statedTerms(grids));
+    if (!verdict.ok) {
+      refuse(file.key, `the workbook states terms of its own that ${verdict.why} (${JSON.stringify(verdict.line.slice(0, 160))}) — `
+        + 'read what it says before loading it');
+    }
   }
   const parsed = file.parse(grids, sourceUrl, licenceWithNotice(licence, suppliedNotice(grids)));
   if (parsed.areas < file.minAreas) {
