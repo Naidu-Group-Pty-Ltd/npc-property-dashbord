@@ -378,6 +378,19 @@ the check, because a guard you can clear by regenerating is not a guard. And
 is nothing but comments hash to the same thing, so both sides are excluded by
 name.
 
+## Applying a migration, and what the ledger may say
+Read [`docs/operations/MIGRATION_LEDGER_SANITISATION.md`](./docs/operations/MIGRATION_LEDGER_SANITISATION.md)
+before dispatching "Apply a migration" or touching `applyPreflight.pure.mjs`,
+`ledgerRecord.mjs`, `ledgerQuery.mjs` or `MIGRATION_WITHDRAWN.json`.
+- The workflow refuses any ref but the default branch.
+- It refuses a withdrawn file, a shared version and a file edited after it
+  applied.
+- It re-runs a recorded version only with `reapply: true`.
+- It stores the body of what it applies, and says "Recorded" only when a row
+  came back.
+- **A migration never writes the ledger.** A DELETE that "fixes" the prime's
+  record runs on every clone's different ledger.
+
 ## What the API gateway checks (`verify_jwt`)
 Read [`docs/security/VERIFY_JWT.md`](./docs/security/VERIFY_JWT.md) before
 changing a `verify_jwt` line in `supabase/config.toml`, the deploy workflow's
