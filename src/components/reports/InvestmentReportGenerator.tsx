@@ -16,7 +16,7 @@ import { useNotifications } from '@/contexts/NotificationsContext';
 import { useAuth } from '@/hooks/useAuth';
 import { useActivityLogger } from '@/hooks/useActivityLogger';
 import { addBackgroundJob } from '@/components/BackgroundJobTracker';
-import { Loader2, MapPin, Hash, Globe, TrendingUp, FileText, Link, Upload, X, Image, AlertCircle, Sparkles } from 'lucide-react';
+import { Loader2, MapPin, Hash, Globe, TrendingUp, FileText, Link, Upload, X, Image, AlertCircle, Sparkles, ClipboardPaste } from 'lucide-react';
 import { convertPdfToImages, isPdfFile, isImageFile, imageFileToBase64 } from '@/utils/pdfToImages';
 import { PreGenerationOverrides, PreGenerationData } from './PreGenerationOverrides';
 import { removeCommas } from '@/hooks/useFormattedNumber';
@@ -1497,7 +1497,7 @@ export function InvestmentReportGenerator() {
                 Generate Investment Analysis
               </CardTitle>
               <CardDescription>
-                Choose your input method - enter details manually, scrape from a URL, or upload a PDF.
+                Choose your input method - enter details manually, extract from a URL, or upload a PDF.
               </CardDescription>
             </CardHeader>
             <CardContent className="reports-investment-panel-content space-y-6">
@@ -1512,7 +1512,7 @@ export function InvestmentReportGenerator() {
                       </TabsTrigger>
                       <TabsTrigger value="url" className="reports-investment-mode-tab">
                         <Link className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                        <span className="reports-investment-mode-label">URL Scrape</span>
+                        <span className="reports-investment-mode-label">URL Extraction</span>
                       </TabsTrigger>
                       <TabsTrigger value="pdf" className="reports-investment-mode-tab">
                         <Upload className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
@@ -1898,7 +1898,7 @@ export function InvestmentReportGenerator() {
               )}
                 </TabsContent>
 
-                {/* URL Scrape Tab - Only for property-specific queries */}
+                {/* URL Extraction Tab - Only for property-specific queries */}
                 {isPropertySpecific && (
                 <TabsContent value="url" className="reports-investment-flow space-y-6 pt-4">
                   {/* Build Type Radio Selection */}
