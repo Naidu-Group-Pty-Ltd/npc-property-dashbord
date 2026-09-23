@@ -16,8 +16,9 @@ already merged. It carries:
   and nothing needs to ship from it separately;
 - this session's completion of the approvals-stall fix, and this document.
 
-**Nothing on the branch is merged or deployed. No pull request has been
-opened. That is the owner's call, under the owner's standing rule.**
+**Nothing on the branch is merged or deployed.** A pull request is open for
+it, under the owner's revised rule in §1. It merges, and anything it ships is
+published, only on the owner's confirmation.
 
 ---
 
@@ -26,10 +27,11 @@ opened. That is the owner's call, under the owner's standing rule.**
 **The national supply register has been stalled since 12:20 UTC on 22 Sep.**
 Seventeen hourly runs, one identical refusal, nothing written. The fix on this
 branch is complete and has been run against a real PostgreSQL, but **it is
-not live**. Shipping it takes two acts, which can happen **in either order**:
+not live**. Shipping it takes two acts, which can happen **in either order**,
+and **each waits for the owner's confirmation** (§1):
 
-1. merge this branch (the deploy workflow then redeploys every function,
-   because shared code changed), and
+1. merge this branch's pull request (the deploy workflow then redeploys every
+   function, because shared code changed), and
 2. dispatch **`apply-migration.yml`** once with
    `supabase/migrations/20261217000000_approvals_admit_net_amendments.sql`.
 
@@ -60,7 +62,12 @@ force**. They are not negotiable and they are not mine to relax.
 - **Do not touch the builder portals, AML/CTF compliance, or agreements.**
 - **Do not introduce new infrastructure or destructive migrations** without
   separate approval, and do not repeat completed template migrations.
-- **Do not open a pull request unless the owner asks for one.**
+- **Open pull requests when they are necessary, and confirm with the owner
+  before merging and before publishing** (a deploy, or a migration dispatch).
+  This is the owner's revision of 23 Sep 2026, in their words: *"open Pull
+  Requests when they are necessary, the only one thing i ask is confirm before
+  merging and publishing"*. It replaces "do not open a pull request unless the
+  owner asks for one".
 - Authorised spend for the acceptance exercise is **A$25** including paid
   retries; track it and pause before exceeding it. **Spent so far: A$0.00.**
 
@@ -193,7 +200,8 @@ Either way the register is never left holding part of a window.
 
 ## 5 · Shipping it, and proving it by effect
 
-1. **Owner:** decide whether a PR is opened for this branch and merged.
+1. **Owner:** confirm the merge of this branch's pull request (the PR is
+   open; merging waits for the owner, under §1).
 2. **After the merge**, confirm the `Deploy Supabase functions` run on that
    commit shipped **`market-sales-ingest`**. Shared code changed, so it deploys
    every function, `generate-investment-report` included (that one carries the
@@ -398,8 +406,9 @@ and a merged commit each describe what was meant to happen.
 
 ## 12 · Next steps, in order
 
-1. **Owner:** decide whether a PR is opened and merged for this branch. It is
-   the only thing standing between production and the fix.
+1. **Owner:** confirm the merge of this branch's pull request, then the
+   migration dispatch (§1: both are "merging and publishing"). Those two
+   confirmations are all that stands between production and the fix.
 2. **Merge, then confirm the deploy shipped `market-sales-ingest`.**
 3. **Dispatch the migration** (§5 step 3). It is independent of step 2's timing.
 4. **Prove it by effect** (§5 step 4), then leave the walk alone for about
