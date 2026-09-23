@@ -130,11 +130,15 @@ manifest re-check each ran live for the first time on that route.
 - **Run 103** — `20261219030000`. Recorded with its body, and it closed a live
   exposure (below).
 - The manifest re-check passed on every run — 695 recorded digests all present
-  in the ledger — and reports that the newly applied files **now match and are
-  not yet in `applied-body-digests.txt`**. Adding them needs
-  `npm run migrations:body-digests`, which reads the live ledger and so needs
-  a credential this checkout does not hold. Until then those files are applied
-  but not yet protected against being edited after the fact.
+  in the ledger — and reported that the newly applied files **matched and were
+  not yet in `applied-body-digests.txt`**. They are now: the ledger's 913
+  distinct bodies were read and passed to the generator as `--digests`, which
+  is the route that module exists for (*"the ledger is also reachable from
+  places that are not this script"*). **699 entries, 9 added, 0 dropped, 0
+  drifted**, and all nine matched **byte-identical** — the rung a body this
+  repository's own workflow stored should land on, and the one that proves
+  what was recorded is what the file holds. `check:applied-body-digests`
+  answers 699 of 699.
 
 ### What `20261219030000` changed, which the step above did not state
 
@@ -199,7 +203,6 @@ step 4.
 - The Mission Control deploy (step 4), and every clone delivery that waits on
   it (step 5, and the three clones above).
 - `20261219040000`, which waits on the Quick Send decision.
-- `applied-body-digests.txt` does not yet name the nine files applied today.
 
 The preflight's ledger reads, the body store and the API-route manifest
 re-check are no longer proven by tests alone: runs 101, 102 and 103 exercised
