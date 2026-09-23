@@ -9,6 +9,12 @@
  * redirect, as rendered by the router, from each of the three routes that
  * mounted it. The mapping itself is covered case by case in
  * `lib/ciAssessment/__tests__/legacyCalculatorLinks.test.ts`.
+ *
+ * The module guard on those routes is pinned by
+ * `lib/navigation/__tests__/registry.spec.ts`, and deliberately not here: this
+ * spec reads nothing but the page it tests. Every clone keeps its own route
+ * table, and a cascade holds back any spec that reads a file it holds — which
+ * once left a clone running the retired workspace's spec against this page.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -64,17 +70,5 @@ describe('the retired analysis workspace', () => {
     expect(arriveAt('/commercial/calculators')).toBe('/commercial?tab=assessments');
     expect(arriveAt('/industrial/calculators')).toBe('/commercial?tab=assessments');
     expect(create).not.toHaveBeenCalled();
-  });
-});
-
-describe('what the redirect must keep', () => {
-  it('stays behind the module guard on every route that mounted the workspace', async () => {
-    const { readFileSync } = await import('node:fs');
-    const app = readFileSync('src/App.tsx', 'utf8');
-    for (const path of ['calculators', 'commercial/calculators', 'industrial/calculators']) {
-      expect(app).toContain(`path="${path}" element={<ModuleGuard moduleKey="commercial"><CommercialIndustrialWorkspace />`);
-    }
-    // The pre-workspace suite is a separate route and is not touched by this.
-    expect(app).toContain('path="calculators/classic" element={<ModuleGuard moduleKey="commercial"><PropertyCalculators />');
   });
 });
