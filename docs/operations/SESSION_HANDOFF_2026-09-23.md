@@ -479,6 +479,14 @@ and a merged commit each describe what was meant to happen.
   first production load of each file (proved by its `market_sales_sync` row,
   never by the cron tick); whether production's egress reaches
   `dpti.geohub.sa.gov.au` (the first South Australian report after deploy).
+- **Found and deliberately left for a follow-up** (outside items 4–6): two
+  more reader-facing sentences print an ISO date prefix instead of going
+  through `auDate` — the archive-capture clause in an open-data sales point's
+  source note (`openDataSalesEvidence.pure.ts`, *"as the Internet Archive
+  captured it on 2025-04-03"*) and the same clause in the Estimate CGR caveat
+  (`capitalGrowthEstimate.pure.ts`). The second is CGR, which this programme
+  protects, so neither was touched here; the projection register's own date
+  was fixed on this branch because the register is new in this PR.
 
 ---
 

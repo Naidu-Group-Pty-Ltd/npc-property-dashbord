@@ -403,6 +403,26 @@ describe('readable is not republishable', () => {
     expect(suppliedNotice({ Notes: [['Copyright is reserved by nobody in particular']] })).toBeNull();
   });
 
+  it('schedules exactly the declared files, and first-loads only the ones whose licence is read', () => {
+    const migrations = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../supabase/migrations');
+    const filesIn = (sql: string) => [...sql.matchAll(/"stage":\s*"projections",\s*"file":\s*"([a-z_0-9]+)"/g)].map((m) => m[1]);
+    /*
+     * A file declared without a job is never refreshed and says nothing about
+     * it — "a job that was never scheduled says nothing at all" — and a job
+     * for a file nobody declares answers 400 every month. So the monthly set
+     * IS the declared set. (Once 20261218010000 has been applied, a new file
+     * gets its job from a new migration, and this reads every file that
+     * schedules one.)
+     */
+    const monthly = readFileSync(`${migrations}/20261218010000_population_projections_refresh.sql`, 'utf8');
+    expect(new Set(filesIn(monthly))).toEqual(new Set(PROJECTION_FILES.map((f) => f.key)));
+    // The first loads fire only what the loader will not refuse.
+    const first = readFileSync(`${migrations}/20261218020000_population_projections_first_ingest.sql`, 'utf8');
+    const fired = filesIn(first);
+    expect(fired.length).toBeGreaterThan(0);
+    for (const key of fired) expect(file(key).licence, key).not.toBeNull();
+  });
+
   it('refuses in the loader, before any fetch, a file whose licence is unread', () => {
     const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../../../supabase/functions/market-sales-ingest/index.ts'), 'utf8');
     const stage = source.slice(source.indexOf("if (stage === 'projections')"));
