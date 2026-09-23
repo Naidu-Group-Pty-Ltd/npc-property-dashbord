@@ -405,6 +405,15 @@ for these expressions in 15 and 17.
   `127.0.0.1` with `unix_socket_directories=''`, keep the data directory under
   `/var/lib/postgresql`, and delete it afterwards. **It is not production**;
   label anything measured on it as such.
+- **A cancelled CI run is not a stopped one if a step says `if: always()`.**
+  GitHub does not interrupt an `always()` step on cancellation, so until
+  `4941f167f` a push that superseded a run left `abs-register-liveness`
+  probing for about fifteen minutes while the next run sat `pending` in the
+  `ci-<ref>` concurrency group. The probes now run under
+  `if: ${{ !cancelled() }}`. A run started from an OLDER commit still carries
+  the old conditions, so the first push after that commit still waits one
+  last time. Use `!cancelled()` for "run even if an earlier step failed", and
+  keep `always()` for steps that take seconds.
 
 ---
 
