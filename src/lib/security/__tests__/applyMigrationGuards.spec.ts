@@ -17,6 +17,7 @@ import {
 import { MAX_DIGEST_BYTES, bodyDigests } from '../../../../scripts/security/appliedBodyIdentity.mjs';
 import { ledgerQuery, ledgerRoute } from '../../../../scripts/lib/ledgerQuery.mjs';
 import { parseWithdrawals, withdrawalsByFile } from '../../../../scripts/ops/migrationWithdrawals.pure.mjs';
+import { TREE_IS_PRIME } from '../../testSupport/primeTree';
 
 const DIR = 'supabase/migrations';
 const corpus = readdirSync(DIR).filter((f) => f.endsWith('.sql')).sort();
@@ -169,7 +170,9 @@ describe('one ledger reader, two routes', () => {
   });
 });
 
-describe('the workflow wires the guards in order', () => {
+// The prime's own workflow. A clone keeps its own `apply-migration.yml`, which
+// the cascade never overwrites, so on a clone these assertions have no subject.
+describe.runIf(TREE_IS_PRIME)('the workflow wires the guards in order', () => {
   const wf = readFileSync('.github/workflows/apply-migration.yml', 'utf8');
   const at = (name: string) => wf.indexOf(`- name: ${name}`);
 

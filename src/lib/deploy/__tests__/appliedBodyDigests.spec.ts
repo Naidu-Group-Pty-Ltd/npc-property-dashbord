@@ -27,6 +27,7 @@ import {
   migrationBodyForms,
   sha256Hex,
 } from '../../../../scripts/security/appliedBodyIdentity.mjs';
+import { TREE_IS_PRIME } from '../../testSupport/primeTree';
 
 const MANIFEST = 'scripts/security/applied-body-digests.txt';
 const BASELINE = 'scripts/security/applied-body-digest-baseline.txt';
@@ -159,9 +160,11 @@ describe('the guard is wired, not merely written', () => {
     );
   });
 
-  it('is re-checked against the live ledger wherever a migration is applied', () => {
+  it.runIf(TREE_IS_PRIME)('is re-checked against the live ledger wherever a migration is applied', () => {
     // The half a pull request cannot do. Without it the manifest could become
     // fiction and nothing would say so.
+    // The prime's own workflow: a clone keeps its own `apply-migration.yml`,
+    // which the cascade never overwrites (see `testSupport/primeTree.ts`).
     // After BOTH apply steps and on neither route alone: it used to be
     // psql-only and placed before the Management API step, so on the prime,
     // which applies over the Management API, it never ran.
