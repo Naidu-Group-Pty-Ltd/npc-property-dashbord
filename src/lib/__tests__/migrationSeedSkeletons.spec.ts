@@ -16,9 +16,9 @@ import {
   MIN_SKELETON_BYTES,
   buildSeedSkeletons,
   gitBlobSha,
-  skeletonsAreCarriedNotAuthored,
 } from "../../../scripts/build-migration-seed-skeletons.mjs";
 import { readSeedShape, seedSkeleton } from "../../../scripts/lib/seedSkeleton.mjs";
+import { TREE_IS_PRIME } from "../testSupport/primeTree";
 
 type Entry = { path: string; blob: string; bytes: number; tuples?: number; skeleton?: string; why?: string };
 const committed = JSON.parse(readFileSync("supabase/migration-seed-skeletons.json", "utf8")) as {
@@ -60,11 +60,14 @@ const SEED = [
 ].join("\n");
 
 describe("the committed manifest describes the migrations it names", () => {
-  // Skipped where Mission Control owns the backend, by the same function the
-  // CI check reads: a clone carries this file and cannot hold the seeds it
-  // describes. Every other assertion in this suite is about the FILE or the
-  // reader and stays true wherever it is carried.
-  it.skipIf(skeletonsAreCarriedNotAuthored())(
+  // Run on the prime's tree alone: a clone carries this file and cannot hold
+  // the seeds it describes. The CI check stands down on `BACKEND_DEPLOYED_BY`,
+  // which its step maps. These used to stand down on that marker too, but a
+  // vitest step maps nothing, so on every clone they read `undefined` and
+  // asserted seed v20, which GitHub refuses to take from the cascade. See
+  // `testSupport/primeTree.ts`. Every other assertion in this suite is about
+  // the FILE or the reader and stays true wherever it is carried.
+  it.runIf(TREE_IS_PRIME)(
     "regenerating produces exactly what is committed",
     // Every file over the threshold is read twice — once for its blob id, once
     // streamed for its shape — and eighteen of them are ~40 MB.
@@ -74,7 +77,7 @@ describe("the committed manifest describes the migrations it names", () => {
     },
   );
 
-  it.skipIf(skeletonsAreCarriedNotAuthored())(
+  it.runIf(TREE_IS_PRIME)(
     "names every migration over the threshold, as a skeleton or as a refusal",
     () => {
       // A file over the threshold that is in neither list is one Mission
