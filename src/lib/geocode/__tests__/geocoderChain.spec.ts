@@ -330,6 +330,13 @@ describe('G-NAF leads the chain where a register is configured', () => {
     expect(out.ok && out.tried).toEqual(['gnaf', 'nominatim', 'photon']);
   });
 
+  it('reads a unit filed as a part of its own — "Unit 3, 5 Second Avenue" — and places its building', async () => {
+    stubNetwork({ gnaf: register(), nominatim: { status: 403, body: NOMINATIM_403 } });
+    const out = await chain.geocodeAddress(fakeDb(), { address: 'Unit 3, 5 Second Avenue, Blacktown NSW 2148' }, { env: GNAF_ENV, feature: 'spec' });
+    expect(out.ok && out.result).toMatchObject({ provider: 'gnaf', precision: 'address' });
+    expect(out.ok && out.tried).toEqual(['gnaf']);
+  });
+
   it('finds the suburb\'s postal area in the index when the ask names no postcode', async () => {
     stubNetwork({ gnaf: register() });
     const out = await chain.geocodeAddress(fakeDb(), { address: '5 Second Avenue, Blacktown NSW' }, { env: GNAF_ENV, feature: 'spec' });

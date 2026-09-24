@@ -57,10 +57,11 @@
  *
  * Pure: no Deno, no DOM, no network.
  */
-import type { GeocodeResult } from './geocodeResult.pure.ts';
+import type { GeocodeAsk, GeocodeResult } from './geocodeResult.pure.ts';
 import { PRECISION_TYPES } from './geocodeResult.pure.ts';
 import { stateForPostcode, type AuState } from '../auLocality.pure.ts';
 import { parseAddress } from '../addressMatch.pure.ts';
+import { streetLineOf } from './osmGeocode.pure.ts';
 
 /**
  * The shard format. The builder (`scripts/gnaf/build_gnaf_shards.py`) writes
@@ -147,8 +148,10 @@ export function parseGnafShard(text: string, state: AuState, postcode: string): 
     const latN = Number(lat);
     const lngN = Number(lng);
     if (!street || !Number.isFinite(latN) || !Number.isFinite(lngN) || (latN === 0 && lngN === 0)) { skipped++; continue; }
-    const firstPart = `${n1p}${n1}${n1s}`;
-    const lastPart = `${n2p}${n2}${n2s}`;
+    // A prefix or suffix with no number to qualify is not a street number:
+    // a lot keeps being a lot however its row is filled in.
+    const firstPart = n1 ? `${n1p}${n1}${n1s}` : '';
+    const lastPart = n2 ? `${n2p}${n2}${n2s}` : '';
     rows.push({
       number: (lastPart ? `${firstPart}-${lastPart}` : firstPart).toLowerCase(),
       first: int(n1),
@@ -254,22 +257,80 @@ export interface GnafAskedAddress {
   street: string | null;
 }
 
+// A dwelling's own designator: `3`, `3a`, `G01`, `LG2`, `1408`.
+const DESIGNATOR = '[a-z]{0,2}\\d+[a-z]{0,2}';
+// A level is not a dwelling: `Level 3, 5 Second Avenue` is asked at the building.
+const LEVEL_WORD = new RegExp(`^(?:level|lvl|floor)\\s*${DESIGNATOR}\\s+`);
+// `Unit 3 …`, `Shop G01/…`, `Apt 4b …`: the label goes, the designator stays.
+const LABELLED_DWELLING = new RegExp(
+  `^(?:unit|apartment|apt|flat|villa|townhouse|suite|shop|office|studio)\\s*#?\\s*(${DESIGNATOR})(?:\\s*\\/\\s*|\\s+)`,
+);
+// `U3 13 Smith Street`, `U3/13 …` — only where a number or a lot follows, so no street is read as a unit.
+const U_DWELLING = /^u\s?(\d+[a-z]?)(?:\s*\/\s*|\s+)(?=\d|lot\b)/;
+// `1408/5`, `G01/5`, `3/13-17`, `5/Lot 2880`: the dwelling before the slash.
+const SLASHED_DWELLING = new RegExp(`^(${DESIGNATOR})\\s*\\/\\s*`);
+const LOT_WORD = new RegExp(`^lot\\s+(${DESIGNATOR})\\s+`);
+
 /**
- * The street line of an ask, read the way `addressMatch` reads one — with the
- * one difference G-NAF needs: `parseAddress` files both `Unit 5` and `Lot 5`
- * under `unit`, and the register holds lots and units in different columns.
+ * The street line of an ask, read for the register.
+ *
+ * `parseAddress` answers the listing-photo question and is deliberately
+ * strict there; the register needs more of the ways an Australian address
+ * files a dwelling, because it HOLDS the dwelling. Measured on a national-scale
+ * build (24 Sep 2026), the forms it could not read were the register's own:
+ * a unit at a ranged number (`3/13-17 Smith Street`), a lettered unit
+ * (`G01/5 Second Avenue`), a unit on a lot. So the dwelling, a level and a lot
+ * are read here, in that order, and the number and street after them by
+ * `parseAddress`. Lots and units stay in different columns, as the register
+ * keeps them.
  */
 export function askedAddressOf(line: string | null | undefined): GnafAskedAddress {
   const text = String(line ?? '').trim();
   if (!text) return { number: null, flat: null, lot: null, street: null };
-  const parsed = parseAddress(text);
-  const isLot = /^\s*lot\b/i.test(text);
+  let rest = text.toLowerCase().replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
+  let flat: string | null = null;
+  let lot: string | null = null;
+  rest = rest.replace(LEVEL_WORD, '');
+  const dwelling = rest.match(LABELLED_DWELLING) ?? rest.match(U_DWELLING) ?? rest.match(SLASHED_DWELLING);
+  if (dwelling) {
+    flat = dwelling[1];
+    rest = rest.slice(dwelling[0].length);
+  }
+  const lotMatch = rest.match(LOT_WORD);
+  if (lotMatch) {
+    lot = lotMatch[1];
+    rest = rest.slice(lotMatch[0].length);
+  }
+  const parsed = parseAddress(rest);
   return {
-    number: parsed.number,
-    flat: isLot ? null : parsed.unit,
-    lot: isLot ? parsed.unit : null,
+    number: lot ? null : parsed.number,
+    flat,
+    lot,
     street: canonicalStreet(parsed.street),
   };
+}
+
+// A comma-separated part that is a dwelling or a level and nothing else.
+const DWELLING_PART = new RegExp(
+  `^(?:(?:unit|apartment|apt|flat|villa|townhouse|suite|shop|office|studio|level|lvl|floor)\\s*#?\\s*${DESIGNATOR}|u\\s?\\d+[a-z]?)$`,
+  'i',
+);
+
+/**
+ * The street line the register is asked about: the plan's own where it has
+ * one. An address that files its dwelling as a part of its own — `Unit 3, 13
+ * Smith Street, Blacktown NSW 2148` — leaves the plan with no street line,
+ * because a part reading `Unit 3` names no street; that is right for a
+ * free-text provider and wrong for the register, which holds the unit. So
+ * that part is joined back onto the street line after it.
+ */
+export function gnafStreetLineOf(ask: Pick<GeocodeAsk, 'address' | 'street' | 'suburb'>): string | null {
+  const own = streetLineOf(ask);
+  if (own) return own;
+  const parts = ask.address.split(',').map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 2 || !DWELLING_PART.test(parts[0])) return null;
+  const street = streetLineOf({ address: parts.slice(1).join(', '), suburb: ask.suburb });
+  return street ? `${parts[0]} ${street}` : null;
 }
 
 /** A ranged address is the property at a plain number inside it only while the range stays a property. */

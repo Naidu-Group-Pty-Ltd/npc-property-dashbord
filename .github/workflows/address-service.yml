@@ -135,7 +135,8 @@ jobs:
           curl -fL --retry 5 --retry-all-errors --retry-delay 15 -C - -A "$UA" -o /mnt/gnaf/gnaf.zip "$URL"
           ls -l /mnt/gnaf/gnaf.zip
 
-      - name: Build the register (refuses a partial release)
+      - id: build
+        name: Build the register (refuses a partial release)
         if: steps.release.outputs.reachable == 'true'
         run: |
           set -euo pipefail
@@ -155,7 +156,8 @@ jobs:
       - if: steps.release.outputs.reachable == 'true'
         run: npm ci --no-audit --no-fund
 
-      - name: Check the register against itself
+      - id: verify
+        name: Check the register against itself
         if: steps.release.outputs.reachable == 'true'
         run: npx tsx scripts/gnaf/verify-gnaf-shards.ts address-service/gnaf
 
@@ -184,6 +186,23 @@ jobs:
           set -euo pipefail
           docker build --progress=plain -t address-service:ci --build-arg "PHOTON_DB_STAMP=$STAMP" address-service
           docker image ls address-service:ci
+          # Fly unpacks an image onto the machine's root filesystem and refuses
+          # one past ~8 GB uncompressed. Both readings are taken — the layers as
+          # stored (a file changed in a later layer is stored twice) and the
+          # filesystem the machine would see — and either past 7.5 GB fails the
+          # run here, rather than the deploy after the proof.
+          layers=$(docker image inspect -f '{{.Size}}' address-service:ci)
+          rootfs=$(docker run --rm --user 0 --entrypoint du address-service:ci -sxb / 2>/dev/null | cut -f1 || true)
+          rootfs=${rootfs:-0}
+          echo "image: layers ${layers} bytes; unpacked filesystem ${rootfs} bytes"
+          echo "- image: layers $((layers / 1048576)) MiB, unpacked filesystem $((rootfs / 1048576)) MiB" >> "$GITHUB_STEP_SUMMARY"
+          ceiling=7500000000
+          for size in "$layers" "$rootfs"; do
+            if [ "$size" -gt "$ceiling" ]; then
+              echo "::error::the image is ${size} bytes; Fly refuses an image past ~8 GB uncompressed"
+              exit 1
+            fi
+          done
 
       # A token for this runner only; the deployed one is derived below.
       - id: local
@@ -202,14 +221,16 @@ jobs:
           done
           [ "$code" = "200" ] || { docker logs addr | tail -80; echo '::error::the service never became healthy'; exit 1; }
 
-      - name: Prove the doors, in the runner
+      - id: doors
+        name: Prove the doors, in the runner
         if: steps.photon.outputs.reachable == 'true'
         env:
           BASE: http://127.0.0.1:8080
           TOKEN: ${{ steps.local.outputs.token }}
         run: bash address-service/prove-doors.sh
 
-      - name: Prove the chain, in the runner
+      - id: chain
+        name: Prove the chain, in the runner
         if: steps.photon.outputs.reachable == 'true'
         env:
           ADDRESS_SERVICE_BASE: http://127.0.0.1:8080/${{ steps.local.outputs.token }}
@@ -369,8 +390,11 @@ jobs:
           {
             echo '### Address service'
             echo
-            echo "- register built and checked: ${{ steps.release.outputs.reachable == 'true' && 'yes' || 'no (data.gov.au did not answer)' }}"
-            echo "- image built and proved in the runner: ${{ steps.photon.outputs.reachable == 'true' && 'see the steps above' || 'no' }}"
+            # Each line reads its step's OUTCOME: a failed build once printed
+            # "register built and checked: yes" because this read reachability.
+            echo "- data.gov.au answered: ${{ steps.release.outputs.reachable == 'true' && 'yes' || 'no' }}"
+            echo "- register built: ${{ steps.build.outcome || 'skipped' }}; checked against itself: ${{ steps.verify.outcome || 'skipped' }}"
+            echo "- image proved in the runner — doors: ${{ steps.doors.outcome || 'skipped' }}; chain: ${{ steps.chain.outcome || 'skipped' }}"
             if [ "$DEPLOYING" = "true" ]; then
               echo "- deployed: https://$APP.fly.dev (one always-on shared-cpu-2x / 2 GB machine in $REGION)"
               echo "- edge functions repointed: ${{ inputs.repoint != false && 'yes' || 'no' }}"

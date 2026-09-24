@@ -79,7 +79,23 @@ resource id changes every quarter, and the catalogue lists GDA94 first.
   zip.
 - It extracts only six tables per jurisdiction and checks every column it
   reads is in each header.
-- It joins them in DuckDB 1.5.5.
+- It joins them in DuckDB 1.5.5, then reads the askable addresses back
+  **sorted** — every address of one number on one street together, and every
+  postal area together — and chooses each site and writes each file in **one
+  pass**, holding one postal area at a time.
+
+That last step is the one the first real run failed at (24 Sep 2026). It was a
+window function, then `DISTINCT ON` and a join back, over all 16.3 million
+addresses at once, and DuckDB ran out of memory in it: `4.6 GiB/4.6 GiB used`,
+under the 5 GB the workflow gives it. DuckDB sorts out of core, so the one-pass
+build does not have that ceiling. It was proved locally before it was pushed:
+
+- on a synthetic release with the real layout and 17.2 million addresses, the
+  old build failed with the same message at the same statement;
+- the one-pass build finished in 5.4 minutes, with a peak of 4.47 GiB;
+- on a million-address release small enough for both builds to finish, the two
+  wrote the same files, the same rows in each, the same counts and the same
+  locality index.
 
 What the join keeps:
 
@@ -98,15 +114,18 @@ What the join keeps:
 - **Other Territories** (Christmas Island, Cocos, Jervis Bay) are read and
   counted, not served: `AuState` has no code for them.
 
-It **refuses**, writing nothing, when:
+It **refuses** when any of these holds. Everything is written beside the
+served directory and moved into place only once it adds up, so a refusal, or a
+build that dies part-way, leaves the previous register standing:
 - the national total of current addresses is below 14,000,000 (a partial
   release is a smaller register, and every address it lost would read as "no
   such address");
 - any served state has no rows;
 - collapsing units removed more than 60% of the askable addresses.
 
-Output is gzipped with a zero mtime, so an unchanged release builds identical
-bytes.
+Output is gzipped with a zero mtime, and a file's lines are in a total order
+(street, locality, number, then the pid, which is unique), so an unchanged
+release builds identical bytes.
 
 **The shard format** (`GNAF_SHARD_FORMAT = 1`) is pipe-separated. The header
 must be exactly `n1p|n1|n1s|n2p|n2|n2s|lot|flat|street|type|suffix|locality|lat|lng|gt|pid`,
@@ -129,6 +148,17 @@ it stands only where it can be **shown** to be the address asked about:
 
    A plain number falls inside a ranged address only where the range spans at
    most 100 and runs down the same side of the street.
+
+   The dwelling is read the ways an Australian address files one:
+   `1408/5`, `G01/5`, `3/13-17`, `5/Lot 2880`, `Unit 3/13`, `U3 13`, and
+   `Unit 3, 13 Smith Street`, where the dwelling is a comma-separated part of
+   its own. A level is not a dwelling: `Level 3, 5 Second Avenue` is asked at
+   the building. The plan leaves `Unit 3, 13 Smith Street` with no street line,
+   because a part reading `Unit 3` names no street. That is right for a
+   free-text provider, so `gnafStreetLineOf` joins the part back on for the
+   register alone. The national-scale check found these forms among the
+   register's own addresses. `parseAddress`, which the listing-photo match
+   keeps deliberately strict, could not read them.
 2. **A lot is never a street number** (`ADDRESS_COMPOSITION.md`). `Lot 12`
    matches the register's lot 12, never house 12.
 3. **The place.** The postal area is the shard.
@@ -164,12 +194,20 @@ and does all of the following inside the CI runner, before anything leaves it:
      report files an address, planned by the chain's own `planGeocode`, and
      matched by the chain's own matcher.
 
-   A sampled address found at the **wrong place** fails the build, and so does
-   more than 2% not found. An address the register holds twice, far apart, is
+   The files are read one at a time, and the sample is chosen before any is
+   read: holding every row at once peaked at 4.9 GB on a national-scale
+   register, past a runner's Node heap, and one file at a time peaks at
+   0.19 GB. A sampled address found at the **wrong place** fails the build,
+   and so does more than 2% not found. An address the register holds twice, far apart, is
    refused and counted as a correct refusal, not a miss. This is the check
    that matters: fixtures are rows somebody wrote, and the register is fifteen
    million rows nobody did.
-4. **The image is built and run in the runner.** The door checks
+4. **The image is built and run in the runner.** Its size is read twice,
+   once as the layers stored and once as the filesystem a machine would see.
+   Either past 7.5 GB fails the run, because Fly refuses an image past ~8 GB
+   uncompressed. The Photon index is handed to the service's user in the layer
+   that unpacks it: a `chown -R` in a later layer copies every file it touches,
+   and the image carried the index twice. The door checks
    (`address-service/prove-doors.sh`) cover:
    - health;
    - Photon through the token;
@@ -246,14 +284,24 @@ the register is rebuilt from whatever the catalogue calls current, the image
 from the current index, and the same proofs gate both. A failed build changes
 nothing, because the live machine keeps serving what it has.
 
-## 10. What stays unverified until the first run
+## 10. What is measured, and what is not yet
 
-- Whether GitHub's runners reach **the zip on data.gov.au** (the catalogue API
-  was reached from CI on 22 Sep 2026) and **download1.graphhopper.com**. The
-  sandbox this was written in is refused both by policy.
-- The real register's **sample hit rate**. The matcher was measured on a
-  miniature release with the real layout; the first real run prints the
-  figure, and the build refuses below 98%.
+**Measured by the first real run (24 Sep 2026).** GitHub's runners reach the
+zip on data.gov.au. The AUG 2026 GDA2020 release was 1,854,931,188 bytes,
+exactly the catalogue's figure, with sha256
+`16820cc91c3ea32a3997b88024c8d0e576c1db10fe8645380be49b457e952df5`. It
+downloaded at ~22 MB/s in 79 s. Its 54 tables unpacked to 3,435,172,421 bytes
+in 13 s, and the join into DuckDB finished. The build then failed on memory in
+the step §3 records.
+
+**Still unverified:**
+
+- Whether the runners reach **download1.graphhopper.com**. The sandbox this
+  was written in is refused by policy.
+- The real register's **sample hit rate**. On a national-scale synthetic
+  register, 100% of 2,000 sampled asks in each form were found, with none at
+  the wrong place. The real run prints its own figure, and the build refuses
+  more than 2% not found.
 - The real **Photon index size**, and therefore whether 2 GB of memory holds
   the page cache comfortably. The build log's `du -sh` decides whether it
   should be 4 GB.

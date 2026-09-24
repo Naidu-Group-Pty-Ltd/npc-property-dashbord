@@ -18,6 +18,7 @@ import {
   fromGnaf,
   gnafPrecision,
   gnafShardPath,
+  gnafStreetLineOf,
   gnafTargetOf,
   gnafUrl,
   localityKey,
@@ -49,7 +50,8 @@ const BLACKTOWN = shard(
 
 const ask = (address: string) => {
   const plan = planGeocode({ address })!;
-  return { asked: askedAddressOf(plan.ask.street), localities: plan.localityCandidates };
+  // Read exactly as the chain's `askGnaf` reads it.
+  return { asked: askedAddressOf(gnafStreetLineOf(plan.ask)), localities: plan.localityCandidates };
 };
 
 describe('the shard format', () => {
@@ -116,9 +118,59 @@ describe('what an ask names', () => {
   it('a LOT, never a street number', () => {
     expect(askedAddressOf('Lot 1037 Hunza Road')).toMatchObject({ lot: '1037', number: null, flat: null });
   });
+
+  // The forms a national-scale build found the register's own addresses in,
+  // which `parseAddress` alone could not read (24 Sep 2026).
+  it.each([
+    ['3/13-17 Smith Street', { flat: '3', number: '13-17', lot: null, street: 'smith street' }],
+    ['G01/5 Second Avenue', { flat: 'g01', number: '5', lot: null, street: 'second avenue' }],
+    ['5/Lot 2880 Smith Circuit', { flat: '5', number: null, lot: '2880', street: 'smith circuit' }],
+    ['Unit 3/13 Smith Street', { flat: '3', number: '13', lot: null, street: 'smith street' }],
+    ['Unit 3 13 Smith Street', { flat: '3', number: '13', lot: null, street: 'smith street' }],
+    ['Apt 4b 10 Main Street', { flat: '4b', number: '10', lot: null, street: 'main street' }],
+    ['Shop G01 5 Second Avenue', { flat: 'g01', number: '5', lot: null, street: 'second avenue' }],
+    ['U3/13 Smith Street', { flat: '3', number: '13', lot: null, street: 'smith street' }],
+    ['U3 13 Smith Street', { flat: '3', number: '13', lot: null, street: 'smith street' }],
+  ])('a dwelling written as %s', (line, expected) => {
+    expect(askedAddressOf(line)).toEqual(expected);
+  });
+
+  it('a lot row carrying a stray number suffix is still a lot', () => {
+    const rows = shard(line({ lot: '4392', n1s: 'A', street: 'HUNZA', type: 'ROAD', locality: 'BLACKTOWN', lat: '-33.7', lng: '150.9', pid: 'L' }));
+    expect(rows[0].number).toBe('');
+    const choice = chooseGnafRow(rows, askedAddressOf('Lot 4392 Hunza Road'), ['Blacktown']);
+    expect(choice.ok && choice.match.kind).toBe('lot');
+  });
+
+  it('a level is not a dwelling: the building is asked', () => {
+    expect(askedAddressOf('Level 3 5 Second Avenue')).toEqual({ flat: null, number: '5', lot: null, street: 'second avenue' });
+  });
+
+  it('a street named for a dwelling word is still a street', () => {
+    expect(askedAddressOf('12 Villa Street')).toEqual({ flat: null, number: '12', lot: null, street: 'villa street' });
+    expect(askedAddressOf('Flat 2 Gordon Road')).toMatchObject({ flat: '2', number: null });
+  });
+
+  it('joins a dwelling filed as a part of its own back onto its street', () => {
+    const line = (address: string) => gnafStreetLineOf(planGeocode({ address })!.ask);
+    expect(line('Unit 3, 13 Smith Street, Blacktown NSW 2148')).toBe('Unit 3 13 Smith Street');
+    expect(line('Unit G01, 5 Second Avenue, Blacktown NSW 2148')).toBe('Unit G01 5 Second Avenue');
+    expect(line('Level 3, 5 Second Avenue, Blacktown NSW 2148')).toBe('Level 3 5 Second Avenue');
+    // The plan's own street line stands wherever it has one.
+    expect(line('1408/5 SECOND AVE, Blacktown NSW 2148')).toBe('1408/5 SECOND AVE');
+    // A part that is not a dwelling is never joined to anything.
+    expect(line('Blacktown Hospital, Blacktown NSW 2148')).toBeNull();
+  });
 });
 
 describe('what counts as this address', () => {
+  it('finds a unit written with its label as a part of its own', () => {
+    const { asked, localities } = ask('Unit 1408, 5 Second Avenue, Blacktown NSW 2148');
+    const choice = chooseGnafRow(BLACKTOWN, asked, localities);
+    expect(choice.ok && choice.match.kind).toBe('unit');
+    expect(choice.ok && choice.match.row.pid).toBe('GANSW0002');
+  });
+
   it('finds the building a unit address names, at its own point', () => {
     const { asked, localities } = ask('1408/5 SECOND AVE, Blacktown NSW 2148');
     const choice = chooseGnafRow(BLACKTOWN, asked, localities);

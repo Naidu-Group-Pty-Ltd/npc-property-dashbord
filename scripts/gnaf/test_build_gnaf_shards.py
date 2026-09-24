@@ -13,7 +13,6 @@ makes a failure there a statement about the data rather than about the code.
 """
 from __future__ import annotations
 
-import argparse
 import gzip
 import json
 import os
@@ -239,6 +238,37 @@ class BuildTest(unittest.TestCase):
         first = open(os.path.join(self.out, 'v1', 'NSW', '2148.psv.gz'), 'rb').read()
         self.assertEqual(self.build(), 0)
         self.assertEqual(open(os.path.join(self.out, 'v1', 'NSW', '2148.psv.gz'), 'rb').read(), first)
+
+    def test_a_file_lists_each_street_by_number(self) -> None:
+        # 5A is its own street number: after 5 and 5's own villa, before 9.
+        tables = mini_release()
+        tables[('NSW', 'ADDRESS_DETAIL')].append(ad('P5A', 'S2ND', 'LBT', '2148', n1='5', n1s='A'))
+        tables[('NSW', 'ADDRESS_DEFAULT_GEOCODE')].append(geo('P5A', '-33.768600', '150.907600'))
+        make_zip(self.zip, tables)
+        self.assertEqual(self.build(), 0)
+        second = [(r['n1'], r['n1s'], r['flat']) for r in read_shard(self.out, 'NSW', '2148') if r['street'] == 'SECOND']
+        self.assertEqual(second, [('5', '', ''), ('5', '', '3'), ('5', 'A', ''), ('9', '', ''), ('9', '', 'G1')])
+
+    def test_a_refusal_after_the_pass_leaves_nothing_served(self) -> None:
+        # Tasmania's addresses are all unusable: the pass completes, then the
+        # empty state refuses — and neither the register nor its half-written
+        # staging directory is left behind.
+        tables = mini_release()
+        tables[('TAS', 'ADDRESS_DEFAULT_GEOCODE')] = []
+        make_zip(self.zip, tables)
+        self.assertEqual(self.build(), 2)
+        self.assertFalse(os.path.exists(os.path.join(self.out, 'v1')))
+        self.assertFalse(os.path.exists(os.path.join(self.out, '.v1.partial')))
+
+    def test_a_refused_rebuild_leaves_the_last_register_standing(self) -> None:
+        make_zip(self.zip, mini_release())
+        self.assertEqual(self.build(), 0)
+        tables = mini_release()
+        tables[('TAS', 'ADDRESS_DEFAULT_GEOCODE')] = []
+        make_zip(self.zip, tables)
+        self.assertEqual(self.build(), 2)
+        self.assertTrue(os.path.exists(os.path.join(self.out, 'v1', 'manifest.json')))
+        self.assertTrue(os.path.exists(os.path.join(self.out, 'v1', 'TAS', '9999.psv.gz')))
 
     def test_refuses_a_file_that_is_not_the_catalogue_s(self) -> None:
         make_zip(self.zip, mini_release())

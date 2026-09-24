@@ -271,6 +271,9 @@ Three rules bite.
   current release and refuses a partial one. It asks the chain's own matcher
   for a sample of the register's own addresses, runs the image in the runner,
   and pushes that same image, never a rebuild.
+- **One postal area at a time.** The build and its check both work that way.
+  The first real build computed a window over all 16.3M addresses at once and
+  ran out of memory.
 
 A deploy is a person's dispatch, at ≈ A$19–24 a month. The planning page
 prints G-NAF's attribution wherever its point came from the register.

@@ -48,7 +48,6 @@ from __future__ import annotations
 import argparse
 import gzip
 import hashlib
-import io
 import json
 import os
 import re
@@ -57,6 +56,7 @@ import sys
 import time
 import urllib.request
 import zipfile
+from collections import Counter
 
 PACKAGE_ID = '19432f89-dc3a-4ef3-b943-5326ef1dbecc'
 CKAN_PACKAGE_SHOW = f'https://data.gov.au/data/api/3/action/package_show?id={PACKAGE_ID}'
@@ -221,7 +221,8 @@ def extract(zf: zipfile.ZipFile, members: dict, work: str) -> dict[str, list[str
     return by_table
 
 
-def build_tables(con, by_table: dict[str, list[str]]) -> None:
+def build_addresses(con, by_table: dict[str, list[str]]) -> None:
+    """Every current address with its street, locality, state and default point: the table `addr`."""
     for table, files in by_table.items():
         listing = '[' + ', '.join("'" + f.replace("'", "''") + "'" for f in files) + ']'
         con.execute(
@@ -229,9 +230,8 @@ def build_tables(con, by_table: dict[str, list[str]]) -> None:
             f"all_varchar=true, quote='', escape='', union_by_name=true)"
         )
 
-    # Every current address with its street, locality, state and default
-    # point. Retirement is CONFIDENCE = -1 (G-NAF's own rule since 2018), and
-    # a retired default geocode is not the default any more.
+    # Retirement is CONFIDENCE = -1 (G-NAF's own rule since 2018), and a
+    # retired default geocode is not the default any more.
     con.execute("""
         CREATE TABLE addr AS
         SELECT
@@ -269,43 +269,6 @@ def build_tables(con, by_table: dict[str, list[str]]) -> None:
         WHERE TRY_CAST(ad.confidence AS INTEGER) > -1
     """)
 
-    # What can be asked by number: a point, a postal area, a street, and a
-    # street number or a lot.
-    con.execute("""
-        CREATE TABLE usable AS
-        SELECT *, count(*) OVER (
-            PARTITION BY state, postcode, slp, n1p, n1, n1s, n2p, n2, n2s, lot, lat, lng
-        ) AS same_point
-        FROM addr
-        WHERE lat IS NOT NULL AND lng IS NOT NULL
-          AND postcode IS NOT NULL AND street IS NOT NULL
-          AND (n1 <> '' OR lot <> '')
-    """)
-
-    # One SITE row per street number (or lot) on a street: the base address's
-    # own point where one exists, else the point most of its units share.
-    con.execute("""
-        CREATE TABLE site AS
-        SELECT DISTINCT ON (state, postcode, slp, n1p, n1, n1s, n2p, n2, n2s, lot)
-          state, postcode, slp, lpid, n1p, n1, n1s, n2p, n2, n2s, lot, '' AS flat,
-          street, type, suffix, locality, lat, lng, gt, pid
-        FROM usable
-        ORDER BY state, postcode, slp, n1p, n1, n1s, n2p, n2, n2s, lot,
-                 is_sub ASC, principal DESC, same_point DESC, pid ASC
-    """)
-
-    # A unit keeps a row of its own only where the register places it
-    # somewhere other than its building — a townhouse on its own lot, a villa.
-    con.execute("""
-        CREATE TABLE unit AS
-        SELECT u.state, u.postcode, u.slp, u.lpid, u.n1p, u.n1, u.n1s, u.n2p, u.n2, u.n2s, u.lot, u.flat,
-               u.street, u.type, u.suffix, u.locality, u.lat, u.lng, u.gt, u.pid
-        FROM usable u
-        JOIN site s USING (state, postcode, slp, n1p, n1, n1s, n2p, n2, n2s, lot)
-        WHERE u.is_sub AND u.flat <> '' AND (u.lat <> s.lat OR u.lng <> s.lng)
-    """)
-    con.execute("CREATE TABLE shard_rows AS SELECT * FROM site UNION ALL SELECT * FROM unit")
-
 
 def count_by(con, sql: str) -> dict[str, int]:
     return {str(k): int(v) for k, v in con.execute(sql).fetchall()}
@@ -319,65 +282,158 @@ def write_gz(path: str, data: bytes) -> None:
             gz.write(data)
 
 
-def write_shards(con, out: str) -> tuple[int, int]:
-    base = os.path.join(out, f'v{SHARD_FORMAT}')
+# What can be asked by number — a point, a postal area, a street, and a street
+# number or a lot — in the register's own order: every address of one street
+# number (or lot) on one street is contiguous, and so is every postal area.
+#
+# That order is what lets ONE PASS choose each site and write each file with
+# nothing but the postal area in hand. DuckDB sorts out of core. The window
+# function this replaced (`count(*) OVER (PARTITION BY …)` over every address,
+# then DISTINCT ON and a join back) held the whole country at once, and the
+# first national build ran out of memory in it: 4.6 GiB of 4.6 GiB, 24 Sep 2026.
+USABLE_IN_ORDER = """
+    SELECT state, postcode, slp, n1p, n1, n1s, n2p, n2, n2s, lot,
+           lpid, flat, is_sub, principal, street, type, suffix, locality, lat, lng, gt, pid
+    FROM addr
+    WHERE lat IS NOT NULL AND lng IS NOT NULL
+      AND postcode IS NOT NULL AND street IS NOT NULL
+      AND (n1 <> '' OR lot <> '')
+    ORDER BY state, postcode, slp, n1p, n1, n1s, n2p, n2, n2s, lot
+"""
+(STATE, POSTCODE, SLP, N1P, N1, N1S, N2P, N2, N2S, LOT,
+ LPID, FLAT, IS_SUB, PRINCIPAL, STREET, TYPE, SUFFIX, LOCALITY, LAT, LNG, GT, PID) = range(22)
+# state … lot: one street number (or lot) on one street, in one postal area.
+KEY_WIDTH = 10
+
+
+def choose_rows(group: list[tuple]) -> tuple[tuple, list[tuple]]:
+    """One street number's (or lot's) addresses → its SITE row, and the units that keep a row of their own.
+
+    The site stands at the base address's own point where there is one, else at
+    the point most of its units share; then the principal address; then the
+    lowest pid, so a rebuild chooses the same row. A unit keeps a row of its own
+    only where the register places it somewhere other than the site — a
+    townhouse on its own lot, a villa.
+    """
+    if len(group) == 1:
+        return group[0], []
+    shared = Counter((r[LAT], r[LNG]) for r in group)
+    site = min(group, key=lambda r: (r[IS_SUB], not r[PRINCIPAL], -shared[(r[LAT], r[LNG])], r[PID]))
+    units = [r for r in group
+             if r[IS_SUB] and r[FLAT] != '' and (r[LAT] != site[LAT] or r[LNG] != site[LNG])]
+    return site, units
+
+
+def natural(value: str) -> tuple:
+    """A number sorts as a number, before anything that is not one."""
+    return (0, int(value), value) if value.isascii() and value.isdigit() else (1, 0, value)
+
+
+def blank_first(value: str) -> tuple:
+    """The building before its units, a single number before a range that starts at it."""
+    return (value != '', natural(value))
+
+
+def served_order(r: tuple, flat: str) -> tuple:
+    """A file's lines by street, then locality, then number: a TOTAL order (the pid is unique), so a rebuild writes the same bytes."""
+    return (r[STREET], r[TYPE], r[SUFFIX], r[LOCALITY] or '', natural(r[N1]), r[N1P], r[N1S],
+            blank_first(r[N2]), r[N2P], r[N2S], natural(r[LOT]), blank_first(flat), r[PID])
+
+
+def served_line(r: tuple, flat: str) -> str:
+    text = (r[N1P], r[N1], r[N1S], r[N2P], r[N2], r[N2S], r[LOT], flat, r[STREET], r[TYPE], r[SUFFIX], r[LOCALITY])
+    clean = [str(v or '').replace('|', ' ').replace('\n', ' ') for v in text]
+    return '|'.join(clean + [f'{r[LAT]:.6f}', f'{r[LNG]:.6f}', r[GT] or '', r[PID] or ''])
+
+
+def write_register(con, staging: str) -> dict:
+    """The one pass: choose each street number's rows, count them, and write one file per postal area into `staging`."""
     header = '|'.join(SHARD_COLUMNS) + '\n'
-    cur = con.execute(f"""
-        SELECT state, postcode, n1p, n1, n1s, n2p, n2, n2s, lot, flat, street, type, suffix, locality,
-               lat, lng, gt, pid
-        FROM shard_rows
-        WHERE state IN ({', '.join("'" + s + "'" for s in SERVED_STATES)})
-        ORDER BY state, postcode, street, type, suffix, TRY_CAST(n1 AS INTEGER), n1, lot, flat
-    """)
-    shards = 0
-    rows = 0
-    key = None
-    buf: io.StringIO | None = None
+    served = set(SERVED_STATES)
+    tally = {'usable': 0, 'site_rows': 0, 'unit_rows': 0, 'shards': 0, 'rows_written': 0}
+    rows_by_state: Counter = Counter()
+    by_geocode_type: Counter = Counter()
+    localities: dict[str, dict[str, set[str]]] = {}
+    locality_postcodes: dict[tuple[str, str], set[str]] = {}
 
-    def flush() -> None:
-        nonlocal shards
-        if key is not None and buf is not None:
-            write_gz(os.path.join(base, key[0], f'{key[1]}.psv.gz'), buf.getvalue().encode('utf-8'))
-            shards += 1
+    area: tuple[str, str] | None = None
+    lines: list[tuple[tuple, str]] = []
+    group: list[tuple] = []
+    group_key: tuple | None = None
 
+    def close_group() -> None:
+        site, units = choose_rows(group)
+        state = site[STATE]
+        tally['usable'] += len(group)
+        tally['site_rows'] += 1
+        tally['unit_rows'] += len(units)
+        rows_by_state[state] += 1 + len(units)
+        for r in (site, *units):
+            by_geocode_type[r[GT] or ''] += 1
+        if state not in served:
+            return
+        for r, flat in ((site, ''), *((u, u[FLAT]) for u in units)):
+            lines.append((served_order(r, flat), served_line(r, flat)))
+            if r[LOCALITY] is not None:
+                localities.setdefault(state, {}).setdefault(r[LOCALITY], set()).add(r[POSTCODE])
+            locality_postcodes.setdefault((state, r[LPID]), set()).add(r[POSTCODE])
+
+    def close_area() -> None:
+        if area is None or not lines:
+            return
+        lines.sort(key=lambda entry: entry[0])
+        write_gz(os.path.join(staging, area[0], f'{area[1]}.psv.gz'),
+                 (header + ''.join(line + '\n' for _, line in lines)).encode('utf-8'))
+        tally['shards'] += 1
+        tally['rows_written'] += len(lines)
+        lines.clear()
+
+    cur = con.execute(USABLE_IN_ORDER)
     while True:
         batch = cur.fetchmany(200_000)
         if not batch:
             break
-        for (state, postcode, *fields) in batch:
-            if (state, postcode) != key:
-                flush()
-                key = (state, postcode)
-                buf = io.StringIO()
-                buf.write(header)
-            *text, lat, lng, gt, pid = fields
-            clean = [str(v or '').replace('|', ' ').replace('\n', ' ') for v in text]
-            buf.write('|'.join(clean + [f'{lat:.6f}', f'{lng:.6f}', gt or '', pid or '']) + '\n')
-            rows += 1
-    flush()
-    return shards, rows
+        for row in batch:
+            key = row[:KEY_WIDTH]
+            if key == group_key:
+                group.append(row)
+                continue
+            if group:
+                close_group()
+            if (row[STATE], row[POSTCODE]) != area:
+                close_area()
+                area = (row[STATE], row[POSTCODE])
+            group = [row]
+            group_key = key
+    if group:
+        close_group()
+    close_area()
+
+    return {
+        **tally,
+        'rows_by_state': dict(sorted(rows_by_state.items())),
+        'by_geocode_type': dict(sorted(by_geocode_type.items(), key=lambda kv: (-kv[1], kv[0]))),
+        'localities': localities,
+        'locality_postcodes': locality_postcodes,
+    }
 
 
-def write_locality_index(con, out: str) -> int:
-    states: dict[str, dict[str, set[str]]] = {}
-    for state, locality, postcode in con.execute(
-        f"SELECT DISTINCT state, locality, postcode FROM shard_rows WHERE state IN ({', '.join(repr(s) for s in SERVED_STATES)})"
+def write_locality_index(con, staging: str, localities: dict, locality_postcodes: dict) -> int:
+    """Which postal areas hold addresses in each locality — under its own name and every other name the register records for it."""
+    states = {state: {name: set(pcs) for name, pcs in names.items()} for state, names in localities.items()}
+    by_lpid: dict[str, list[tuple[str, set[str]]]] = {}
+    for (state, lpid), postcodes in locality_postcodes.items():
+        by_lpid.setdefault(lpid, []).append((state, postcodes))
+    for lpid, name in con.execute(
+        'SELECT locality_pid, name FROM locality_alias WHERE date_retired IS NULL AND name IS NOT NULL'
     ).fetchall():
-        states.setdefault(state, {}).setdefault(locality, set()).add(postcode)
-    # Another name the register records for a locality reaches the same postal areas.
-    for state, name, postcode in con.execute(f"""
-        SELECT DISTINCT r.state, la.name, r.postcode
-        FROM locality_alias la
-        JOIN (SELECT DISTINCT state, lpid, postcode FROM shard_rows) r ON r.lpid = la.locality_pid
-        WHERE la.date_retired IS NULL AND la.name IS NOT NULL
-          AND r.state IN ({', '.join(repr(s) for s in SERVED_STATES)})
-    """).fetchall():
-        states.setdefault(state, {}).setdefault(name, set()).add(postcode)
+        for state, postcodes in by_lpid.get(lpid, ()):
+            states.setdefault(state, {}).setdefault(name, set()).update(postcodes)
     index = {
         'format': SHARD_FORMAT,
         'states': {s: {loc: sorted(pcs) for loc, pcs in sorted(locs.items())} for s, locs in sorted(states.items())},
     }
-    write_gz(os.path.join(out, f'v{SHARD_FORMAT}', 'localities.json.gz'),
+    write_gz(os.path.join(staging, 'localities.json.gz'),
              json.dumps(index, separators=(',', ':'), sort_keys=True).encode('utf-8'))
     return sum(len(v) for v in states.values())
 
@@ -410,7 +466,7 @@ def cmd_build(args: argparse.Namespace) -> int:
     con.execute(f"SET memory_limit='{args.memory}'")
     con.execute(f"SET temp_directory='{os.path.join(work, 'duckdb-tmp')}'")
     con.execute('SET preserve_insertion_order=false')
-    build_tables(con, by_table)
+    build_addresses(con, by_table)
     log(f'joined    ({time.time() - t0:.0f}s)')
 
     counts = {
@@ -419,46 +475,58 @@ def cmd_build(args: argparse.Namespace) -> int:
         'without_point': con.execute('SELECT count(*) FROM addr WHERE lat IS NULL OR lng IS NULL').fetchone()[0],
         'without_postcode': con.execute('SELECT count(*) FROM addr WHERE postcode IS NULL').fetchone()[0],
         'without_number_or_lot': con.execute("SELECT count(*) FROM addr WHERE n1 = '' AND lot = ''").fetchone()[0],
-        'usable': con.execute('SELECT count(*) FROM usable').fetchone()[0],
-        'site_rows': con.execute('SELECT count(*) FROM site').fetchone()[0],
-        'unit_rows': con.execute('SELECT count(*) FROM unit').fetchone()[0],
-        'rows_by_state': count_by(con, 'SELECT state, count(*) FROM shard_rows GROUP BY 1 ORDER BY 1'),
-        'by_geocode_type': count_by(con, 'SELECT gt, count(*) FROM shard_rows GROUP BY 1 ORDER BY 2 DESC'),
     }
-
-    # The refusals, before anything is written.
     if counts['addresses'] < args.min_addresses:
         raise Refusal(f'{counts["addresses"]:,} current addresses, below the floor of {args.min_addresses:,} — a partial release')
-    empty = [s for s in SERVED_STATES if counts['rows_by_state'].get(s, 0) == 0]
-    if empty:
-        raise Refusal(f'no usable rows for {", ".join(empty)}')
-    if counts['site_rows'] + counts['unit_rows'] < counts['usable'] * 0.4:
-        raise Refusal('collapsing units removed more than 60% of usable addresses — the join is wrong, not the register')
 
-    if os.path.exists(os.path.join(args.out, f'v{SHARD_FORMAT}')):
-        shutil.rmtree(os.path.join(args.out, f'v{SHARD_FORMAT}'))
-    shards, rows = write_shards(con, args.out)
-    localities = write_locality_index(con, args.out)
-    counts.update({'shards': shards, 'rows_written': rows, 'localities_indexed': localities})
+    # Everything is written beside the served directory and moved into place
+    # only once it adds up: a refusal, or a build that dies part-way, leaves
+    # the previous register standing and nothing half-written in its place.
+    final = os.path.join(args.out, f'v{SHARD_FORMAT}')
+    staging = os.path.join(args.out, f'.v{SHARD_FORMAT}.partial')
+    if os.path.exists(staging):
+        shutil.rmtree(staging)
+    try:
+        written = write_register(con, staging)
+        counts.update({k: written[k] for k in ('usable', 'site_rows', 'unit_rows', 'rows_by_state', 'by_geocode_type')})
+        log(f'chose     {written["site_rows"]:,} sites and {written["unit_rows"]:,} units ({time.time() - t0:.0f}s)')
 
-    manifest = {
-        'format': SHARD_FORMAT,
-        'release': {**release, 'bytes': file_facts['bytes'], 'sha256': file_facts['sha256']},
-        'members': member_sizes,
-        'built_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
-        'served_states': list(SERVED_STATES),
-        'counts': counts,
-        'licence': {
-            'name': 'Open Geo-coded National Address File (G-NAF) End User Licence Agreement',
-            'dataset': f'https://data.gov.au/data/dataset/{PACKAGE_ID}',
-        },
-    }
-    with open(os.path.join(args.out, f'v{SHARD_FORMAT}', 'manifest.json'), 'w', encoding='utf-8') as fh:
-        json.dump(manifest, fh, indent=2, sort_keys=True)
-        fh.write('\n')
+        # The refusals, before anything is served.
+        empty = [s for s in SERVED_STATES if counts['rows_by_state'].get(s, 0) == 0]
+        if empty:
+            raise Refusal(f'no usable rows for {", ".join(empty)}')
+        if counts['site_rows'] + counts['unit_rows'] < counts['usable'] * 0.4:
+            raise Refusal('collapsing units removed more than 60% of usable addresses — the join is wrong, not the register')
+
+        localities = write_locality_index(con, staging, written['localities'], written['locality_postcodes'])
+        counts.update({'shards': written['shards'], 'rows_written': written['rows_written'], 'localities_indexed': localities})
+
+        manifest = {
+            'format': SHARD_FORMAT,
+            'release': {**release, 'bytes': file_facts['bytes'], 'sha256': file_facts['sha256']},
+            'members': member_sizes,
+            'built_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+            'served_states': list(SERVED_STATES),
+            'counts': counts,
+            'licence': {
+                'name': 'Open Geo-coded National Address File (G-NAF) End User Licence Agreement',
+                'dataset': f'https://data.gov.au/data/dataset/{PACKAGE_ID}',
+            },
+        }
+        with open(os.path.join(staging, 'manifest.json'), 'w', encoding='utf-8') as fh:
+            json.dump(manifest, fh, indent=2, sort_keys=True)
+            fh.write('\n')
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+
+    if os.path.exists(final):
+        shutil.rmtree(final)
+    os.replace(staging, final)
 
     log(json.dumps(counts, indent=2))
-    log(f'wrote     {shards:,} shards, {rows:,} rows, {localities:,} locality names ({time.time() - t0:.0f}s)')
+    log(f'wrote     {counts["shards"]:,} shards, {counts["rows_written"]:,} rows, '
+        f'{counts["localities_indexed"]:,} locality names ({time.time() - t0:.0f}s)')
     if args.summary:
         with open(args.summary, 'a', encoding='utf-8') as fh:
             fh.write(summary_markdown(release, file_facts, counts))

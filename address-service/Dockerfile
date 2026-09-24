@@ -37,13 +37,22 @@ RUN mkdir -p /srv/photon \
 
 # The index, checked against its published MD5. A dump that is missing,
 # truncated or renamed fails here.
+#
+# It is handed to the service's user IN THIS LAYER. OpenSearch writes its node
+# lock and translog beside the index, so the files must be the user's, and a
+# `chown -R` in a later layer copies every file it touches into that layer:
+# the image would carry the index twice, and Fly refuses an image past ~8 GB
+# uncompressed. Only the index and the directory entry change hands; the jar
+# stays root's, read-only, and is not copied.
 RUN echo "photon index stamp: ${PHOTON_DB_STAMP}" \
  && curl -fsSL -o /tmp/db.tar.bz2.md5 "${PHOTON_DB_URL}.md5" \
  && curl -fsSL -o /tmp/db.tar.bz2 "${PHOTON_DB_URL}" \
  && echo "$(cut -d' ' -f1 /tmp/db.tar.bz2.md5)  /tmp/db.tar.bz2" | md5sum -c - \
- && lbzip2 -dc /tmp/db.tar.bz2 | tar -x -C /srv/photon \
+ && lbzip2 -dc /tmp/db.tar.bz2 | tar -x --no-same-owner -C /srv/photon \
  && rm -f /tmp/db.tar.bz2 /tmp/db.tar.bz2.md5 \
  && test -d /srv/photon/photon_data \
+ && chown address:address /srv/photon \
+ && chown -R address:address /srv/photon/photon_data \
  && du -sh /srv/photon/photon_data
 
 # The G-NAF register, built from the current release and checked against
@@ -55,8 +64,7 @@ RUN test -f /srv/gnaf/v1/manifest.json \
 
 COPY Caddyfile /etc/caddy/Caddyfile
 COPY start.sh /srv/start.sh
-# OpenSearch writes its node lock and translog beside the index.
-RUN chown -R address:address /srv/photon && chmod 0555 /srv/start.sh
+RUN chmod 0555 /srv/start.sh
 
 USER address
 WORKDIR /srv

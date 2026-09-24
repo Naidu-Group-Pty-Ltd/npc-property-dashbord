@@ -85,6 +85,7 @@ import {
   type GnafLocalityLookup,
   type GnafRow,
   askedAddressOf,
+  gnafStreetLineOf,
   chooseGnafRow,
   fromGnaf,
   gnafShardPath,
@@ -119,7 +120,6 @@ import {
   chooseNominatimPlace,
   fromNominatim,
   nominatimSearchUrl,
-  streetLineOf,
   type NominatimPlace,
 } from './osmGeocode.pure.ts';
 import { awaitOsmTurn, consumeOsmDailyAllowance } from './osmAllowance.ts';
@@ -554,7 +554,7 @@ async function askGnaf(plan: GeocodePlan, base: string, timeoutMs: number): Prom
 
   const target = gnafTargetOf(plan.ask);
   if (!target.ok) return { ok: false, reason: 'no_match', providerRefused: false, detail: `gnaf: ${target.reason}` };
-  const asked = askedAddressOf(plan.ask.street ?? streetLineOf(plan.ask));
+  const asked = askedAddressOf(gnafStreetLineOf(plan.ask));
   if (!asked.street || (!asked.number && !asked.lot)) {
     return { ok: false, reason: 'no_match', providerRefused: false, detail: 'gnaf: the ask names no street number or lot — a street alone is not a register question' };
   }

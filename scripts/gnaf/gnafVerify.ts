@@ -32,6 +32,7 @@ import {
   askedAddressOf,
   chooseGnafRow,
   gnafRowStreet,
+  gnafStreetLineOf,
   localityLookupOf,
   parseGnafShard,
   type GnafLocalityIndex,
@@ -108,7 +109,9 @@ function judge(rows: GnafRow[], row: GnafRow, plan: ReturnType<typeof planGeocod
   if (plan.ask.postcode && plan.ask.postcode !== row.postcode) {
     return { outcome: 'not_found', reason: `the chain read the postcode as ${plan.ask.postcode}` };
   }
-  const choice = chooseGnafRow(rows, askedAddressOf(plan.ask.street), plan.localityCandidates);
+  const asked = askedAddressOf(gnafStreetLineOf(plan.ask));
+  if (!asked.street || (!asked.number && !asked.lot)) return { outcome: 'not_found', reason: 'the ask names no street number or lot' };
+  const choice = chooseGnafRow(rows, asked, plan.localityCandidates);
   if (!choice.ok) {
     const ambiguous = /more than one place|localities of the postal area/.test(choice.reason);
     return { outcome: ambiguous ? 'ambiguous' : 'not_found', reason: choice.reason };
@@ -140,45 +143,44 @@ export function verifyGnafShards(options: VerifyOptions): VerifyResult {
   }
   shards.sort((a, b) => (a.path < b.path ? -1 : 1));
 
-  const rowsOf = new Map<string, GnafRow[]>();
+  // Which postal areas are asked is chosen BEFORE anything is read, so the
+  // register is read one file at a time: holding every row at once is ~13
+  // million objects, and a national build measured 4.9 GB doing it — past
+  // what a CI runner's Node heap allows.
+  const seed = options.seed ?? 20260924;
+  const rand = mulberry32(seed);
+  const sampleShards = Math.min(options.sampleShards ?? 400, shards.length);
+  const perShard = options.perShard ?? 5;
+  const pool = shards.map((_, k) => k);
+  const sampled = new Set<number>();
+  for (let i = 0; i < sampleShards; i++) sampled.add(pool.splice(Math.floor(rand() * pool.length), 1)[0]);
+
+  const present = new Set<string>();
   let countedRows = 0;
   let skippedLines = 0;
   let largest: VerifyResult['largestShard'] = null;
-  for (const s of shards) {
+  const fields = emptyTally();
+  const text = emptyTally();
+  const misses: VerifyResult['misses'] = [];
+  for (const [idx, s] of shards.entries()) {
     const parsed = parseGnafShard(gunzipSync(readFileSync(s.path)).toString('utf8'), s.state, s.postcode);
     if (!parsed) throw new Error(`${s.path} is not shard format ${GNAF_SHARD_FORMAT}`);
     countedRows += parsed.rows.length;
     skippedLines += parsed.skipped;
-    rowsOf.set(`${s.state}/${s.postcode}`, parsed.rows);
+    present.add(`${s.state}/${s.postcode}`);
     if (!largest || s.bytes > largest.bytes) largest = { path: s.path.slice(options.dir.length + 1), bytes: s.bytes, rows: parsed.rows.length };
-  }
+    if (!sampled.has(idx)) continue;
 
-  // Every postal area the index promises must be a file.
-  const index = JSON.parse(gunzipSync(readFileSync(join(root, 'localities.json.gz'))).toString('utf8')) as GnafLocalityIndex;
-  const lookup = localityLookupOf(index);
-  const missing = new Set<string>();
-  for (const [key, postcodes] of lookup) {
-    const state = key.split('|')[0];
-    for (const p of postcodes) if (!rowsOf.has(`${state}/${p}`)) missing.add(`${state}/${p}`);
-  }
-
-  // The register's own addresses, asked the way a report asks.
-  const rand = mulberry32(options.seed ?? 20260924);
-  const sampleShards = Math.min(options.sampleShards ?? 400, shards.length);
-  const perShard = options.perShard ?? 5;
-  const pool = [...shards];
-  const fields = emptyTally();
-  const text = emptyTally();
-  const misses: VerifyResult['misses'] = [];
-  for (let i = 0; i < sampleShards; i++) {
-    const pick = pool.splice(Math.floor(rand() * pool.length), 1)[0];
-    const rows = rowsOf.get(`${pick.state}/${pick.postcode}`) ?? [];
-    // Distinct rows, drawn by a partial shuffle: an address asked twice is
-    // one measurement counted twice.
+    // The register's own addresses, asked the way a report asks. Distinct
+    // rows, drawn by a partial shuffle (an address asked twice is one
+    // measurement counted twice), from a generator seeded by the file's place
+    // in the register, so the sample does not depend on the order files are read.
+    const rows = parsed.rows;
+    const draw = mulberry32((seed ^ Math.imul(idx + 1, 0x9e3779b1)) >>> 0);
     const order = rows.map((_, k) => k);
     const take = Math.min(perShard, rows.length);
     for (let k = 0; k < take; k++) {
-      const swap = k + Math.floor(rand() * (order.length - k));
+      const swap = k + Math.floor(draw() * (order.length - k));
       [order[k], order[swap]] = [order[swap], order[k]];
     }
     for (let j = 0; j < take; j++) {
@@ -194,6 +196,15 @@ export function verifyGnafShards(options: VerifyOptions): VerifyResult {
         if (outcome !== 'hit' && outcome !== 'nearby' && misses.length < 60) misses.push({ form, ask: address, outcome, reason });
       }
     }
+  }
+
+  // Every postal area the index promises must be a file.
+  const index = JSON.parse(gunzipSync(readFileSync(join(root, 'localities.json.gz'))).toString('utf8')) as GnafLocalityIndex;
+  const lookup = localityLookupOf(index);
+  const missing = new Set<string>();
+  for (const [key, postcodes] of lookup) {
+    const state = key.split('|')[0];
+    for (const p of postcodes) if (!present.has(`${state}/${p}`)) missing.add(`${state}/${p}`);
   }
 
   return {
