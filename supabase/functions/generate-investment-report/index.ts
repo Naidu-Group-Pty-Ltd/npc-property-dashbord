@@ -41,7 +41,24 @@ import {
   assessEnrichmentReuse,
   nextAcquisitionAttempt,
   recordAcquisitionAttempt,
+  standsInAfterFailedRefetch,
 } from '../_shared/reports/location/locationEnrichmentReuse.pure.ts';
+import {
+  LOCATION_CALL_MAX_ATTEMPTS,
+  describeLocationReading,
+  mayRetryLocationNow,
+  readLocationAnswer,
+  readLocationThrow,
+  type LocationCallReading,
+} from '../_shared/reports/location/locationEnrichmentCall.pure.ts';
+import {
+  decideWrittenBasis,
+  isLocated,
+  withWrittenBasis,
+  withoutWrittenBasis,
+  writtenBasisMarkerOf,
+  type WrittenBasisDecision,
+} from '../_shared/reports/investment/evidenceBasis.pure.ts';
 import { AcquisitionRecorder } from '../_shared/reports/acquisitionLedger.pure.ts';
 import {
   classifyProgress,
@@ -2505,6 +2522,22 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
      */
     let existingTotalSections: number | null = null;
 
+    /**
+     * What this invocation does with the score it computes, against the score
+     * the sections already on the row were written from. Decided once, after
+     * acquisition, and read at the early write, the section loop's reset and
+     * every response. See `evidenceBasis.pure.ts`.
+     */
+    let writtenBasisDecision: WrittenBasisDecision | null = null;
+    /**
+     * True when this invocation restarted the document from its first section
+     * on a better basis. Every response carries it, because a caller counting
+     * sections itself (`useChunkedRegeneration`) would otherwise read the
+     * server's lower counter as no progress, retry, and mark a healthy report
+     * failed.
+     */
+    let sectionsRestartedThisRun = false;
+
     // Get pre-generation overrides from request (passed from frontend)
     const frontendManualOverrides = propertyDetails?.manualOverrides || null;
     if (frontendManualOverrides && Object.keys(frontendManualOverrides).length > 0) {
@@ -2639,8 +2672,13 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               completedSectionIndices.push(idx);
             }
             
-            console.log(`   Completed sections: ${completedSectionIndices.length}/${REPORT_SECTIONS.length}`);
-            console.log(`   Will resume from section: ${lastCompletedSection} (${REPORT_SECTIONS[lastCompletedSection]?.name || 'END'})`);
+            // Counted against the list this report is written under. It printed
+            // the legacy twelve-section list's length and names — "9/12 … (Loan
+            // & Sensitivity)" on a sixteen-section Compass — which is a log
+            // line an operator reads while diagnosing exactly this code.
+            const plannedTotal = registryTotal || storedTotal || REPORT_SECTIONS.length;
+            console.log(`   Completed sections: ${completedSectionIndices.length}/${plannedTotal}`);
+            console.log(`   Will resume from section ${lastCompletedSection + 1} of ${plannedTotal}`);
           } else {
             // Fresh regeneration: either last_completed_section was reset to 0,
             // or the section list changed underneath a partially generated
@@ -3574,27 +3612,48 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
           'location-intelligence-service',
         );
       } else {
-      // Fetch location intelligence data
-      try {
-        console.log(`Fetching location intelligence for: ${formattedInput} (${reuse.verdict})`);
-        const locationResponse = await acquisitionFetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/location-intelligence-service`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${INTERNAL_EDGE_SECRET}`,
-            ...(supabaseAnonKey ? { 'apikey': supabaseAnonKey } : {})
-          },
-          body: JSON.stringify({
-            address: formattedInput,
-            postcode: postcode,
-            state: state
-          })
-        }, 'vendor', 'location-intelligence-service');
-        
-        if (locationResponse.ok) {
-          const locationData = await locationResponse.json();
-          
-          if (locationData.success && locationData.data) {
+      // Fetch location intelligence data — the one call every geography-keyed
+      // reading downstream is keyed on: the boundary resolution, the trusted
+      // postal area, the demographics the gate admits, the planning parcel,
+      // the crime area, the market evidence and the Location dimension.
+      //
+      // It carries the `composite` ceiling rather than a single vendor call's,
+      // and a transient failure is asked once more while the run has room:
+      // on 24 Sep 2026 (60 Lawley Street, Spalding WA) the answer arrived three
+      // seconds after a 12 s ceiling had abandoned it, with 95 s of the run
+      // unspent, and the invocation wrote nine sections about a property it
+      // could not place. See `locationEnrichmentCall.pure.ts`.
+      for (let attempt = 1; attempt <= LOCATION_CALL_MAX_ATTEMPTS; attempt++) {
+        let reading: LocationCallReading;
+        try {
+          console.log(
+            `Fetching location intelligence for: ${formattedInput} (${reuse.verdict})`
+            + (attempt > 1 ? ` — attempt ${attempt}` : ''),
+          );
+          const locationResponse = await acquisitionFetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/location-intelligence-service`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${INTERNAL_EDGE_SECRET}`,
+              ...(supabaseAnonKey ? { 'apikey': supabaseAnonKey } : {})
+            },
+            body: JSON.stringify({
+              address: formattedInput,
+              postcode: postcode,
+              state: state
+            })
+          }, 'composite', 'location-intelligence-service');
+
+          // The body is read either way: an error's words are what an operator
+          // needs to tell a geocoder refusal from a boot failure, and an
+          // answer's are the enrichment.
+          const errorText = locationResponse.ok ? '' : await locationResponse.text().catch(() => '');
+          const locationData: any = locationResponse.ok
+            ? await locationResponse.json().catch(() => undefined)
+            : undefined;
+          reading = readLocationAnswer(locationResponse.status, locationData);
+
+          if (reading.kind === 'answered') {
             // RF-7.2B.1B1 — carry the attempt count forward. A partial
             // acquisition is retried a bounded number of times and then
             // accepted, so a persistently failing amenity category cannot
@@ -3611,35 +3670,69 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             };
             console.log('✓ Location intelligence data fetched successfully');
             acquisition.answered('locationIntelligence', 'Retrieved and used', 'location-intelligence-service');
-            
+
             if (locationData.usingMockData) {
               console.warn('⚠️ Using mock location data:', locationData.message);
             }
-          } else {
-            console.warn('⚠️ Location intelligence returned no data');
+          } else if (reading.kind === 'no_match') {
+            // A statement about the address: no provider matches it.
+            console.warn(`⚠️ Location intelligence ${describeLocationReading(reading)}`);
             acquisition.empty(
               'locationIntelligence',
-              'The location service answered and returned nothing for this address',
+              'The location service answered and could place nothing: no provider matches this address',
               'location-intelligence-service',
             );
+          } else {
+            // Everything else is a statement about this invocation, never about
+            // the property — including the service's own `success: false` for a
+            // geocoder that refused or was not attempted, which used to be
+            // filed as "answered and returned nothing".
+            const detail = reading.kind === 'http_error'
+              // The body is bounded because a ledger entry is read by a person,
+              // not parsed.
+              ? `location-intelligence-service answered HTTP ${reading.status}: ${String(errorText).slice(0, 200)}`
+              : `location-intelligence-service ${describeLocationReading(reading)}`;
+            console.error('❌ Location intelligence API error:', detail);
+            acquisition.failed('locationIntelligence', detail, 'location-intelligence-service');
           }
-        } else {
-          const errorText = await locationResponse.text();
-          console.error('❌ Location intelligence API error:', locationResponse.status, errorText);
-          // The body is the provider's own words and is what an operator needs
-          // to tell a geocoder refusal from a boot failure; it is bounded here
-          // because a ledger entry is read by a person, not parsed.
+        } catch (error: any) {
+          reading = readLocationThrow(error);
+          console.error('❌ Location intelligence fetch failed:', error?.message || 'Unknown error');
           acquisition.failed(
             'locationIntelligence',
-            `location-intelligence-service answered HTTP ${locationResponse.status}: ${String(errorText).slice(0, 200)}`,
+            String(error?.message ?? 'The location request threw and reported no message'),
             'location-intelligence-service',
           );
         }
-      } catch (error: any) {
-        console.error('❌ Location intelligence fetch failed:', error?.message || 'Unknown error');
-        acquisition.failed(
+
+        const retryWindowMs = acquisitionWindowMs(acquisitionBudgetFor('composite'));
+        if (!mayRetryLocationNow({ reading, attempt, windowMs: retryWindowMs })) break;
+        console.log(
+          `🔁 Location intelligence ${describeLocationReading(reading)} — asking once more with `
+          + `${Math.round((retryWindowMs ?? 0) / 1000)}s of window: every geography-keyed reading is keyed on it.`,
+        );
+      }
+
+      // A failed re-fetch never discards a sound reading this report already
+      // holds for this property. `incomplete_acquisition` refused the stored
+      // enrichment only in the hope of completing its amenity set; when asking
+      // again fails, the choice is between that partial set and nothing, and
+      // nothing is no coordinate, no geography, no demographics and no planning
+      // for every section this invocation writes. It is still recorded as
+      // partial, and it is not rewritten.
+      if (!enhancedData.locationIntelligence && standsInAfterFailedRefetch(reuse)) {
+        locationEnrichmentReused = true;
+        enhancedData = {
+          ...enhancedData,
+          locationIntelligence: existingEnhancedFields.locationIntelligence,
+        };
+        console.log(
+          '♻️ Location re-fetch failed — keeping the partial enrichment this report already holds for '
+          + 'this property rather than proceeding with none.',
+        );
+        acquisition.answered(
           'locationIntelligence',
-          String(error?.message ?? 'The location request threw and reported no message'),
+          'The re-fetch failed; kept the partial enrichment this report already holds for this property',
           'location-intelligence-service',
         );
       }
@@ -3684,9 +3777,17 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             reportId,
             latitude: Number.isFinite(subjectLat) ? subjectLat : null,
             longitude: Number.isFinite(subjectLng) ? subjectLng : null,
+            // Every invocation of this report resolves the same coordinate. A
+            // row that already places it under this release answers, and a
+            // later boundary-service failure can no longer overwrite it with
+            // `unresolved` and write this invocation's sections as if the
+            // property had never been placed. See `storedRowDescribesPoint`.
+            reuseStored: true,
           });
           geographyResolution = {
-            source: 'pre_generation', status: geoOutcome.status, requeried: false,
+            source: geoOutcome.reused ? 'stored_row' : 'pre_generation',
+            status: geoOutcome.status,
+            requeried: false,
           };
           if (geoOutcome.writeError) {
             // The row could not be persisted. The RESOLUTION is still sound —
@@ -3710,7 +3811,8 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
           };
           console.log(
             `🗺️ Geography resolved before the gate: ${geoOutcome.status}`
-            + (geoOutcome.row?.postcode ? ` (POA ${geoOutcome.row.postcode})` : ''),
+            + (geoOutcome.row?.postcode ? ` (POA ${geoOutcome.row.postcode})` : '')
+            + (geoOutcome.reused ? ' — the stored row already places this point; the boundary service was not asked' : ''),
           );
         } catch (error: any) {
           // Total: a resolution that cannot be made is an absence, never a
@@ -4850,6 +4952,41 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         ? ' · SOME CALLS DEFERRED for want of a window — not recorded as absences'
         : '')
     );
+
+    // ========================================================================
+    // ONE GENERATION, ONE EVIDENCE BASIS
+    // ========================================================================
+    // Decided here: after the last score this invocation computes, and before
+    // the gate, the prompts or the early write read it. The sections already on
+    // the row were written from the score already on the row; this invocation's
+    // score may replace it only by being STRICTLY better evidenced, and then
+    // every section is rewritten on it. Anything else leaves the written score
+    // standing. See `evidenceBasis.pure.ts` — 60 Lawley Street was written from
+    // `withheld` for sections 1-9 and B+ 89 for 10-16 because nothing compared
+    // the two.
+    writtenBasisDecision = decideWrittenBasis({
+      applies: !isAreaReport && !!reportId,
+      sectionsWritten: completedSectionIndices.length,
+      storedScore: existingEnhancedFields.investmentScore,
+      storedLocated: isLocated(existingEnhancedFields.locationIntelligence),
+      freshScore: enhancedData.investmentScore,
+      freshLocated: isLocated(enhancedData.locationIntelligence),
+    });
+    console.log(`🧭 Evidence basis: ${writtenBasisDecision.action} — ${writtenBasisDecision.note}`);
+    if (writtenBasisDecision.action === 'rewrite') {
+      // Every section on the row was written from less than this invocation
+      // holds. The document starts again here, and the early write resets the
+      // row's counter in the SAME update that records the new score — so an
+      // invocation that dies before its first section cannot leave the old
+      // sections standing beside the new score.
+      existingReportContent = '';
+      completedSectionIndices.length = 0;
+      sectionsRestartedThisRun = true;
+    } else if (writtenBasisDecision.action === 'keep_written') {
+      // The written sections' score stands, for this invocation's prompts and
+      // for the record: a failed or equal re-acquisition does not restate it.
+      enhancedData = { ...enhancedData, investmentScore: existingEnhancedFields.investmentScore };
+    }
 
     // ========================================================================
     // RF-7.2B.1 — CLIENT-SAFE GATE ACTIVATION
@@ -7054,6 +7191,29 @@ YOUR DEDICATED PROPERTY PARTNER
     let acquisitionFieldsBankedThisRun = 0;
     const sectionPlanNewlyKnown = existingTotalSections === null;
 
+    /**
+     * The score as the row should hold it once it becomes the basis the
+     * sections are written from: marked with whether this invocation held a
+     * verified location, and with how many times this generation has been
+     * rewritten. Anything that is not becoming the basis is returned as it is.
+     * One definition for the early write and its progressive-save fallback, so
+     * the two cannot record different bases.
+     */
+    const basisRecordedAt = new Date().toISOString();
+    const basisScoreForRow = (): any => {
+      const score = enhancedData?.investmentScore;
+      if (!score) return score;
+      const action = writtenBasisDecision?.action;
+      if (action !== 'record_first' && action !== 'rewrite') return score;
+      const priorRewrites = writtenBasisMarkerOf(existingEnhancedFields.investmentScore)?.rewrites ?? 0;
+      return withWrittenBasis(
+        score,
+        isLocated(measuredLocationIntelligence ?? enhancedData?.locationIntelligence),
+        basisRecordedAt,
+        action === 'rewrite' ? priorRewrites + 1 : 0,
+      );
+    };
+
     // ============================================================================
     // EARLY ENHANCED DATA PERSISTENCE
     // Persist scoring + calculations before section generation so chunked/resume calls
@@ -7063,9 +7223,33 @@ YOUR DEDICATED PROPERTY PARTNER
       try {
         const earlyUpdate: any = { updated_at: new Date().toISOString() };
 
-        // Only write fields that are currently missing on the report row
-        if (!existingEnhancedFields.investmentScore && enhancedData?.investmentScore) {
+        // The score is the basis the sections are written from
+        // (`evidenceBasis.pure.ts`). The invocation that writes the FIRST
+        // section records it and a rewrite replaces it — marked, so a later
+        // invocation can tell the score these sections were written from from
+        // a leftover of an earlier generation. It used to be written only when
+        // the row had none, so a regeneration kept the previous generation's
+        // grade until its last section, and 60 Lawley Street kept `withheld`
+        // on the row while ten sections were being written from B+ 89.
+        const scoreBecomesBasis = writtenBasisDecision?.action === 'record_first'
+          || writtenBasisDecision?.action === 'rewrite';
+        if (scoreBecomesBasis && enhancedData?.investmentScore) {
+          earlyUpdate.investment_score = basisScoreForRow();
+        } else if (writtenBasisDecision?.action === 'clear_marker') {
+          // A document that never finished left its marker, and this pass
+          // starts a new one with no score of its own to record. The score
+          // stays — it is still a measurement — and the marker goes, so no
+          // later pass reads it as the basis of sections it never described.
+          earlyUpdate.investment_score = withoutWrittenBasis(existingEnhancedFields.investmentScore);
+        } else if (!existingEnhancedFields.investmentScore && enhancedData?.investmentScore) {
+          // Only write fields that are currently missing on the report row
           earlyUpdate.investment_score = enhancedData.investmentScore;
+        }
+        if (writtenBasisDecision?.action === 'rewrite') {
+          // The counter goes back to zero in the same update that records the
+          // new basis. Written separately, an invocation that died between the
+          // two would leave the old sections resumable beside the new score.
+          earlyUpdate.last_completed_section = 0;
         }
         if (!existingEnhancedFields.financials && enhancedData?.financials) {
           earlyUpdate.financial_calculations = enhancedData.financials;
@@ -7075,6 +7259,14 @@ YOUR DEDICATED PROPERTY PARTNER
         }
         if (!existingEnhancedFields.economics && enhancedData?.economics) {
           earlyUpdate.economic_data = enhancedData.economics;
+        }
+        if (writtenBasisDecision?.action === 'rewrite') {
+          // The rewritten document rests on THIS invocation's acquisition, so
+          // the row carries it — "only what is missing" would leave the
+          // readings the old sections were written from beside the new ones.
+          if (enhancedData?.financials) earlyUpdate.financial_calculations = enhancedData.financials;
+          if (enhancedData?.demographics) earlyUpdate.demographics_data = enhancedData.demographics;
+          if (enhancedData?.economics) earlyUpdate.economic_data = enhancedData.economics;
         }
         // RF-7.2B.1B1 — also write it when this run RE-ACQUIRED it. The guard
         // below is "don't overwrite what is already banked", which is right for
@@ -7111,12 +7303,24 @@ YOUR DEDICATED PROPERTY PARTNER
 
         if (hasAnyEnhancedField) {
           console.log('💾 Early persistence: saving enhanced data to DB before section generation...');
-          await supabaseClient
+          const { error: earlyWriteError } = await supabaseClient
             .from('investment_reports')
             .update(earlyUpdate)
             .eq('id', reportId);
-          enhancedDataPersisted = true;
-          console.log('✓ Early enhanced data saved:', Object.keys(earlyUpdate).filter(k => k !== 'updated_at').join(', '));
+          if (earlyWriteError) {
+            // A client that answers with an error does not throw, and this was
+            // read as saved: the fallback on the first section's save never
+            // ran, so the basis this write carries — and a rewrite's reset —
+            // reached the row a section late or not at all. Unsaved now means
+            // unsaved, exactly as a thrown write always did.
+            console.warn(
+              '⚠️ Early enhanced data persistence failed (non-blocking) — the first section\'s save will carry it:',
+              earlyWriteError.message,
+            );
+          } else {
+            enhancedDataPersisted = true;
+            console.log('✓ Early enhanced data saved:', Object.keys(earlyUpdate).filter(k => k !== 'updated_at').join(', '));
+          }
         } else {
           // If the DB already has enhanced fields, treat them as persisted for this run
           enhancedDataPersisted = alreadyHasAnyEnhancedField;
@@ -7407,8 +7611,17 @@ YOUR DEDICATED PROPERTY PARTNER
             if (!enhancedDataPersisted && enhancedData) {
               console.log('📊 First generated section in this run - saving enhanced data to DB...');
               if (enhancedData.investmentScore) {
-                progressiveUpdatePayload.investment_score = enhancedData.investmentScore;
+                // Marked where it becomes the basis — the same value the early
+                // write would have recorded, had it not failed.
+                progressiveUpdatePayload.investment_score = basisScoreForRow();
                 console.log('  ✓ Saving investment_score:', enhancedData.investmentScore?.grade, enhancedData.investmentScore?.totalScore);
+                didAttachEnhancedData = true;
+              } else if (writtenBasisDecision?.action === 'clear_marker') {
+                // …and the same clear, where the early write that carried it
+                // failed. This section is the first of a new document.
+                progressiveUpdatePayload.investment_score = withoutWrittenBasis(
+                  existingEnhancedFields.investmentScore,
+                );
                 didAttachEnhancedData = true;
               }
               if (enhancedData.financials) {
@@ -7466,7 +7679,13 @@ YOUR DEDICATED PROPERTY PARTNER
                   sectionCompleted: completedSectionIndex,
                   totalSections: filteredSections.length,
                   isComplete: false,
-                  contentLength: combinedContent.length
+                  contentLength: combinedContent.length,
+                  // This invocation wrote the section `sectionCompleted` names.
+                  // A caller counting sections itself follows the server's
+                  // counter on this flag, including when the counter went DOWN
+                  // because the document was restarted on a better basis.
+                  sectionWrittenThisRun: true,
+                  sectionsRestarted: sectionsRestartedThisRun,
                 }), {
                   headers: { ...corsHeaders, 'Content-Type': 'application/json' },
                 });
@@ -7502,6 +7721,7 @@ YOUR DEDICATED PROPERTY PARTNER
             sectionCompleted: lastCompletedSectionIndex,
             totalSections: filteredSections.length,
             contentLength: combinedContent.length,
+            sectionsRestarted: sectionsRestartedThisRun,
           }), {
             status: 200,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -7557,6 +7777,7 @@ YOUR DEDICATED PROPERTY PARTNER
             isComplete: false,
             resumeRequired: true,
             contentLength: combinedContent.length,
+            sectionsRestarted: sectionsRestartedThisRun,
           }), {
             status: 200,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -7664,6 +7885,7 @@ YOUR DEDICATED PROPERTY PARTNER
         // measured from the network tab rather than from edge-log access.
         acquisitionMs,
         sectionMsThisRun: sectionDurationsMs,
+        sectionsRestarted: sectionsRestartedThisRun,
       }), {
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -7694,7 +7916,25 @@ YOUR DEDICATED PROPERTY PARTNER
       averageScore: avgScore,
       sectionScores: sectionResults.map(s => ({ id: s.id, name: s.name, score: s.score, valid: s.valid, attempts: s.attempts })),
       invalidSectionCount: invalidSections.length,
-      errorsEncountered: generationErrors.length
+      errorsEncountered: generationErrors.length,
+      /*
+       * Whether this document was written on one evidence basis from its first
+       * section, or rewritten when a later invocation held more — so the row
+       * can answer that question after the marker that tracked it has gone.
+       */
+      evidenceBasis: (() => {
+        const marker = writtenBasisMarkerOf(
+          writtenBasisDecision?.action === 'record_first' || writtenBasisDecision?.action === 'rewrite'
+            ? basisScoreForRow()
+            : enhancedData.investmentScore,
+        );
+        return {
+          finalDecision: writtenBasisDecision?.action ?? null,
+          rewrites: marker?.rewrites ?? null,
+          located: marker?.located ?? null,
+          recordedAt: marker?.recordedAt ?? null,
+        };
+      })(),
     };
     console.log('📋 Quality metadata:', JSON.stringify(qualityMetadata));
     // === END FINAL VALIDATION ===
@@ -8411,7 +8651,9 @@ YOUR DEDICATED PROPERTY PARTNER
         demographics_data: enhancedData.demographics || null,
         economic_data: enhancedData.economics || null,
         financial_calculations: enhancedData.financials || null,
-        investment_score: enhancedData.investmentScore || null,
+        // The basis marker is generation state and leaves with the last
+        // section; what it recorded travels in `_generationQuality`.
+        investment_score: withoutWrittenBasis(enhancedData.investmentScore) || null,
         // …with the planning and development evidence this report was shown
         // recorded beside it. It was retrieved on every run, rendered into two
         // tables in the document, and persisted NOWHERE — so no projection,
