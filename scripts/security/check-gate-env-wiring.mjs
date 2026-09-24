@@ -83,6 +83,18 @@ const CONTRACTS = [
       + 'cannot hold the seeds the manifest describes. Unset it fails closed and asserts a '
       + 'claim no clone can satisfy.',
   },
+  {
+    // `npm run templates:library:seed:check` → scripts/template-library/buildSeedCatalogue.ts
+    runMatch: 'templates:library:seed:check',
+    source: 'scripts/template-library/buildSeedCatalogue.ts',
+    env: ['BACKEND_DEPLOYED_BY'],
+    why:
+      'seedIsCarriedNotAuthored stands the seed-currency comparison down where Mission '
+      + 'Control owns the backend, on the same marker: a seed past what a cascade carries in '
+      + 'one file never reaches a clone. Unset it fails closed and holds every cascade pull '
+      + 'request on a check no delivery can clear, because Mission Control merges none with '
+      + 'a red check.',
+  },
 ];
 
 const indentOf = (text) => text.match(/^ */)[0].length;

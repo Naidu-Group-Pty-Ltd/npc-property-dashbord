@@ -1262,8 +1262,18 @@ jobs:
       #
       # `always()` so a stale seed and a geometry failure are both reported by
       # one run rather than the first hiding the second.
+      #
+      # The currency half stands itself down where Mission Control owns the
+      # backend, on the same marker as the object index and the seed skeletons:
+      # a seed past what a cascade carries in one file never reaches a clone, so
+      # the comparison said "never written" about a seed the prime wrote, and
+      # Mission Control merges no cascade pull request with a red check. Every
+      # template is still validated on every repository.
+      # `check-gate-env-wiring.mjs` fails if this mapping goes.
       - name: The seed migration is what the template definitions produce
         if: always()
+        env:
+          BACKEND_DEPLOYED_BY: ${{ vars.BACKEND_DEPLOYED_BY }}
         run: npm run templates:library:seed:check
 
       # The renders themselves, when it fails: a reviewer should be able to
