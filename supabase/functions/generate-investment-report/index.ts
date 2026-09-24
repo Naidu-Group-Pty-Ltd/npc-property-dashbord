@@ -4,7 +4,7 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_s
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { logApiUsage } from '../_shared/logApiUsage.ts';
 import { getBrandConfig } from '../_shared/brand-config.ts';
-import { publishableGrade } from '../_shared/reports/investment/scoreSections.pure.ts';
+import { evidenceCautionLine, publishableGrade } from '../_shared/reports/investment/scoreSections.pure.ts';
 import { withReportMetering, resolveUserId, buildIdempotencyKey } from '../_shared/reportMetering.ts';
 import { insertTargetedNotification } from '../_shared/notify.ts';
 import { compassSections, financialSections, COMPASS_PAGE_BAND, EDITORIAL_LABELS, type CompassSectionDefinition as CanonicalSectionDefinition } from '../_shared/compassSectionRegistry.ts';
@@ -1860,7 +1860,14 @@ async function generateReportSection(
     investmentScoreContext = `
 **INVESTMENT SCORE DATA (USE THESE EXACT VALUES):**
 ${publishedGrade
-    ? `- Total Investment Score: ${score.totalScore}/100\n- Investment Grade: ${publishedGrade}\n- Recommendation: ${score.recommendation}`
+    ? `- Total Investment Score: ${score.totalScore}/100\n- Investment Grade: ${publishedGrade}\n- Recommendation: ${score.recommendation}${
+      // Eligibility 5.0.0: the letter follows the score; where the evidence
+      // alone would not carry it, the run's own sentence travels with it so
+      // the prose cannot present, say, a state-wide growth figure as the
+      // suburb's own.
+      evidenceCautionLine(score)
+        ? `\n- Evidence behind the grade: ${evidenceCautionLine(score)} Wherever the grade or the growth outlook is discussed, say this plainly, and never present the evidence as more specific to this property than that sentence describes.`
+        : ''}`
     : '- No overall grade or total score is issued for this property. Do NOT state a grade, a score out of 100, or that a grade is unavailable — write the section without one.'}
 ${dimensionLines.join('\n')}
 ${score.strengths?.length ? `- Strengths: ${score.strengths.join(', ')}` : ''}

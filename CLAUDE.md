@@ -2156,6 +2156,26 @@ and stage-proven readings count, a stampless legacy enrichment verifies
 nothing, and a request field asserting verification is never read; Risk stays
 null under `propertyRiskSchema.pure.ts`'s recorded decision.
 
+**The letter is the band of the score (eligibility 5.0.0, 24 Sep 2026).**
+Read the *5.0.0* section of
+[`SCORING_V2_METHODOLOGY.md`](./docs/reports/SCORING_V2_METHODOLOGY.md) before
+touching `applyEligibility`, `GRADE_THRESHOLDS`, `gradeThresholdsFor` or
+anything that prints a grade. The owner's list showed 60 Lawley Street at
+**B+ · 89** beside 9 Hollow Street at **A · 77**: Lawley's growth came from the
+ABS state series for WA, and a state series scores **44** on growth
+confidence at best — one under the A test — so every property graded on one
+(all of WA, TAS, NT and the ACT) was held at B+ whatever it scored, with the
+number beside the letter saying otherwise. Three rules. **A higher score
+never prints a lower letter**: `grade === scoreGrade`, pinned by a sweep
+across grain, dwelling match, yield and location, and the evidence test now
+decides only whether `evidenceCaution` travels with the grade — one sentence
+saying what the evidence is, drawn on every surface that prints a grade and
+handed to the model with it. **A+ is from 80** (the owner's decision; A spans
+75–79). And **a stored grade is read by the line it was issued against** —
+`gradeThresholdsFor` reads the record's eligibility version, so a pre-5.0.0
+82 issued as an A is never re-labelled a cap, and Lawley's stored B+ keeps
+the explanation of the rule that capped it until it is regenerated.
+
 **A renormalised weight is not a nominal one, and all five dimensions are
 always drawn.** Read
 [`docs/reports/S5_CORRECTIONS.md`](./docs/reports/S5_CORRECTIONS.md) §3 and
