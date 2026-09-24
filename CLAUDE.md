@@ -3936,7 +3936,12 @@ absorbs one change arriving as another leaves — `check-edge-functions.mjs`'
 lesson), and **a migration that was never written is drift, not a pass**. It is
 `investmentCompassSource.spec.ts`' rule one layer out, and it was measured both
 ways before it was trusted — exit 1 on the stale file, exit 0 on the fresh
-one.
+one. **It asserts only where the seed is AUTHORED**: where Mission Control owns
+the backend (`BACKEND_DEPLOYED_BY`) the comparison stands down, on the marker
+the object index and the seed skeletons read, because a seed past what a
+cascade carries in one file never reaches a clone — there it said "never
+written" about a seed the prime wrote, and the cascade merges no pull request
+with a red check. The templates are still validated everywhere.
 
 It carries **two authoring systems over one renderer**. The 43 *voice* templates
 come from `scripts/template-library/designSystem.ts` — five voices keyed to the

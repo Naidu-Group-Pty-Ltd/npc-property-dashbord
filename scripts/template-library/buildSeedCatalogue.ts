@@ -840,6 +840,30 @@ function seedTuples(sql: string): Map<string, string> {
   return tuples;
 }
 
+/**
+ * Is this repository the one that AUTHORS the seed, or one that CARRIES it?
+ *
+ * The same question, and the same marker, as `indexIsCarriedNotAuthored` in
+ * `build-migration-object-index.mjs` and `skeletonsAreCarriedNotAuthored` in
+ * `build-migration-seed-skeletons.mjs`. The seed is past what a cascade
+ * carries in one file — v20 is 42.2 MB, and GitHub refuses a blob that size
+ * with a 422 — so it is absent on every clone, and the comparison below
+ * reported "the seed has never been written" about a seed the prime wrote.
+ * Measured 24 Sep 2026 on npc-client-dashboard#245: verify and security green,
+ * this step the only red check, and Mission Control merges no cascade pull
+ * request with a red check — so the delivery stopped there, with both of that
+ * clone's children queued behind it. Only the CURRENCY comparison stands down:
+ * every template is still validated against the live schema, the renderer
+ * allow-list and the publish gate, on every repository, before this is asked.
+ * It FAILS CLOSED: an unset or unrecognised value asserts, so a repository that
+ * authors its own backend is held to its own seed, and
+ * `scripts/security/check-gate-env-wiring.mjs` fails if the workflow step stops
+ * mapping the variable.
+ */
+function seedIsCarriedNotAuthored(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.BACKEND_DEPLOYED_BY === 'mission-control';
+}
+
 function reportDrift(fresh: string): void {
   const path = MIGRATION.replace(REPO + '/', '');
   if (!existsSync(MIGRATION)) {
@@ -1062,6 +1086,16 @@ WHERE version = 1
 `;
 
   if (mode === 'check') {
+    if (seedIsCarriedNotAuthored()) {
+      console.log(
+        `✓ ${all.length} templates validated against the live schema. `
+        + `${MIGRATION.replace(REPO + '/', '')} is carried here, not authored: Mission Control `
+        + "owns this repository's backend, the definitions and their seed are the prime's, and a "
+        + 'seed past what a cascade carries in one file never arrives here, so its currency is not '
+        + "this repository's to assert.",
+      );
+      return;
+    }
     reportDrift(sql);
     return;
   }

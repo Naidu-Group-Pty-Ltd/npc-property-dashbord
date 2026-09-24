@@ -508,6 +508,23 @@ const CASES = [
       + '        run: npm run migrations:seed-skeletons:check',
   },
 
+  {
+    /* The seed-currency comparison stands down on the same marker, from a
+       third mapping of the same line in another job. Starved, it said "the
+       seed has never been written" on every clone — the one red check on
+       npc-client-dashboard#245 on 24 Sep 2026, and Mission Control merges no
+       cascade pull request with a red check. Anchored on its own run line. */
+    gate: 'check-gate-env-wiring.mjs',
+    file: '.github/workflows/ci.yml',
+    what: 'the step running the seed-currency check stops mapping BACKEND_DEPLOYED_BY',
+    find:
+      'BACKEND_DEPLOYED_BY: ${{ vars.BACKEND_DEPLOYED_BY }}\n'
+      + '        run: npm run templates:library:seed:check',
+    replace:
+      'DEPLOYED_BY: ${{ vars.BACKEND_DEPLOYED_BY }}\n'
+      + '        run: npm run templates:library:seed:check',
+  },
+
 ];
 
 /**
