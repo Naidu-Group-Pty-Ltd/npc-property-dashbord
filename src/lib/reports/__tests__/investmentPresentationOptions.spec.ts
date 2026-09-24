@@ -159,6 +159,7 @@ describe('presentation — Charts and Sparklines', () => {
 describe('the whole pass', () => {
   it('applies content rules and figure rules together', () => {
     const out = applyPresentationOptionsToContent(REPORT, {
+      audience: 'investor',
       includeSources: false,
       includeScoring: false,
       includeCharts: false,
