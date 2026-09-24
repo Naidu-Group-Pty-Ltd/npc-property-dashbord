@@ -119,8 +119,18 @@ of every master a second time as an owner-occupier's copy.
 - **The cover title is unchanged** — "Investment Compass", "Financial Analysis
   Report". Renaming the product for an owner-occupier is a naming decision for
   the owner.
-- **Production is PENDING.** Nothing here has been drawn from production: the
-  frontend is not published and seed v20 (which carries the dashboard band) is
-  not applied. Until v20 is applied, an owner-occupier's Financial Analysis and
-  Snapshot draw the investor band with its letting tiles closed up; the
-  Compass, the Due Diligence report and the Briefing need no seed change.
+- **Shipped 23 Sep 2026; nothing has been drawn from production yet.** Merged
+  as #2748 (`2efa52496`), every function redeployed (deploy run 681), seed v20
+  applied (apply run 104: `template_library_release_baselines` 2,715 → 3,258,
+  one baseline per catalogue entry) and then its refresh (run 105:
+  `template_master_refresh_decisions` 80 → 98, eighteen active adopted
+  masters classified). The frontend was published as Lovable deployment
+  `e21fb279`, from a sandbox whose network policy refuses the published host,
+  so the live build is accepted but not confirmed.
+- **Which of the eighteen masters took v20 is unknown.** A master proven an
+  unedited copy is refreshed; a customised one is deferred and keeps v19,
+  where an owner-occupier's Financial Analysis and Snapshot draw the investor
+  band with its letting tiles closed up (the Compass, the Due Diligence report
+  and the Briefing need no seed change). The split needs a SQL read this work
+  did not have; the query is in the footer of
+  `20261219070000_refresh_active_masters_from_library_v20.sql`.
