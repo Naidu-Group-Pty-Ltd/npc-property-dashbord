@@ -303,7 +303,27 @@ function verdictLines(score: Record<string, unknown>): string[] | null {
   const partial = coverage ? str(coverage.partialLabel) : undefined;
   if (partial && ratio !== undefined && ratio < 1) lines.push('', `_${partial}._`);
 
+  // Eligibility 5.0.0: the letter follows the score, and where the evidence
+  // alone would not carry it the run's own sentence says what it is. Printed
+  // under the grade it qualifies, in the run's words.
+  const caution = evidenceCautionLine(score);
+  if (caution) lines.push('', `_${caution}_`);
+
   return lines;
+}
+
+/**
+ * The run's own caution beside an ISSUED grade (eligibility 5.0.0), or
+ * undefined. Where the evidence alone would not carry the letter the score
+ * gives, the scoring service records one sentence saying what the evidence is
+ * — "Capital growth is measured for Western Australia as a whole…" — and a
+ * surface that prints the grade prints it beside it. Never without a grade:
+ * a caution about a letter nobody prints qualifies nothing.
+ */
+export function evidenceCautionLine(score: unknown): string | undefined {
+  if (!isRecord(score) || !publishableGrade(score)) return undefined;
+  const caution = isRecord(score.evidenceCaution) ? str(score.evidenceCaution.statement) : undefined;
+  return caution?.trim() ? caution.trim() : undefined;
 }
 
 /**

@@ -989,7 +989,12 @@ export function composeScoreDimensionTable(rec: StrategyRecord): string | null {
     // graded it, so it follows the methodology too. Where the record does not
     // state one, the difference is reported and not explained away.
     steps.push(!a.capped
-      ? `**Grade issued: ${a.issuedGrade}**, which the composite and the evidence behind it both support.`
+      // Eligibility 5.0.0: the letter is the band of the composite, and where
+      // the evidence alone would not carry it the engine's caution says what
+      // the evidence is — stated here rather than deducted from the letter.
+      ? (a.caution
+        ? `**Grade issued: ${a.issuedGrade}**, the grade the composite gives. ${a.caution}`
+        : `**Grade issued: ${a.issuedGrade}**, which the composite and the evidence behind it both support.`)
       : a.methodology === 'unknown'
         ? `**Grade issued: ${a.issuedGrade}**, below the ${a.uncappedGrade} the composite alone gives. This `
           + 'record does not state which scoring methodology issued it, so the reason for the difference is not '
