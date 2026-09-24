@@ -210,6 +210,44 @@ postcode (`suburblessAnswerRefusal`). The suburb evidence is keyed on is decided
 never by any of these names. `geocodePlan.pure.ts` holds the decisions so
 they are tested without a network.
 
+**A suburb's centre is not the property, and the chain now says which it
+has.** Read §17 of the same doc and §15 of
+[`PLANNING_CONTROLS_IN_THE_REPORT.md`](./docs/reports/PLANNING_CONTROLS_IN_THE_REPORT.md)
+before touching `geocodeChainPolicy.pure.ts`, `photonGeocode.pure.ts`,
+`enrichmentPoint.pure.ts`, `enrichmentCoordinate` or the cache write in
+`geocoder.ts`.
+
+From 07:51 UTC on 24 Sep 2026 the public Nominatim answered 403 to the
+production egress. The chain fell to the ABS suburb centroid, and then:
+
+- it wrote that centroid into `geocode_cache` as the address's permanent answer;
+- the location service dropped the geocoder's `precision: 'locality'`;
+- `enrichmentCoordinate` stamped the point `address`.
+
+So Blacktown's report printed "R2 — Low Density Residential" for a
+fourteenth-floor apartment, and the centre's walk score and commute scored the
+grade.
+
+Four rules bite.
+
+- **An answer coarser than a street is never remembered while a street-level
+  provider could not be asked.** A remembered one is provisional: it is re-asked
+  after an hour.
+- **A refusal pauses its provider**, and its own words are logged — the day it
+  mattered, nobody could say why.
+- **The point's precision travels** on the acquisition stamp, and one reader
+  (`enrichmentPoint.pure.ts`) decides:
+  - `address` and `street` read planning (a street reading SAYS it is one — the
+    owner's decision);
+  - an area centre reads no planning, is not scored, and is disclosed where its
+    figures are used.
+- **Reuse asks what the point was.** An unrecorded point is re-acquired, and a
+  planning answer that records no point is asked again.
+
+Photon is the chain's second street-level provider, held to a stricter match
+than the address field's. Migration `20261220090000` lets the cache remember
+its answers.
+
 **The address a pin and a card are built from is COMPOSED, never inherited.**
 Read [`ADDRESS_COMPOSITION.md`](./docs/listings/ADDRESS_COMPOSITION.md) before
 touching `_shared/listingAddress.pure.ts`,

@@ -34,14 +34,21 @@
  * provider**: OpenStreetMap's usage policy requires it, it is what makes the
  * daily allowances hold, and a listing sweep re-asks the same addresses every
  * day. **The order is configuration and its default names no Google**:
- * `GEOCODER_PROVIDERS=nominatim,abs_locality` unless an operator adds
+ * `GEOCODER_PROVIDERS=nominatim,photon,abs_locality` unless an operator adds
  * `google` deliberately.
+ *
+ * Photon joined the default on 24 Sep 2026, the day the public Nominatim
+ * refused the production egress with HTTP 403 and every geocode fell to a
+ * suburb centroid: a chain whose only street-level provider is one operator
+ * is one refusal away from placing every property in the middle of its
+ * suburb. See `photonGeocode.pure.ts` for why its answers are held to a
+ * stricter match than the address field's suggestions.
  *
  * Pure: no Deno, no DOM, no network.
  */
 import { type AuState } from '../auLocality.pure.ts';
 
-export type GeocodeProvider = 'nominatim' | 'abs_locality' | 'google';
+export type GeocodeProvider = 'nominatim' | 'photon' | 'abs_locality' | 'google';
 
 /** How finely the provider placed the address. */
 export type GeocodePrecision = 'address' | 'street' | 'locality' | 'postcode';
@@ -89,9 +96,9 @@ export const PRECISION_TYPES: Record<GeocodePrecision, readonly string[]> = {
 };
 
 /** The default asks no Google. Adding it is an operator's explicit choice. */
-export const DEFAULT_PROVIDER_ORDER: readonly GeocodeProvider[] = ['nominatim', 'abs_locality'];
+export const DEFAULT_PROVIDER_ORDER: readonly GeocodeProvider[] = ['nominatim', 'photon', 'abs_locality'];
 
-const KNOWN_PROVIDERS: ReadonlySet<string> = new Set<GeocodeProvider>(['nominatim', 'abs_locality', 'google']);
+const KNOWN_PROVIDERS: ReadonlySet<string> = new Set<GeocodeProvider>(['nominatim', 'photon', 'abs_locality', 'google']);
 
 /**
  * `GEOCODER_PROVIDERS` → the order. Unknown names are dropped, duplicates
