@@ -1846,6 +1846,27 @@ rating you invented may not be drawn in ANY primitive**; `bars`, `heatmap` and
 `radar` are judged where the directive declares `max=100`, measured at 383 of
 611 with no legitimate counter-example in the 25 most frequent titles.
 
+**And then the contract stopped arriving.** Read *What a section is told* in
+[`INVESTMENT_STRUCTURE.md`](./docs/reports/INVESTMENT_STRUCTURE.md) before
+touching `_shared/compassSectionContract.ts`, `generateReportSection`'s system
+message, the pinned context's size or anything prepended to the base prompt.
+`generateReportSection` trims the base head-tail to what the pin and the
+instructions leave of 70 KB, and the pin grew to 33–46 KB, so on 24 Sep 2026
+**all 32 section calls logged `trimmed true`** and the head kept 8.5–11.6 KB of
+an 18.7 KB structure guide. The document's rules (15 KB in) and the last four
+sections' own instructions — the Risk Dashboard's register among them — never
+reached the model, nor did the method contract behind the guide: none of five
+Compass reports carried the declared register. Three rules. **A section's
+instructions and the document's rules travel in the SYSTEM message**, budgeted
+first and never trimmed, on the full and the compact prompt alike — not in the
+user message's pin, which is full (45.6 KB on a NSW run), where adding them
+would have pushed the final tail trim into the planning controls table. **The
+base carries an outline**, because other sections' purposes are not
+instructions for this call and they occupied the head the trim keeps. And
+**`trimmed true` is a finding, not a log line**: the evidence pack still loses
+two-thirds of itself on every call, and that is the next measured fix, not a
+settled one.
+
 ## The Compass has room for what it retrieves (v4.0)
 
 Zoning had **no section**. `Zoning` and `Planning` were sourceHeadings of the

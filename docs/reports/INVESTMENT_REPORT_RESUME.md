@@ -628,14 +628,31 @@ live today.
 
 * **The 316-token refund for 60 Lawley Street's finished run is not reversed.**
   It is a Mission Control ledger entry; nothing here touches billing records.
-* **`report-schema-validator` answers 401 to every generator call** — five of
-  five between 23 Sep 13:30 and 24 Sep 05:32, while every `curl` probe gets 200.
-  The generator invokes it through an ANON client and the validator requires a
-  user session, so schema validation has not run inside a generation for at
-  least that long; the generator logs it and carries on. Pre-existing,
-  unrelated to this failure, named rather than fixed here.
-* **Compass QA's `missing-protected-section compass.cover`** fires on every
-  Compass report (five of five in the same window): the cover left
-  `compassSections()` in 2026-09 and is drawn by the template, while the QA
-  list still requires it. A stale rule in a log-only verdict, named rather than
-  fixed here.
+
+Three things this section first named as not done were then fixed in the same
+change, each measured from the same logs:
+
+* **`report-schema-validator` is no longer called.** It answered 401 to every
+  generator call — five of five between 23 Sep 13:30 and 24 Sep 05:32 — because
+  the generator invoked it through an ANON client and it requires a user
+  session. Two more reasons, each sufficient: its answer sits under `data` while
+  the reader took `.issues` from the top level, so a 200 would still have
+  produced nothing; and its nine required sections are the legacy layout, none
+  of them a Compass section name. It had never contributed a flag to any report,
+  so removing the call changes no document. A Compass's structure is judged by
+  `runQAValidation`, against the registry it was generated from.
+* **Compass QA requires only the Protected sections the generator writes.**
+  `missing-protected-section compass.cover` fired on every Compass (five of
+  five): the cover is Protected and `includeInCompass: false`, drawn by the
+  template and never written. `REQUIRED_PROTECTED_SECTION_IDS` is derived from
+  `compassSections()`, never restated.
+* **QA no longer calls the price and the rent financial modelling.**
+  `/weekly rent/` and `/purchase price/` predated TIER_FRAMEWORK Decision E and
+  filed two `financial-exclusion` errors on 9 Hollow Street for stating facts
+  the tier keeps. Yield, LVR, the loan and the cash flow are still refused.
+
+And a fourth, found while fixing the missing risk register, which is larger than
+any of them: every Compass section's own instructions and the document's rules
+were cut from its prompt on every call. That is recorded in
+[`INVESTMENT_STRUCTURE.md`](./INVESTMENT_STRUCTURE.md) under *What a section is
+told*. 
