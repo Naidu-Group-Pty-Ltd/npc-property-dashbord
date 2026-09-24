@@ -147,10 +147,10 @@ describe('decideDecode', () => {
       [20000, 20000],
     ]) {
       const d = decideDecode(plan(w, h), allowance, allowance);
-      if (d.decode) {
-        expect(true).toBe(true);
-      } else {
+      if ('reason' in d) {
         expect(d.reason).not.toBe('deferred');
+      } else {
+        expect(d.decode).toBe(true);
       }
     }
   });
