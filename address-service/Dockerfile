@@ -44,6 +44,18 @@ RUN mkdir -p /srv/photon \
 # the image would carry the index twice, and Fly refuses an image past ~8 GB
 # uncompressed. Only the index and the directory entry change hands; the jar
 # stays root's, read-only, and is not copied.
+#
+# The dump also carries the LOCK FILES of the machine that built it —
+# `node.lock`, and a `write.lock` for the cluster state and for every shard —
+# and they are deleted here, in the layer that holds the index. Lucene takes a
+# lock by reading the file's creation time, opening it for writing, and
+# comparing the creation time again. Under Docker's overlay filesystem, opening
+# a file from an image layer for writing copies it into the container's layer
+# as a NEW file, so the second reading differs and OpenSearch refuses to start:
+# "Underlying file changed by an external force". The first real run died that
+# way seven seconds in, and a local overlay mount reproduces it exactly. A lock
+# file OpenSearch creates for itself is born in the container's layer and never
+# moves. A lock file holds no data: its presence means nothing to Lucene.
 RUN echo "photon index stamp: ${PHOTON_DB_STAMP}" \
  && curl -fsSL -o /tmp/db.tar.bz2.md5 "${PHOTON_DB_URL}.md5" \
  && curl -fsSL -o /tmp/db.tar.bz2 "${PHOTON_DB_URL}" \
@@ -51,6 +63,7 @@ RUN echo "photon index stamp: ${PHOTON_DB_STAMP}" \
  && lbzip2 -dc /tmp/db.tar.bz2 | tar -x --no-same-owner -C /srv/photon \
  && rm -f /tmp/db.tar.bz2 /tmp/db.tar.bz2.md5 \
  && test -d /srv/photon/photon_data \
+ && find /srv/photon/photon_data -name '*.lock' -type f -print -delete \
  && chown address:address /srv/photon \
  && chown -R address:address /srv/photon/photon_data \
  && du -sh /srv/photon/photon_data

@@ -207,7 +207,16 @@ and does all of the following inside the CI runner, before anything leaves it:
    Either past 7.5 GB fails the run, because Fly refuses an image past ~8 GB
    uncompressed. The Photon index is handed to the service's user in the layer
    that unpacks it: a `chown -R` in a later layer copies every file it touches,
-   and the image carried the index twice. The door checks
+   and the image carried the index twice. The same layer deletes the index's
+   **lock files**. The dump ships the `node.lock` and `write.lock` files of the
+   machine that built it. Lucene checks a lock file's creation time before and
+   after opening it for writing, and Docker's overlay filesystem copies a file
+   from an image layer into the container's layer when it is opened for
+   writing, as a new file with a new creation time. So OpenSearch refused to
+   start ("Underlying file changed by an external force") seven seconds in. A
+   local overlay mount reproduces it exactly, and the same index without its
+   locks answers in ten seconds. The health wait also stops the moment the
+   container exits, rather than waiting out its five minutes. The door checks
    (`address-service/prove-doors.sh`) cover:
    - health;
    - Photon through the token;
@@ -294,17 +303,33 @@ downloaded at ~22 MB/s in 79 s. Its 54 tables unpacked to 3,435,172,421 bytes
 in 13 s, and the join into DuckDB finished. The build then failed on memory in
 the step §3 records.
 
+**Measured by the second (24 Sep 2026, one postal area at a time).**
+
+| Reading | Value |
+|---|---|
+| Current addresses | 15,949,543 (17 with neither a number nor a lot) |
+| Rows chosen | 12,875,507: 11,042,485 sites and 1,833,022 units at a point of their own |
+| Rows served | 12,872,133. The other 3,374 are in Other Territories (Christmas Island, Cocos, Jervis Bay), which are read and counted but not served, because the chain has no state for them |
+| Postal areas | 2,652 files, 168 MB, plus 19,533 locality names |
+| Build time | 313 s in the runner, with no memory failure |
+| Geocoded at a surveyed point on the property (every type but the three below) | 12,532,735 of the 12,875,507 chosen rows (97.3%) |
+| Interpolated between known points on the street (`GG`) | 92,155 (0.7%). The chain counts these as address precision, because G-NAF places them at the address |
+| Street (`STL`) or locality (`LOC`) only | 241,945 (1.9%) and 8,672 (0.07%). The chain reports these as street and locality precision |
+| Self-check | 1,996 sampled asks in each form, 99.90% found at their own point, **none at the wrong place** |
+| Photon index | reached from the runner, 2.4 GB unpacked |
+| Image | 3.15 GB, as layers and as unpacked filesystem alike |
+
+The self-check's two misses are one address asked two ways each. Each has a
+lettered prefix on its number (`L1 Ikartuka Terrace`, `M508 Longs Hill Road`),
+which the matcher does not read as a street number. The run then failed on the
+index's lock files, as §5 records.
+
 **Still unverified:**
 
-- Whether the runners reach **download1.graphhopper.com**. The sandbox this
-  was written in is refused by policy.
-- The real register's **sample hit rate**. On a national-scale synthetic
-  register, 100% of 2,000 sampled asks in each form were found, with none at
-  the wrong place. The real run prints its own figure, and the build refuses
-  more than 2% not found.
-- The real **Photon index size**, and therefore whether 2 GB of memory holds
-  the page cache comfortably. The build log's `du -sh` decides whether it
-  should be 4 GB.
+- Photon's start and its first answers on the **real** index. The CI run after
+  the lock fix decides it.
+- Whether 2 GB of memory holds the page cache for a 2.4 GB index comfortably.
+  The first week of answer times decides whether it should be 4 GB.
 - Fly's **`syd` price** after 1 Oct 2026.
 - How many of the owner's addresses the register holds. The chain proof's
   table is the answer.

@@ -214,12 +214,20 @@ jobs:
           echo "::add-mask::$token"
           echo "token=$token" >> "$GITHUB_OUTPUT"
           docker run -d --name addr -p 8080:8080 -e "ADDRESS_SERVICE_TOKEN=$token" address-service:ci
+          # A service that has EXITED is not a slow one. The first real run
+          # died seven seconds in and this loop waited out its five minutes,
+          # so it stops the moment the container is gone and says which it was.
+          code=000
           for i in $(seq 1 60); do
             code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/healthz || echo 000)
             [ "$code" = "200" ] && { echo "healthy after $((i * 5))s"; break; }
+            if [ "$(docker inspect -f '{{.State.Running}}' addr 2>/dev/null)" != "true" ]; then
+              echo "::error::the service exited within ~$((i * 5))s (exit code $(docker inspect -f '{{.State.ExitCode}}' addr 2>/dev/null || echo unknown))"
+              break
+            fi
             sleep 5
           done
-          [ "$code" = "200" ] || { docker logs addr | tail -80; echo '::error::the service never became healthy'; exit 1; }
+          [ "$code" = "200" ] || { docker logs addr 2>&1 | tail -80; echo '::error::the service never became healthy'; exit 1; }
 
       - id: doors
         name: Prove the doors, in the runner

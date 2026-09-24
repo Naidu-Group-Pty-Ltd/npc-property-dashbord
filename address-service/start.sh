@@ -22,7 +22,12 @@ java ${JAVA_OPTS:-} -jar "${PHOTON_JAR:-/srv/photon/photon.jar}" serve \
   -listen-ip 127.0.0.1 -listen-port 2322 \
   -max-results 20 -query-timeout 5 -default-language en &
 
-caddy run --config "${CADDYFILE:-/etc/caddy/Caddyfile}" --adapter caddyfile &
+# Caddy keeps an instance id and its storage locks under the user's data
+# directory, and this user's home (/srv) is not writable. Without a writable
+# one, every start logs an ERROR that reads like the fault when somebody is
+# looking for the real one.
+XDG_DATA_HOME="${XDG_DATA_HOME:-/tmp/caddy-data}" \
+  caddy run --config "${CADDYFILE:-/etc/caddy/Caddyfile}" --adapter caddyfile &
 
 wait -n
 echo "a process stopped; exiting so the machine restarts" >&2
