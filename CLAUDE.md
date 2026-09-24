@@ -3375,6 +3375,46 @@ ledger is last-write-wins and a reused dependency still passes its own call
 site, which records a skip. And **reuse can never fail a report**: the read is
 wrapped and a failure just costs the calls again.
 
+**One generation, one evidence basis — and the location call gets the ceiling
+of what it is.** Read §8 of the same doc and §11 of
+[`INVESTMENT_REPORT_RESUME.md`](./docs/reports/INVESTMENT_REPORT_RESUME.md)
+before touching `_shared/reports/investment/evidenceBasis.pure.ts`,
+`_shared/reports/location/locationEnrichmentCall.pure.ts`,
+`_shared/transportStopRead.ts`, `storedRowDescribesPoint`, the early write's
+`investment_score` or `nextSectionIndex`. 60 Lawley Street (24 Sep 2026) was
+written from two bases: the location call was abandoned at the `vendor`
+class's 12 s — at +9.9 s of a 125 s run, three seconds before its answer
+arrived — so sections 1-9 had no coordinate, no geography, no demographics and
+a withheld grade, and sections 10-16 were written on B+ 89 after the next
+invocation's identical call took 6 s. Nothing compared the two, and the row kept
+`withheld` until the final write stamped the last invocation's grade, because
+early persistence wrote the score only when the row had none. Four rules bite.
+**The location call is `composite`** (30 s, still under the run clock), gets
+**one retry** for what a retry cures (timeout, reset, 5xx, the provider
+envelope — never a geocoder refusal, a no-match or a no-window), and its three
+readings (transport, amenities, commute) are taken **together**; the transport
+reading is no longer a 6.3 s-cold HTTP hop but the same two indexed reads
+`public-transport-service` makes, through one shared module. **A later
+invocation cannot lose what an earlier one placed**: a failed re-fetch keeps a
+stored partial enrichment, and the ABS resolution answers from the report's own
+row when it already places the same point (a later outage used to overwrite it
+with `unresolved`). **The sections on the row and the score on the row are one
+basis**: the first section-writing invocation records its score with a marker,
+a later one rewrites every section from the first only on STRICTLY more
+evidence, resetting the counter in the same update, and anything else — a lost
+reading, the same evidence at a different figure, a scoring call that failed —
+keeps the written score for the prompts and the record. An unmarked score is
+never kept, because it may be another generation's, and **a marker never
+outlives its document**: a stopped generation leaves one on the row, so a new
+document's first pass that cannot score CLEARS it (`clear_marker`) — the
+simulation that pins the rule found a stale grade held over a new document the
+moment the clear was removed. The early write also reads its own `{ error }`
+now: a refused write was taken as saved, so the first section's fallback that
+carries the basis never ran. And **the browser follows the row**: a restart
+writes section 1 when section 10 was asked for, which `sectionWasWritten` alone
+reads as no progress, so `useChunkedRegeneration` follows `nextSectionIndex`
+and bounds the whole run.
+
 Ten formats have been migrated onto it, and each carries its own contract:
 [`INVESTMENT.md`](./docs/reports/INVESTMENT.md),
 [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md),
