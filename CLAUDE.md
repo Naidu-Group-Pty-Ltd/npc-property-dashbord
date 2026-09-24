@@ -3435,6 +3435,33 @@ writes section 1 when section 10 was asked for, which `sectionWasWritten` alone
 reads as no progress, so `useChunkedRegeneration` follows `nextSectionIndex`
 and bounds the whole run.
 
+**And a read that failed is not a failed report.** Read §12 of
+[`INVESTMENT_REPORT_RESUME.md`](./docs/reports/INVESTMENT_REPORT_RESUME.md)
+before touching `_shared/reports/investment/failureStamp.pure.ts`,
+`src/lib/reports/runRowRead.pure.ts`, the final status check or the failure
+path in `useChunkedRegeneration`, or the `status: 'failed'` branch of
+`manage-investment-reports`. On 24 Sep 2026 60 Lawley Street finished — 16 of
+16 sections banked, the row written `completed` — and three seconds later the
+Supabase edge runtime answered 503 `SUPABASE_EDGE_RUNTIME_SERVICE_DEGRADED` in
+6 ms to the browser's final status read. The hook had dropped that read's
+`error` and compared `NaN >= 16`, threw "the record holds 0 of 16 sections",
+could not read the row in its catch either, and §9's own guarantee — *an
+unreadable row still records the failure* — stamped the finished document
+failed, which `manage-investment-reports` then refunded as a failed run (16
+jobs, 316 tokens). Three rules now. **The server decides from the row it can
+read**: a failure stamp over a finished document is refused (409
+`report_complete`, nothing written, nothing released), and one over a row it
+cannot read is not written either — the half that protects every browser
+build, and it ships with the edge deploy rather than a frontend publish. **A
+failed read is `unreadable`, never a row of zero**: `readRunRow` repeats a
+transient failure through the measured window before concluding anything, and
+`settleRunOutcome` lets the generator's own `isComplete` stand where the row
+cannot be read — while the row, whenever it CAN be read, still wins, because a
+second pump can rewind a counter the generator reported complete. And **a run
+that wrote nothing stamps nothing**. A report stamped before this recovers by
+**Regenerate**: with every section banked the hook calls no generator and only
+re-runs the finishing step, pinned on the hook both before and after.
+
 Ten formats have been migrated onto it, and each carries its own contract:
 [`INVESTMENT.md`](./docs/reports/INVESTMENT.md),
 [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md),
