@@ -63,6 +63,7 @@
  */
 
 import { auDate } from './auDate.pure.ts';
+import { GNAF_ATTRIBUTION } from '../geocode/gnafShard.pure.ts';
 
 import {
   VERIFICATION_INSTRUMENT,
@@ -220,6 +221,13 @@ export interface PlanningFacts {
    * boundary along the street can put the lot on the other side of it.
    */
   pointPrecision: 'address' | 'street' | null;
+  /**
+   * Who placed that point (`gnaf`, `nominatim`, `photon`, …), off the same
+   * `pointBasis`. G-NAF's licence asks for its attribution wherever material
+   * developed from it is shared, and the page that says where the registers
+   * were asked is where that point is described.
+   */
+  pointProvider: string | null;
   /**
    * True where the registers were NOT asked because the address could be
    * placed only at the centre of its suburb or postal area — a zone read
@@ -697,6 +705,7 @@ export function buildPlanningFacts(input: PlanningFactsInput): PlanningFacts {
         : 'A spatial layer is indicative; verify with the relevant council or planning authority.'),
     retrievedAt,
     pointPrecision: pointPrecisionOf(data),
+    pointProvider: pointProviderOf(data),
     pointNotPlaced: !data && input.pointNotPlaced === true,
     anyStated: cells.some((c) => c.status === 'stated' || c.status === 'operator_stated'),
     enrichmentMissing: !data,
@@ -708,6 +717,12 @@ function pointPrecisionOf(data: Record<string, unknown> | null): 'address' | 'st
   const basis = isRecord(data?.pointBasis) ? data!.pointBasis as Record<string, unknown> : null;
   const p = str(basis?.precision);
   return p === 'address' || p === 'street' ? p : null;
+}
+
+/** Who placed the point the registers were asked at, off the answer's own `pointBasis`. */
+function pointProviderOf(data: Record<string, unknown> | null): string | null {
+  const basis = isRecord(data?.pointBasis) ? data!.pointBasis as Record<string, unknown> : null;
+  return str(basis?.provider);
 }
 
 /** The sentence under the table that says where the readings were taken. */
@@ -1167,6 +1182,10 @@ export function renderPlanningControls(facts: PlanningFacts): string {
     + `${pointBasisSentence(facts)}. They are not a planning certificate and do not `
     + `substitute for one. ${facts.verification}`,
   );
+  if (facts.pointProvider === 'gnaf') {
+    lines.push('');
+    lines.push(`**Where the address point comes from.** The national address register, G-NAF. ${GNAF_ATTRIBUTION}`);
+  }
   lines.push('');
   lines.push(
     '**What a zone is not.** A zone that admits a use is not consent for it. Any development potential described here '

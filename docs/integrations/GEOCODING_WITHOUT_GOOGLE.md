@@ -230,7 +230,8 @@ geocodes correctly.
 
 | Name | Default | Meaning |
 |---|---|---|
-| `GEOCODER_PROVIDERS` | `nominatim,photon,abs_locality` | The order. Add `google` to make Google a last resort. A misspelt value falls back to the default, never to "no providers". Photon joined the default on 24 Sep 2026 (§17). |
+| `GEOCODER_PROVIDERS` | `gnaf,nominatim,photon,abs_locality` | The order. Add `google` to make Google a last resort. A misspelt value falls back to the default, never to "no providers". Photon joined the default on 24 Sep 2026 (§17), and G-NAF leads it wherever a register is configured (§18). |
+| `GEOCODER_GNAF_URL` | unset | The G-NAF register the product's own address service serves (§18) — `https://<app>.fly.dev/<token>/gnaf`, written by the deploy workflow once the service has proved itself. Unset, the `gnaf` provider is skipped without a request. |
 | `GEOCODER_OSM_URL` | `https://nominatim.openstreetmap.org` | A self-hosted Nominatim (§10). |
 | `GEOCODER_PHOTON_URL` | `https://photon.komoot.io` | The Photon the chain asks for a street address (§17). Falls back to `AUTOCOMPLETE_PHOTON_URL`, then the public instance — so pointing the address field at a self-hosted copy points the chain at it too. |
 | `OSM_GEOCODING_DAILY_LIMIT` | `2000` | The day's geocoding allowance across the deployment, shared by Nominatim and Photon. |
@@ -807,3 +808,27 @@ The durable answer to "a public service can refuse us at any time" is the one
 §10 already names: our own copy of the lookup service, and G-NAF as the
 provider that places every real address on its own block. The owner approved
 both on 24 Sep 2026.
+
+## 18. Our own address service (G-NAF + Photon)
+
+Both durable answers §17 names are built, as one service:
+[`ADDRESS_SERVICE.md`](./ADDRESS_SERVICE.md).
+
+- **G-NAF** is the national address register: 15.9M addresses, 98% of them
+  geocoded at the address itself. It is served as static files, one per postal
+  area, and read by the `gnaf` provider (`gnafShard.pure.ts`), which leads the
+  default order and is skipped without a request where `GEOCODER_GNAF_URL` is
+  unset.
+- **Photon** runs on the same machine over the Australia–Oceania index, behind
+  `GEOCODER_PHOTON_URL` and, where it is unset or already ours,
+  `AUTOCOMPLETE_PHOTON_URL`.
+- **A copy this product runs is never held to the public allowance or the
+  one-a-second turn** (`isPublicPhotonBase`, one rule for the address field
+  and the chain).
+
+The register is **not** in the database, because it would add sixty per cent
+to it, needs a credential the repository does not hold, and would never reach
+a clone. Every build is proved in CI before anything serves it: the register
+checked against itself, the image run in the runner, the real chain asked for
+the owner's addresses. A deploy is a person's dispatch, at ≈ A$19–24 a month
+for one always-on machine.

@@ -248,6 +248,33 @@ Photon is the chain's second street-level provider, held to a stricter match
 than the address field's. Migration `20261220090000` lets the cache remember
 its answers.
 
+**The address register is a service, not a table.** Read
+[`ADDRESS_SERVICE.md`](./docs/integrations/ADDRESS_SERVICE.md) before touching
+`gnafShard.pure.ts`, `askGnaf`, `scripts/gnaf/`, `address-service/` or its
+workflow.
+
+G-NAF (15.9M addresses, 98% geocoded at the address itself) and our own Photon
+run on one Fly machine. The register is static files, one per postal area. It
+is **not** in the database: that would add sixty per cent to it, needs a
+credential the repository does not hold, and would never reach a clone.
+
+Three rules bite.
+
+- **A 404 is the only answer about an address.** A postal area with no
+  addresses has no file. A missing manifest is an outage, and the provider
+  rests; it never reads as "no such address".
+- **The match is shown, never scored.** Number and street must agree through
+  one normalisation, a lot is never a street number, and the answer must stand
+  in the suburb asked, or in one locality where none was asked: a postal area
+  covers several towns.
+- **Nothing serves unproved.** CI builds the register from the catalogue's
+  current release and refuses a partial one. It asks the chain's own matcher
+  for a sample of the register's own addresses, runs the image in the runner,
+  and pushes that same image, never a rebuild.
+
+A deploy is a person's dispatch, at ≈ A$19–24 a month. The planning page
+prints G-NAF's attribution wherever its point came from the register.
+
 **The address a pin and a card are built from is COMPOSED, never inherited.**
 Read [`ADDRESS_COMPOSITION.md`](./docs/listings/ADDRESS_COMPOSITION.md) before
 touching `_shared/listingAddress.pure.ts`,

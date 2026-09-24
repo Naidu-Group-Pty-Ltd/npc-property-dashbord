@@ -53,7 +53,7 @@ export const FLOOR_PRECISIONS: ReadonlySet<GeocodePrecision> = new Set<GeocodePr
  * Providers that can place an address on its street or at its door. The ABS
  * locality provider is the floor and cannot.
  */
-export const STREET_LEVEL_PROVIDERS: ReadonlySet<GeocodeProvider> = new Set<GeocodeProvider>(['nominatim', 'photon', 'google']);
+export const STREET_LEVEL_PROVIDERS: ReadonlySet<GeocodeProvider> = new Set<GeocodeProvider>(['gnaf', 'nominatim', 'photon', 'google']);
 
 /**
  * How long a remembered floor answer stands before the street-level providers

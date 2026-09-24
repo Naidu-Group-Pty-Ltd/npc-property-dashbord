@@ -8,7 +8,9 @@
  * the real `geocodeAddress` — providers, cache policy, pause and all — against
  * a stubbed network and an in-memory cache, and pin what it does now.
  */
+import { gzipSync } from 'node:zlib';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { GNAF_SHARD_COLUMNS } from '../../../../supabase/functions/_shared/geocode/gnafShard.pure.ts';
 
 type Chain = typeof import('../../../../supabase/functions/_shared/geocode/geocoder.ts');
 
@@ -38,21 +40,29 @@ const NOMINATIM_STREET = [{
 }];
 
 interface Route { status: number; body: unknown; headers?: Record<string, string> }
-type Routes = { nominatim?: Route; photon?: Route; abs?: Route };
+type Routes = { nominatim?: Route; photon?: Route; abs?: Route; gnaf?: (path: string) => Route | undefined };
 
 let calls: string[] = [];
+let gnafPaths: string[] = [];
 
 function stubNetwork(routes: Routes) {
   calls = [];
+  gnafPaths = [];
   vi.stubGlobal('fetch', async (input: string | URL) => {
     const url = String(input);
-    const host = new URL(url).host;
-    const which = host.includes('nominatim') ? 'nominatim' : host.includes('photon') ? 'photon' : host.includes('abs.gov.au') ? 'abs' : 'other';
+    const { host, pathname } = new URL(url);
+    const which = host.includes('gnaf') ? 'gnaf' : host.includes('nominatim') ? 'nominatim' : host.includes('photon') ? 'photon' : host.includes('abs.gov.au') ? 'abs' : 'other';
     calls.push(which);
-    const route = (routes as Record<string, Route | undefined>)[which];
+    let route: Route | undefined;
+    if (which === 'gnaf') {
+      gnafPaths.push(pathname);
+      route = routes.gnaf?.(pathname);
+    } else {
+      route = (routes as Record<string, Route | undefined>)[which];
+    }
     if (!route) return new Response('not stubbed', { status: 599 });
-    const body = typeof route.body === 'string' ? route.body : JSON.stringify(route.body);
-    return new Response(body, { status: route.status, headers: route.headers });
+    const body = typeof route.body === 'string' || route.body instanceof Uint8Array ? route.body : JSON.stringify(route.body);
+    return new Response(body as BodyInit, { status: route.status, headers: route.headers });
   });
 }
 
@@ -240,5 +250,90 @@ describe('a remembered street or address is the answer', () => {
     expect(out.ok && out.fromCache).toBe(true);
     expect(out.ok && out.result.precision).toBe('street');
     expect(calls).toEqual([]);
+  });
+});
+
+describe('G-NAF leads the chain where a register is configured', () => {
+  const GNAF_BASE = 'https://gnaf.test/tok/gnaf';
+  const GNAF_ENV = (k: string) => (k === 'GEOCODER_GNAF_URL' ? GNAF_BASE : undefined);
+  const line = (o: Record<string, string>) => GNAF_SHARD_COLUMNS.map((c) => o[c] ?? '').join('|');
+  const SHARD_2148 = gzipSync(Buffer.from([
+    GNAF_SHARD_COLUMNS.join('|'),
+    line({ n1: '5', street: 'SECOND', type: 'AVENUE', locality: 'BLACKTOWN', lat: '-33.768512', lng: '150.907511', gt: 'BC', pid: 'GANSW0001' }),
+  ].join('\n')));
+  const MANIFEST = { format: 1, release: { label: 'AUG 2026' } };
+  const INDEX = gzipSync(Buffer.from(JSON.stringify({ format: 1, states: { NSW: { BLACKTOWN: ['2148'] } } })));
+
+  const register = (over: Record<string, Route> = {}) => (path: string): Route | undefined => {
+    const tail = path.replace('/tok/gnaf/', '');
+    if (over[tail]) return over[tail];
+    if (tail === 'v1/manifest.json') return { status: 200, body: MANIFEST };
+    if (tail === 'v1/localities.json.gz') return { status: 200, body: new Uint8Array(INDEX) };
+    if (tail === 'v1/NSW/2148.psv.gz') return { status: 200, body: new Uint8Array(SHARD_2148) };
+    return { status: 404, body: 'Not Found' };
+  };
+
+  it('places the unit\'s building from the register, asks nothing else, and remembers it', async () => {
+    stubNetwork({ gnaf: register(), nominatim: { status: 403, body: NOMINATIM_403 } });
+    const db = fakeDb();
+    const out = await chain.geocodeAddress(db, ASK, { env: GNAF_ENV, feature: 'spec' });
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.result).toMatchObject({ provider: 'gnaf', precision: 'address', postcode: '2148', providerPrecision: 'G-NAF AUG 2026 BC' });
+    expect(out.tried).toEqual(['gnaf']);
+    expect(calls.every((c) => c === 'gnaf')).toBe(true);
+    expect(gnafPaths).toEqual(['/tok/gnaf/v1/manifest.json', '/tok/gnaf/v1/NSW/2148.psv.gz']);
+    expect(db.writes[0]).toMatchObject({ provider: 'gnaf', precision: 'address' });
+  });
+
+  it('is skipped without a request where no register is configured — and is not counted as tried', async () => {
+    stubNetwork({ gnaf: register(), nominatim: { status: 200, body: NOMINATIM_STREET } });
+    const out = await chain.geocodeAddress(fakeDb(), ASK, { env: ENV, feature: 'spec' });
+    expect(out.ok && out.result.provider).toBe('nominatim');
+    expect(calls).not.toContain('gnaf');
+    expect(out.tried).not.toContain('gnaf');
+  });
+
+  it('treats a missing manifest as an outage — never as "no such address" — and rests the register', async () => {
+    stubNetwork({
+      gnaf: register({ 'v1/manifest.json': { status: 404, body: 'Not Found' } }),
+      nominatim: { status: 200, body: NOMINATIM_STREET },
+    });
+    const warn = vi.spyOn(console, 'warn');
+    const first = await chain.geocodeAddress(fakeDb(), ASK, { env: GNAF_ENV, feature: 'spec' });
+    expect(first.ok && first.result.provider).toBe('nominatim');
+    expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toContain('no manifest at GEOCODER_GNAF_URL');
+    const before = calls.filter((c) => c === 'gnaf').length;
+    await chain.geocodeAddress(fakeDb(), { address: '12 Other Street, Blacktown NSW 2148' }, { env: GNAF_ENV, feature: 'spec' });
+    expect(calls.filter((c) => c === 'gnaf').length).toBe(before);
+  });
+
+  it('keeps a floor answer out of the cache when the register could not be read', async () => {
+    stubNetwork({
+      gnaf: register({ 'v1/manifest.json': { status: 503, body: 'down' } }),
+      nominatim: { status: 200, body: [] },
+      photon: { status: 200, body: PHOTON_NOTHING },
+      abs: { status: 200, body: ABS_BLACKTOWN },
+    });
+    const db = fakeDb();
+    const out = await chain.geocodeAddress(db, ASK, { env: GNAF_ENV, feature: 'spec' });
+    expect(out.ok && out.result.precision).toBe('locality');
+    expect(db.writes).toHaveLength(0);
+  });
+
+  it('reads a postal area the register holds nothing in as no such address, and asks the next provider', async () => {
+    const photonIn2149 = { ...PHOTON_HOUSE, features: [{ ...PHOTON_HOUSE.features[0], properties: { ...PHOTON_HOUSE.features[0].properties, postcode: '2149' } }] };
+    stubNetwork({ gnaf: register(), photon: { status: 200, body: photonIn2149 }, nominatim: { status: 200, body: [] } });
+    const out = await chain.geocodeAddress(fakeDb(), { address: '5 Second Avenue, Blacktown NSW 2149' }, { env: GNAF_ENV, feature: 'spec' });
+    expect(gnafPaths).toContain('/tok/gnaf/v1/NSW/2149.psv.gz');
+    expect(out.ok && out.result.provider).toBe('photon');
+    expect(out.ok && out.tried).toEqual(['gnaf', 'nominatim', 'photon']);
+  });
+
+  it('finds the suburb\'s postal area in the index when the ask names no postcode', async () => {
+    stubNetwork({ gnaf: register() });
+    const out = await chain.geocodeAddress(fakeDb(), { address: '5 Second Avenue, Blacktown NSW' }, { env: GNAF_ENV, feature: 'spec' });
+    expect(out.ok && out.result.provider).toBe('gnaf');
+    expect(gnafPaths).toEqual(['/tok/gnaf/v1/manifest.json', '/tok/gnaf/v1/localities.json.gz', '/tok/gnaf/v1/NSW/2148.psv.gz']);
   });
 });

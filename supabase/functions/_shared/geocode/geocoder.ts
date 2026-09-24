@@ -15,7 +15,11 @@
  *      providers once it is an hour old (`geocodeChainPolicy.pure.ts`), and
  *      it stands only if they cannot do better.
  *   2. Each provider in `GEOCODER_PROVIDERS` (default
- *      `nominatim,photon,abs_locality`):
+ *      `gnaf,nominatim,photon,abs_locality`):
+ *        gnaf          — the national address register, read one postal area
+ *                        at a time from the product's own address service
+ *                        (`GEOCODER_GNAF_URL`); skipped without a request
+ *                        where none is configured (`gnafShard.pure.ts`).
  *        nominatim     — OpenStreetMap, street or house precision when OSM
  *                        has the street; one request a second across every
  *                        isolate, a daily allowance, an identifying
@@ -48,8 +52,8 @@
  *      one thing this cache must never remember.
  *
  * WHAT IT NEVER DOES
- *   - Bill a tenant: Nominatim, Photon and the ABS spend no credential, so
- *     they are fetched plainly rather than through `meteredFetch`, which
+ *   - Bill a tenant: G-NAF, Nominatim, Photon and the ABS spend no
+ *     credential, so they are fetched plainly rather than through `meteredFetch`, which
  *     exists to attach a bill to a key. The Google provider still meters.
  *   - Invent a coordinate: a failure is a failure with a reason, and the
  *     reason distinguishes "the address matches nothing" from "the provider
@@ -62,9 +66,10 @@ import { ADDRESS_IS_THE_ANSWER, judgeGoogleMapsBody } from '../googleMapsBody.pu
 import { meteredFetch } from '../meteredFetch.ts';
 import { fetchWithTimeout } from '../publicAbuseControls.ts';
 import { normaliseAuState, normalisePostcode, type AuState } from '../auLocality.pure.ts';
-import { planGeocode, suburblessAnswerRefusal } from './geocodePlan.pure.ts';
+import { type GeocodePlan, planGeocode, suburblessAnswerRefusal } from './geocodePlan.pure.ts';
 import {
   type ChainFailure,
+  PAUSE_AFTER_STATUS_MS,
   STREET_LEVEL_PROVIDERS,
   cacheVerdict,
   cachedAnswerIsProvisional,
@@ -72,7 +77,25 @@ import {
   pauseAfterRefusal,
   refusalExcerpt,
 } from './geocodeChainPolicy.pure.ts';
+import {
+  GNAF_LOCALITY_INDEX_PATH,
+  GNAF_MANIFEST_PATH,
+  GNAF_SHARD_FORMAT,
+  type GnafLocalityIndex,
+  type GnafLocalityLookup,
+  type GnafRow,
+  askedAddressOf,
+  chooseGnafRow,
+  fromGnaf,
+  gnafShardPath,
+  gnafTargetOf,
+  gnafUrl,
+  localityLookupOf,
+  parseGnafShard,
+  postcodesForLocalities,
+} from './gnafShard.pure.ts';
 import { PHOTON_PUBLIC_BASE, choosePhotonFeature, fromPhoton, photonGeocodeUrl } from './photonGeocode.pure.ts';
+import { isPublicPhotonBase } from './osmAutocomplete.pure.ts';
 import { stripLocalityQualifier } from '../geography/asgsGeography.pure.ts';
 import {
   ABS_ATTRIBUTION,
@@ -96,6 +119,7 @@ import {
   chooseNominatimPlace,
   fromNominatim,
   nominatimSearchUrl,
+  streetLineOf,
   type NominatimPlace,
 } from './osmGeocode.pure.ts';
 import { awaitOsmTurn, consumeOsmDailyAllowance } from './osmAllowance.ts';
@@ -337,15 +361,6 @@ async function askNominatim(
   return gated(mapped);
 }
 
-/** Is this the public komoot instance, rather than a copy this product runs? */
-function isPublicPhoton(base: string): boolean {
-  try {
-    return new URL(base).host === new URL(PHOTON_PUBLIC_BASE).host;
-  } catch {
-    return true;
-  }
-}
-
 /**
  * Photon — the same OpenStreetMap data behind a second operator, asked the
  * forward question. Held to the stricter match in `photonGeocode.pure.ts`:
@@ -361,11 +376,9 @@ async function askPhoton(
   const paused = pausedAttempt('photon');
   if (paused) return paused;
   const base = (opts.env('GEOCODER_PHOTON_URL') || opts.env('AUTOCOMPLETE_PHOTON_URL') || PHOTON_PUBLIC_BASE).trim();
-  // The allowance and the one-a-second turn are the goodwill a PUBLIC service
-  // is owed. A copy this product runs itself owes none, and holding it to the
-  // public ceiling would put our own server back behind the limit it exists
-  // to escape.
-  if (isPublicPhoton(base)) {
+  // The allowance and the one-a-second turn are owed to the PUBLIC service
+  // only (`isPublicPhotonBase`).
+  if (isPublicPhotonBase(base)) {
     const allowance = await consumeOsmDailyAllowance(supabase, 'geocoding', opts.env);
     if (!allowance.ok) {
       return { ok: false, reason: 'budget', providerRefused: true, capReason: allowance.reason, detail: `photon: ${allowance.reason}` };
@@ -390,6 +403,187 @@ async function askPhoton(
     return { ok: false, reason: 'no_match', providerRefused: false, detail: `photon: ${count} candidate(s), none shown to be this address` };
   }
   return gated(mapped);
+}
+
+/** Our own copy of the G-NAF register (`address-service/`), or null where none is configured. */
+function gnafBaseOf(env: (k: string) => string | undefined): string | null {
+  const value = (env('GEOCODER_GNAF_URL') ?? '').trim();
+  return value || null;
+}
+
+/**
+ * What one isolate remembers of the register: which release it is (read from
+ * its manifest, which is also the proof the configured URL IS the register),
+ * its locality index, and the last few postal areas read. The register
+ * changes once a quarter, and a report's continuations ask the same address
+ * every thirty seconds for a few minutes; an hour's memory costs a few
+ * megabytes at most and saves those requests.
+ */
+const GNAF_MEMORY_MS = 60 * 60 * 1000;
+const GNAF_SHARDS_KEPT = 16;
+let gnafManifestMemo: { base: string; release: string | null; at: number } | null = null;
+let gnafLocalityMemo: { base: string; lookup: GnafLocalityLookup; at: number } | null = null;
+const gnafShardMemo = new Map<string, { rows: GnafRow[]; at: number }>();
+
+type GnafRead<T> = { ok: true; value: T } | { ok: false; attempt: Extract<Attempt, { ok: false }> };
+
+const gnafUnavailable = (detail: string): Extract<Attempt, { ok: false }> =>
+  ({ ok: false, reason: 'unavailable', providerRefused: true, detail: `gnaf: ${detail}` });
+
+/**
+ * One file from the register. A 404 is the one answer about the ADDRESS — a
+ * postal area the register holds no address in has no file — and every other
+ * refusal is about us, and pauses the provider like any other.
+ */
+async function gnafFetch(url: string, timeoutMs: number): Promise<GnafRead<ArrayBuffer | null>> {
+  let res: Response;
+  try {
+    res = await fetchWithTimeout(url, { headers: { 'User-Agent': GEOCODER_USER_AGENT } }, timeoutMs);
+  } catch (error) {
+    return { ok: false, attempt: gnafUnavailable(error instanceof Error ? error.message : String(error)) };
+  }
+  if (res.status === 404) {
+    await res.body?.cancel().catch(() => {});
+    return { ok: true, value: null };
+  }
+  if (!res.ok) {
+    const refused = await refusedAttempt('gnaf', res);
+    return { ok: false, attempt: refused as Extract<Attempt, { ok: false }> };
+  }
+  return { ok: true, value: await res.arrayBuffer() };
+}
+
+/** The service sends each file as stored; read the gzip magic rather than trust a header a proxy may rewrite. */
+async function gnafText(buffer: ArrayBuffer): Promise<string> {
+  const bytes = new Uint8Array(buffer);
+  if (bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
+    const body = new Response(buffer).body;
+    if (!body) return '';
+    return await new Response(body.pipeThrough(new DecompressionStream('gzip'))).text();
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+function gnafJson(text: string): Record<string, unknown> | null {
+  try {
+    const value = JSON.parse(text);
+    return value && typeof value === 'object' ? value as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The release this register is, or the reason the configured URL is not a
+ * register at all. Configuration is not reachability: a base URL whose
+ * manifest is missing would answer 404 for every postal area, and every one
+ * of those would read as "no such address" — a statement about our
+ * configuration dressed as a statement about the property. So a missing or
+ * foreign manifest is an outage, and the provider rests for five minutes.
+ */
+async function gnafManifest(base: string, timeoutMs: number): Promise<GnafRead<string | null>> {
+  if (gnafManifestMemo && gnafManifestMemo.base === base && Date.now() - gnafManifestMemo.at < GNAF_MEMORY_MS) {
+    return { ok: true, value: gnafManifestMemo.release };
+  }
+  const read = await gnafFetch(gnafUrl(base, GNAF_MANIFEST_PATH), timeoutMs);
+  if (!read.ok) return read;
+  const manifest = read.value ? gnafJson(await gnafText(read.value)) : null;
+  if (!manifest || manifest.format !== GNAF_SHARD_FORMAT) {
+    providerPausedUntil.set('gnaf', Date.now() + PAUSE_AFTER_STATUS_MS.tooMany);
+    return {
+      ok: false,
+      attempt: gnafUnavailable(read.value
+        ? `the manifest at GEOCODER_GNAF_URL is not shard format ${GNAF_SHARD_FORMAT}`
+        : 'no manifest at GEOCODER_GNAF_URL — the register is not there'),
+    };
+  }
+  const releaseInfo = (manifest.release ?? {}) as { label?: unknown };
+  const release = typeof releaseInfo.label === 'string' && releaseInfo.label.trim() ? releaseInfo.label.trim() : null;
+  gnafManifestMemo = { base, release, at: Date.now() };
+  return { ok: true, value: release };
+}
+
+async function gnafLocalities(base: string, timeoutMs: number): Promise<GnafRead<GnafLocalityLookup>> {
+  if (gnafLocalityMemo && gnafLocalityMemo.base === base && Date.now() - gnafLocalityMemo.at < GNAF_MEMORY_MS) {
+    return { ok: true, value: gnafLocalityMemo.lookup };
+  }
+  const read = await gnafFetch(gnafUrl(base, GNAF_LOCALITY_INDEX_PATH), timeoutMs);
+  if (!read.ok) return read;
+  const index = read.value ? gnafJson(await gnafText(read.value)) : null;
+  if (!index || index.format !== GNAF_SHARD_FORMAT) return { ok: false, attempt: gnafUnavailable('the locality index is missing or unreadable') };
+  const lookup = localityLookupOf(index as unknown as GnafLocalityIndex);
+  gnafLocalityMemo = { base, lookup, at: Date.now() };
+  return { ok: true, value: lookup };
+}
+
+async function gnafShardRows(base: string, state: AuState, postcode: string, timeoutMs: number): Promise<GnafRead<GnafRow[]>> {
+  const key = `${base}|${state}|${postcode}`;
+  const memo = gnafShardMemo.get(key);
+  if (memo && Date.now() - memo.at < GNAF_MEMORY_MS) {
+    gnafShardMemo.delete(key);
+    gnafShardMemo.set(key, memo);
+    return { ok: true, value: memo.rows };
+  }
+  const read = await gnafFetch(gnafUrl(base, gnafShardPath(state, postcode)), timeoutMs);
+  if (!read.ok) return read;
+  let rows: GnafRow[] = [];
+  if (read.value) {
+    const parsed = parseGnafShard(await gnafText(read.value), state, postcode);
+    if (!parsed) return { ok: false, attempt: gnafUnavailable(`${state}/${postcode} is not shard format ${GNAF_SHARD_FORMAT}`) };
+    rows = parsed.rows;
+  }
+  gnafShardMemo.set(key, { rows, at: Date.now() });
+  while (gnafShardMemo.size > GNAF_SHARDS_KEPT) {
+    const oldest = gnafShardMemo.keys().next().value;
+    if (oldest === undefined) break;
+    gnafShardMemo.delete(oldest);
+  }
+  return { ok: true, value: rows };
+}
+
+/**
+ * G-NAF — the national address register, read one postal area at a time from
+ * the product's own address service. See `gnafShard.pure.ts` for what counts
+ * as a match; this function does the reading.
+ */
+async function askGnaf(plan: GeocodePlan, base: string, timeoutMs: number): Promise<Attempt> {
+  const paused = pausedAttempt('gnaf');
+  if (paused) return paused;
+  const manifest = await gnafManifest(base, timeoutMs);
+  if (!manifest.ok) return manifest.attempt;
+
+  const target = gnafTargetOf(plan.ask);
+  if (!target.ok) return { ok: false, reason: 'no_match', providerRefused: false, detail: `gnaf: ${target.reason}` };
+  const asked = askedAddressOf(plan.ask.street ?? streetLineOf(plan.ask));
+  if (!asked.street || (!asked.number && !asked.lot)) {
+    return { ok: false, reason: 'no_match', providerRefused: false, detail: 'gnaf: the ask names no street number or lot — a street alone is not a register question' };
+  }
+
+  let postcodes: string[];
+  if (target.postcode) {
+    postcodes = [target.postcode];
+  } else {
+    const lookup = await gnafLocalities(base, timeoutMs);
+    if (!lookup.ok) return lookup.attempt;
+    postcodes = postcodesForLocalities(lookup.value, target.state, plan.localityCandidates);
+    if (postcodes.length === 0) {
+      return { ok: false, reason: 'no_match', providerRefused: false, detail: `gnaf: no postal area in ${target.state} holds ${plan.localityCandidates.join(' / ') || 'an unnamed suburb'}` };
+    }
+  }
+
+  const rows: GnafRow[] = [];
+  for (const postcode of postcodes) {
+    const shard = await gnafShardRows(base, target.state, postcode, timeoutMs);
+    if (!shard.ok) return shard.attempt;
+    rows.push(...shard.value);
+  }
+  const choice = chooseGnafRow(rows, asked, plan.localityCandidates);
+  if (!choice.ok) return { ok: false, reason: 'no_match', providerRefused: false, detail: `gnaf: ${choice.reason}` };
+  const result = fromGnaf(choice.match, manifest.value);
+  if (result.precision === 'locality') {
+    return { ok: false, reason: 'no_match', providerRefused: false, detail: 'gnaf: the register places this address only at its locality — the ABS is the authority on where a suburb is' };
+  }
+  return gated(result);
 }
 
 async function askAbsLocality(ask: GeocodeAsk, suburb: string | null, state: AuState | null, postcode: string | null, timeoutMs: number): Promise<Attempt> {
@@ -531,7 +725,10 @@ export async function geocodeAddress(supabase: any, ask: GeocodeAsk, options: Ge
   // is old enough the street-level providers are asked again
   // (`cachedAnswerIsProvisional`). A caller that refuses a suburb-level
   // answer is never handed one from the cache either.
-  const streetLevelConfigured = providers.some((p) => STREET_LEVEL_PROVIDERS.has(p));
+  // G-NAF counts only where a register is configured: a provider that is
+  // skipped without a request cannot vouch for a street it never looked at.
+  const gnafBase = gnafBaseOf(env);
+  const streetLevelConfigured = providers.some((p) => STREET_LEVEL_PROVIDERS.has(p) && (p !== 'gnaf' || gnafBase !== null));
   let provisional: GeocodeResult | null = null;
   if (hit) {
     const floor = isFloorPrecision(hit.result.precision);
@@ -554,7 +751,13 @@ export async function geocodeAddress(supabase: any, ask: GeocodeAsk, options: Ge
   let worst: Extract<GeocodeOutcome, { ok: false }> | null = null;
   for (const provider of providers) {
     let attempt: Attempt;
-    if (provider === 'nominatim') {
+    if (provider === 'gnaf') {
+      // Not configured is not a failure: nothing was asked, so nothing is
+      // recorded — neither in `tried` nor in what the cache policy reads.
+      if (!gnafBase) continue;
+      tried.push(provider);
+      attempt = await askGnaf(plan, gnafBase, timeoutMs);
+    } else if (provider === 'nominatim') {
       tried.push(provider);
       attempt = await askNominatim(supabase, fullAsk, { timeoutMs, env });
       // A suburb OpenStreetMap files differently (a development split runs

@@ -224,7 +224,7 @@ describe('the configuration is declared where an operator looks', () => {
 
   it('documents every name the chain reads, with its default', () => {
     for (const [name, fallback] of [
-      ['GEOCODER_PROVIDERS', 'nominatim,photon,abs_locality'],
+      ['GEOCODER_PROVIDERS', 'gnaf,nominatim,photon,abs_locality'],
       ['GEOCODER_OSM_URL', 'https://nominatim.openstreetmap.org'],
       ['GEOCODER_PHOTON_URL', 'https://photon.komoot.io'],
       ['OSM_GEOCODING_DAILY_LIMIT', '2000'],
