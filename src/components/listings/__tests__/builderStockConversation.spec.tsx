@@ -24,8 +24,10 @@ const sendFailures = { remaining: 0 };
 const retried: string[] = [];
 
 const scrolled: unknown[] = [];
-vi.mock('@/lib/marketplaceBuilderStock', () => ({
+vi.mock('@/lib/marketplaceBuilderStock', async () => ({
+  arrivalScrollTarget: (await vi.importActual<typeof import('@/lib/marketplaceBuilderStock')>('@/lib/marketplaceBuilderStock')).arrivalScrollTarget,
   scrollLogToEnd: (log: unknown) => { scrolled.push(log); },
+  scrollMessageIntoView: (_log: unknown, id: string) => { scrolled.push(`message:${id}`); },
   useBuilderConversation: () => ({
     data: state.conversation ?? undefined, error: state.error, isLoading: false, isFetching: false,
   }),
@@ -211,6 +213,18 @@ describe('the conversation log follows its newest message', () => {
     state.conversation = { ...state.conversation, messages: [...state.conversation.messages, MESSAGE({ id: 'm2', body: 'Arrived by poll.' })] };
     view.rerender(card());
     expect(scrolled.length).toBeGreaterThan(before);
+  });
+
+  it('brings a late message into view when the poll sorts it above the newest one', () => {
+    scrolled.length = 0;
+    state.conversation = { conversation_id: 'c', open: true, can_send: true,
+      messages: [MESSAGE({ id: 'm1', body: 'First.' }), MESSAGE({ id: 'm3', body: 'Newest.' })] };
+    const card = () => <BuilderStockConversation stockItemId="item-1" builderName="Proof Homes" />;
+    const view = render(card());
+    state.conversation = { ...state.conversation, messages: [state.conversation.messages[0],
+      MESSAGE({ id: 'm2', body: 'Arrived late.' }), state.conversation.messages[1]] };
+    view.rerender(card());
+    expect(scrolled[scrolled.length - 1]).toBe('message:m2');
   });
 });
 

@@ -6,7 +6,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import {
-  scrollLogToEnd, useBuilderConversation, useRetryBuilderMessage, useSendBuilderMessage,
+  arrivalScrollTarget, scrollLogToEnd, scrollMessageIntoView, useBuilderConversation, useRetryBuilderMessage, useSendBuilderMessage,
   type ConversationMessageView, type DeliveryState,
 } from '@/lib/marketplaceBuilderStock';
 
@@ -69,8 +69,18 @@ function ConversationForProperty({
   const who = builderName ?? 'the builder';
   // Open at the newest message, and follow it as polls bring more in.
   const logRef = useRef<HTMLDivElement>(null);
-  const newestId = messages.length ? messages[messages.length - 1].id : null;
-  useEffect(() => { scrollLogToEnd(logRef.current); }, [stockItemId, newestId]);
+  // Follow whatever a poll brings in, even a late message that sorts above
+  // the newest one. The card is keyed by property, so a new property starts
+  // with nothing seen and opens at the end.
+  const seenIdsRef = useRef<string[] | null>(null);
+  const idsKey = messages.map((message) => message.id).join(',');
+  useEffect(() => {
+    const ids = idsKey ? idsKey.split(',') : [];
+    const target = arrivalScrollTarget(seenIdsRef.current, ids);
+    seenIdsRef.current = ids;
+    if (target === 'end') scrollLogToEnd(logRef.current);
+    else if (target) scrollMessageIntoView(logRef.current, target);
+  }, [idsKey]);
 
   const submit = async () => {
     const body = draft.trim();
@@ -175,6 +185,7 @@ function Message({
   const ours = message.side === 'command_centre';
   return (
     <article
+      data-message-id={message.id}
       className={cn(
         'max-w-[85%] rounded-lg border px-3 py-2 text-sm',
         ours ? 'ml-auto border-primary/30 bg-primary/5' : 'mr-auto border-border bg-card',

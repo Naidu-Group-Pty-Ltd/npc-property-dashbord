@@ -227,7 +227,7 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
       for (const [n, change] of [
         [2, { body: 'Different words.' }],
         [3, { sender_display_name: 'Someone Else' }],
-        [4, { sent_at: '2026-09-26T09:00:00.000000Z' }],
+        [4, { sent_at: '2026-09-24T09:00:00.000000Z' }],
       ] as Array<[number, Record<string, unknown>]>) {
         land(CONN_A, 'agency.message.posted', `agency.message:${original.message_id}:${n}`, { ...original, ...change, generation: n });
         sweep();
@@ -765,6 +765,21 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
       expect(db.sql(`SELECT message_apply_error FROM public.builder_network_inbound_events
                      WHERE dedupe_key = 'agency.message:${odd.message_id}:1'`)).toBe('refused:invalid_message');
       expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE id = ${lit(odd.message_id)}`)).toBe('0');
+    });
+  });
+
+  describe('a time from the future', () => {
+    it('refuses a message dated well past this side\'s clock, and stores one inside ordinary clock skew', () => {
+      const future = builderMessage({ body: 'Dated a millennium ahead.', sent_at: '9999-01-01T00:00:00Z' });
+      land(CONN_A, 'agency.message.posted', `agency.message:${future.message_id}:1`, future);
+      const skewed = builderMessage({ body: 'A minute ahead: clock skew.',
+        sent_at: db.sql(`SELECT to_char((now() + interval '1 minute') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`) });
+      land(CONN_A, 'agency.message.posted', `agency.message:${skewed.message_id}:1`, skewed);
+      sweep();
+      expect(db.sql(`SELECT message_apply_error FROM public.builder_network_inbound_events
+                     WHERE dedupe_key = 'agency.message:${future.message_id}:1'`)).toBe('refused:invalid_message');
+      expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE id = ${lit(future.message_id)}`)).toBe('0');
+      expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE id = ${lit(skewed.message_id)}`)).toBe('1');
     });
   });
 
