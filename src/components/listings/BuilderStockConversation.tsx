@@ -41,7 +41,17 @@ const deliveryLabel = (state: DeliveryState, failureReason: string | null) =>
 
 const when = (iso: string) => new Date(iso).toLocaleString('en-AU');
 
-export function BuilderStockConversation({
+/**
+ * Keyed by the property, so a draft and its idempotency key belong to the
+ * property they were written on: moving to another property's page (even
+ * without a remount of the page) starts a clean composer, and text written for
+ * one builder can never be sent to another.
+ */
+export function BuilderStockConversation(props: { stockItemId: string; builderName: string | null }) {
+  return <ConversationForProperty key={props.stockItemId} {...props} />;
+}
+
+function ConversationForProperty({
   stockItemId, builderName,
 }: {
   stockItemId: string;

@@ -24,7 +24,7 @@ import {
 } from '../_shared/builderNetworkPrivacy.pure.ts';
 import { buildStamp } from '../_shared/builderNetworkStamp.pure.ts';
 import { builderNetworkEnabled, connectionByNetworkId } from '../_shared/builderNetwork.ts';
-import { agencyDedupeKeyFor, agencyPayloadContractViolation } from '../_shared/builderStock/agencyMessages.pure.ts';
+import { agencyDedupeKeyFor, agencyPayloadContractViolation, sameAgencyEnvelope } from '../_shared/builderStock/agencyMessages.pure.ts';
 
 const MESSAGE_EVENT_TYPES = new Set(['agency.message.posted', 'agency.message.receipt']);
 
@@ -122,6 +122,15 @@ Deno.serve(async (req) => {
       });
     if (insertError) {
       if (String(insertError.code) === '23505') {
+        // A message key is a duplicate only if it is the SAME envelope: the
+        // same key carrying other content is a conflict, never acknowledged.
+        if (expectedKey !== null) {
+          const { data: stored } = await supabase.from('builder_network_inbound_events')
+            .select('connection_id, event_type, payload').eq('dedupe_key', dedupeKey).maybeSingle();
+          if (!stored || !sameAgencyEnvelope(stored, { connection_id: connection.id, event_type: eventType, payload: envelope.payload ?? {} })) {
+            return json({ error: 'message_conflict' }, 409);
+          }
+        }
         return json({ accepted: true, duplicate: true });
       }
       console.error('[builder-network-inbound] insert failed', insertError);

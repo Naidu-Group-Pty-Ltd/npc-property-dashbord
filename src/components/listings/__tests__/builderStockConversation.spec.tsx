@@ -213,3 +213,13 @@ describe('the conversation log follows its newest message', () => {
     expect(scrolled.length).toBeGreaterThan(before);
   });
 });
+
+describe('a draft belongs to the property it was written on', () => {
+  it('moving to another property clears the composer rather than carrying the text to another builder', () => {
+    state.conversation = { conversation_id: 'c', open: true, can_send: true, messages: [] };
+    const view = render(<BuilderStockConversation stockItemId="item-1" builderName="Proof Homes" />);
+    fireEvent.change(screen.getByRole('textbox', { name: /message/i }), { target: { value: 'For the first property only.' } });
+    view.rerender(<BuilderStockConversation stockItemId="item-2" builderName="Other Homes" />);
+    expect((screen.getByRole('textbox', { name: /message/i }) as HTMLTextAreaElement).value).toBe('');
+  });
+});
