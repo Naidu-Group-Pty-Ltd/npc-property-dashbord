@@ -34,6 +34,7 @@ import { HarveyCountdown } from "@/components/HarveyCountdown";
 import { Button } from "@/components/ui/button";
 const Overview = lazyWithRetry(() => import("./pages/Overview"));
 const Listings = lazyWithRetry(() => import("./pages/Listings"));
+const BuilderStockProperty = lazyWithRetry(() => import("./pages/BuilderStockProperty"));
 const ListingDetail = lazyWithRetry(() => import("./pages/ListingDetail"));
 const Calendar = lazyWithRetry(() => import("./pages/Calendar"));
 const MarketUpdates = lazyWithRetry(() => import("./pages/MarketUpdates"));
@@ -584,6 +585,13 @@ const App = () => (
                 <Route
                   path="listings/:listingId"
                   element={<ModuleGuard moduleKey="listings"><ListingDetail /></ModuleGuard>}
+                />
+                {/* A builder's property, at an address a card, a map pin and a
+                    pasted link all open. Declared before nothing it could
+                    shadow: `listings/:listingId` takes one segment only. */}
+                <Route
+                  path="listings/builder-stock/:stockItemId"
+                  element={<ModuleGuard moduleKey="listings"><BuilderStockProperty /></ModuleGuard>}
                 />
                 <Route path="market-updates" element={<ModuleGuard moduleKey="market_updates"><MarketUpdates /></ModuleGuard>} />
                 <Route path="market-updates/archived" element={<ModuleGuard moduleKey="market_updates"><MarketArchivePage /></ModuleGuard>} />
