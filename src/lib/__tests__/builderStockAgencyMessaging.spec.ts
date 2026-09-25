@@ -685,6 +685,17 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
     });
   });
 
+  describe('a time that is not a time', () => {
+    it.each(['infinity', '-infinity'])('a builder message sent at %s is refused as malformed and stored nowhere', (when) => {
+      const odd = builderMessage({ body: `Sent at ${when}.`, sent_at: when });
+      land(CONN_A, 'agency.message.posted', `agency.message:${odd.message_id}:1`, odd);
+      sweep();
+      expect(db.sql(`SELECT message_apply_error FROM public.builder_network_inbound_events
+                     WHERE dedupe_key = 'agency.message:${odd.message_id}:1'`)).toBe('refused:invalid_message');
+      expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE id = ${lit(odd.message_id)}`)).toBe('0');
+    });
+  });
+
   describe('the exact contract, at the apply step too', () => {
     it('refuses a message or a receipt carrying a key outside the contract', () => {
       const extra = { ...builderMessage({ body: 'Carrying a field the contract does not have.' }), customer_details: 'Jordan Buyer' };

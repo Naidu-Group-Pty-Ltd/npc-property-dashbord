@@ -581,7 +581,7 @@ BEGIN
   v_body := btrim(COALESCE(v_payload->>'body', ''));
   v_name := btrim(COALESCE(v_payload->>'sender_display_name', ''));
 
-  IF v_item IS NULL OR v_sent IS NULL OR length(v_body) NOT BETWEEN 1 AND 4000
+  IF v_item IS NULL OR v_sent IS NULL OR NOT isfinite(v_sent) OR length(v_body) NOT BETWEEN 1 AND 4000
      OR length(v_name) NOT BETWEEN 1 AND 200 THEN
     v_reason := 'invalid_message';
   ELSIF NOT EXISTS (SELECT 1 FROM public.builder_network_connections c
