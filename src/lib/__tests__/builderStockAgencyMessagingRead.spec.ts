@@ -154,6 +154,24 @@ describe('reading a property\'s conversation', () => {
       .toMatch(/useSelectBuilderStockForClient[\s\S]*?invalidateQueries\(\{ queryKey: marketplaceStockKeys\.root\(\) \}\)/);
   });
 
+  it('a connection that has lost stock:publish keeps its history readable, and is closed to writing', async () => {
+    const { tables } = fixture();
+    tables.builder_network_connections[0].scopes = [];
+    const read = await readBuilderConversation(standIn(tables).client, { stockItemId: ITEM, organisationId: ORG, viewerUserId: ME });
+    if (!read.ok) throw new Error('read failed');
+    expect(read.messages.map((m) => m.body)).toEqual(['Question', 'Reply', 'Follow-up']);
+    expect(read.open).toBe(false);
+  });
+
+  it('a disputed connection keeps its history readable, and is closed to writing', async () => {
+    const { tables } = fixture();
+    tables.builder_network_connections[0].identity_mismatch_since = '2026-09-25T00:00:00Z';
+    const read = await readBuilderConversation(standIn(tables).client, { stockItemId: ITEM, organisationId: ORG, viewerUserId: ME });
+    if (!read.ok) throw new Error('read failed');
+    expect(read.messages).toHaveLength(3);
+    expect(read.open).toBe(false);
+  });
+
   it('20. a cross-organisation read returns nothing', async () => {
     const { tables } = fixture();
     const read = await readBuilderConversation(standIn(tables).client, {
@@ -257,5 +275,14 @@ describe('the worker holds a message whose route stopped being deliverable', () 
     expect(drain.indexOf('agencyMessageRouteHeld(')).toBeLessThan(drain.indexOf('fetch('));
     expect(drain).toMatch(/available_at:\s*'infinity'/);
     expect(drain).toMatch(/attempts:\s*Math\.max\(0,\s*event\.attempts\s*-\s*1\)/);
+  });
+});
+
+describe('a reader who may not write', () => {
+  it('is never offered "Send again": the read gates the retry on Listings edit', () => {
+    const market = readCode('supabase/functions/builder-stock-marketplace/index.ts');
+    const start = market.indexOf("operation === 'get_builder_conversation'");
+    const op = market.slice(start, market.indexOf('operation ===', start + 20));
+    expect(op).toMatch(/can_retry:\s*message\.can_retry\s*&&\s*listingsEdit\.ok/);
   });
 });

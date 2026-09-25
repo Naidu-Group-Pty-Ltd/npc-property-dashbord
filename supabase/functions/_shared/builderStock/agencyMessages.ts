@@ -25,10 +25,9 @@ export async function readBuilderConversation(
 ): Promise<BuilderConversationRead> {
   const { data: connection, error: connectionError } = await supabase
     .from('builder_network_connections')
-    .select('id')
+    .select('id, scopes, identity_mismatch_since')
     .eq('builder_organisation_id', args.organisationId)
     .eq('state', 'active')
-    .contains('scopes', ['stock:publish'])
     .order('accepted_at', { ascending: false, nullsFirst: false })
     .limit(1)
     .maybeSingle();
@@ -44,7 +43,10 @@ export async function readBuilderConversation(
         .eq('connection_id', connection.id).eq('stock_item_id', args.stockItemId).maybeSingle(),
     ]);
   if (selectionError || conversationError) return { ok: false };
-  const open = !!selection;
+  // History is read whatever the connection's write grant; open is whether a
+  // new message could be written now — the writer's own three conditions.
+  const route = connection as { scopes?: string[] | null; identity_mismatch_since?: string | null };
+  const open = !!selection && (route.scopes ?? []).includes('stock:publish') && !route.identity_mismatch_since;
   if (!conversation) return { ok: true, conversation_id: null, open, messages: [] };
 
   const { data: messages, error: messagesError } = await supabase

@@ -394,11 +394,6 @@ BEGIN
   -- A builder that withdrew stock:publish has withdrawn this conversation's
   -- grant too: no new message from it is stored. Receipts for what we sent
   -- still land — they carry no content.
-  IF v_event.event_type = 'agency.message.posted'
-     AND NOT EXISTS (SELECT 1 FROM public.builder_network_connections c
-                      WHERE c.id = v_connection.id AND 'stock:publish' = ANY (c.scopes)) THEN
-    RETURN 'refused:scope_revoked';
-  END IF;
 
   BEGIN
     v_message_id := (v_payload->>'message_id')::uuid;
@@ -456,6 +451,12 @@ BEGIN
   IF v_item IS NULL OR v_sent IS NULL OR length(v_body) NOT BETWEEN 1 AND 4000
      OR length(v_name) NOT BETWEEN 1 AND 200 THEN
     v_reason := 'invalid_message';
+  ELSIF NOT EXISTS (SELECT 1 FROM public.builder_network_connections c
+                     WHERE c.id = v_connection.id AND 'stock:publish' = ANY (c.scopes)) THEN
+    -- A builder that withdrew stock:publish has withdrawn this conversation's
+    -- grant too: nothing new from it is stored, and it is told so rather than
+    -- left to time out. Receipts for what we sent still land.
+    v_reason := 'scope_revoked';
   ELSIF NOT EXISTS (
     SELECT 1 FROM public.builder_network_stock_items i
      WHERE i.id = v_item AND i.organisation_id = v_connection.builder_organisation_id) THEN

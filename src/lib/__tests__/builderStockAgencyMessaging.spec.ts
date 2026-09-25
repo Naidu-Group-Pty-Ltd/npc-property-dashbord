@@ -398,6 +398,9 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
         sweep();
         expect(db.sql(`SELECT message_apply_error FROM public.builder_network_inbound_events
                        WHERE dedupe_key = 'agency.message:${inbound.message_id}:1'`)).toBe('refused:scope_revoked');
+        // The builder is told, not left to time out.
+        expect(outbox(`dedupe_key = 'agency.receipt:${inbound.message_id}:1' AND payload->>'outcome' = 'refused'
+                       AND payload->>'reason' = 'scope_revoked'`)).toBe('1');
         expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE id = ${lit(inbound.message_id)}`)).toBe('0');
       } finally {
         db.sql(`UPDATE public.builder_network_connections SET scopes = ARRAY['stock:publish'] WHERE id = ${lit(CONN_A)}`);

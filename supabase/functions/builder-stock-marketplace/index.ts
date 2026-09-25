@@ -619,7 +619,9 @@ Deno.serve(async (req) => {
         conversation_id: read.conversation_id,
         open: read.open,
         can_send: read.open && listingsEdit.ok,
-        messages: read.messages,
+        // The retry endpoint needs Listings edit, so a reader without it is
+        // never offered "Send again".
+        messages: read.messages.map((message) => ({ ...message, can_retry: message.can_retry && listingsEdit.ok })),
       });
     }
 
