@@ -58,8 +58,10 @@ export async function readBuilderConversation(
   const route = connection as { scopes?: string[] | null; identity_mismatch_since?: string | null };
   const paused = !(route.scopes ?? []).includes('stock:publish') || !!route.identity_mismatch_since;
   const open = !!selection && !paused;
+  // No live activation outranks a paused route: restoring the route alone
+  // would not open it, so the activation is the step to name.
   const closed_reason: ConversationClosedReason | null = open ? null
-    : paused ? 'connection_paused' : 'not_activated';
+    : !selection ? 'not_activated' : 'connection_paused';
   if (!conversation) return { ok: true, conversation_id: null, open, closed_reason, messages: [] };
 
   const { data: messages, error: messagesError } = await supabase

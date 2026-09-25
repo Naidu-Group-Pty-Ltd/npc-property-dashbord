@@ -56,7 +56,9 @@ async function drainBuilderNetworkOutbox(db: any, workerIdValue: string): Promis
       // A message never overtakes the activation it depends on: while an
       // earlier activation on this connection is undelivered, it waits.
       if (event.event_type === 'agency.message.posted') {
-        const { data: deferred } = await db.rpc('builder_network_defer_message_behind_activation', { _outbox_id: event.id, _worker_id: workerIdValue });
+        const { data: deferred, error: deferError } = await db.rpc('builder_network_defer_message_behind_activation', { _outbox_id: event.id, _worker_id: workerIdValue });
+        // A check that could not be made is not a pass: retry, never send unchecked.
+        if (deferError) { await release(event, 'activation_order_unchecked'); retried++; continue; }
         if (deferred === true) { retried++; continue; }
       }
       if (agencyMessageRouteHeld(connection, String(event.event_type ?? ''))) {

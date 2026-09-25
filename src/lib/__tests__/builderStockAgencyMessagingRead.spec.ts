@@ -170,6 +170,15 @@ describe('reading a property\'s conversation', () => {
     expect(read.closed_reason).toBe('connection_paused');
   });
 
+  it('with no live activation AND a paused route, the reason is the activation: restoring the route alone would not open it', async () => {
+    const { tables } = fixture();
+    tables.builder_network_connections[0].scopes = [];
+    tables.builder_stock_selections[0].status = 'withdrawn';
+    const read = await readBuilderConversation(standIn(tables).client, { stockItemId: ITEM, organisationId: ORG, viewerUserId: ME });
+    if (!read.ok) throw new Error('read failed');
+    expect(read.closed_reason).toBe('not_activated');
+  });
+
   it('a disputed connection keeps its history readable, and is closed to writing', async () => {
     const { tables } = fixture();
     tables.builder_network_connections[0].identity_mismatch_since = '2026-09-25T00:00:00Z';
@@ -292,6 +301,9 @@ describe('the worker holds a message whose route stopped being deliverable', () 
     // A message never overtakes the activation it depends on.
     expect(drain.indexOf("rpc('builder_network_defer_message_behind_activation'")).toBeGreaterThan(-1);
     expect(drain.indexOf("rpc('builder_network_defer_message_behind_activation'")).toBeLessThan(drain.indexOf('fetch('));
+    // A failed check is not a pass: the row is retried, never sent unchecked.
+    expect(drain).toMatch(/error: deferError \} = await db\.rpc\('builder_network_defer_message_behind_activation'/);
+    expect(drain).toMatch(/if \(deferError\) \{ await release\(event, 'activation_order_unchecked'\)/);
     expect(drain).not.toMatch(/available_at:\s*'infinity'/);
   });
 });
