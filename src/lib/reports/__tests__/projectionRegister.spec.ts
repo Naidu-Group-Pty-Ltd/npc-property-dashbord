@@ -215,7 +215,7 @@ describe('one composer for the section and the pin', () => {
    * "No population projection has been loaded" would be false there.
    */
   it('says a caller that did not read did not read', () => {
-    expect(forwardDemandStatement(null, 'QLD')).toMatch(/This report does not read a population projection/);
+    expect(forwardDemandStatement(null, 'QLD')).toMatch(/This report does not include a population projection/);
     expect(forwardDemandStatement(undefined, null)).toMatch(/limit of this report rather than a finding about the area/);
   });
 
@@ -240,7 +240,7 @@ describe('one composer for the section and the pin', () => {
       },
     });
     expect(without).toMatch(/Do NOT state an unemployment rate, a population projection,/);
-    expect(without).toMatch(/No population projection for this jurisdiction has been loaded/);
+    expect(without).toMatch(/not included in this report/);
   });
 
   it('pins exactly what the section says', () => {
@@ -310,6 +310,6 @@ describe('the generator reads the register by trusted geography, stores it and p
   it('leaves the regeneration path reading nothing, and saying so', () => {
     expect(regenerator).not.toMatch(/readProjectionRegister/);
     expect(regenerator).toContain('regionalTrendBlocks(enhancedData)');
-    expect(regionalTrendBlocks({})).toMatch(/This report does not read a population projection/);
+    expect(regionalTrendBlocks({})).toMatch(/This report does not include a population projection/);
   });
 });

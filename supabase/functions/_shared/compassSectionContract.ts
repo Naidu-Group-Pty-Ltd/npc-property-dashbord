@@ -76,6 +76,7 @@ import { hasRiskRegister, riskRegisterRepairNote, RISK_REGISTER_COLUMNS } from '
 import { promotePipedPseudoTables } from './reports/investment/pseudoTables.pure.ts';
 import { publishableGrade } from './reports/investment/scoreSections.pure.ts';
 import { printedVerdict } from './reports/printedVerdict.pure.ts';
+import { adviserVoiceRules } from './reports/adviserVoice.pure.ts';
 
 export type CanonicalTier = 'compass-40' | 'financial-analysis';
 
@@ -116,6 +117,11 @@ export function documentRules(tier: CanonicalTier): string {
     'thing this report must not contain. If a sentence would begin "this means",',
     '"in other words", "for an investor this suggests" or similar, delete it: the',
     'finding belongs in the sentence that introduced the data, not underneath it.',
+    '',
+    // The voice the whole document speaks in, and where each limitation is
+    // explained — see `adviserVoice.pure.ts` (60 Lawley Street, 25 Sep 2026:
+    // "register" 110 times, one infrastructure caveat five times).
+    adviserVoiceRules(),
     '',
     '## FORBIDDEN LABELS — these must not appear anywhere, in any form',
     `- Never write ${EDITORIAL_LABELS.map((l) => `"${l}"`).join(', ')}.`,

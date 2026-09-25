@@ -680,9 +680,9 @@ describe('transport: a station count is not "no public transport" (pages 9-10 ag
   it('the prompt block states the count, what it cannot see, and never "no reading was retrieved"', () => {
     const block = transportFactBlocks(LAWLEY_TRANSPORT);
     expect(block).not.toContain('No public-transport reading was retrieved');
-    expect(block).toContain('Transit stations within 2 km, in the OpenStreetMap amenity register held by this platform: **0**');
+    expect(block).toContain('Transit stations within 2 km (OpenStreetMap): **0**');
     expect(block).toContain('bus stops are not in it');
-    expect(block).toContain('A count of stations is not a finding that the area has no public transport.');
+    expect(block).toContain('A count of stations is not a finding that the area has no public transport');
   });
 
   it('a route or a timetable found in a search may be attributed, never quantified or taken from a profile', () => {
@@ -808,8 +808,10 @@ describe('a Western Australian lot is described in Western Australia\'s terms (a
 });
 
 describe('a note about our build is written in the reader\'s words (printed four times)', () => {
-  const READER = 'No state development-instrument register was searched for Western Australia: the only such '
-    + 'register this report reads is Queensland\'s.';
+  // The service's own diagnostic words stay in the service; the page prints
+  // an adviser's sentence (`readerNote`, serviceNote.pure.ts).
+  const READER = 'State-level development designations are not covered by this report for Western Australia. Any '
+    + 'that affect the property will appear on the local government’s planning certificate.';
 
   it('in the planning table', () => {
     expect(WA_PLANNING().instruments.note).toBe(READER);
@@ -901,8 +903,8 @@ describe('Western Australia\'s bush fire prone areas are read (the page said "Bu
 
   it('coverage says what is read and what is still not, in one sentence per jurisdiction', () => {
     expect(OVERLAY_COVERAGE.WA).toBe('partial_state_layers_read');
-    expect(NO_STATE_LAYER_NOTE.WA).toMatch(/bush fire prone areas are read/);
-    expect(NO_STATE_LAYER_NOTE.WA).toMatch(/planning scheme zones, density codes and other overlays, and its state floodplain mapping/);
-    expect(NO_STATE_LAYER_NOTE.WA).toMatch(/Nothing here says whether any of those controls applies\./);
+    expect(NO_STATE_LAYER_NOTE.WA).toMatch(/bush fire prone area designation is read/);
+    expect(NO_STATE_LAYER_NOTE.WA).toMatch(/planning scheme zones, density codes and other overlays, and its floodplain mapping/);
+    expect(NO_STATE_LAYER_NOTE.WA).toMatch(/nothing here says whether any of them applies\./);
   });
 });

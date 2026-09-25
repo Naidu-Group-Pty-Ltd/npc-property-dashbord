@@ -164,6 +164,13 @@ import { readProjectionRegister } from '../_shared/reports/market/projectionRegi
 import { planningCouncilName } from '../_shared/reports/market/openData/projectionRegister.pure.ts';
 import type { SalesRegisterState } from '../_shared/reports/market/openData/salesRegister.pure.ts';
 import { describeLandArea } from '../_shared/reports/investment/landAreaScope.pure.ts';
+import {
+  INFRASTRUCTURE_REGISTER_HEADING,
+  INFRASTRUCTURE_REGISTER_SECTION,
+  PLANNING_REGISTER_HEADING,
+  PLANNING_REGISTER_SECTION,
+} from '../_shared/reports/investment/registerTables.pure.ts';
+import { DISCLOSURE_HOMES } from '../_shared/reports/adviserVoice.pure.ts';
 import { applyDisplayOverrides, buildAnnualCostOverrides, normalisePropertyType, toFiniteNumber } from '../_shared/reports/investment/overrides.pure.ts';
 import { attributeTableYearBuilt, composePropertySpecs } from '../_shared/reports/investment/propertyRecord.pure.ts';
 import { reconcileNearestSchool, reconcileSchoolDistances } from '../_shared/reports/schoolDistance.pure.ts';
@@ -6205,9 +6212,14 @@ Produce a comprehensive statewide investment analysis following the structure ab
       '1. **Name the publisher and its currency**, which the table beside you',
       '   already carries — "the NSW Planning Portal\'s Principal Planning',
       '   Layers, current at 7 August 2026" — or',
-      '2. **Name the report\'s own section**: these tables are reproduced in',
-      '   full at the end of this report under *Planning controls and',
-      '   development registers*.',
+      // The headings the page actually carries: each table closes the
+      // chapter it is the evidence for (`mergeBlocksIntoSections`), so a
+      // pointer to one section "at the end of this report" named a heading
+      // the document only has when that chapter is absent.
+      '2. **Name the heading it is set out under**: the planning controls close',
+      `   the ${DISCLOSURE_HOMES.planning.sectionName} chapter under *${PLANNING_REGISTER_HEADING}*,`,
+      `   and the development activity closes the ${DISCLOSURE_HOMES.infrastructure.sectionName}`,
+      `   chapter under *${INFRASTRUCTURE_REGISTER_HEADING}*.`,
       '',
       'The same rule covers every other source. A source is named in the',
       'sentence — "listed on realestate.com.au" — and never as a bracketed',
@@ -6284,10 +6296,10 @@ to be confirmed against the contract, the listing and the building inspection.
       // The attributes on record ride the pin: see `recordedAttributesBlock`.
       '# The property — every physical attribute on record',
       recordedAttributesBlock,
-      '# Zoning & Planning Analysis — the controls retrieved for this property',
+      '# Zoning & Planning Analysis — the planning controls for this property',
       planningControlsTable,
       planningSectionRules,
-      '# Infrastructure & Development Outlook — what the registers answered',
+      '# Infrastructure & Development Outlook — what the published sources show',
       infrastructureTable,
       infrastructureSectionRules,
       /*
@@ -6376,7 +6388,7 @@ to be confirmed against the contract, the listing and the building inspection.
       // concatenated after the trim. A rule that survives while its evidence
       // is cut is the §6 defect, and it produced a report that named no source
       // because it had none to name.
-      '# Market Evidence — the figures retrieved for this market',
+      '# Market Evidence — the published figures for this market',
       marketTable,
       marketSectionRules,
       // The subject's own price rides the same pin as the market's figures,
@@ -8456,12 +8468,12 @@ YOUR DEDICATED PROPERTY PARTNER
       // Appended verbatim for the reason the tables always were: asking a
       // model to reproduce a table is how a table comes back paraphrased, and
       // every date and figure here is one an authority published.
-      const planningPart = `### Planning controls retrieved for this property\n\n${planningControlsTable}\n`;
-      let infrastructurePart = `### Infrastructure and development retrieved for this property\n\n${infrastructureTable}\n`;
+      const planningPart = `### ${PLANNING_REGISTER_HEADING}\n\n${planningControlsTable}\n`;
+      let infrastructurePart = `### ${INFRASTRUCTURE_REGISTER_HEADING}\n\n${infrastructureTable}\n`;
       if (publishedProjectBlock) {
         infrastructurePart += `\n#### Major public projects near this property\n\n`
           + `${publishedProjectBlock}\n`
-          + `**What this register covers.** ${PUBLISHED_PROJECT_COVERAGE.join(' ')}\n`;
+          + `**What this list covers.** ${PUBLISHED_PROJECT_COVERAGE.join(' ')}\n`;
       }
       console.log(
         `📋 Composed retrieved planning + infrastructure evidence `
@@ -8477,8 +8489,8 @@ YOUR DEDICATED PROPERTY PARTNER
         into: 'planning',
         markdown: planningPart,
         fallback: {
-          heading: 'Planning controls and development registers',
-          markdown: `## Planning controls and development registers\n\n${planningPart}`,
+          heading: PLANNING_REGISTER_SECTION,
+          markdown: `## ${PLANNING_REGISTER_SECTION}\n\n${planningPart}`,
           order: 89,
         },
       });
@@ -8486,8 +8498,8 @@ YOUR DEDICATED PROPERTY PARTNER
         into: 'infrastructure',
         markdown: infrastructurePart,
         fallback: {
-          heading: 'Infrastructure and development registers',
-          markdown: `## Infrastructure and development registers\n\n${infrastructurePart}`,
+          heading: INFRASTRUCTURE_REGISTER_SECTION,
+          markdown: `## ${INFRASTRUCTURE_REGISTER_SECTION}\n\n${infrastructurePart}`,
           order: 89,
         },
       });
