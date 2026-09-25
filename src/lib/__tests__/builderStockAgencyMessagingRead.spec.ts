@@ -584,3 +584,20 @@ describe('a duplicate message key is a duplicate only if it is the same envelope
     expect(dup).toMatch(/error: 'message_conflict' \}, 409/);
   });
 });
+
+describe('a conversation the reader may no longer see', () => {
+  it('is a 401, a 403 or the feature switched off, never a transient failure', async () => {
+    const { conversationAccessLost } = await import('@/lib/marketplaceBuilderStock');
+    expect(conversationAccessLost(Object.assign(new Error('x'), { status: 401 }))).toBe(true);
+    expect(conversationAccessLost(Object.assign(new Error('x'), { status: 403 }))).toBe(true);
+    expect(conversationAccessLost(Object.assign(new Error('x'), { code: 'builder_stock_disabled' }))).toBe(true);
+    expect(conversationAccessLost(Object.assign(new Error('x'), { status: 503 }))).toBe(false);
+    expect(conversationAccessLost(new Error('Failed to fetch'))).toBe(false);
+    expect(conversationAccessLost(null)).toBe(false);
+  });
+
+  it('the function client carries the HTTP status onto the error it throws', () => {
+    const src = readFileSync(join(__dirname, '..', 'marketplaceBuilderStock.ts'), 'utf8');
+    expect(src).toMatch(/failure\.status\s*=\s*error\?\.status/);
+  });
+});

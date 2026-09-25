@@ -6,7 +6,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import {
-  arrivalScrollTarget, scrollLogToEnd, scrollMessageIntoView, useBuilderConversation, useRetryBuilderMessage, useSendBuilderMessage,
+  arrivalScrollTarget, conversationAccessLost, scrollLogToEnd, scrollMessageIntoView, useBuilderConversation, useRetryBuilderMessage, useSendBuilderMessage,
   type ConversationMessageView, type DeliveryState,
 } from '@/lib/marketplaceBuilderStock';
 
@@ -64,7 +64,10 @@ function ConversationForProperty({
   const [draft, setDraft] = useState('');
   const [clientMessageId, setClientMessageId] = useState(() => crypto.randomUUID());
 
-  const conversation = query.data;
+  // A refusal withdraws what was read: history and composer are kept only
+  // through failures that say nothing about who may read it.
+  const accessLost = conversationAccessLost(query.error);
+  const conversation = accessLost ? undefined : query.data;
   const messages = conversation?.messages ?? [];
   const who = builderName ?? 'the builder';
   // Open at the newest message, and follow it as polls bring more in.
@@ -118,6 +121,12 @@ function ConversationForProperty({
       <CardContent className="space-y-4">
         {/* A poll that fails after the thread was read keeps what was read:
             the history is still true, it may just be behind. */}
+        {accessLost ? (
+          <p className="text-sm text-muted-foreground">
+            This conversation is no longer available to you.
+          </p>
+        ) : null}
+
         {query.error && conversation ? (
           <p role="status" className="text-sm text-muted-foreground">
             The conversation could not be refreshed just now, so newer messages may be missing. It will try again shortly.
@@ -128,7 +137,7 @@ function ConversationForProperty({
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Loading the conversation…
           </p>
-        ) : query.error && !conversation ? (
+        ) : query.error && !conversation && !accessLost ? (
           <p className="text-sm text-muted-foreground">
             The conversation could not be loaded just now. It will try again shortly.
           </p>

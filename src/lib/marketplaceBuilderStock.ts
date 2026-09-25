@@ -67,8 +67,9 @@ async function invoke<T>(body: Record<string, unknown>): Promise<T> {
   const { data, error } = await invokeSecureFunction<T>('builder-stock-marketplace', body);
   const message = error?.message || (data as { error?: string } | null)?.error;
   if (message) {
-    const failure = new Error(message) as Error & { code?: string };
-    failure.code = (data as { code?: string } | null)?.code;
+    const failure = new Error(message) as Error & { code?: string; status?: number };
+    failure.code = (data as { code?: string } | null)?.code ?? error?.code;
+    failure.status = error?.status;
     throw failure;
   }
   return data as T;
@@ -256,6 +257,17 @@ export function builderConversationPollInterval(data: { open?: boolean } | undef
 
 const conversationKey = (stockItemId: string) =>
   [...marketplaceStockKeys.root(), 'conversation', stockItemId] as const;
+
+/**
+ * A refusal says the reader may no longer see this conversation: signed out,
+ * Listings access withdrawn, or the feature switched off. Unlike a transient
+ * failure, what was read before must not stay on screen after it.
+ */
+export function conversationAccessLost(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const { status, code } = error as { status?: number; code?: string };
+  return status === 401 || status === 403 || code === 'builder_stock_disabled';
+}
 
 export function useBuilderConversation(stockItemId: string, enabled = true) {
   return useQuery({

@@ -26,6 +26,7 @@ const retried: string[] = [];
 const scrolled: unknown[] = [];
 vi.mock('@/lib/marketplaceBuilderStock', async () => ({
   arrivalScrollTarget: (await vi.importActual<typeof import('@/lib/marketplaceBuilderStock')>('@/lib/marketplaceBuilderStock')).arrivalScrollTarget,
+  conversationAccessLost: (await vi.importActual<typeof import('@/lib/marketplaceBuilderStock')>('@/lib/marketplaceBuilderStock')).conversationAccessLost,
   scrollLogToEnd: (log: unknown) => { scrolled.push(log); },
   scrollMessageIntoView: (_log: unknown, id: string) => { scrolled.push(`message:${id}`); },
   useBuilderConversation: () => ({
@@ -87,6 +88,24 @@ describe('the builder conversation card', () => {
     expect(within(screen.getByRole('log')).getByText('Already read.')).toBeInTheDocument();
     expect(screen.getByText(/could not be refreshed/i)).toBeInTheDocument();
     expect(screen.queryByText(/could not be loaded just now/i)).toBeNull();
+  });
+
+  it.each([
+    ['access revoked', Object.assign(new Error('Listings access required'), { status: 403 })],
+    ['signed out', Object.assign(new Error('Authentication required'), { status: 401 })],
+    ['feature switched off', Object.assign(new Error('Builder Stock is switched off for this workspace.'), { status: 403, code: 'builder_stock_disabled' })],
+  ])('a poll refused because %s withdraws the history and the composer', (_why, error) => {
+    state.conversation = {
+      conversation_id: 'c', open: true, can_send: true,
+      messages: [MESSAGE({ id: 'a', body: 'Already read.', delivery_state: 'delivered' })],
+    };
+    state.error = error;
+    renderCard();
+    expect(screen.queryByRole('log')).toBeNull();
+    expect(screen.queryByText('Already read.')).toBeNull();
+    expect(screen.queryByRole('textbox', { name: /message/i })).toBeNull();
+    expect(screen.queryByText(/could not be refreshed/i)).toBeNull();
+    expect(screen.getByText(/no longer available to you/i)).toBeInTheDocument();
   });
 
   it('a first read that fails says the conversation could not be loaded', () => {
