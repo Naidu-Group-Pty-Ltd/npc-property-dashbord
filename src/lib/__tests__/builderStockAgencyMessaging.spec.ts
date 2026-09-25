@@ -571,6 +571,26 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
     });
   });
 
+  describe('a lost response, retried after the relationship changed', () => {
+    it.each([
+      ['a dispute', `identity_mismatch_since = now()`, `identity_mismatch_since = NULL`],
+      ['a withdrawn scope', `scopes = ARRAY[]::text[]`, `scopes = ARRAY['stock:publish']`],
+      ['a revocation', `state = 'revoked', revoked_at = now()`, `state = 'active', revoked_at = NULL`],
+    ])('after %s, the same send is answered with the message it already made; an edit is still refused', (_label, change, restore) => {
+      const key = randomUUID();
+      const original = post(ITEM_A1, OWNER, key, 'Sent just before the change.');
+      db.sql(`UPDATE public.builder_network_connections SET ${change} WHERE id = ${lit(CONN_A)}`);
+      try {
+        expect(post(ITEM_A1, OWNER, key, 'Sent just before the change.')).toBe(original);
+        expect(refusal(`SELECT public.builder_network_post_message(${lit(ITEM_A1)}, ${lit(OWNER)}, ${lit(key)}, 'Edited after the change.')`))
+          .toMatch(/AGENCY_MESSAGE_ID_REUSED/);
+        expect(outbox(`dedupe_key LIKE 'agency.message:${original}:%'`)).toBe('1');
+      } finally {
+        db.sql(`UPDATE public.builder_network_connections SET ${restore} WHERE id = ${lit(CONN_A)}`);
+      }
+    });
+  });
+
   describe('the exact contract, at the apply step too', () => {
     it('refuses a message or a receipt carrying a key outside the contract', () => {
       const extra = { ...builderMessage({ body: 'Carrying a field the contract does not have.' }), customer_details: 'Jordan Buyer' };

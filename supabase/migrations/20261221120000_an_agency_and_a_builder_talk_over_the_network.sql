@@ -242,6 +242,25 @@ BEGIN
     RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'AGENCY_MESSAGE_INVALID';
   END IF;
 
+  -- The same send again (a lost response, a double click) is the same row, and
+  -- it is answered FIRST: a repeat of a message this sender already made is not
+  -- a new write, so a relationship that closed or paused since does not turn it
+  -- into a failure the sender would read as "not sent". Nothing new is written.
+  -- The key is bound to what was sent: the same key with other text, or for
+  -- another property, is not a repeat, and answering it with the original
+  -- would lose the new text.
+  SELECT * INTO v_existing FROM public.builder_network_messages m
+   WHERE m.sender_user_id = _sender_user_id AND m.client_message_id = _client_message_id;
+  IF v_existing.id IS NOT NULL THEN
+    IF v_existing.body <> v_body OR NOT EXISTS (
+      SELECT 1 FROM public.builder_network_conversations c
+       WHERE c.id = v_existing.conversation_id AND c.stock_item_id = _stock_item_id) THEN
+      RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'AGENCY_MESSAGE_ID_REUSED';
+    END IF;
+    RETURN NEXT v_existing;
+    RETURN;
+  END IF;
+
   SELECT (value = 'true'::jsonb) INTO v_flag
     FROM public.feature_flags WHERE key = 'builder_network_enabled';
   IF v_flag IS DISTINCT FROM true THEN
@@ -275,19 +294,6 @@ BEGIN
     RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'AGENCY_CONNECTION_HALTED';
   END IF;
   v_conversation := public.builder_network_conversation_id(v_connection.network_connection_id, _stock_item_id);
-
-  -- The same send again (a lost response, a double click) is the same row.
-  SELECT * INTO v_existing FROM public.builder_network_messages m
-   WHERE m.sender_user_id = _sender_user_id AND m.client_message_id = _client_message_id;
-  IF v_existing.id IS NOT NULL THEN
-    -- The key is bound to what was sent: the same key with other text is not
-    -- a repeat, and answering it with the original would lose the new text.
-    IF v_existing.conversation_id <> v_conversation OR v_existing.body <> v_body THEN
-      RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'AGENCY_MESSAGE_ID_REUSED';
-    END IF;
-    RETURN NEXT v_existing;
-    RETURN;
-  END IF;
 
   -- Every live activation is held until this message is written, so a
   -- withdrawal cannot commit between this check and the write: it either
