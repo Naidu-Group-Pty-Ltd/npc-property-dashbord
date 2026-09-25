@@ -46,6 +46,13 @@
  *     `MIN_PRINT_LONG_EDGE_PX` on its long side is set at the size of a page
  *     plate by these masters and prints soft. Unknown dimensions are not
  *     evidence of either, and pass.
+ *  4. **Of the report's own address** — the owner's rule (25 Sep 2026): a
+ *     report carries photographs of its address and property and nothing
+ *     else, never a picture chosen to fill a slot. The photographs are
+ *     always their source's own; what can differ is the report, whose address
+ *     can be typed or edited to another property. So the report's address and
+ *     the source's must be the same property (`photographsAreOfReportAddress`)
+ *     or nothing is taken.
  *
  * Duplicate intake RECORDS of one property share every photograph, so rule 2
  * leaves such a property with none. That is the conservative side on purpose,
@@ -57,6 +64,7 @@
  * signs what this returns.
  */
 import { bandOf, selectListingGallery } from './listingImageSelection.pure.ts';
+import { isSameProperty } from './addressMatch.pure.ts';
 
 /** The most photographs any master binds (`six_with_bleed`: a cover and five plates). */
 export const REPORT_PHOTOGRAPH_LIMIT = 6;
@@ -170,6 +178,68 @@ export function photographsForReport(
       width: image.row.width,
       height: image.row.height,
     }));
+}
+
+/* -------------------------------------------------------------------------- */
+/* Rule 4: the photographs are of the report's own address                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The address a set of photographs belongs to, as their source states it: a
+ * listing's composed street line and suburb, or what an extraction read off
+ * the listing page the photographs were attributed to.
+ */
+export interface PhotographSource {
+  address: string;
+  suburb: string;
+}
+
+/**
+ * Whether photographs of `source` may appear in a report written for
+ * `reportAddress`.
+ *
+ * The photographs are always their source's own: a listing's gallery, or a
+ * listing page's gallery matched by the page's own listing id. The report is
+ * what can differ. Its address is typed before it is generated and can be
+ * edited in the report editor afterwards. A report for 5/12 Smith Street must
+ * not carry the photographs of 12 Smith Street, and a report re-pointed at
+ * another house must not keep the first one's.
+ *
+ * So this answers yes only through `isSameProperty`, the rule the marketplace
+ * applies before it attaches a photograph to a card:
+ *   - street number, street name and suburb agree after normalisation;
+ *   - units agree whenever either side names one;
+ *   - an address with only a lot number never matches, because a lot is not
+ *     a street number.
+ * A source with no suburb answers no, because a street line alone could be
+ * any of several properties. Anything unreadable answers no. A missed match
+ * costs a cover without a photograph; a false one puts somebody else's house
+ * on a client's document.
+ */
+export function photographsAreOfReportAddress(
+  reportAddress: unknown,
+  source: { address?: unknown; suburb?: unknown } | null | undefined,
+): boolean {
+  const report = typeof reportAddress === 'string' ? reportAddress.trim() : '';
+  const address = typeof source?.address === 'string' ? source.address.trim() : '';
+  const suburb = typeof source?.suburb === 'string' ? source.suburb.trim() : '';
+  if (!report || !address || !suburb) return false;
+  return isSameProperty({ address, suburb }, { address: report });
+}
+
+/**
+ * The address an extraction read off its listing page, from the job's stored
+ * result (`extractedDetails`, written by `scrape-property-listing`); null
+ * where it read no street line or no suburb.
+ */
+export function extractionPhotographSource(result: unknown): PhotographSource | null {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
+  const details = (result as Record<string, unknown>).extractedDetails;
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return null;
+  const d = details as Record<string, unknown>;
+  const address = typeof d.extractedAddress === 'string' ? d.extractedAddress.trim() : '';
+  const suburb = typeof d.extractedSuburb === 'string' ? d.extractedSuburb.trim() : '';
+  return address && suburb ? { address, suburb } : null;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -357,6 +427,12 @@ export interface CaptureRecord {
   version: 1;
   /** The extraction whose named photographs these are. */
   scrapeJobId: string;
+  /**
+   * The address the extraction read off the listing page, which matched the
+   * report's when the capture was asked for. Every reader holds the report's
+   * address against it again (rule 4), because a report can be edited after.
+   */
+  source: PhotographSource;
   /** The report's author, who asked. */
   requestedBy: string;
   requestedAt: string;
@@ -395,10 +471,16 @@ function stamp(value: unknown): string | null {
 }
 
 /** A new record, for a capture nothing has been asked for yet. */
-export function newCaptureRecord(args: { scrapeJobId: string; requestedBy: string; now: number }): CaptureRecord {
+export function newCaptureRecord(args: {
+  scrapeJobId: string;
+  requestedBy: string;
+  now: number;
+  source: PhotographSource;
+}): CaptureRecord {
   return {
     version: 1,
     scrapeJobId: args.scrapeJobId.trim().toLowerCase(),
+    source: { address: args.source.address.trim(), suburb: args.source.suburb.trim() },
     requestedBy: args.requestedBy,
     requestedAt: instant(args.now),
     attempts: 0,
@@ -417,6 +499,14 @@ export function parseCaptureRecord(value: unknown): CaptureRecord | null {
   if (v.version !== 1) return null;
   if (!isRecordId(v.scrapeJobId)) return null;
   if (typeof v.requestedBy !== 'string' || !v.requestedBy.trim()) return null;
+  // A record that cannot say whose address its photographs are of is not one
+  // any reader may act on (rule 4).
+  const source = v.source && typeof v.source === 'object' && !Array.isArray(v.source)
+    ? v.source as Record<string, unknown>
+    : null;
+  const sourceAddress = typeof source?.address === 'string' ? source.address.trim() : '';
+  const sourceSuburb = typeof source?.suburb === 'string' ? source.suburb.trim() : '';
+  if (!sourceAddress || !sourceSuburb) return null;
   const requestedAt = stamp(v.requestedAt);
   if (!requestedAt) return null;
   const attempts = Number(v.attempts);
@@ -440,6 +530,7 @@ export function parseCaptureRecord(value: unknown): CaptureRecord | null {
   return {
     version: 1,
     scrapeJobId: v.scrapeJobId.trim().toLowerCase(),
+    source: { address: sourceAddress, suburb: sourceSuburb },
     requestedBy: v.requestedBy,
     requestedAt,
     attempts,

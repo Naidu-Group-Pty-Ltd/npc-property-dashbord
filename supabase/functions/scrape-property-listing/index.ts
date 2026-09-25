@@ -16,15 +16,16 @@ import {
 /**
  * A listing page as a reader returned it.
  *
- * `photographEvidence` is what the page says about its own photographs — its
- * markup as served and its `og:image` — kept only long enough for
- * `photographCandidatesFromPage` to name them; the markup is never stored.
+ * `photographEvidence` is what the page says about its own photographs: its
+ * markup as served, kept only long enough for `photographCandidatesFromPage`
+ * to name the photographs the page attributes to its listing. The markup is
+ * never stored.
  */
 type ScrapedPage = {
   markdown: string;
   title?: string;
   description?: string;
-  photographEvidence?: { rawHtml?: string | null; ogImage?: unknown };
+  photographEvidence?: { rawHtml?: string | null };
 };
 
 /**
@@ -491,7 +492,6 @@ async function readPageThroughBroker(
       // relay nothing, and then the listing simply has none named.
       photographEvidence: {
         rawHtml: typeof brokeredHtml === 'string' ? brokeredHtml : null,
-        ogImage: j?.data?.metadata?.ogImage ?? j?.ogImage ?? null,
       },
     };
   } catch (e) {
@@ -567,7 +567,6 @@ async function scrapeWithFirecrawl(url: string): Promise<ScrapedPage | null> {
       description,
       photographEvidence: {
         rawHtml: typeof root?.rawHtml === 'string' ? root.rawHtml : null,
-        ogImage: root?.metadata?.ogImage ?? root?.metadata?.['og:image'] ?? null,
       },
     };
   } catch (e) {
@@ -669,22 +668,19 @@ async function extractListingWithModel(url: string, propertyCategory = 'auto', u
     console.log(`[scrape-property-listing] source markdown length: ${pageContent.length}`);
   }
 
-  // The listing's own photographs, as the page attributes them. Named here and
-  // fetched later, for the report made from this extraction
-  // (`listing-images`, `op: 'capture_report'`). Nothing about it may cost the
-  // extraction: a page that says nothing, or says it in a shape no rule reads,
-  // leaves the listing with none named and the job exactly as it was.
+  // The listing's own photographs, as the page's own data attributes them to
+  // this listing, and nothing else: never a picture found on the page to fill
+  // a slot. Named here and fetched later, for the report made from this
+  // extraction (`listing-images`, `op: 'capture_report'`), which keeps them
+  // only if the report's address is the listing's. Nothing about it may cost
+  // the extraction: a page that says nothing, or says it in a shape no rule
+  // reads, leaves the listing with none named and the job exactly as it was.
   let photographCandidates: PagePhotographCandidate[] = [];
   if (scraped?.photographEvidence) {
     try {
       photographCandidates = photographCandidatesFromPage({
         pageUrl: url,
         rawHtml: scraped.photographEvidence.rawHtml ?? null,
-        ogImage: typeof scraped.photographEvidence.ogImage === 'string'
-          ? scraped.photographEvidence.ogImage
-          : Array.isArray(scraped.photographEvidence.ogImage)
-            ? scraped.photographEvidence.ogImage.find((v): v is string => typeof v === 'string') ?? null
-            : null,
       });
     } catch (e) {
       console.warn('[scrape-property-listing] listing photographs could not be read', e);

@@ -14,6 +14,12 @@
  * was asked and answers at once, the work runs after the answer, and an
  * attempt that leaves work over is finished by the next document drawn — in
  * the listing's own order, so a lead photograph kept late still leads.
+ *
+ * And then the rule every one of these answers to: the photographs are of the
+ * REPORT's address and property, never chosen to fill a slot. A capture starts
+ * only when the address the extraction read is the report's own, and every
+ * reader holds the report's address against it again, because a report can
+ * be edited after it is made.
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
@@ -30,6 +36,7 @@ import {
   captureObjectName,
   capturedPhotographsForReport,
   captureStateOf,
+  extractionPhotographSource,
   finishCaptureAttempt,
   heldCapturedPhotographs,
   isLastingRefusal,
@@ -37,6 +44,7 @@ import {
   newCaptureRecord,
   parseCaptureObjectName,
   parseCaptureRecord,
+  photographsAreOfReportAddress,
   placesTakenBefore,
   REPORT_PHOTOGRAPH_CAPTURE_PREFIX,
   REPORT_PHOTOGRAPH_LIMIT,
@@ -60,6 +68,8 @@ const REPORT = '60f205f9-3c1e-4d2a-9b7f-0a1b2c3d4e5f';
 const JOB = '0b8c1a52-7d4e-4f3a-9c2b-1e5d6f7a8b9c';
 const AUTHOR = 'b2d1c0e9-8f7a-4b6c-9d5e-4f3a2b1c0d9e';
 const T0 = Date.parse('2026-09-25T13:00:00.000Z');
+/** The address the extraction read, and the report made from it. */
+const SOURCE = { address: '60 Lawley Street', suburb: 'Spalding' };
 
 const hex = (seed: number) => seed.toString(16).padStart(16, '0');
 
@@ -167,8 +177,65 @@ describe('a report reads its captured photographs in the listing\'s order, one c
   });
 });
 
+describe('rule 4: the photographs are of the report\'s own address, and nothing is chosen to fill a slot', () => {
+  const REPORT_ADDRESS = '60 Lawley Street, Spalding WA 6530';
+
+  it('holds the same property however the address was typed', () => {
+    for (const typed of [
+      REPORT_ADDRESS,
+      '60 LAWLEY ST, SPALDING WA 6530',
+      '60 Lawley St Spalding',
+      '60 Lawley Street, Spalding, Western Australia',
+    ]) {
+      expect(photographsAreOfReportAddress(typed, SOURCE), typed).toBe(true);
+    }
+    // The extraction may carry the whole line rather than the street alone.
+    expect(photographsAreOfReportAddress(REPORT_ADDRESS, { address: '60 Lawley St, Spalding WA 6530', suburb: 'Spalding' })).toBe(true);
+  });
+
+  it('refuses another house: a different number, street or suburb', () => {
+    for (const other of [
+      '62 Lawley Street, Spalding WA 6530',
+      '60 Lawley Road, Spalding WA 6530',
+      '60 Lawley Street, Geraldton WA 6530',
+      '60 Lowley Street, Spalding WA 6530',
+    ]) {
+      expect(photographsAreOfReportAddress(other, SOURCE), other).toBe(false);
+    }
+  });
+
+  it('refuses one dwelling of a building for the building, and the building for one dwelling', () => {
+    expect(photographsAreOfReportAddress('5/60 Lawley Street, Spalding WA 6530', SOURCE)).toBe(false);
+    expect(photographsAreOfReportAddress(REPORT_ADDRESS, { address: '5/60 Lawley Street', suburb: 'Spalding' })).toBe(false);
+    expect(photographsAreOfReportAddress('Unit 5, 60 Lawley Street, Spalding', { address: '5/60 Lawley Street', suburb: 'Spalding' })).toBe(true);
+    expect(photographsAreOfReportAddress('4/60 Lawley Street, Spalding', { address: '5/60 Lawley Street', suburb: 'Spalding' })).toBe(false);
+  });
+
+  it('refuses whatever cannot be verified as one property: a lot, a suburb, a street with no suburb', () => {
+    // A lot is not a street number, so a lot-only address cannot be verified.
+    expect(photographsAreOfReportAddress('Lot 12 Hunza Road, Truganina VIC 3029', { address: 'Lot 12 Hunza Road', suburb: 'Truganina' })).toBe(false);
+    expect(photographsAreOfReportAddress('Spalding WA 6530', SOURCE)).toBe(false);
+    expect(photographsAreOfReportAddress('60 Lawley Street', SOURCE)).toBe(false);
+    expect(photographsAreOfReportAddress(REPORT_ADDRESS, { address: '60 Lawley Street', suburb: '' })).toBe(false);
+    expect(photographsAreOfReportAddress(REPORT_ADDRESS, { address: 'Lawley Street', suburb: 'Spalding' })).toBe(false);
+    expect(photographsAreOfReportAddress(REPORT_ADDRESS, null)).toBe(false);
+    expect(photographsAreOfReportAddress(null, SOURCE)).toBe(false);
+    expect(photographsAreOfReportAddress(42, SOURCE)).toBe(false);
+  });
+
+  it('reads the address the extraction stored on its job, and nothing it did not state', () => {
+    expect(extractionPhotographSource({ extractedDetails: { extractedAddress: ' 60 Lawley Street ', extractedSuburb: 'Spalding' } }))
+      .toEqual(SOURCE);
+    expect(extractionPhotographSource({ extractedDetails: { extractedAddress: '60 Lawley Street' } })).toBeNull();
+    expect(extractionPhotographSource({ extractedDetails: { extractedSuburb: 'Spalding' } })).toBeNull();
+    expect(extractionPhotographSource({ extractedDetails: 'x' })).toBeNull();
+    expect(extractionPhotographSource(null)).toBeNull();
+    expect(extractionPhotographSource([])).toBeNull();
+  });
+});
+
 describe('the capture writes down what was asked, so any later request can finish it', () => {
-  const fresh = () => newCaptureRecord({ scrapeJobId: JOB.toUpperCase(), requestedBy: AUTHOR, now: T0 });
+  const fresh = () => newCaptureRecord({ scrapeJobId: JOB.toUpperCase(), requestedBy: AUTHOR, now: T0, source: SOURCE });
 
   it('round-trips through its own JSON, and refuses what is not a record', () => {
     const record = beginCaptureAttempt(fresh(), T0);
@@ -177,6 +244,9 @@ describe('the capture writes down what was asked, so any later request can finis
     for (const bad of [
       null, 'x', [], {}, { ...record, version: 2 }, { ...record, scrapeJobId: 'job-1' }, { ...record, requestedBy: ' ' },
       { ...record, requestedAt: 'yesterday' }, { ...record, attempts: -1 }, { ...record, attempts: 1.5 },
+      // A record that cannot say whose address its photographs are of.
+      { ...record, source: undefined }, { ...record, source: { address: '60 Lawley Street' } },
+      { ...record, source: { address: ' ', suburb: 'Spalding' } }, { ...record, source: 'Spalding' },
     ]) {
       expect(parseCaptureRecord(bad)).toBeNull();
     }
@@ -256,7 +326,7 @@ describe('what an owner asked: the photographs are not fetched in the browser\'s
   type Script = (url: string, attempt: number) => 'photo' | 'floorplan' | 'http_503' | 'http_404' | 'fetch_failed';
 
   function simulate(urls: string[], script: Script, maxRequests = 10) {
-    let record: CaptureRecord = newCaptureRecord({ scrapeJobId: JOB, requestedBy: AUTHOR, now: T0 });
+    let record: CaptureRecord = newCaptureRecord({ scrapeJobId: JOB, requestedBy: AUTHOR, now: T0, source: SOURCE });
     let held: CapturedPhotograph[] = [];
     let now = T0;
     const timeline: Array<{ attempt: number; kept: number[]; state: string }> = [];
@@ -319,7 +389,7 @@ describe('what an owner asked: the photographs are not fetched in the browser\'s
   });
 
   it('finishes at once, with nothing, where the extraction named nothing', () => {
-    const begun = beginCaptureAttempt(newCaptureRecord({ scrapeJobId: JOB, requestedBy: AUTHOR, now: T0 }), T0);
+    const begun = beginCaptureAttempt(newCaptureRecord({ scrapeJobId: JOB, requestedBy: AUTHOR, now: T0, source: SOURCE }), T0);
     const done = finishCaptureAttempt(begun, { now: T0, candidates: [], settledNow: [], refusalsNow: [], held: [] });
     expect(done.finished?.reason).toBe('no_candidates');
     expect(done.leaseUntil).toBeNull();
@@ -447,9 +517,35 @@ describe('listing-images keeps them for the report\'s author, and only what it h
   it('lets only the author start a capture, from their own finished extraction', () => {
     const start = capture.slice(capture.indexOf('if (!record) {'), capture.indexOf('} else {'));
     expect(start).toContain("if (report.generated_by !== args.userId) return { status: 403, reason: 'not_the_author' };");
-    expect(start).toContain('newCaptureRecord({ scrapeJobId: args.scrapeJobId, requestedBy: args.userId, now })');
-    expect(capture).toContain("if (job.user_id !== record.requestedBy) return { status: 403, reason: 'not_your_extraction', held: held.length };");
+    expect(capture).toContain('const requestedBy = record?.requestedBy ?? args.userId;');
+    expect(capture).toContain("if (job.user_id !== requestedBy) return { status: 403, reason: 'not_your_extraction', held: held.length };");
     expect(capture).toContain("if (job.status !== 'succeeded') return { status: 409, reason: 'extraction_not_finished', held: held.length };");
+  });
+
+  it('starts only for the report\'s own address, and stops a resume once the report is re-pointed', () => {
+    // The report is read with its address.
+    expect(capture).toMatch(/select\('id, generated_by, parent_report_id, derived_from_report_id, property_address'\)/);
+    // Start: the address the extraction read must be the report's, before any record exists.
+    const read = capture.indexOf('const source = extractionPhotographSource(job.result);');
+    const unknown = capture.indexOf("if (!source) return { status: 409, reason: 'address_unknown' };");
+    const checked = capture.indexOf('if (!photographsAreOfReportAddress(report.property_address, source)) {');
+    const refused = capture.indexOf("return { status: 409, reason: 'address_mismatch' };");
+    const created = capture.indexOf('record = newCaptureRecord({ scrapeJobId, requestedBy, now, source });');
+    const begun = capture.indexOf('const begun = beginCaptureAttempt(record, now);');
+    const run = capture.indexOf('await runCaptureAttempt(');
+    for (const at of [read, unknown, checked, refused, created, begun, run]) expect(at).toBeGreaterThan(-1);
+    expect(read).toBeLessThan(unknown);
+    expect(unknown).toBeLessThan(checked);
+    expect(checked).toBeLessThan(refused);
+    expect(refused).toBeLessThan(created);
+    expect(created).toBeLessThan(begun);
+    expect(begun).toBeLessThan(run);
+    // Resume: held against the record's address again, before any state is acted on.
+    const resume = capture.slice(capture.indexOf('} else {'), capture.indexOf("from('property_scrape_jobs')"));
+    const again = resume.indexOf('if (!photographsAreOfReportAddress(report.property_address, record.source)) {');
+    expect(again).toBeGreaterThan(-1);
+    expect(resume).toContain("return { status: 409, reason: 'address_changed', held: held.length };");
+    expect(again).toBeLessThan(resume.indexOf("if (state === 'complete') return"));
   });
 
   it('lets a resume continue only what the author asked, for this report, and never ask for anything new', () => {
@@ -459,7 +555,8 @@ describe('listing-images keeps them for the report\'s author, and only what it h
     expect(resume).toMatch(/if \(state === 'complete'\) return/);
     expect(resume).toMatch(/if \(state === 'running'\) return \{ status: 202/);
     // The job a resume reads is the record's, never the request's.
-    expect(capture).toContain(".eq('id', record.scrapeJobId)");
+    expect(capture).toContain("const scrapeJobId = record?.scrapeJobId ?? String(args.scrapeJobId).trim().toLowerCase();");
+    expect(capture).toContain(".eq('id', scrapeJobId)");
   });
 
   it('refuses a derived report, and a record it cannot read is not a record that is absent', () => {
@@ -469,13 +566,15 @@ describe('listing-images keeps them for the report\'s author, and only what it h
     expect(capture).toContain("if (jobError) return { status: 503, reason: 'extraction_unreadable', held: held.length };");
   });
 
-  it('writes the attempt down before it fetches, and answers at once unless a document is waiting', () => {
+  it('writes the attempt down before it fetches, and fetches nothing it could not write down', () => {
     const begin = capture.indexOf('const begun = beginCaptureAttempt(record, now);');
-    const written = capture.indexOf('await writeCaptureRecord(supabase, folder, begun);');
+    const written = capture.indexOf('if (!(await writeCaptureRecord(supabase, folder, begun))) {');
+    const refused = capture.indexOf("return { status: 503, reason: 'record_unwritable', held: held.length };");
     const run = capture.indexOf('await runCaptureAttempt(');
     expect(begin).toBeGreaterThan(-1);
     expect(written).toBeGreaterThan(begin);
-    expect(run).toBeGreaterThan(written);
+    expect(refused).toBeGreaterThan(written);
+    expect(run).toBeGreaterThan(refused);
     expect(capture).toMatch(/if \(!args\.wait\) \{\s*continueAfterResponse\(/);
     expect(capture).toContain("return { status: 202, state: 'accepted', held: held.length };");
     expect(section).toMatch(/runtime\.waitUntil\(work\)/);
@@ -519,15 +618,35 @@ describe('the broker reads a URL-extract report\'s photographs, and where their 
 
   it('reads the family\'s folder for a derived document, and names that report as the capture\'s', () => {
     expect(fn).toContain('const ownerId = row ? familyParentId(row) ?? row.id : null;');
-    expect(fn).toContain('{ state: capture, reportId: ownerId.trim().toLowerCase() }');
+    expect(fn).toContain('state: captureStateOf(record, Date.now()),');
+    expect(fn).toContain('reportId: ownerId.trim().toLowerCase(),');
     expect(fn).toContain('capturedPhotographsForReport(listed.data ?? [])');
   });
 
-  it('a record it cannot read says nothing, and so asks for nothing', () => {
-    const state = fn.slice(fn.indexOf('async function readCaptureState('));
-    expect(state).toMatch(/if \(stored\.error \|\| !stored\.data\) \{[\s\S]*?return null;/);
-    expect(state).toContain("return record ? captureStateOf(record, Date.now()) : null;");
-    expect(fn).toContain("capture && capture !== 'none'");
+  it('serves nothing without a readable record, and nothing of another address', () => {
+    const reader = fn.slice(fn.indexOf('async function readCaptureRecord('));
+    expect(reader).toMatch(/if \(stored\.error \|\| !stored\.data\) \{[\s\S]*?return null;/);
+    const noRecord = fn.indexOf('if (!record) return { photographs: [] };');
+    const address = fn.indexOf('if (!photographsAreOfReportAddress(row?.property_address, record.source)) {');
+    const chosen = fn.indexOf('capturedPhotographsForReport(listed.data ?? [])');
+    expect(noRecord).toBeGreaterThan(-1);
+    expect(address).toBeGreaterThan(noRecord);
+    expect(chosen).toBeGreaterThan(address);
+  });
+
+  it('holds a listing report to its listing\'s address before it reads a photograph', () => {
+    const listing = broker.slice(broker.indexOf('async function readListingPhotographs('), broker.indexOf('async function readCapturedPhotographs('));
+    const cached = listing.indexOf(".from('listings_cache')");
+    const projected = listing.indexOf('projectAirtableRecord(');
+    const checked = listing.indexOf('if (!photographsAreOfReportAddress(reportAddress, { address: projected.address, suburb: projected.suburb })) {');
+    const images = listing.indexOf(".from('listing_images')");
+    for (const at of [cached, projected, checked, images]) expect(at).toBeGreaterThan(-1);
+    expect(cached).toBeLessThan(projected);
+    expect(projected).toBeLessThan(checked);
+    expect(checked).toBeLessThan(images);
+    // A listing the cache no longer holds cannot vouch for an address.
+    expect(listing).toMatch(/if \(listing\.error \|\| !listing\.data\) \{[\s\S]*?return \[\];/);
+    expect(broker).toContain('readListingPhotographs(supabase, listingId, row?.property_address, correlationId)');
   });
 
   it('signs from the private bucket for minutes, and every failure is an empty list', () => {
@@ -557,6 +676,10 @@ describe('the extraction names them and stores them on its job, and nothing abou
 
   it('stores the names on the succeeded job, where the report\'s request reads them', () => {
     expect(scrape).toContain('photographs: { candidates: result.photographCandidates ?? [] }');
+  });
+
+  it('hands the page reader the markup alone: a page\'s og:image names no property', () => {
+    expect(scrape).not.toMatch(/ogImage|og:image/);
   });
 });
 

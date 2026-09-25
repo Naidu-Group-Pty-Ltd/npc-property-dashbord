@@ -74,6 +74,7 @@ import {
   captureIsFinal,
   captureObjectName,
   captureStateOf,
+  extractionPhotographSource,
   finishCaptureAttempt,
   heldCapturedPhotographs,
   isLastingRefusal,
@@ -82,6 +83,7 @@ import {
   newCaptureRecord,
   parseCaptureObjectName,
   parseCaptureRecord,
+  photographsAreOfReportAddress,
   placesTakenBefore,
   REPORT_PHOTOGRAPH_LIMIT,
   type CapturedPhotograph,
@@ -131,7 +133,8 @@ type ListingImagesClient = SupabaseClient;
  *   op: 'capture_report' (the report's author, to start; anyone who may read
  *                  the report, to resume) — keep the photographs a URL
  *                  extraction named on its listing page, for the report made from
- *                  it. Answered at once and finished in the background; resumed
+ *                  it, and only while the report's address is the listing's.
+ *                  Answered at once and finished in the background; resumed
  *                  by the next document drawn while work is left over. Filed
  *                  under the report, never in `listing_images`; see
  *                  `captureReportPhotographs`.
@@ -1659,6 +1662,12 @@ async function runCaptureAttempt(
  * reads its parent's photographs, so there is only ever one copy to keep.
  * Without `wait` the attempt runs after the answer (202); a document being
  * drawn passes `wait` so it can carry what the attempt kept.
+ *
+ * And either way the photographs must be of the REPORT's address (rule 4 in
+ * `reportPhotographs.pure.ts`). A start is refused unless the address the
+ * extraction read is the report's own; a resume stops if the report has been
+ * re-pointed since. The address is written into the record, and every reader
+ * holds the report against it again.
  */
 async function captureReportPhotographs(
   supabase: ListingImagesClient,
@@ -1670,7 +1679,7 @@ async function captureReportPhotographs(
 
   const { data: report, error: reportError } = await supabase
     .from('investment_reports')
-    .select('id, generated_by, parent_report_id, derived_from_report_id')
+    .select('id, generated_by, parent_report_id, derived_from_report_id, property_address')
     .eq('id', args.reportId)
     .maybeSingle();
   if (reportError) return { status: 503, reason: 'report_unreadable' };
@@ -1702,26 +1711,44 @@ async function captureReportPhotographs(
         : { status: 404, reason: 'nothing_requested' };
     }
     if (report.generated_by !== args.userId) return { status: 403, reason: 'not_the_author' };
-    record = newCaptureRecord({ scrapeJobId: args.scrapeJobId, requestedBy: args.userId, now });
   } else {
     if (args.scrapeJobId && args.scrapeJobId.trim().toLowerCase() !== record.scrapeJobId) {
       return { status: 409, reason: 'different_extraction', held: held.length };
     }
     if (record.requestedBy !== report.generated_by) return { status: 409, reason: 'record_mismatch', held: held.length };
+    // Rule 4 again: the report may have been re-pointed at another address
+    // since the capture was asked for, and then these are not its photographs.
+    if (!photographsAreOfReportAddress(report.property_address, record.source)) {
+      return { status: 409, reason: 'address_changed', held: held.length };
+    }
     const state = captureStateOf(record, now);
     if (state === 'complete') return { status: 200, state, held: held.length };
     if (state === 'running') return { status: 202, state, held: held.length };
   }
 
+  const scrapeJobId = record?.scrapeJobId ?? String(args.scrapeJobId).trim().toLowerCase();
+  const requestedBy = record?.requestedBy ?? args.userId;
   const { data: job, error: jobError } = await supabase
     .from('property_scrape_jobs')
     .select('id, user_id, status, result')
-    .eq('id', record.scrapeJobId)
+    .eq('id', scrapeJobId)
     .maybeSingle();
   if (jobError) return { status: 503, reason: 'extraction_unreadable', held: held.length };
   if (!job) return { status: 404, reason: 'extraction_not_found', held: held.length };
-  if (job.user_id !== record.requestedBy) return { status: 403, reason: 'not_your_extraction', held: held.length };
+  if (job.user_id !== requestedBy) return { status: 403, reason: 'not_your_extraction', held: held.length };
   if (job.status !== 'succeeded') return { status: 409, reason: 'extraction_not_finished', held: held.length };
+
+  if (!record) {
+    // Rule 4: the page's gallery is the photographs of the listing at the
+    // address the extraction read. They are kept for this report only if that
+    // is the report's own address; otherwise nothing is fetched or written.
+    const source = extractionPhotographSource(job.result);
+    if (!source) return { status: 409, reason: 'address_unknown' };
+    if (!photographsAreOfReportAddress(report.property_address, source)) {
+      return { status: 409, reason: 'address_mismatch' };
+    }
+    record = newCaptureRecord({ scrapeJobId, requestedBy, now, source });
+  }
 
   const result = (job.result ?? {}) as { photographs?: { candidates?: unknown } };
   const candidates = readPageCandidates(result.photographs?.candidates).map((candidate) => candidate.url);
@@ -1743,8 +1770,11 @@ async function captureReportPhotographs(
   }
 
   const begun = beginCaptureAttempt(record, now);
-  // A record that cannot be written costs the resume, never the photographs.
-  await writeCaptureRecord(supabase, folder, begun);
+  // No record, no photographs: a reader serves only what a record vouches is
+  // of the report's address (rule 4), so nothing is fetched until it is written.
+  if (!(await writeCaptureRecord(supabase, folder, begun))) {
+    return { status: 503, reason: 'record_unwritable', held: held.length };
+  }
 
   const attempt = (async () => {
     const outcome = await runCaptureAttempt(supabase, {

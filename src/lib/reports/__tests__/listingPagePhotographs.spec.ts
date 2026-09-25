@@ -10,6 +10,12 @@
  * with photographs and floor plans in separate lists. The fixture below is built
  * in exactly that nesting, as Scrapfly's worked example documents it, with a
  * second listing and floor plans present so the test can see them refused.
+ *
+ * And nothing else. The owner's rule is that a report's photographs are of its
+ * address and property and are never chosen to fill a slot, so a page whose
+ * data attributes no gallery to its listing names nothing, however plausible
+ * its `og:image` looks. That was the fallback once, and these tests pin that it
+ * is gone.
  */
 import { describe, expect, it } from 'vitest';
 
@@ -17,7 +23,6 @@ import {
   argonautListings,
   captureRenditions,
   jsonObjectAt,
-  ogImageFromHtml,
   PAGE_PHOTOGRAPH_CANDIDATE_LIMIT,
   photographCandidatesFromPage,
   REA_CLASSIFY_RENDITION,
@@ -101,13 +106,13 @@ describe('realestate.com.au: the listing the page names, from its own data', () 
     for (const refused of [hash(7), hash(8), hash(9)]) expect(urls).not.toContain(refused);
   });
 
-  it('refuses the gallery when the data describes a different listing from the URL', () => {
+  it('refuses the gallery when the data describes a different listing from the URL, and takes nothing in its place', () => {
     const out = photographCandidatesFromPage({
       pageUrl: PAGE,
       rawHtml: reaPage({ listingId: '149999999', images: [hash(1)], ogImage: `https://i2.au.reastatic.net/1200x630-format=jpeg/${hash(5)}/image.jpg` }),
     });
-    // Only the page's own og:image survives, as the cover.
-    expect(out).toEqual([{ url: stored(hash(5)), origin: 'og_image' }]);
+    // Not the other listing's gallery, and not the page's og:image either.
+    expect(out).toEqual([]);
   });
 
   it('reads a GraphQL-style id that carries the listing number', () => {
@@ -139,50 +144,35 @@ describe('realestate.com.au: the listing the page names, from its own data', () 
     expect(out.length).toBeLessThanOrEqual(PAGE_PHOTOGRAPH_CANDIDATE_LIMIT);
   });
 
-  it('a page whose data is missing or broken falls back to og:image and never throws', () => {
+  it('a page whose data is missing or broken names nothing, never its og:image, and never throws', () => {
     const og = `https://i2.au.reastatic.net/1200x630-format=jpeg/${hash(4)}/image.jpg`;
     const broken = `<html><head><meta content="${og}" property="og:image"></head>` +
       '<script>window.ArgonautExchange={"resi-property_listing-experience-web":{"urqlClientCache":"{not json';
-    expect(photographCandidatesFromPage({ pageUrl: PAGE, rawHtml: broken }))
-      .toEqual([{ url: stored(hash(4)), origin: 'og_image' }]);
+    expect(photographCandidatesFromPage({ pageUrl: PAGE, rawHtml: broken })).toEqual([]);
     expect(photographCandidatesFromPage({ pageUrl: 'not a url', rawHtml: broken })).toEqual([]);
   });
 });
 
-describe('every other page: its own og:image, as the cover, and nothing else', () => {
+describe('every other page: nothing, however good its og:image looks', () => {
   const agency = 'https://www.acmerealty.com.au/listings/60-lawley-street';
 
-  it('takes the declared og:image, resolved against the page', () => {
-    const out = photographCandidatesFromPage({
+  it('names no photograph from a page that attributes none to its listing', () => {
+    // An og:image is what a page wants shown when it is shared: on a portal or
+    // an agency site it is as often a banner, an office or a stock photograph
+    // as the house, and nothing on the page says which.
+    expect(photographCandidatesFromPage({
       pageUrl: agency,
       rawHtml: '<meta property="og:image" content="/uploads/60-lawley/front-1920.jpg"><img src="/uploads/other-house.jpg">',
-    });
-    expect(out).toEqual([{ url: 'https://www.acmerealty.com.au/uploads/60-lawley/front-1920.jpg', origin: 'og_image' }]);
-  });
-
-  it('prefers what the reader reported to what the markup says', () => {
-    const out = photographCandidatesFromPage({
-      pageUrl: agency,
-      rawHtml: '<meta property="og:image" content="https://cdn.acme.example/b.jpg">',
-      ogImage: 'https://cdn.acme.example/a.jpg',
-    });
-    expect(out.map((c) => c.url)).toEqual(['https://cdn.acme.example/a.jpg']);
-  });
-
-  it('refuses a logo, an icon, an SVG and anything not served over https', () => {
-    for (const og of [
-      'https://cdn.acme.example/brand/logo-header.png',
-      'https://cdn.acme.example/icons/share.png',
-      'https://cdn.acme.example/hero.svg',
-      'http://cdn.acme.example/hero.jpg',
-    ]) {
-      expect(photographCandidatesFromPage({ pageUrl: agency, ogImage: og })).toEqual([]);
-    }
-  });
-
-  it('a page that declares nothing yields nothing', () => {
+    })).toEqual([]);
     expect(photographCandidatesFromPage({ pageUrl: agency, rawHtml: '<p>no images declared</p>' })).toEqual([]);
     expect(photographCandidatesFromPage({ pageUrl: agency })).toEqual([]);
+  });
+
+  it('a Domain listing names nothing: its markup was never measured', () => {
+    expect(photographCandidatesFromPage({
+      pageUrl: 'https://www.domain.com.au/60-lawley-street-spalding-wa-6530-2019598837',
+      rawHtml: '<meta property="og:image" content="https://bucket-api.domain.com.au/v1/bucket/image/2019598837_1_1_x.jpg">',
+    })).toEqual([]);
   });
 });
 
@@ -207,32 +197,39 @@ describe('renditions — measured on i2.au.reastatic.net, 25 Sep 2026', () => {
 });
 
 describe('the stored candidate list is re-checked on the way in', () => {
-  it('https only, known origins only, one per photograph, capped', () => {
+  it('https only, the listing\'s own gallery only, one per photograph, capped', () => {
     const out = readPageCandidates([
       { url: stored(hash(1)), origin: 'listing_gallery' },
       { url: `https://i1.au.reastatic.net/800x600/${hash(1)}/image.jpg`, origin: 'listing_gallery' },
-      { url: 'http://cdn.acme.example/a.jpg', origin: 'og_image' },
+      { url: 'http://cdn.acme.example/a.jpg', origin: 'listing_gallery' },
       { url: 'https://cdn.acme.example/b.jpg', origin: 'somewhere' },
-      { url: 'javascript:alert(1)', origin: 'og_image' },
+      { url: 'javascript:alert(1)', origin: 'listing_gallery' },
       'https://cdn.acme.example/c.jpg',
-      { url: 'https://cdn.acme.example/d.jpg', origin: 'og_image' },
+      { url: 'https://cdn.acme.example/d.jpg', origin: 'listing_gallery' },
     ]);
     expect(out).toEqual([
       { url: stored(hash(1)), origin: 'listing_gallery' },
-      { url: 'https://cdn.acme.example/d.jpg', origin: 'og_image' },
+      { url: 'https://cdn.acme.example/d.jpg', origin: 'listing_gallery' },
     ]);
     expect(readPageCandidates(null)).toEqual([]);
-    expect(readPageCandidates(Array.from({ length: 40 }, (_, i) => ({ url: `https://cdn.acme.example/${i}.jpg`, origin: 'og_image' }))))
+    expect(readPageCandidates(Array.from({ length: 40 }, (_, i) => ({ url: `https://cdn.acme.example/${i}.jpg`, origin: 'listing_gallery' }))))
       .toHaveLength(PAGE_PHOTOGRAPH_CANDIDATE_LIMIT);
+  });
+
+  it('refuses an og:image an earlier version could have stored: it is not attributed to the listing', () => {
+    expect(readPageCandidates([
+      { url: 'https://cdn.acme.example/front.jpg', origin: 'og_image' },
+      { url: stored(hash(3)), origin: 'og_image' },
+    ])).toEqual([]);
   });
 
   it('holds a planted URL to the rule the page was read with: no page, no icon, no vector', () => {
     expect(readPageCandidates([
-      { url: 'https://example.com/admin/export', origin: 'og_image' },
-      { url: 'https://cdn.acme.example/logo.svg', origin: 'og_image' },
+      { url: 'https://example.com/admin/export', origin: 'listing_gallery' },
+      { url: 'https://cdn.acme.example/logo.svg', origin: 'listing_gallery' },
       { url: 'https://cdn.acme.example/icons/bed.png', origin: 'listing_gallery' },
-      { url: 'https://cdn.acme.example/front.jpg', origin: 'og_image' },
-    ])).toEqual([{ url: 'https://cdn.acme.example/front.jpg', origin: 'og_image' }]);
+      { url: 'https://cdn.acme.example/front.jpg', origin: 'listing_gallery' },
+    ])).toEqual([{ url: 'https://cdn.acme.example/front.jpg', origin: 'listing_gallery' }]);
   });
 });
 
@@ -253,9 +250,4 @@ describe('reading the embedded data', () => {
     expect(photographCandidatesFromPage({ pageUrl: PAGE.replace('152134896', '152134897'), rawHtml: html })).toEqual([]);
   });
 
-  it('reads og:image in either attribute order, and decodes an escaped ampersand', () => {
-    expect(ogImageFromHtml('<meta property="og:image" content="https://a.example/x.jpg?w=1&amp;h=2">')).toBe('https://a.example/x.jpg?w=1&h=2');
-    expect(ogImageFromHtml("<meta content='https://a.example/y.jpg' name='og:image'>")).toBe('https://a.example/y.jpg');
-    expect(ogImageFromHtml('<meta property="og:title" content="x">')).toBeNull();
-  });
 });

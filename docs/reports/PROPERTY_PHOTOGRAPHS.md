@@ -88,6 +88,27 @@ de-duplication:
 3. **Enough pixels to print.** A picture known to be under 1,000 px on its long
    edge prints soft at plate size. Unknown dimensions are evidence of neither,
    so they pass.
+4. **Of the report's own address and property.** The owner's rule
+   (25 Sep 2026): the photographs must be only of that address and property,
+   and a slot is never filled with a picture chosen to fill it. The
+   photographs are always their source's own. What can differ is the report:
+   its address is typed before it is generated and can be edited in the
+   report editor afterwards. So on every read the report's address is held
+   against the address the photographs belong to
+   (`photographsAreOfReportAddress`):
+   - on the listing path, the listing's own address, composed from its record
+     exactly as the marketplace composes it;
+   - on the URL-extract path, the address the extraction read (§6).
+
+   The comparison is `isSameProperty`, the rule the marketplace applies
+   before it attaches a photograph to a card:
+   - street number, street name and suburb must agree after normalisation;
+   - units must agree whenever either side names one;
+   - an address with only a lot number never matches, because a lot is not a
+     street number.
+
+   Anything that cannot be verified takes nothing: a missing suburb, a
+   suburb-only address, or a listing the cache no longer holds.
 
 At most six photographs are carried: the largest number any master binds.
 
@@ -139,16 +160,23 @@ this one route, and only for the listing's own pictures.
    photographs from it. On realestate.com.au that is the gallery in the page's
    embedded data, attributed by the listing id in the URL: the "similar
    properties" beside it carry other ids and are never taken, and floor plans
-   are a separate list. Anywhere else it is the page's `og:image`, held to the
-   same URL rules as every other candidate. Domain answers this sandbox 403 on
-   every page, so its embedded gallery was never measured and it gets
-   `og:image` only. The names are URLs stored on the job; nothing is fetched,
-   and nothing about naming can fail the extraction.
+   are a separate list. **Anywhere else, nothing.** A page's `og:image` was
+   the fallback in the first version. It says what the page wants shown when
+   it is shared, not which property a picture is of; on a portal or an agency
+   site it is as often a banner, an office or a stock photograph as the house.
+   It is not read any more. Domain answers this sandbox 403 on every page, so
+   its embedded gallery was never measured and a Domain listing names
+   nothing. The names are URLs stored on the job; nothing is fetched, and
+   nothing about naming can fail the extraction.
 2. **The report asks for them to be kept.** Once the report row exists the
    browser sends `listing-images` one request, `op: 'capture_report'`, naming
    the report and the job. Only the report's author may start a capture, only
    from their own finished extraction, and never for a derived report (a fork
-   or a condensed child reads its parent's photographs).
+   or a condensed child reads its parent's photographs). And only when the
+   address the extraction read (`extractedAddress`, `extractedSuburb`) is the
+   report's own address (rule 4). Otherwise the request is refused before
+   anything is fetched or written. That address goes into the record, and a
+   resume stops if the report has since been re-pointed at another address.
 3. **The server keeps what passes.** Each photograph is fetched through the
    SSRF guard, must state at least 1,000 px on its long edge, must be judged a
    photograph by the server's own reading of its pixels (a floor plan or a
@@ -160,7 +188,8 @@ this one route, and only for the listing's own pictures.
 4. **Every document in the family reads them.** `get-investment-reports`
    falls back to the report's folder when the report has no listing, reading
    the parent's folder for a derived document, and signs them exactly as it
-   signs a listing's.
+   signs a listing's. It serves them only where a readable record vouches
+   that they are of the report's address as the report reads now.
 
 ### "What if the photographs are not fetched within the browser's minute?"
 
@@ -200,9 +229,10 @@ The link from a report to the extraction it came from is stored nowhere else.
 `data_sources` is rebuilt when the report finishes, `manual_overrides` is the
 operator's own figures and reaches prompts and templates, and a new column is a
 migration. The report's own folder already holds everything else about its
-photographs, and the object names describe the photographs, so the one extra
-fact sits beside them. If the bucket ever refuses the record, the capture still
-keeps the photographs and logs the storage's own words; only the retry is lost.
+photographs, and the object names describe the photographs, so the two extra
+facts (the extraction, and the address its photographs are of) sit beside
+them. If the bucket refuses the record, nothing is fetched: no reader may serve
+a photograph that no record says is of the report's address.
 
 ### Verified locally
 
@@ -217,6 +247,18 @@ keeps the photographs and logs the storage's own words; only the retry is lost.
   before the work, fetches only through the SSRF guard, nothing written to
   `listing_images`, the broker's reading of the family's folder, and the
   adapter's bounded wait.
+- Rule 4 is pinned the same way:
+  - the address cases: typed differently but the same property; another
+    number, street or suburb; a unit against its building; a lot; a suburb
+    alone; a street with no suburb;
+  - the order of the checks in `listing-images` (address before the record,
+    the record before the fetch) and in both of the broker's paths;
+  - the page reader naming nothing from an `og:image`.
+
+  With the comparison replaced by an unconditional yes, three of the spec's
+  tests fail. With any one of the three checks removed (the capture's start,
+  the broker's listing path, the broker's captured path), that check's own
+  test fails.
 - The REA image host was measured from this sandbox: it serves JPEG whatever
   the request's `Accept` header says, so the server can always read the size and
   judge the picture, and both renditions pass the page-furniture and
@@ -232,3 +274,9 @@ keeps the photographs and logs the storage's own words; only the retry is lost.
 - **Photographs are not removed when a report is deleted.** The folder stays,
   as the image library's files do; at about 4 MB a report it is recorded rather
   than built.
+- **How many existing listing reports rule 4 withholds photographs from.** A
+  report whose address was written in a form `isSameProperty` cannot match to
+  its listing loses its photographs, on the conservative side. Measuring that
+  needs a read of production rows this environment is not permitted to make.
+  After deploy, the broker logs `listing photographs are of another address`
+  for each one, which is where to count them. PENDING.

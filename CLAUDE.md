@@ -2976,11 +2976,22 @@ Three rules bite:
   seed.
 
 **A URL-extract report carries the listing's own photographs** (the owner's
-decision, 25 Sep 2026; §6 of the same doc). The extraction names them — on
-realestate.com.au the gallery in the page's own data, attributed by the
-listing id so the "similar properties" beside it are never taken; elsewhere
-the page's `og:image` — and the report asks `listing-images` to keep them
-under the report, never in `listing_images`. Three rules bite. **The browser's
+decision, 25 Sep 2026; §6 of the same doc). The extraction names them: on
+realestate.com.au, the gallery in the page's own data, attributed by the
+listing id so the "similar properties" beside it are never taken. Anywhere
+else it names nothing: a page's `og:image` is what the page wants shared, not
+a statement of which property a picture shows, and was removed as a fallback.
+The report asks `listing-images` to keep them under the report, never in
+`listing_images`.
+
+**And every photograph is of the report's own address and property, on both
+paths** (the owner's rule; rule 4 in §3): never a picture chosen to fill a
+slot. `photographsAreOfReportAddress` holds the report's address as it reads
+NOW against the address the photographs belong to: the listing's composed
+address, or the address the extraction read, recorded in `capture.json`. The
+comparison is `isSameProperty`, and anything it cannot verify takes nothing.
+
+Three more rules bite. **The browser's
 minute is not the deadline**: the server writes down what was asked
 (`capture.json`, beside the photographs), answers, and does the work after
 answering, and a capture the host left unfinished is finished by the next

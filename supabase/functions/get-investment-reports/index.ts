@@ -5,6 +5,7 @@ import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { hasCompleteAustralianAddress, resolveCompleteReportAddress } from './report-address.pure.ts';
 import { familyParentId, isBaseReport, shapeFamily } from '../_shared/reports/investment/subReportFamily.pure.ts';
 import { reconcileStoredFinancials } from '../_shared/reports/investment/financialEngine.pure.ts';
+import { projectAirtableRecord } from '../_shared/airtableListing.pure.ts';
 import { resolveReportGeneratedAt } from '../_shared/reports/investment/reportGeneratedAt.pure.ts';
 import {
   CAPTURE_RECORD_NAME,
@@ -12,7 +13,9 @@ import {
   capturedPhotographsForReport,
   captureStateOf,
   parseCaptureRecord,
+  photographsAreOfReportAddress,
   photographsForReport,
+  type CaptureRecord,
   type CaptureState,
   REPORT_PHOTOGRAPH_COLUMNS,
   sharedListingCounts,
@@ -103,7 +106,7 @@ const TABLE_SELECTS: Record<Exclude<TableName, 'investment_reports'>, string> = 
   generated_reports: 'id,title,created_at',
   property_comparisons: 'id,property_count,property_addresses,property_states,report_title,report_ids,created_at,analysis_summary,executive_summary,rankings,recommendations,financial_comparison,location_comparison,risk_comparison,red_flags',
 };
-const FUNCTION_VERSION = '2026-09-25.3';
+const FUNCTION_VERSION = '2026-09-25.4';
 const json = (body: unknown, status: number, headers: Record<string, string>, correlationId: string) => new Response(JSON.stringify(body), {
   status, headers: { ...headers, 'Content-Type': 'application/json', 'x-correlation-id': correlationId },
 });
@@ -236,6 +239,11 @@ interface PhotographReading {
  * and a log line. And it fails CLOSED — a reuse reading that could not be
  * taken returns nothing, because "not shared with another listing" cannot be
  * read from a failure.
+ *
+ * Either way the photographs must be of the report's own address (rule 4 in
+ * `reportPhotographs.pure.ts`), held against the address as the report reads
+ * NOW. A report's address can be edited, and a report re-pointed at another
+ * house must not keep the first one's photographs.
  */
 async function readReportPhotographs(
   supabase: SupabaseClient,
@@ -244,16 +252,38 @@ async function readReportPhotographs(
 ): Promise<PhotographReading> {
   const listingId = typeof row?.property_listing_id === 'string' ? row.property_listing_id.trim() : '';
   if (!listingId) return await readCapturedPhotographs(supabase, row, correlationId);
-  return { photographs: await readListingPhotographs(supabase, listingId, correlationId) };
+  return { photographs: await readListingPhotographs(supabase, listingId, row?.property_address, correlationId) };
 }
 
-/** A listing-sourced report's photographs, from the image library. */
+/**
+ * A listing-sourced report's photographs, from the image library.
+ *
+ * The listing's own address is composed from its record exactly as the
+ * marketplace composes it (`projectAirtableRecord`), and the report must be at
+ * that address. A listing the cache no longer holds cannot vouch for an
+ * address, so it answers nothing.
+ */
 async function readListingPhotographs(
   supabase: SupabaseClient,
   listingId: string,
+  reportAddress: unknown,
   correlationId: string,
 ): Promise<SignedPhotograph[]> {
   try {
+    const listing = await supabase
+      .from('listings_cache')
+      .select('fields')
+      .eq('listing_id', listingId)
+      .maybeSingle();
+    if (listing.error || !listing.data) {
+      if (listing.error) console.warn('[get-investment-reports] listing address unavailable', { correlationId, code: listing.error.code });
+      return [];
+    }
+    const projected = projectAirtableRecord({ id: listingId, fields: (listing.data as { fields?: Record<string, unknown> }).fields ?? {} });
+    if (!photographsAreOfReportAddress(reportAddress, { address: projected.address, suburb: projected.suburb })) {
+      console.info('[get-investment-reports] listing photographs are of another address', { correlationId });
+      return [];
+    }
     const images = await supabase
       .from('listing_images')
       .select(REPORT_PHOTOGRAPH_COLUMNS)
@@ -326,10 +356,19 @@ async function readCapturedPhotographs(
       console.warn('[get-investment-reports] captured photographs unavailable', { correlationId });
       return { photographs: [] };
     }
-    const capture = await readCaptureState(supabase, folder, listed.data ?? [], correlationId);
-    const photographCapture = capture && capture !== 'none'
-      ? { state: capture, reportId: ownerId.trim().toLowerCase() }
-      : undefined;
+    // Rule 4: a photograph is served only where a record vouches that it is of
+    // the report's address. Photographs with no readable record, or of an
+    // address the report no longer has, are not this report's.
+    const record = await readCaptureRecord(supabase, folder, listed.data ?? [], correlationId);
+    if (!record) return { photographs: [] };
+    if (!photographsAreOfReportAddress(row?.property_address, record.source)) {
+      console.info('[get-investment-reports] captured photographs are of another address', { correlationId });
+      return { photographs: [] };
+    }
+    const photographCapture = {
+      state: captureStateOf(record, Date.now()),
+      reportId: ownerId.trim().toLowerCase(),
+    };
     const chosen = capturedPhotographsForReport(listed.data ?? []);
     if (!chosen.length) return { photographs: [], photographCapture };
     const signed = await supabase.storage
@@ -356,25 +395,21 @@ async function readCapturedPhotographs(
   }
 }
 
-/** Where a report's capture stands, from its record; null where the record cannot be read. */
-async function readCaptureState(
+/** A report's capture record; null where there is none, or it cannot be read. */
+async function readCaptureRecord(
   supabase: SupabaseClient,
   folder: string,
   objects: ReadonlyArray<{ name?: unknown }>,
   correlationId: string,
-): Promise<CaptureState | null> {
-  if (!objects.some((object) => object?.name === CAPTURE_RECORD_NAME)) {
-    // Photographs with no record were kept without one; there is nothing to finish.
-    return 'none';
-  }
+): Promise<CaptureRecord | null> {
+  if (!objects.some((object) => object?.name === CAPTURE_RECORD_NAME)) return null;
   const stored = await supabase.storage.from('listing-images').download(`${folder}/${CAPTURE_RECORD_NAME}`);
   if (stored.error || !stored.data) {
     console.warn('[get-investment-reports] capture record unavailable', { correlationId });
     return null;
   }
   try {
-    const record = parseCaptureRecord(JSON.parse(await stored.data.text()));
-    return record ? captureStateOf(record, Date.now()) : null;
+    return parseCaptureRecord(JSON.parse(await stored.data.text()));
   } catch {
     return null;
   }

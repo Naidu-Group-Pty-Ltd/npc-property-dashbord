@@ -25,12 +25,16 @@
  *   separate `media.floorplans` list, which is never read. The object must
  *   name the listing id the page URL names, or none of it is taken.
  * - **Everywhere else**, and on a realestate.com.au page whose data cannot be
- *   read, the only claim a page makes about its own lead image is
- *   `og:image`. That is taken, alone, as the cover.
+ *   read: nothing. The owner's rule (25 Sep 2026) is that a report's
+ *   photographs are of its address and property and are never chosen to fill
+ *   a slot. A page's `og:image` says what the page wants shown when it is
+ *   shared, not which property the picture is of. On a portal or an agency
+ *   site it is as often a banner, an office or a stock photograph as the
+ *   house, so it was the fallback here once and is not any more.
  *
  * Domain was probed and not built: its pages and both image hosts refuse the
  * environment this was written in (403 on all three, 25 Sep 2026), so no rule
- * about its markup could be checked. A Domain listing gets its og:image.
+ * about its markup could be checked. A Domain listing names no photographs.
  *
  * ## Renditions (measured on i2.au.reastatic.net, 25 Sep 2026)
  *
@@ -56,7 +60,8 @@ export const REA_STORE_RENDITION = '2000x2000-fit';
 /** The rendition looked at to decide whether it is a photograph. */
 export const REA_CLASSIFY_RENDITION = '800x800-fit';
 
-export type PagePhotographOrigin = 'listing_gallery' | 'og_image';
+/** The one attribution a candidate may carry: the page's own data names it as this listing's. */
+export type PagePhotographOrigin = 'listing_gallery';
 
 export interface PagePhotographCandidate {
   url: string;
@@ -68,8 +73,6 @@ export interface PagePhotographEvidence {
   pageUrl: string;
   /** The page's markup as served, when the reader returned it. */
   rawHtml?: string | null;
-  /** The page's `og:image`, when the reader reported it separately. */
-  ogImage?: string | null;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -254,42 +257,6 @@ export function reaListingGallery(rawHtml: string, listingId: string): string[] 
 }
 
 /* -------------------------------------------------------------------------- */
-/* og:image                                                                    */
-/* -------------------------------------------------------------------------- */
-
-/** The page's own `og:image`, from its markup. */
-export function ogImageFromHtml(rawHtml: string): string | null {
-  const patterns = [
-    /<meta[^>]+(?:property|name)\s*=\s*["']og:image(?::secure_url)?["'][^>]*\bcontent\s*=\s*["']([^"']+)["']/i,
-    /<meta[^>]+\bcontent\s*=\s*["']([^"']+)["'][^>]*(?:property|name)\s*=\s*["']og:image(?::secure_url)?["']/i,
-  ];
-  for (const pattern of patterns) {
-    const match = pattern.exec(rawHtml);
-    if (match) return match[1].replace(/&amp;/g, '&').trim();
-  }
-  return null;
-}
-
-function firstString(value: unknown): string | null {
-  if (typeof value === 'string' && value.trim()) return value.trim();
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      if (typeof item === 'string' && item.trim()) return item.trim();
-    }
-  }
-  return null;
-}
-
-function absoluteHttps(url: string, pageUrl: string): string | null {
-  try {
-    const resolved = new URL(url, pageUrl);
-    return resolved.protocol === 'https:' ? resolved.toString() : null;
-  } catch {
-    return null;
-  }
-}
-
-/* -------------------------------------------------------------------------- */
 /* The decision                                                                */
 /* -------------------------------------------------------------------------- */
 
@@ -300,10 +267,11 @@ function assetKey(url: string): string {
 }
 
 /**
- * The photographs a report may take from this listing page, best first.
+ * The photographs a report may take from this listing page, in the agent's
+ * order.
  *
- * The listing's own gallery where the page's data attributes one to it;
- * otherwise the page's og:image as the cover; otherwise nothing. Never throws.
+ * The listing's own gallery where the page's data attributes one to it by the
+ * listing id the page URL names; otherwise nothing. Never throws.
  */
 export function photographCandidatesFromPage(evidence: PagePhotographEvidence): PagePhotographCandidate[] {
   const pageUrl = String(evidence?.pageUrl ?? '');
@@ -327,11 +295,6 @@ export function photographCandidatesFromPage(evidence: PagePhotographEvidence): 
         push(reaRendition(url, REA_STORE_RENDITION), 'listing_gallery');
       }
     }
-    if (out.length) return out;
-
-    const declared = firstString(evidence.ogImage) ?? (rawHtml ? ogImageFromHtml(rawHtml) : null);
-    const og = declared ? absoluteHttps(declared, pageUrl) : null;
-    if (og && isPropertyImageUrl(og)) push(reaRendition(og, REA_STORE_RENDITION) ?? og, 'og_image');
   } catch {
     return [];
   }
@@ -351,7 +314,9 @@ export function readPageCandidates(value: unknown): PagePhotographCandidate[] {
   const seen = new Set<string>();
   for (const entry of value) {
     if (!isRecord(entry) || typeof entry.url !== 'string') continue;
-    const origin = entry.origin === 'listing_gallery' || entry.origin === 'og_image' ? entry.origin : null;
+    // Only a photograph the page attributed to its own listing. A job written
+    // by an earlier version may name an `og_image`, which is refused here.
+    const origin = entry.origin === 'listing_gallery' ? entry.origin : null;
     if (!origin) continue;
     let url: URL;
     try {
