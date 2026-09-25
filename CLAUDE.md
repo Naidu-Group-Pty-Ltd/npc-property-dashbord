@@ -2971,9 +2971,20 @@ Three rules bite:
   also holds, and nothing at all when the reuse reading fails.
 - **A photograph never costs the document.** Every failure drops that one
   photograph.
-- **The other 45 masters get nothing yet, on purpose.** A photo slot on those
-  covers is a design change that goes through the design source and a new
-  seed.
+- **A cover takes the photograph only where nothing moves** (seed v21,
+  `withCoverPhotograph`, §7 of the same doc):
+  - The 16 field covers take it behind the whole sheet.
+  - The 18 banded covers take it inside the band. The title grows upward by
+    as many lines as the address needs, so no photograph goes between them.
+  - The 11 paper covers are left as drawn: dark type on a photograph is a
+    different cover, and Monograph is photo-free by design.
+
+  The photograph sits under **two** passes of the field colour's scrim, where
+  the photographic covers use one: over a white facade one pass leaves these
+  covers' small type at 3.48:1, below the 7:1 print floor, and two passes give
+  7.89:1. Without a photograph each cover draws exactly what it drew before,
+  and nothing fills the space. It is composed in code; the Claude Design
+  catalogue does not draw it.
 
 **A URL-extract report carries the listing's own photographs** (the owner's
 decision, 25 Sep 2026; §6 of the same doc). The extraction names them: on

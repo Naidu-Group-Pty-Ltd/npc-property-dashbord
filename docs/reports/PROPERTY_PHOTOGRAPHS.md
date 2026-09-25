@@ -4,8 +4,9 @@ Read this before touching `_shared/reportPhotographs.pure.ts`,
 `_shared/listingPagePhotographs.pure.ts`, the `photographs` option on
 `get-investment-reports`, the `capture_report` operation on `listing-images`,
 `src/lib/reports/urlExtractPhotographs.ts`,
-`src/lib/reportTemplate/adapters/reportPhotographs.ts`, or the `property.images`
-binding in the Investment Compass masters. §6 is the URL-extract path.
+`src/lib/reportTemplate/adapters/reportPhotographs.ts`, `withCoverPhotograph`, or
+the `property.images` binding in the Investment Compass masters. §6 is the
+URL-extract path; §7 is the cover photograph on the other masters.
 
 ## 1. What was asked, and what was actually wrong
 
@@ -116,12 +117,9 @@ At most six photographs are carried: the largest number any master binds.
 
 - **A report made through URL extract had no photographs.** The owner has
   since decided it should carry the listing's own (25 Sep 2026); §6 is how.
-- **Forty-five masters have no photo slot.** The Lawley PDF was drawn with
-  one of them: a dark cover with a large empty band where a photograph would
-  sit. Adding a photograph to those covers is a design change. It goes
-  through the design source and the generator (`07-investment-compass-families.md`),
-  then a new seed version and the active-master refresh. It is not hand-written
-  here.
+- **Eleven masters have no photograph on the cover.** Since seed v21 the
+  other thirty-four carry the lead photograph (§7). The eleven are paper
+  covers, which need a different design to carry one, not an added block.
 - **Duplicate intake records lose their photographs.** One property forwarded
   twice is two listings holding the same pictures, and rule 2 cannot tell that
   from a stock render, because the reuse reading carries counts, not addresses.
@@ -280,3 +278,55 @@ a photograph that no record says is of the report's address.
   needs a read of production rows this environment is not permitted to make.
   After deploy, the broker logs `listing photographs are of another address`
   for each one, which is where to count them. PENDING.
+
+## 7. A cover photograph on thirty-four more masters (seed v21)
+
+The Lawley PDF was drawn with one of the forty-five masters that had no photo
+slot: a dark cover with an empty field where a reader expected the house.
+The owner asked for the photograph on those covers (25 Sep 2026). Seed v21
+sets the report's lead photograph (`property.images.0`) by the cover's
+ground (`withCoverPhotograph`, and the table in
+[`07-investment-compass-families.md`](../template-library/07-investment-compass-families.md)):
+
+- **Sixteen field covers** take it behind the whole sheet, under two passes
+  of the field colour's scrim.
+- **Eighteen banded covers** take it inside the band, under the same two
+  passes.
+- **Eleven paper covers** are left as drawn.
+
+Two passes, where Atelier uses one, because these covers carry small type
+designed for a flat field. Over a white facade one pass leaves it at 3.48:1;
+two come to 7.89:1, above the 7:1 print floor.
+
+It is the same photograph whichever route found it: the listing's own
+library (§2) or the URL-extract capture (§6). The rules in §3 still decide
+which photographs a report may carry, rule 4 included: only this address.
+A report with none draws exactly the cover it drew before. Nothing is ever
+put in the space to fill it: no stock image, no photograph of the suburb and
+no picture of a similar house. The binding has no fallback.
+
+### Verified locally
+
+- `investmentCompassCoverPhotograph.spec.ts` renders all 34 masters through
+  the production renderer. Without a photograph, each draws exactly the HTML
+  of the same master with the three new blocks removed. With one, every other
+  box on the cover stands where it stood without it. With the slot removed,
+  38 of its 74 tests fail. With the layer rule in `closeDroppedBlocks`
+  removed, 32 fail: the sixteen field covers, whose cover would otherwise
+  rise when the photograph is absent.
+- Parsed and compared against v20, row by row: 34 of 543 rows differ, each
+  by exactly those three blocks (in `schema` and `preview_schema`), plus
+  `property.images.0` in `required_bindings` and, on fifteen field masters,
+  `hero` in the block types.
+- `templates:library:seed:check` confirms the migration is what the
+  definitions produce.
+
+### Not verified
+
+- **A real report drawn through one of these covers.** It needs the two
+  migrations applied (`20261222090000` seed, then `20261222100000`
+  refresh, through the reviewed workflow), a report whose photographs pass
+  §3, and the PDF read. PENDING.
+- **The Claude Design catalogue does not draw it.** The slot is composed in
+  code from a ground the catalogue declares. `source.json` is untouched, so
+  the Design file still shows these covers without a photograph.
