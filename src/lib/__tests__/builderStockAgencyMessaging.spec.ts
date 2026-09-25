@@ -1,0 +1,342 @@
+/**
+ * AGENCY MESSAGING — THE COMMAND CENTRE'S HALF, ON A REAL SCHEMA.
+ *
+ * A Command Centre user writes to the builder about an activated property;
+ * the builder's replies arrive over the signed network. These run the REAL
+ * network migrations and `20261221120000` against a throwaway Postgres and
+ * land envelopes exactly as the inbound door does, then assert the rows each
+ * step leaves: one conversation per property, the actual sender on every
+ * message, delivery that means ACCEPTED, idempotent sends and replays,
+ * refusals across builders, connections and properties, a poison message that
+ * does not block the next, and the order a thread settles in.
+ *
+ * The network's half is proved the same way in aurixa-builders
+ * (`scripts/db/agency-messaging-check.mjs`); both implement one contract
+ * (docs/builder-portal/51).
+ */
+import { createHash, randomUUID } from 'node:crypto';
+import { join } from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
+import {
+  postgresAvailable, startThrowawayPostgres, type ThrowawayPostgres,
+} from './support/throwawayPostgres';
+import { assertPayloadCrossesClean } from '../../../supabase/functions/_shared/builderNetworkPrivacy.pure';
+
+const REPO_ROOT = join(__dirname, '..', '..', '..');
+const MIGRATIONS = join(REPO_ROOT, 'supabase', 'migrations');
+export const MESSAGING_MIGRATION = '20261221120000_an_agency_and_a_builder_talk_over_the_network.sql';
+const NETWORK = [
+  '20261121000000_builder_network_mirror.sql',
+  '20261122000000_builder_network_phase5_inbound_fk_release.sql',
+  '20261123000000_builder_network_stock_mirror.sql',
+  '20261124000000_builder_portal_decommission.sql',
+  '20261124010000_builder_network_stock_selection_producer.sql',
+  '20261201090000_builder_network_stock_consumer_and_agency_disclosure.sql',
+  '20261201100000_agency_contact_name_falls_back_to_username.sql',
+  '20261202090000_builder_marketplace_ranking.sql',
+  '20261211000000_a_builder_route_installs_itself.sql',
+  '20261221090000_a_property_brings_its_photographs_and_documents.sql',
+  '20261221100000_a_media_diagnostic_never_breaks_the_sweep.sql',
+  MESSAGING_MIGRATION,
+];
+
+const runs = postgresAvailable();
+let db: ThrowawayPostgres;
+
+const lit = (v: unknown) => (v === null || v === undefined ? 'NULL' : `'${String(v).replace(/'/g, "''")}'`);
+const json = (v: unknown) => `${lit(JSON.stringify(v))}::jsonb`;
+const refusal = (statement: string): string | null => {
+  try { db.sql(statement); return null; } catch (error) {
+    return String((error as { stderr?: unknown }).stderr ?? (error as Error).message);
+  }
+};
+const conversationId = (networkConnection: string, item: string) => {
+  const hex = createHash('md5').update(`agency.conversation:${networkConnection}:${item}`).digest('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+};
+
+// The world.
+const ORG_A = randomUUID(); const ORG_B = randomUUID();
+const NET_A = randomUUID(); const NET_B = randomUUID();
+const ITEM_A1 = randomUUID(); const ITEM_A2 = randomUUID(); const ITEM_B1 = randomUUID();
+const OWNER = randomUUID(); const COLLEAGUE = randomUUID(); const INACTIVE = randomUUID();
+let CONN_A = ''; let CONN_B = '';
+
+const post = (item: string, user: string, clientId: string, body: string) => db.sql(`
+  SELECT id FROM public.builder_network_post_message(${lit(item)}, ${lit(user)}, ${lit(clientId)}, ${lit(body)})`);
+const outbox = (where: string) => db.sql(`SELECT count(*) FROM public.builder_network_outbox WHERE ${where}`);
+const land = (connection: string, eventType: string, dedupe: string, payload: unknown) => db.sql(`
+  INSERT INTO public.builder_network_inbound_events(connection_id, event_type, dedupe_key, payload, source_version)
+  VALUES (${lit(connection)}, ${lit(eventType)}, ${lit(dedupe)}, ${json(payload)}, 1)`);
+const sweep = () => db.sql('SELECT * FROM public.builder_network_apply_message_events(50)');
+const mainSweep = () => db.sql('SELECT * FROM public.builder_network_apply_inbound_events(50)');
+const builderMessage = (overrides: Record<string, unknown> = {}) => ({
+  schema_version: 1,
+  conversation_id: conversationId(NET_A, ITEM_A1),
+  message_id: randomUUID(),
+  stock_item_id: ITEM_A1,
+  body: 'Lot 101 is available; the deposit is 5%.',
+  sender_display_name: 'Avery Builder',
+  sent_at: '2026-09-25T10:00:00.000000Z',
+  generation: 1,
+  ...overrides,
+});
+const receipt = (message: string, generation: number, outcome: string, reason?: string, connection = CONN_A) =>
+  land(connection, 'agency.message.receipt', `agency.receipt:${message}:${generation}:${randomUUID()}`, {
+    schema_version: 1, message_id: message, conversation_id: conversationId(NET_A, ITEM_A1),
+    generation, outcome, ...(reason ? { reason } : {}),
+  });
+
+describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
+  beforeAll(() => {
+    db = startThrowawayPostgres();
+    db.file(join(__dirname, 'support', 'builderNetworkStandins.sql'));
+    for (const file of NETWORK) db.file(join(MIGRATIONS, file));
+    db.sql(`
+      INSERT INTO public.feature_flags(key, value) VALUES ('builder_network_enabled', 'true'::jsonb)
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+      INSERT INTO public.custom_users(id, username, first_name, last_name, is_active)
+      VALUES (${lit(OWNER)}, 'owner', 'Olive', 'Owner', true),
+             (${lit(COLLEAGUE)}, 'Casey Colleague', NULL, NULL, true),
+             (${lit(INACTIVE)}, 'gone', 'Gone', 'User', false);
+      INSERT INTO public.builder_network_stock_items(id, organisation_id, address_line, lot_number, lifecycle_status)
+      VALUES (${lit(ITEM_A1)}, ${lit(ORG_A)}, '1 Check Street', '101', 'active'),
+             (${lit(ITEM_A2)}, ${lit(ORG_A)}, '2 Check Street', '102', 'active'),
+             (${lit(ITEM_B1)}, ${lit(ORG_B)}, '9 Other Road', '9', 'active');`);
+    CONN_A = db.sql(`INSERT INTO public.builder_network_connections(network_connection_id, state, scopes,
+        outbound_hmac_secret, network_inbound_url, builder_organisation_id, accepted_at)
+      VALUES (${lit(NET_A)}, 'active', ARRAY['stock:publish'], 's', 'https://network.example/functions/v1/builder-network-inbound', ${lit(ORG_A)}, now())
+      RETURNING id`);
+    CONN_B = db.sql(`INSERT INTO public.builder_network_connections(network_connection_id, state, scopes,
+        outbound_hmac_secret, network_inbound_url, builder_organisation_id, accepted_at)
+      VALUES (${lit(NET_B)}, 'active', ARRAY['stock:publish'], 's', 'https://network.example/functions/v1/builder-network-inbound', ${lit(ORG_B)}, now())
+      RETURNING id`);
+    const client = db.sql(`INSERT INTO public.clients(primary_first_name, primary_surname) VALUES ('Private', 'Client') RETURNING id`);
+    db.sql(`INSERT INTO public.builder_stock_selections(stock_item_id, organisation_id, client_id, selected_by_user_id, status, internal_notes)
+            VALUES (${lit(ITEM_A1)}, ${lit(ORG_A)}, ${lit(client)}, ${lit(OWNER)}, 'selected', 'Private note about the client')`);
+    db.sql('DELETE FROM public.builder_network_outbox');
+  }, 120_000);
+  afterAll(() => db?.stop());
+
+  describe('starting and writing', () => {
+    let first = '';
+    it('1. a Command Centre user writes about an activated property; it is queued and named', () => {
+      first = post(ITEM_A1, OWNER, randomUUID(), '  Is lot 101 still available?  ');
+      expect(db.sql(`SELECT conversation_id || '|' || side || '|' || delivery_state || '|' || body || '|' || sender_display_name
+                     FROM public.builder_network_messages WHERE id = ${lit(first)}`))
+        .toBe(`${conversationId(NET_A, ITEM_A1)}|command_centre|queued|Is lot 101 still available?|Olive Owner`);
+      expect(db.sql(`SELECT owner_user_id || '|' || started_by_user_id FROM public.builder_network_conversations
+                     WHERE id = ${lit(conversationId(NET_A, ITEM_A1))}`)).toBe(`${OWNER}|${OWNER}`);
+    });
+
+    it('2. exactly one signed-network event carries it, naming no user, client or note', () => {
+      const payload = JSON.parse(db.sql(`SELECT payload FROM public.builder_network_outbox
+                                         WHERE dedupe_key = 'agency.message:${first}:1'`));
+      expect(Object.keys(payload).sort()).toEqual([
+        'body', 'conversation_id', 'generation', 'message_id', 'schema_version', 'sender_display_name', 'sent_at', 'stock_item_id',
+      ]);
+      const text = JSON.stringify(payload);
+      for (const secret of [OWNER, 'Private', 'Client', 'Private note']) expect(text).not.toContain(secret);
+      expect(() => assertPayloadCrossesClean(payload)).not.toThrow();
+    });
+
+    it('6. a second authorised user writes into the same conversation as themselves', () => {
+      const second = post(ITEM_A1, COLLEAGUE, randomUUID(), 'Adding: settlement in June.');
+      expect(db.sql(`SELECT count(DISTINCT conversation_id) || '|' || string_agg(sender_display_name, ',' ORDER BY sent_at)
+                     FROM public.builder_network_messages WHERE id IN (${lit(first)}, ${lit(second)})`))
+        .toBe('1|Olive Owner,Casey Colleague');
+    });
+
+    it('17. conversation creation is idempotent: one row for the pair however often it is written to', () => {
+      post(ITEM_A1, OWNER, randomUUID(), 'Third.');
+      expect(db.sql(`SELECT count(*) FROM public.builder_network_conversations WHERE connection_id = ${lit(CONN_A)}`)).toBe('1');
+    });
+
+    it('11/12. the same send again (replay, or a retry after an ambiguous timeout) is one message and one event', () => {
+      const key = randomUUID();
+      const a = post(ITEM_A1, OWNER, key, 'Only once please.');
+      const b = post(ITEM_A1, OWNER, key, 'Only once please.');
+      expect(a).toBe(b);
+      expect(outbox(`dedupe_key LIKE 'agency.message:${a}:%'`)).toBe('1');
+      expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE body = 'Only once please.'`)).toBe('1');
+    });
+  });
+
+  describe('who may write where', () => {
+    it('10. a property nobody here activated has no conversation', () => {
+      expect(refusal(`SELECT public.builder_network_post_message(${lit(ITEM_A2)}, ${lit(OWNER)}, gen_random_uuid(), 'x')`))
+        .toMatch(/AGENCY_CONVERSATION_NOT_OPEN/);
+    });
+    it('8. a property of a builder with no activation here is refused', () => {
+      expect(refusal(`SELECT public.builder_network_post_message(${lit(ITEM_B1)}, ${lit(OWNER)}, gen_random_uuid(), 'x')`))
+        .toMatch(/AGENCY_CONVERSATION_NOT_OPEN/);
+    });
+    it('7. an inactive user cannot write', () => {
+      expect(refusal(`SELECT public.builder_network_post_message(${lit(ITEM_A1)}, ${lit(INACTIVE)}, gen_random_uuid(), 'x')`))
+        .toMatch(/AGENCY_SENDER_NOT_A_MEMBER/);
+    });
+    it('an unknown property and an empty body are refused', () => {
+      expect(refusal(`SELECT public.builder_network_post_message(gen_random_uuid(), ${lit(OWNER)}, gen_random_uuid(), 'x')`))
+        .toMatch(/AGENCY_CONVERSATION_NOT_FOUND/);
+      expect(refusal(`SELECT public.builder_network_post_message(${lit(ITEM_A1)}, ${lit(OWNER)}, gen_random_uuid(), '   ')`))
+        .toMatch(/AGENCY_MESSAGE_INVALID/);
+    });
+    it('nothing is written while the network is switched off', () => {
+      db.sql(`UPDATE public.feature_flags SET value = 'false'::jsonb WHERE key = 'builder_network_enabled'`);
+      expect(refusal(`SELECT public.builder_network_post_message(${lit(ITEM_A1)}, ${lit(OWNER)}, gen_random_uuid(), 'x')`))
+        .toMatch(/AGENCY_NETWORK_DISABLED/);
+      db.sql(`UPDATE public.feature_flags SET value = 'true'::jsonb WHERE key = 'builder_network_enabled'`);
+    });
+  });
+
+  describe('the builder\'s replies arriving', () => {
+    const reply = builderMessage();
+    it('3/4/5. a reply lands out of the main sweep\'s lane and arrives once, as the builder\'s', () => {
+      land(CONN_A, 'agency.message.posted', `agency.message:${reply.message_id}:1`, reply);
+      mainSweep();
+      expect(db.sql(`SELECT COALESCE(apply_error, 'none') FROM public.builder_network_inbound_events
+                     WHERE dedupe_key = 'agency.message:${reply.message_id}:1'`)).toBe('none');
+      sweep();
+      expect(db.sql(`SELECT count(*) || '|' || max(side) || '|' || max(sender_display_name)
+                     FROM public.builder_network_messages WHERE id = ${lit(reply.message_id)}`))
+        .toBe('1|builder|Avery Builder');
+      expect(outbox(`dedupe_key = 'agency.receipt:${reply.message_id}:1' AND payload->>'outcome' = 'accepted'`)).toBe('1');
+    });
+
+    it('11. a redelivery and a retry of it converge on one message', () => {
+      land(CONN_A, 'agency.message.posted', `agency.message:${reply.message_id}:1:again`, reply);
+      land(CONN_A, 'agency.message.posted', `agency.message:${reply.message_id}:2`, { ...reply, generation: 2 });
+      sweep();
+      expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE id = ${lit(reply.message_id)}`)).toBe('1');
+      expect(outbox(`dedupe_key LIKE 'agency.receipt:${reply.message_id}:%'`)).toBe('2');
+    });
+
+    it.each([
+      ['9. a conversation computed for another connection (wrong workspace)', () => builderMessage({ conversation_id: conversationId(NET_B, ITEM_A1) }), 'conversation_mismatch'],
+      ['8. another builder\'s property', () => builderMessage({ stock_item_id: ITEM_B1, conversation_id: conversationId(NET_A, ITEM_B1) }), 'stock_item_not_ours'],
+      ['10. a property this workspace never activated', () => builderMessage({ stock_item_id: ITEM_A2, conversation_id: conversationId(NET_A, ITEM_A2) }), 'conversation_not_open'],
+      ['a malformed message', () => builderMessage({ sender_display_name: '' }), 'invalid_message'],
+    ])('%s is refused, stores nothing and is answered', (_label, make, reason) => {
+      const message = make();
+      land(CONN_A, 'agency.message.posted', `agency.message:${message.message_id}:1`, message);
+      sweep();
+      expect(db.sql(`SELECT message_apply_error FROM public.builder_network_inbound_events
+                     WHERE dedupe_key = 'agency.message:${message.message_id}:1'`)).toBe(`refused:${reason}`);
+      expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE id = ${lit(message.message_id)}`)).toBe('0');
+      expect(outbox(`dedupe_key = 'agency.receipt:${message.message_id}:1' AND payload->>'outcome' = 'refused'`)).toBe('1');
+    });
+
+    it('a message over a connection to another builder cannot write into this builder\'s conversation', () => {
+      const message = builderMessage();
+      land(CONN_B, 'agency.message.posted', `agency.message:${message.message_id}:1`, message);
+      sweep();
+      expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE id = ${lit(message.message_id)}`)).toBe('0');
+    });
+  });
+
+  describe('delivery', () => {
+    it('delivered means the builder accepted it — not that the envelope left', () => {
+      const m = post(ITEM_A1, OWNER, randomUUID(), 'Delivery check.');
+      db.sql(`UPDATE public.builder_network_outbox SET status = 'delivered', delivered_at = now() WHERE dedupe_key = 'agency.message:${m}:1'`);
+      expect(db.sql(`SELECT delivery_state FROM public.builder_network_messages WHERE id = ${lit(m)}`)).toBe('queued');
+      receipt(m, 1, 'accepted');
+      sweep();
+      expect(db.sql(`SELECT delivery_state FROM public.builder_network_messages WHERE id = ${lit(m)}`)).toBe('delivered');
+    });
+
+    it('14/15. a failed delivery stays visible, and its writer\'s retry goes failed → delivered with no duplicate', () => {
+      const m = post(ITEM_A1, OWNER, randomUUID(), 'Retry check.');
+      db.sql(`UPDATE public.builder_network_outbox SET status = 'dead' WHERE dedupe_key = 'agency.message:${m}:1'`);
+      expect(db.sql(`SELECT delivery_state || '|' || failure_reason FROM public.builder_network_messages WHERE id = ${lit(m)}`))
+        .toBe('failed|not_delivered');
+      expect(refusal(`SELECT public.builder_network_retry_message(${lit(m)}, ${lit(COLLEAGUE)})`)).toMatch(/NOT_RETRYABLE/);
+      db.sql(`SELECT public.builder_network_retry_message(${lit(m)}, ${lit(OWNER)})`);
+      expect(outbox(`dedupe_key = 'agency.message:${m}:2'`)).toBe('1');
+      receipt(m, 1, 'accepted');
+      sweep();
+      expect(db.sql(`SELECT delivery_state FROM public.builder_network_messages WHERE id = ${lit(m)}`)).toBe('queued');
+      receipt(m, 2, 'accepted');
+      sweep();
+      expect(db.sql(`SELECT delivery_state || '|' || delivery_generation FROM public.builder_network_messages WHERE id = ${lit(m)}`))
+        .toBe('delivered|2');
+      expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE body = 'Retry check.'`)).toBe('1');
+    });
+
+    it('a refused receipt fails the message with the builder\'s reason', () => {
+      const m = post(ITEM_A1, OWNER, randomUUID(), 'Refusal check.');
+      receipt(m, 1, 'refused', 'conversation_not_open');
+      sweep();
+      expect(db.sql(`SELECT delivery_state || '|' || failure_reason FROM public.builder_network_messages WHERE id = ${lit(m)}`))
+        .toBe('failed|refused:conversation_not_open');
+    });
+
+    it('a receipt over another connection cannot touch this conversation\'s message', () => {
+      const m = post(ITEM_A1, OWNER, randomUUID(), 'Cross-connection receipt.');
+      receipt(m, 1, 'accepted', undefined, CONN_B);
+      sweep();
+      expect(db.sql(`SELECT delivery_state FROM public.builder_network_messages WHERE id = ${lit(m)}`)).toBe('queued');
+    });
+  });
+
+  describe('robustness and order', () => {
+    it('16. a poison message is retried then dead-lettered, and never blocks the next', () => {
+      db.sql(`CREATE OR REPLACE FUNCTION public._spec_poison() RETURNS trigger LANGUAGE plpgsql AS $$
+              BEGIN IF NEW.body = 'poison' THEN RAISE EXCEPTION 'simulated fault'; END IF; RETURN NEW; END $$;
+              CREATE TRIGGER _spec_poison BEFORE INSERT ON public.builder_network_messages
+                FOR EACH ROW EXECUTE FUNCTION public._spec_poison();`);
+      const poison = builderMessage({ body: 'poison' });
+      const next = builderMessage({ body: 'After the poison.' });
+      land(CONN_A, 'agency.message.posted', `agency.message:${poison.message_id}:1`, poison);
+      land(CONN_A, 'agency.message.posted', `agency.message:${next.message_id}:1`, next);
+      sweep();
+      expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE id = ${lit(next.message_id)}`)).toBe('1');
+      for (let i = 0; i < 5; i += 1) sweep();
+      expect(db.sql(`SELECT message_apply_attempts || '|' || left(message_apply_error, 5) FROM public.builder_network_inbound_events
+                     WHERE dedupe_key = 'agency.message:${poison.message_id}:1'`)).toBe('5|dead:');
+      expect(db.sql(`SELECT count(*) FROM public.portal_operational_events_log WHERE name = 'builder_network_message_apply_dead'`)).toBe('1');
+      db.sql('DROP TRIGGER _spec_poison ON public.builder_network_messages; DROP FUNCTION public._spec_poison();');
+    });
+
+    it('13. messages that arrive out of order settle into the order they were written', () => {
+      const later = builderMessage({ body: 'Second.', sent_at: '2026-09-25T12:00:00.000000Z' });
+      const earlier = builderMessage({ body: 'First.', sent_at: '2026-09-25T11:00:00.000000Z' });
+      land(CONN_A, 'agency.message.posted', `agency.message:${later.message_id}:1`, later);
+      sweep();
+      land(CONN_A, 'agency.message.posted', `agency.message:${earlier.message_id}:1`, earlier);
+      sweep();
+      expect(db.sql(`SELECT string_agg(body, ' / ' ORDER BY sent_at, id) FROM public.builder_network_messages
+                     WHERE id IN (${lit(later.message_id)}, ${lit(earlier.message_id)})`)).toBe('First. / Second.');
+    });
+
+    it('21/22. a stock event still takes the main sweep, and media its own lane', () => {
+      const item = randomUUID();
+      land(CONN_A, 'stock.item.upserted', `stock:${randomUUID()}`, {
+        id: item, organisation_id: ORG_A, lifecycle_status: 'active', availability_status: 'available',
+        address_line: '3 Check Street', organisation: { id: ORG_A, legal_name: 'Check Homes' },
+        media: { schema_version: 1, photos: [], documents: [] },
+      });
+      mainSweep();
+      db.sql('SELECT * FROM public.builder_network_apply_stock_media(50)');
+      expect(db.sql(`SELECT count(*) FROM public.builder_network_stock_items WHERE id = ${lit(item)}`)).toBe('1');
+      expect(db.sql(`SELECT count(*) FROM public.builder_network_inbound_events
+                     WHERE event_type = 'stock.item.upserted' AND media_applied_at IS NULL`)).toBe('0');
+    });
+
+    it('23. activation behaviour is unchanged: withdrawing the activation closes the conversation to new messages', () => {
+      db.sql(`UPDATE public.builder_stock_selections SET status = 'withdrawn' WHERE stock_item_id = ${lit(ITEM_A1)}`);
+      expect(refusal(`SELECT public.builder_network_post_message(${lit(ITEM_A1)}, ${lit(OWNER)}, gen_random_uuid(), 'x')`))
+        .toMatch(/AGENCY_CONVERSATION_NOT_OPEN/);
+      db.sql(`UPDATE public.builder_stock_selections SET status = 'selected' WHERE stock_item_id = ${lit(ITEM_A1)}`);
+    });
+
+    it('20. no browser role reaches the tables or the functions', () => {
+      for (const role of ['anon', 'authenticated']) {
+        expect(db.sql(`SELECT has_table_privilege('${role}', 'public.builder_network_messages', 'SELECT')
+                          OR has_table_privilege('${role}', 'public.builder_network_conversations', 'SELECT')
+                          OR has_function_privilege('${role}', 'public.builder_network_post_message(uuid,uuid,uuid,text)', 'EXECUTE')
+                          OR has_function_privilege('${role}', 'public.builder_network_apply_message_events(integer)', 'EXECUTE')`)).toBe('f');
+      }
+    });
+  });
+});

@@ -37,6 +37,11 @@ vi.mock('@/lib/marketplaceBuilderStock', async (original) => ({
   },
   useMarketplaceClientSearch: () => ({ data: { records: [] }, isLoading: false }),
   useSelectBuilderStockForClient: () => ({ mutate: vi.fn(), isPending: false }),
+  useBuilderConversation: () => ({
+    data: { conversation_id: null, open: true, can_send: true, messages: [] }, isLoading: false, error: null,
+  }),
+  useSendBuilderMessage: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useRetryBuilderMessage: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
 const record = {
@@ -135,6 +140,11 @@ describe('what the page states', () => {
       expect(link.getAttribute('target')).toBe('_blank');
       expect(link.getAttribute('rel')).toContain('noopener');
     }
+  });
+
+  it('carries the conversation with the property\'s builder', async () => {
+    await renderAt('/listings/builder-stock/stock-1');
+    expect(screen.getByRole('heading', { name: /messages with proof homes/i })).toBeInTheDocument();
   });
 
   it('the activation record: status, who, when — and the client where the reader may see clients', async () => {

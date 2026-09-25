@@ -13,6 +13,7 @@ import { invokeSecureFunction } from '@/lib/secureInvoke';
 import type { BuilderStockItem, BuilderStockSelection } from '@/lib/builderStock';
 import type { MirrorSource } from '../../supabase/functions/_shared/builderStock/mirrorAvailability.pure';
 import type { PropertyDetail } from '../../supabase/functions/_shared/builderStock/propertyDetail.pure';
+import type { ConversationMessageView } from '../../supabase/functions/_shared/builderStock/agencyMessages.pure';
 
 export const marketplaceStockKeys = {
   root: () => ['marketplace', 'builder-stock'] as const,
@@ -215,5 +216,62 @@ export function useMarketplaceStockItem(stockItemId: string, enabled = true) {
     queryFn: () => invoke<MarketplaceStockDetail & { success?: boolean }>({
       operation: 'get_stock_item', stock_item_id: stockItemId,
     }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// The builder conversation on a property page.
+// ---------------------------------------------------------------------------
+
+export type { ConversationMessageView, DeliveryState } from '../../supabase/functions/_shared/builderStock/agencyMessages.pure';
+
+export interface BuilderConversation {
+  conversation_id: string | null;
+  /** False where this workspace holds no live activation of the property. */
+  open: boolean;
+  can_send: boolean;
+  messages: ConversationMessageView[];
+}
+
+/** How often an open conversation re-reads itself. Polling is the transport's floor. */
+export const BUILDER_CONVERSATION_POLL_MS = 10_000;
+
+const conversationKey = (stockItemId: string) =>
+  [...marketplaceStockKeys.root(), 'conversation', stockItemId] as const;
+
+export function useBuilderConversation(stockItemId: string, enabled = true) {
+  return useQuery({
+    queryKey: conversationKey(stockItemId),
+    enabled: enabled && !!stockItemId,
+    queryFn: () => invoke<BuilderConversation>({
+      operation: 'get_builder_conversation', stock_item_id: stockItemId,
+    }),
+    refetchInterval: BUILDER_CONVERSATION_POLL_MS,
+    refetchIntervalInBackground: false,
+  });
+}
+
+/**
+ * Send one message. The caller mints `clientMessageId` once per message and
+ * reuses it for any repeat of the same send, so a timeout is safe to retry.
+ */
+export function useSendBuilderMessage(stockItemId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { clientMessageId: string; body: string }) => invoke<{ message: ConversationMessageView | null }>({
+      operation: 'send_builder_message', stock_item_id: stockItemId,
+      client_message_id: input.clientMessageId, body: input.body,
+    }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: conversationKey(stockItemId) }),
+  });
+}
+
+export function useRetryBuilderMessage(stockItemId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (messageId: string) => invoke<{ message: ConversationMessageView | null }>({
+      operation: 'retry_builder_message', message_id: messageId,
+    }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: conversationKey(stockItemId) }),
   });
 }

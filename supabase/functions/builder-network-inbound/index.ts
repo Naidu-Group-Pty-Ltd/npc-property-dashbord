@@ -25,6 +25,8 @@ import {
 import { buildStamp } from '../_shared/builderNetworkStamp.pure.ts';
 import { builderNetworkEnabled, connectionByNetworkId } from '../_shared/builderNetwork.ts';
 
+const MESSAGE_EVENT_TYPES = new Set(['agency.message.posted', 'agency.message.receipt']);
+
 const MAX_BODY_BYTES = 256 * 1024;
 
 Deno.serve(async (req) => {
@@ -114,6 +116,15 @@ Deno.serve(async (req) => {
       .rpc('builder_network_apply_inbound_events', { _limit: 25 });
     if (applyError) {
       console.error('[builder-network-inbound] opportunistic apply failed', applyError.message);
+    }
+    // Messages have their own lane and sweep; the same opportunism, the same
+    // rule: a failure here costs latency, never the delivery.
+    if (MESSAGE_EVENT_TYPES.has(eventType)) {
+      const { error: messageError } = await supabase
+        .rpc('builder_network_apply_message_events', { _limit: 25 });
+      if (messageError) {
+        console.error('[builder-network-inbound] opportunistic message apply failed', messageError.message);
+      }
     }
 
     const { count } = await supabase
