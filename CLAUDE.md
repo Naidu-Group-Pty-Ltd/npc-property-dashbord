@@ -2126,8 +2126,8 @@ area's general character is not a retrieval either). **An evidence note
 describes the RETRIEVAL, never the conclusion beside it.** And **the two
 absences are different sentences**: `none_at_point` is a register asked here
 that holds nothing here, the other four are ways of never having asked, so
-`RegisterReading` carries the distinction and the page prints "Searched,
-nothing found." or "Not searched." The same gap existed one level down —
+`RegisterReading` carries the distinction and the page prints "Checked —
+nothing recorded." or "Not covered by this report." The same gap existed one level down —
 `planningFactBlocks` rule 4 closed the STATEMENT ("never write that no overlay
 applies") and the model obeyed it, then rated `Environmental nuisance | Low`
 from the same absence one row later. Three things had to be CHECKED rather than
@@ -2902,6 +2902,39 @@ chapter it is evidence for**, so the recommendation stays the last assessment.
 **A comparison with one side left is not drawn, and neither is its caption.**
 And **our words never reach the page as labels** — a registry id or a phrase of
 the prompt is described to the model and scrubbed on read.
+
+## A report speaks as the adviser, and makes one recommendation
+Read [`ADVISER_VOICE.md`](./docs/reports/ADVISER_VOICE.md) before touching
+`_shared/reports/adviserVoice.pure.ts`, `printedVerdict.pure.ts`,
+`recommendationContract`, `readerNote`, the register headings in
+`registerTables.pure.ts`, or any sentence a composer hands the writer or the
+page. The regenerated Lawley Compass said "register" 110 times, "retrieved"
+38, "this platform" 11 and "Not searched." six times — every sentence true,
+none of them about the property — and printed **STRONG BUY** on its cover
+beside **"Proceed with caution"** in its verdict. Two causes. **The words were
+ours**: the verbatim blocks, the section purposes and even the contract's
+worked example of an *honest* sentence spoke the machine room's vocabulary,
+and a writer copies what it is handed. **The repetition was an instruction**: a
+"say that" rule pinned into every section call is obeyed in every section, so
+one absence was explained five times. Four rules bite. **The machine room
+never reaches the page** — `PLATFORM_VOCABULARY` is narrow on purpose (a
+relocatable home is "loaded onto a truck", Queensland has "coordinated
+projects"), because a warning that fires on ordinary English teaches an
+operator to ignore it; and `adviserVoice.spec.ts` reads the string literals of
+every composer, because a fixture reaches only the branches it was written
+for. **A limitation is explained once, in the section that owns its subject**
+(`DISCLOSURE_HOMES`, `inHomeSection`, `elsewhereOnly`); a prohibition still
+binds every section, since it costs no words. **The two absences are one pair
+of constants** (`REGISTER_CHECKED_EMPTY`, `REGISTER_NOT_COVERED`), because two
+spellings of one distinction on two pages read as two meanings, and a service
+note is translated on the way OUT (`readerNote`) rather than rewritten at the
+source, which reaches cached answers too. And **the document makes one
+recommendation**: both verdict sections open with the label the cover prints.
+Prose is never scrubbed — `platform-vocabulary` is a QA warning. One thing the
+rewrite found is worth knowing before renaming anything: **a header row is a
+KEY** — `REGISTER_TABLE_HEADERS` dedupes a reproduced register by its whole
+header row, so both spellings are listed and a spec reads every header the
+composers draw.
 
 ## A premium document, and the eighteen per cent that was bold
 

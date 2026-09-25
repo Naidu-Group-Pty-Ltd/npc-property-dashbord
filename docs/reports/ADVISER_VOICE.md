@@ -1,0 +1,176 @@
+# A report speaks as the adviser
+
+The owner read the regenerated Compass for 60 Lawley Street, Spalding WA
+(report `60f205f9`, 25 Sep 2026) as a client would, and asked for every report
+to read like "a property professional presenting the information". This is the
+record of what that took, what it found on the way, and what is still open.
+
+## What the document sounded like
+
+Measured on the text the dashboard showed:
+
+| word or sentence | times |
+| --- | ---: |
+| "register" | 110 |
+| "retrieved" / "retrieval" | 38 |
+| "coordinate" | 17 |
+| "this platform" | 11 |
+| "Recorded attribute" (a column heading) | 6 |
+| "Not searched." | 6 |
+| "No infrastructure project or development instrument was retrieved …" | 5 |
+| "… no operator stop file was available for this assessment" | 5 |
+| "No population projection … has been loaded for this assessment" | 3 |
+
+Every one of those sentences was **true**. None of them was about the property.
+They describe how the report was made, and a client does not buy a house from a
+description of a database. The honesty rules behind them stay exactly as they
+were — an absence is never rated, a checked-and-empty map is not an unchecked
+one, a limitation is stated. What changed is who is speaking, and how often.
+
+The same document also printed **STRONG BUY** on its cover and **"Proceed with
+caution"** in its Executive Verdict, explaining the difference as "matters the
+model does not measure". Two verdicts, and an explanation in the platform's
+vocabulary. That is rule 5 below.
+
+## Two causes, each fixed at its source
+
+**The words came from us.** The blocks the page prints verbatim (the planning
+controls table, the infrastructure outlook, the SWOT, the monitoring plan), the
+sentences the writer is told to write, the section instructions in the
+registry, and even the document contract's worked example ("No council overlay
+mapping was retrieved for this lot" was the model's example of an *honest*
+sentence) all spoke the machine room's vocabulary. A writer copies what it is
+handed.
+
+**The repetition was an instruction.** `infrastructureRules` opened "RULES FOR
+THE WHOLE REPORT … they apply in every section" and its first rule was "Say in
+one sentence that no infrastructure project … was retrieved". The pinned
+context is the same for every section call, so every section that touched the
+subject said it — five times. A rule that must be obeyed everywhere and a
+sentence that must be written once are different kinds of instruction.
+
+## The rules
+
+1. **The machine room never reaches the page.** `PLATFORM_VOCABULARY`
+   (`_shared/reports/adviserVoice.pure.ts`) names the terms — "this platform",
+   "this deployment", "loaded", "retrieved", "coordinate", "address point",
+   "stop file", "evidence pack", "the model", "recorded attribute", "not
+   searched", "the registers this report reads" — each with what an adviser
+   writes instead. The patterns are narrow on purpose: `coordinate` does not
+   match Queensland's statutory "coordinated project", `loaded` needs its
+   auxiliary and not a preposition of motion (a relocatable home is "loaded
+   onto a truck"), and "the model" does not match a display home's model. A
+   warning that fires on ordinary English teaches an operator to ignore it.
+2. **A limitation is explained once, in the section that owns its subject.**
+   `DISCLOSURE_HOMES` gives each one a home — planning → Zoning, Planning and
+   Development Considerations; infrastructure → Infrastructure and Growth
+   Context; supply → Competitive Landscape and Supply Pipeline; forward demand
+   → Demand Drivers; transport → Transport & Connectivity; amenity → Amenity &
+   Access; hazards, climate and crime → Environment, Climate & Safety; market
+   figures → Market Positioning. Every composed "say this" rule is confined
+   with `inHomeSection()`, and every other section is told by `elsewhereOnly()`
+   that it may point to it in a few words. Prohibitions still bind every
+   section — they cost no words.
+3. **The two absences keep their distinction, in the adviser's words.**
+   "Checked — nothing recorded." (`REGISTER_CHECKED_EMPTY`) and "Not covered by
+   this report." (`REGISTER_NOT_COVERED`) replace "Searched, nothing found."
+   and "Not searched.". They are ONE pair of constants, because the planning
+   table, the infrastructure outlook and the supply block all print them, and
+   two spellings of one distinction on two pages reads as two meanings.
+4. **A service note is translated on the way to the page, never rewritten at
+   the source.** `planning-data-service` writes notes for the people who
+   maintain it ("the only such register this report reads is Queensland's").
+   `readerNote` (`_shared/planning/serviceNote.pure.ts`) turns each known note
+   into what is not covered and what confirms it, returns `null` for a note
+   that carries a failure's own detail (so the caller's sentence stands), and
+   passes an unrecognised note through unchanged. Translating on the way out
+   reaches answers cached before the change too. The planning prompt block
+   (`planningStatBlocks`) now reads through the same function, so the writer
+   is never handed a diagnostic either.
+5. **The document makes one recommendation.** `printedVerdict` reads what the
+   cover prints; `issuedRecommendation` hands it to the Executive Verdict and
+   the Final Recommendation; `recommendationContract` makes both open with it
+   ("Strong Buy — subject to the due diligence set out in this report") and
+   forbids every other label. Where the page prints no verdict, the adviser's
+   three labels remain and both sections must use the same one.
+6. **Prose is never scrubbed.** `compassQAValidator` reports what still reaches
+   a finished document as the `platform-vocabulary` warning. Deleting a phrase
+   leaves a sentence that no longer says what it said.
+
+## What the rewrite found
+
+Four defects, each invisible until the wording moved:
+
+- **The register dedupe keyed on header rows that had been renamed.**
+  `REGISTER_TABLE_HEADERS` matches a table's header row whole, and the control
+  summary's columns became `Finding | Status | Source`, so a model's
+  reproduction of the table would have printed twice with nothing reporting
+  it. Both spellings are listed now (stored reports keep the old one), and
+  `aRegisterIsPrintedOnce.spec.ts` reads every header the two composers draw
+  out of their source — proven to fail when a spelling is removed.
+- **The rated-absence chart guard did not know the new absence words.**
+  `ABSENCE_WORDS` gains "not checked", "not confirmed" and "not covered", or a
+  confession written in the adviser's voice would have passed the guard.
+- **The supply instruction contradicted its own block.** The registry told the
+  writer a partial approvals total "is a FLOOR and says so" while
+  `approvalsFactBlocks` says it is not a minimum, because the ABS publishes
+  approvals net of amendments. The instruction now says PARTIAL.
+- **The citation rule pointed at a heading the page no longer carries.** It
+  sent the reader to "*Planning controls and development registers* at the end
+  of this report" — the section the registers left on 25 Sep 2026, when they
+  moved inside the chapters they are evidence for. It now names the headings
+  the page prints, from the same constants the generator writes them with.
+
+And three instructions that were producing the vocabulary directly: the
+planning section's purpose asked for the sentence "the cadastral area of the
+lot was not retrieved"; the section contract asked for "a short two-column
+table of the recorded attributes" (the likely source of the six "Recorded
+attribute" headings); and the attributes rule offered "not recorded for this
+assessment" as the permitted form.
+
+## Stored reports
+
+- **No stored prose is rewritten.** The voice is in what the generator is
+  handed and what it composes, so a stored report keeps its words until it is
+  regenerated.
+- **The appended register headings changed** ("Planning controls retrieved for
+  this property" → "Planning controls for this property"; the infrastructure
+  one likewise), named once in `registerTables.pure.ts`.
+  `STORED_REGISTER_HEADINGS` keeps the old spelling readable, so a pointer in
+  an existing report still resolves and its tables are still deduplicated.
+
+## Where it lives
+
+| File | What it holds |
+| --- | --- |
+| `_shared/reports/adviserVoice.pure.ts` | The vocabulary, the homes, the two readings, `adviserVoiceRules()` |
+| `_shared/compassSectionContract.ts` | `documentRules` carries the voice into every Compass section call's untrimmed system message; `recommendationContract` |
+| `_shared/reports/printedVerdict.pure.ts` | The one reader of the verdict the page prints |
+| `_shared/planning/serviceNote.pure.ts` | `readerNote`, `uncheckedSentence` |
+| `_shared/reports/investment/registerTables.pure.ts` | The register headings and header rows, both spellings |
+| `_shared/compassQAValidator.ts` | Rule 17, `platform-vocabulary` (warning) |
+
+## What pins it
+
+`adviserVoice.spec.ts` drives the planning table, the infrastructure outlook and
+the major-projects block in all eight jurisdictions and asserts none carries the
+vocabulary; holds `DISCLOSURE_HOMES` to both registry mirrors; asserts every
+composed "say that" rule names its home; and **reads the string literals of 23
+composer modules** and fails on any platform term, with status enum values
+named explicitly — because a fixture reaches only the branches it was written
+for, and the SWOT, the monitoring plan and the market block each carried the
+vocabulary on a branch no fixture took. `oneRecommendation.spec.ts` pins rule 5.
+
+## Still open
+
+- **The four derived formats.** `documentRules` returns nothing for any tier
+  but the Compass, so the voice reaches Compass generation only. The Financial,
+  Strategic, Snapshot and Briefing are produced by the fork and the condenser
+  and need the same treatment.
+- **The Risk Dashboard's evidence vocabulary.** "Not searched" became "Not
+  checked"; a checked-and-clear register should read as a finding ("Not
+  mapped"), not as an absence, which is a change to what the register may
+  say rather than to its words.
+- **"register" is not banned.** A heritage register and a risk register are
+  ordinary professional vocabulary; the composed blocks now use it far less,
+  and the warning does not count it.
