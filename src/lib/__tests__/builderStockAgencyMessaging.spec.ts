@@ -287,6 +287,21 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
     });
   });
 
+  describe('a relationship whose two ends disagree', () => {
+    it('holds a builder message unconsumed while the connection is halted, and applies it once repaired', () => {
+      db.sql(`UPDATE public.builder_network_connections SET identity_mismatch_since = now() WHERE id = ${lit(CONN_A)}`);
+      const held = builderMessage({ body: 'Held during the halt.' });
+      land(CONN_A, 'agency.message.posted', `agency.message:${held.message_id}:1`, held);
+      sweep();
+      expect(db.sql(`SELECT (message_applied_at IS NULL) || '|' || message_apply_attempts FROM public.builder_network_inbound_events
+                     WHERE dedupe_key = 'agency.message:${held.message_id}:1'`)).toBe('true|0');
+      expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE id = ${lit(held.message_id)}`)).toBe('0');
+      db.sql(`UPDATE public.builder_network_connections SET identity_mismatch_since = NULL WHERE id = ${lit(CONN_A)}`);
+      sweep();
+      expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE id = ${lit(held.message_id)}`)).toBe('1');
+    });
+  });
+
   describe('a receipt that never gets back', () => {
     it('as RECEIVER (1, 2, 8, 9): the message is stored once, and a retry of it is answered again', () => {
       const lostIn = builderMessage({ body: 'Did you get this one?' });

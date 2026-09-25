@@ -496,6 +496,11 @@ BEGIN
       FROM public.builder_network_inbound_events e
      WHERE e.message_applied_at IS NULL
        AND e.event_type IN ('agency.message.posted', 'agency.message.receipt')
+       -- A relationship whose two ends disagree is HELD, never consumed —
+       -- the main sweep's rule (20261211000000): repaired, it replays.
+       AND NOT EXISTS (
+         SELECT 1 FROM public.builder_network_connections c
+          WHERE c.id = e.connection_id AND c.identity_mismatch_since IS NOT NULL)
      ORDER BY e.received_at, e.id
      LIMIT greatest(1, least(_limit, 500))
      FOR UPDATE SKIP LOCKED
