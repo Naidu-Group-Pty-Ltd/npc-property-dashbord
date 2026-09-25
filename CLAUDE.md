@@ -3044,7 +3044,11 @@ after the contents and before the verdict, each sheet conditional on its plan.
 The rule that makes it safe: **without a plan every master draws byte for
 byte what it drew before**, pinned by rendering all fifty with and without the
 sheets. The sheet takes no running head, because a head names a part and a new
-part would renumber every later page.
+part would renumber every later page. A URL-extract report takes the listing's
+own plans the same way: realestate.com.au's `media.floorplans`, attributed by
+the listing id, kept by the same capture as its photographs in a list the
+record settles apart, and an asset the page lists as a plan is never offered
+as a photograph.
 
 **The standard presentation draws them too** (§10). A report left on no
 template used to carry no photograph and no plan whichever route found them.

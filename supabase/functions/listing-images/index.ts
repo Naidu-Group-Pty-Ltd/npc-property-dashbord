@@ -72,11 +72,10 @@ import {
   brochurePhotographsAreOfReportAddress,
   brochurePhotographSource,
   candidatesToTry,
-  CAPTURE_MAX_ATTEMPTS,
   CAPTURE_RECORD_NAME,
+  captureFinish,
   captureFolder,
   floorPlanFolder,
-  captureIsFinal,
   captureObjectName,
   captureStateOf,
   extractionPhotographSource,
@@ -101,7 +100,11 @@ import {
   type CaptureRecord,
   type CaptureState,
 } from '../_shared/reportPhotographs.pure.ts';
-import { captureRenditions, readPageCandidates } from '../_shared/listingPagePhotographs.pure.ts';
+import {
+  captureRenditions,
+  readPageCandidates,
+  readPageFloorPlanCandidates,
+} from '../_shared/listingPagePhotographs.pure.ts';
 
 /**
  * The client type these helpers actually receive.
@@ -142,8 +145,9 @@ type ListingImagesClient = SupabaseClient;
  *                  page, and the enrichment sweep is what goes and finds them.
  *   op: 'capture_report' (the report's author, to start; anyone who may read
  *                  the report, to resume) — keep the photographs a URL
- *                  extraction named on its listing page, for the report made from
- *                  it, and only while the report's address is the listing's.
+ *                  extraction named on its listing page, and its floor plans
+ *                  (filed in `plans/`), for the report made from it, and only
+ *                  while the report's address is the listing's.
  *                  Answered at once and finished in the background; resumed
  *                  by the next document drawn while work is left over. Filed
  *                  under the report, never in `listing_images`; see
@@ -419,8 +423,17 @@ async function storagePathFor(
  */
 async function fetchImageBytes(
   candidate: ImageCandidate,
+  options: {
+    /**
+     * Refuse what the URL says is page furniture. On for everything but a
+     * listing page's own floor plan: the furniture rule refuses a file called
+     * `floorplan` — which is how it keeps plans off photo cards, and exactly
+     * what a plan may be called.
+     */
+    furniture?: boolean;
+  } = {},
 ): Promise<{ bytes: Uint8Array; contentType: string } | { error: string }> {
-  if (looksLikeChromeUrl(candidate.url)) return { error: 'page_furniture' };
+  if (options.furniture !== false && looksLikeChromeUrl(candidate.url)) return { error: 'page_furniture' };
 
   let safeUrl: URL;
   try {
@@ -1510,7 +1523,13 @@ interface CaptureAnswer {
   /** Photographs the report holds, as far as this request knows. */
   held?: number;
   reason?: string;
-  attempt?: { number: number; kept: number; refused: Record<string, number> };
+  attempt?: {
+    number: number;
+    kept: number;
+    refused: Record<string, number>;
+    /** The same attempt's floor plans. */
+    plans: { kept: number; refused: Record<string, number> };
+  };
 }
 
 function countRefusals(refusals: readonly string[]): Record<string, number> {
@@ -1568,28 +1587,35 @@ async function judgeForCapture(
 }
 
 /**
- * One attempt at a report's photographs: the candidates not yet settled, in
- * the listing's order, until the first `REPORT_PHOTOGRAPH_LIMIT` places are
- * taken or the allowance is spent.
+ * One pass of an attempt over one of a report's lists — its photographs, or
+ * its floor plans: the candidates not yet settled, in the listing's order,
+ * until the first `limit` places are taken or the allowance is spent.
  *
- * A photograph is kept only when every check passes: it downloads through the
+ * A picture is kept only when every check passes: it downloads through the
  * SSRF guard as a bounded image, its header states at least the print floor on
- * its long edge, the server's own judgement of its pixels says it is a
- * photograph, and it is not a second copy of one already kept, by this attempt
- * or an earlier one. An image the allowance cannot look at is not kept — no
- * evidence is not a verdict — and the next attempt looks again.
+ * its long edge, the server's own judgement of its pixels says it is what the
+ * list is for — a photograph, or for the plans a plan — and it is not a second
+ * copy of one already kept, by this attempt or an earlier one. An image the
+ * allowance cannot look at is not kept — no evidence is not a verdict — and
+ * the next attempt looks again. The two passes share one allowance,
+ * photographs first, because the cover is what a reader sees first.
  */
 async function runCaptureAttempt(
   supabase: ListingImagesClient,
   args: {
+    kind: 'photo' | 'floorplan';
     folder: string;
     candidates: readonly string[];
     settled: ReadonlySet<string>;
     held: readonly CapturedPhotograph[];
-    budgetMs: number;
+    budget: AnalysisBudget;
   },
 ): Promise<CaptureAttempt> {
-  const budget = newAnalysisBudget(args.budgetMs);
+  const { budget } = args;
+  const limit = args.kind === 'floorplan' ? REPORT_FLOOR_PLAN_LIMIT : REPORT_PHOTOGRAPH_LIMIT;
+  // A plan comes from the page's own floor-plan list, so the photographs'
+  // furniture rule, which refuses a file called `floorplan`, is not asked.
+  const furniture = args.kind === 'photo';
   const places = new Set(args.held.map((photo) => photo.place));
   const checksums = new Set(args.held.map((photo) => photo.checksum));
   const signatures = args.held.map((photo) => photo.signature);
@@ -1601,16 +1627,16 @@ async function runCaptureAttempt(
     if (isLastingRefusal(why)) settled.push(url);
   };
 
-  for (const place of candidatesToTry(args.candidates, args.settled, args.held)) {
-    // A photograph this attempt kept may already have decided the places ahead.
-    if (placesTakenBefore(places, place) >= REPORT_PHOTOGRAPH_LIMIT) break;
+  for (const place of candidatesToTry(args.candidates, args.settled, args.held, limit)) {
+    // A picture this attempt kept may already have decided the places ahead.
+    if (placesTakenBefore(places, place) >= limit) break;
     const url = args.candidates[place];
     // Past the allowance nothing more can be judged, so nothing more is
     // fetched; what is left is the next attempt's.
     if (!hasBudget(budget)) { refusals.push('out_of_time'); continue; }
     const renditions = captureRenditions(url);
 
-    const fetched = await fetchImageBytes({ url: renditions.store, origin: 'scraped' });
+    const fetched = await fetchImageBytes({ url: renditions.store, origin: 'scraped' }, { furniture });
     if ('error' in fetched) { refuse(url, fetched.error.split(':')[0]); continue; }
 
     const size = readDecodableDimensions(fetched.bytes);
@@ -1624,14 +1650,16 @@ async function runCaptureAttempt(
     // 64 px square, and a decode is paid for in pixels.
     let look = fetched.bytes;
     if (renditions.classify) {
-      const small = await fetchImageBytes({ url: renditions.classify, origin: 'scraped' });
+      const small = await fetchImageBytes({ url: renditions.classify, origin: 'scraped' }, { furniture });
       if ('error' in small) { refuse(url, small.error.split(':')[0]); continue; }
       look = small.bytes;
     }
     const judged = await judgeForCapture(budget, look);
     if ('refusal' in judged) { refuse(url, judged.refusal); continue; }
     const { analysis } = judged;
-    if (analysis.kind !== 'photo') { refuse(url, analysis.kind); continue; }
+    // The server's own verdict decides which list a picture may join: a
+    // photograph only where the pixels read as one, a plan only as a plan.
+    if (analysis.kind !== args.kind) { refuse(url, analysis.kind); continue; }
     const repeat = signatures.some((prior) => {
       const distance = signatureDistance(prior, analysis.signature);
       return distance !== null && distance <= SIGNATURE_MATCH_BITS;
@@ -1684,13 +1712,19 @@ async function runCaptureAttempt(
  * extraction read is the report's own; a resume stops if the report has been
  * re-pointed since. The address is written into the record, and every reader
  * holds the report against it again.
+ *
+ * The listing's floor plans, where its page named any, ride the same capture:
+ * the same record, the same address check, the same attempts, filed in
+ * `plans/` and settled in the record's own `plans` list. The capture is
+ * finished when both lists are (`captureFinish`).
  */
 async function captureReportPhotographs(
   supabase: ListingImagesClient,
   args: { reportId: string; scrapeJobId: string | null; userId: string; wait: boolean },
 ): Promise<CaptureAnswer> {
   const folder = captureFolder(args.reportId);
-  if (!folder) return { status: 400, reason: 'invalid_report_id' };
+  const planFolder = floorPlanFolder(args.reportId);
+  if (!folder || !planFolder) return { status: 400, reason: 'invalid_report_id' };
   if (args.scrapeJobId !== null && !isRecordId(args.scrapeJobId)) return { status: 400, reason: 'invalid_extraction_id' };
 
   const { data: report, error: reportError } = await supabase
@@ -1771,16 +1805,27 @@ async function captureReportPhotographs(
     record = newCaptureRecord({ scrapeJobId, requestedBy, now, source });
   }
 
-  const result = (job.result ?? {}) as { photographs?: { candidates?: unknown } };
+  const result = (job.result ?? {}) as { photographs?: { candidates?: unknown; floorPlans?: unknown } };
   const candidates = readPageCandidates(result.photographs?.candidates).map((candidate) => candidate.url);
+  const planCandidates = readPageFloorPlanCandidates(result.photographs?.floorPlans).map((candidate) => candidate.url);
   const settled = new Set(record.settled);
+  const planSettled = new Set(record.plans.settled);
+  // The plans already kept, where the page named any. A folder that cannot be
+  // listed is not an empty one: a place could be filled twice.
+  let heldPlans: CapturedPhotograph[] = [];
+  if (planCandidates.length) {
+    const plans = await supabase.storage.from(BUCKET).list(planFolder, { limit: 100 });
+    if (plans.error) return { status: 503, reason: 'storage_unreadable', held: held.length };
+    heldPlans = heldCapturedPhotographs(plans.data ?? []);
+  }
 
-  // Final before any attempt: nothing was named, every place is decided, or
-  // the attempts are spent (an attempt whose worker ended before it could say so).
-  const final: CaptureFinish | null = candidates.length === 0
-    ? 'no_candidates'
-    : captureIsFinal(candidates, settled, held)
-      ?? (record.attempts >= CAPTURE_MAX_ATTEMPTS ? 'attempts' : null);
+  // Final before any attempt: nothing was named, every place of both lists is
+  // decided, or the attempts are spent (an attempt whose worker ended before
+  // it could say so).
+  const final: CaptureFinish | null = captureFinish({
+    photographs: { candidates, settled, held },
+    plans: { candidates: planCandidates, settled: planSettled, held: heldPlans },
+  }, record.attempts);
   if (final) {
     await writeCaptureRecord(supabase, folder, {
       ...record,
@@ -1798,28 +1843,46 @@ async function captureReportPhotographs(
   }
 
   const attempt = (async () => {
-    const outcome = await runCaptureAttempt(supabase, {
-      folder,
-      candidates,
-      settled,
-      held,
-      budgetMs: args.wait ? CAPTURE_BUDGET_WAITED_MS : CAPTURE_BUDGET_DETACHED_MS,
-    });
+    // One allowance for the attempt, photographs first: the cover is what a
+    // reader sees first, and plans the allowance cannot reach wait for the
+    // next attempt like any other unfinished work.
+    const budget = newAnalysisBudget(args.wait ? CAPTURE_BUDGET_WAITED_MS : CAPTURE_BUDGET_DETACHED_MS);
+    const outcome = await runCaptureAttempt(supabase, { kind: 'photo', folder, candidates, settled, held, budget });
+    const planOutcome: CaptureAttempt = planCandidates.length
+      ? await runCaptureAttempt(supabase, {
+        kind: 'floorplan',
+        folder: planFolder,
+        candidates: planCandidates,
+        settled: planSettled,
+        held: heldPlans,
+        budget,
+      })
+      : { kept: [], settled: [], refusals: [] };
     const finished = finishCaptureAttempt(begun, {
       now: Date.now(),
       candidates,
       settledNow: outcome.settled,
       refusalsNow: outcome.refusals,
       held: [...held, ...outcome.kept],
+      plans: {
+        candidates: planCandidates,
+        settledNow: planOutcome.settled,
+        refusalsNow: planOutcome.refusals,
+        held: [...heldPlans, ...planOutcome.kept],
+      },
     });
     await writeCaptureRecord(supabase, folder, finished);
     // One line an attempt: most run with nobody reading their answer.
     console.log(
       `[listing-images] capture_report: report=${args.reportId} attempt=${begun.attempts} ` +
         `candidates=${candidates.length} kept=${outcome.kept.length} held=${held.length + outcome.kept.length} ` +
-        `refused=${JSON.stringify(countRefusals(outcome.refusals))} finished=${finished.finished?.reason ?? 'no'}`,
+        `refused=${JSON.stringify(countRefusals(outcome.refusals))} ` +
+        `plans=${planCandidates.length} plans_kept=${planOutcome.kept.length} ` +
+        `plans_held=${heldPlans.length + planOutcome.kept.length} ` +
+        `plans_refused=${JSON.stringify(countRefusals(planOutcome.refusals))} ` +
+        `finished=${finished.finished?.reason ?? 'no'}`,
     );
-    return { outcome, finished };
+    return { outcome, planOutcome, finished };
   })();
 
   if (!args.wait) {
@@ -1829,12 +1892,17 @@ async function captureReportPhotographs(
     return { status: 202, state: 'accepted', held: held.length };
   }
   try {
-    const { outcome, finished } = await attempt;
+    const { outcome, planOutcome, finished } = await attempt;
     return {
       status: 200,
       state: captureStateOf(finished, Date.now()),
       held: held.length + outcome.kept.length,
-      attempt: { number: begun.attempts, kept: outcome.kept.length, refused: countRefusals(outcome.refusals) },
+      attempt: {
+        number: begun.attempts,
+        kept: outcome.kept.length,
+        refused: countRefusals(outcome.refusals),
+        plans: { kept: planOutcome.kept.length, refused: countRefusals(planOutcome.refusals) },
+      },
     };
   } catch (error) {
     console.error('[listing-images] capture_report attempt failed', redactError(error));

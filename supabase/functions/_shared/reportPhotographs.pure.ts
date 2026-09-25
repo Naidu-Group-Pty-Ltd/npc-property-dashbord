@@ -505,6 +505,15 @@ export function capturedFloorPlansForReport(
  * listing's gallery are decided, or every candidate is settled, or
  * `CAPTURE_MAX_ATTEMPTS` attempts have been made. After that, whatever was kept
  * is what the report carries, and nothing asks again.
+ *
+ * A listing page may also name its floor plans. They are captured by the same
+ * attempts, under the same record and the same address check, and kept in
+ * their own list: filed in `plans/`, placed by their order in the page's
+ * floor-plan list, settled apart (`plans`), and final on the same terms with
+ * `REPORT_FLOOR_PLAN_LIMIT` for the limit. The capture is finished when both
+ * lists are. The two are never pooled, because one asset can sit in both
+ * lists on a page — refused as a photograph for being a plan, and kept as a
+ * plan.
  */
 
 /** The record's object name, inside the report's folder. Not a photograph name. */
@@ -539,7 +548,18 @@ export interface CaptureRecord {
   settled: string[];
   /** Every refusal, counted by reason, across every attempt. */
   refused: Record<string, number>;
+  /**
+   * The same bookkeeping for the listing's floor plans. Empty on a record
+   * written before plans were read, which then asks for none.
+   */
+  plans: CaptureListRecord;
   finished: { at: string; reason: CaptureFinish } | null;
+}
+
+/** One candidate list's bookkeeping: what is decided for good, and every refusal, counted. */
+export interface CaptureListRecord {
+  settled: string[];
+  refused: Record<string, number>;
 }
 
 /**
@@ -583,8 +603,25 @@ export function newCaptureRecord(args: {
     leaseUntil: null,
     settled: [],
     refused: {},
+    plans: { settled: [], refused: {} },
     finished: null,
   };
+}
+
+function settledList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? [...new Set(value.filter((url): url is string => typeof url === 'string' && url.length > 0))]
+    : [];
+}
+
+function refusalCounts(value: unknown): Record<string, number> {
+  const refused: Record<string, number> = {};
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    for (const [why, count] of Object.entries(value as Record<string, unknown>)) {
+      if (Number.isInteger(count) && (count as number) > 0) refused[why] = count as number;
+    }
+  }
+  return refused;
 }
 
 /** A stored record, or null for anything that is not one — which is then treated as never written. */
@@ -607,15 +644,11 @@ export function parseCaptureRecord(value: unknown): CaptureRecord | null {
   const attempts = Number(v.attempts);
   if (!Number.isInteger(attempts) || attempts < 0) return null;
 
-  const settled = Array.isArray(v.settled)
-    ? [...new Set(v.settled.filter((url): url is string => typeof url === 'string' && url.length > 0))]
-    : [];
-  const refused: Record<string, number> = {};
-  if (v.refused && typeof v.refused === 'object' && !Array.isArray(v.refused)) {
-    for (const [why, count] of Object.entries(v.refused as Record<string, unknown>)) {
-      if (Number.isInteger(count) && (count as number) > 0) refused[why] = count as number;
-    }
-  }
+  const settled = settledList(v.settled);
+  const refused = refusalCounts(v.refused);
+  const plans = v.plans && typeof v.plans === 'object' && !Array.isArray(v.plans)
+    ? v.plans as Record<string, unknown>
+    : null;
   let finished: CaptureRecord['finished'] = null;
   if (v.finished && typeof v.finished === 'object') {
     const f = v.finished as Record<string, unknown>;
@@ -633,6 +666,7 @@ export function parseCaptureRecord(value: unknown): CaptureRecord | null {
     leaseUntil: stamp(v.leaseUntil),
     settled,
     refused,
+    plans: { settled: settledList(plans?.settled), refused: refusalCounts(plans?.refused) },
     finished,
   };
 }
@@ -670,6 +704,8 @@ const LASTING_REFUSALS = new Set([
   'duplicate',
   'floorplan',
   'graphic',
+  // A plan's verdict: the pixels read as a photograph, so it is not a plan.
+  'photo',
   'undecodable',
   'unnameable',
 ]);
@@ -748,6 +784,45 @@ export function captureIsFinal(
   return candidates.every((_, index) => decided(index)) ? 'exhausted' : null;
 }
 
+/** One candidate list as a capture weighs it: what was named, what is settled, what is held. */
+export interface CaptureList {
+  candidates: readonly string[];
+  settled: ReadonlySet<string>;
+  held: readonly CapturedPhotograph[];
+}
+
+const NO_LIST: CaptureList = { candidates: [], settled: new Set(), held: [] };
+
+/**
+ * Whether a capture is finished, and why, over both of its lists.
+ *
+ * Each list is final on its own terms (`captureIsFinal`, with the plans'
+ * limit for the plans), and a list nothing was named for is final already.
+ * `no_candidates` when neither list named anything; `exhausted` where either
+ * list ended by running out; `limit` where each ended at its limit; and
+ * `attempts` once the attempts are spent with work still left. With no plans
+ * named this is exactly the photographs' own answer, which is every record
+ * written before plans were read.
+ */
+export function captureFinish(
+  lists: { photographs: CaptureList; plans?: CaptureList },
+  attempts: number,
+): CaptureFinish | null {
+  const photographs = lists.photographs;
+  const plans = lists.plans ?? NO_LIST;
+  const photographsFinal = photographs.candidates.length === 0
+    ? 'empty'
+    : captureIsFinal(photographs.candidates, photographs.settled, photographs.held);
+  const plansFinal = plans.candidates.length === 0
+    ? 'empty'
+    : captureIsFinal(plans.candidates, plans.settled, plans.held, REPORT_FLOOR_PLAN_LIMIT);
+  if (photographsFinal === 'empty' && plansFinal === 'empty') return 'no_candidates';
+  if (photographsFinal !== null && plansFinal !== null) {
+    return photographsFinal === 'exhausted' || plansFinal === 'exhausted' ? 'exhausted' : 'limit';
+  }
+  return attempts >= CAPTURE_MAX_ATTEMPTS ? 'attempts' : null;
+}
+
 /** The record once an attempt is over: what it settled, what it refused, and whether that was the last. */
 export function finishCaptureAttempt(
   record: CaptureRecord,
@@ -757,19 +832,32 @@ export function finishCaptureAttempt(
     settledNow: readonly string[];
     refusalsNow: readonly string[];
     held: readonly CapturedPhotograph[];
+    /** The floor plans' half of the same attempt; absent where the page named none. */
+    plans?: {
+      candidates: readonly string[];
+      settledNow: readonly string[];
+      refusalsNow: readonly string[];
+      held: readonly CapturedPhotograph[];
+    };
   },
 ): CaptureRecord {
   const settled = [...new Set([...record.settled, ...args.settledNow])];
   const refused = { ...record.refused };
   for (const why of args.refusalsNow) refused[why] = (refused[why] ?? 0) + 1;
-  const final: CaptureFinish | null = args.candidates.length === 0
-    ? 'no_candidates'
-    : captureIsFinal(args.candidates, new Set(settled), args.held)
-      ?? (record.attempts >= CAPTURE_MAX_ATTEMPTS ? 'attempts' : null);
+  const planSettled = [...new Set([...record.plans.settled, ...(args.plans?.settledNow ?? [])])];
+  const planRefused = { ...record.plans.refused };
+  for (const why of args.plans?.refusalsNow ?? []) planRefused[why] = (planRefused[why] ?? 0) + 1;
+  const final = captureFinish({
+    photographs: { candidates: args.candidates, settled: new Set(settled), held: args.held },
+    plans: args.plans
+      ? { candidates: args.plans.candidates, settled: new Set(planSettled), held: args.plans.held }
+      : NO_LIST,
+  }, record.attempts);
   return {
     ...record,
     settled,
     refused,
+    plans: { settled: planSettled, refused: planRefused },
     leaseUntil: null,
     finished: final ? { at: instant(args.now), reason: final } : null,
   };

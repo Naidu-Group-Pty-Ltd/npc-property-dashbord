@@ -131,10 +131,11 @@ At most six photographs are carried: the largest number any master binds.
 - **The standard presentation's cover was unchanged** when this section was
   written: it is a static page. §10 puts the lead photograph in the field below
   its lockup, measured off the page, without changing the page itself.
-- **A URL-extract report carries no floor plan.** realestate.com.au publishes a
-  listing's plans as a separate list in the same page data (§6), and the
-  capture does not read it yet. A report made from a listing in the intake
-  does carry its plans (§9), from the image library.
+- **A URL-extract report's floor plans came later** (§9, "From a listing
+  page"). realestate.com.au publishes a listing's plans as a separate list in
+  the same page data, and the capture now reads that list beside the
+  gallery. A report made from a listing in the intake carries its plans from
+  the image library.
 - **A document already produced in a tab is not redrawn** when a photograph is
   harvested later, because the template path's cache fingerprint does not
   include the images.
@@ -168,7 +169,7 @@ this one route, and only for the listing's own pictures.
    photographs from it. On realestate.com.au that is the gallery in the page's
    embedded data, attributed by the listing id in the URL: the "similar
    properties" beside it carry other ids and are never taken, and floor plans
-   are a separate list. **Anywhere else, nothing.** A page's `og:image` was
+   are a separate list, named apart (§9). **Anywhere else, nothing.** A page's `og:image` was
    the fallback in the first version. It says what the page wants shown when
    it is shared, not which property a picture is of; on a portal or an agency
    site it is as often a banner, an office or a stock photograph as the house.
@@ -508,6 +509,41 @@ plan has lost its north). Two rules follow from "whole":
    room between, and a three-line title block at the foot: not to scale, where
    it came from, and to check it against the contract drawings.
 
+### From a listing page
+
+A report made through URL extract (§6) takes the listing's own plans the way it
+takes its photographs, and files them where a brochure's go, so steps 3 and 4
+above serve and draw them unchanged.
+
+1. **The extraction names them apart.** `floorPlanCandidatesFromPage` reads
+   `media.floorplans` from the realestate.com.au listing object that names the
+   page's own listing id: the same attribution as the gallery, and only the
+   list the page itself calls floor plans, never a guess from the gallery. They
+   are stored on the job as `photographs.floorPlans`, at the photographs'
+   rendition (`2000x2000-fit`, the original's frame: never cropped, padded or
+   enlarged). Up to four are named, for a report that carries two.
+2. **An asset the page lists as a plan is never offered as a photograph**,
+   even where the agent put it in the gallery as well. The server's reading
+   refuses most plans as photographs anyway, but a coloured or rendered plan
+   can read as a photograph, and a photograph can lead a cover.
+3. **The same capture keeps them.** `capture_report` runs the same attempts
+   under the same record and the same address check (rule 4), in two passes
+   that share one allowance, photographs first, because the cover is what a
+   reader sees first. A plan is kept only on the server's own `floorplan`
+   verdict, at the print floor, one copy each, at its place in the page's list,
+   in `plans/`. Its list is settled apart in the record (`plans`), because one
+   asset can sit in both lists: refused as a photograph for being a plan, and
+   still tried as a plan. The capture is finished when both lists are
+   (`captureFinish`). With no plans named, every answer is exactly what it was
+   before plans were read, which is every record already written.
+4. **The furniture rule is a photograph's, not a plan's.** It refuses a file
+   called `floorplan`, which is how a plan is kept off a photo card and exactly
+   what a plan may be called. So it is lifted for a listing's plan and for
+   nothing else, and in its place a stored plan must be on realestate.com.au's
+   own image host, the only host any plan is read from.
+5. **The browser asks where the extraction named either.** A listing whose page
+   names a plan and no photograph still has its plan kept.
+
 ### Where the sheet goes
 
 After the cover, the contents and any photographic plates, and before the
@@ -549,12 +585,28 @@ Parsed out of the v21 and v22 seed files, 543 rows each:
 - `templates:library:seed:check`: the v22 file is byte-identical to what the
   definitions produce.
 - The owner's plan drawn on the sheet in ten families, wide and turned tall.
+- The listing-page plans: `listingPagePhotographs.spec.ts` (the page names
+  them apart, by the listing id, capped; a listed plan is never a photograph;
+  a stored list is re-checked, and a plan called `floorplan` survives) and
+  `urlExtractPhotographs.spec.ts` (a record written before plans reads as one
+  that asks for none; with no plans every finish is the photographs' own; the
+  capture finishes only when both lists do; the lists settle apart; the
+  source-level order of the two passes, their shared allowance and the plans
+  folder). Seven deliberate mutations of those rules each fail a test.
 
 ### Not verified
 
 - **v22 is not applied.** The seed and the refresh go through the reviewed
   "Apply a migration" workflow after merge. PENDING.
 - **A real filing of a plan has not run**, for the same reason as §8's. PENDING.
+- **A listing page's plan has not been fetched from realestate.com.au.** The
+  owner's rule is that no outside picture is used for testing, so the plan
+  list's shape is the one the photographs were built against, and what the
+  image host serves for a plan (its format and size) is unmeasured. A plan it
+  serves as GIF or WebP is refused `unreadable`, because the capture decodes
+  only JPEG and PNG; the refusal is counted in the record's `plans.refused`
+  and in the capture's log line, so production will say so. PENDING: the
+  first URL-extract report made from a listing with a plan.
 
 ## 10. The standard presentation
 
