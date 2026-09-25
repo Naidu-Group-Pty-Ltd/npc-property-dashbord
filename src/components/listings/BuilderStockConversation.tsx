@@ -116,6 +116,14 @@ function ConversationForProperty({
         <CardTitle className="text-base">Messages with {who}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* A poll that fails after the thread was read keeps what was read:
+            the history is still true, it may just be behind. */}
+        {query.error && conversation ? (
+          <p role="status" className="text-sm text-muted-foreground">
+            The conversation could not be refreshed just now, so newer messages may be missing. It will try again shortly.
+          </p>
+        ) : null}
+
         {query.isLoading ? (
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Loading the conversation…

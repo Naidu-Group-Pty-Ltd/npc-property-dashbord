@@ -77,6 +77,25 @@ describe('the builder conversation card', () => {
     expect(screen.getByRole('textbox', { name: /message/i })).not.toBeDisabled();
   });
 
+  it('a poll that fails after the thread was read keeps the history and says it may be behind', () => {
+    state.conversation = {
+      conversation_id: 'c', open: true, can_send: true,
+      messages: [MESSAGE({ id: 'a', body: 'Already read.', delivery_state: 'delivered' })],
+    };
+    state.error = new Error('poll failed');
+    renderCard();
+    expect(within(screen.getByRole('log')).getByText('Already read.')).toBeInTheDocument();
+    expect(screen.getByText(/could not be refreshed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/could not be loaded just now/i)).toBeNull();
+  });
+
+  it('a first read that fails says the conversation could not be loaded', () => {
+    state.error = new Error('first read failed');
+    renderCard();
+    expect(screen.getByText(/could not be loaded just now/i)).toBeInTheDocument();
+    expect(screen.queryByText(/could not be refreshed/i)).toBeNull();
+  });
+
   it('shows the thread in order, with the actual sender, and delivery only for ours', () => {
     state.conversation = {
       conversation_id: 'c', open: true, can_send: true,
