@@ -649,6 +649,20 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
       }
     });
 
+    it('also waits while that activation is claimed and in flight: a claim does not make it delivered', () => {
+      const announce = `stock.selection:${randomUUID()}:1`;
+      db.sql(`INSERT INTO public.builder_network_outbox(connection_id, event_type, dedupe_key, payload, source_version)
+              VALUES (${lit(CONN_A)}, 'stock.selection.announced', '${announce}', '{}'::jsonb, 1)`);
+      claim(announce, 'other-worker');
+      const m = post(ITEM_A1, OWNER, randomUUID(), 'Written while the activation is in flight.');
+      const row = claim(`agency.message:${m}:1`, 'order-w3');
+      try {
+        expect(db.sql(`SELECT public.builder_network_defer_message_behind_activation('${row}', 'order-w3')`)).toBe('t');
+      } finally {
+        db.sql(`DELETE FROM public.builder_network_outbox WHERE dedupe_key = '${announce}'`);
+      }
+    });
+
     it('is not held behind an activation that was written after it, or one that dead-lettered', () => {
       const m = post(ITEM_A1, OWNER, randomUUID(), 'Written before the next activation.');
       const dead = `stock.selection:${randomUUID()}:1`;
@@ -693,6 +707,17 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
       expect(db.sql(`SELECT message_apply_error FROM public.builder_network_inbound_events
                      WHERE dedupe_key = 'agency.message:${typed.message_id}:1'`)).toBe('refused:invalid_payload');
       expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE id = ${lit(typed.message_id)}`)).toBe('0');
+    });
+  });
+
+  describe('a generation that is not a whole number', () => {
+    it('a builder message with a fractional generation is refused and stored nowhere', () => {
+      const fractional = builderMessage({ body: 'Generation one and a half.', generation: 1.5 });
+      land(CONN_A, 'agency.message.posted', `agency.message:${fractional.message_id}:1.5`, fractional);
+      sweep();
+      expect(db.sql(`SELECT message_apply_error FROM public.builder_network_inbound_events
+                     WHERE dedupe_key = 'agency.message:${fractional.message_id}:1.5'`)).toBe('refused:invalid_payload');
+      expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE id = ${lit(fractional.message_id)}`)).toBe('0');
     });
   });
 
