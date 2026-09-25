@@ -23,7 +23,9 @@ const sent: Array<{ clientMessageId: string; body: string }> = [];
 const sendFailures = { remaining: 0 };
 const retried: string[] = [];
 
+const scrolled: unknown[] = [];
 vi.mock('@/lib/marketplaceBuilderStock', () => ({
+  scrollLogToEnd: (log: unknown) => { scrolled.push(log); },
   useBuilderConversation: () => ({
     data: state.conversation ?? undefined, error: state.error, isLoading: false, isFetching: false,
   }),
@@ -195,5 +197,19 @@ describe('the builder conversation card', () => {
   it('no model and no email: a message is text between people', () => {
     const source = code('src/components/listings/BuilderStockConversation.tsx');
     expect(source).not.toMatch(/openrouter|anthropic|openai|claude|resend|sendEmail/i);
+  });
+});
+
+describe('the conversation log follows its newest message', () => {
+  it('opens at the end, and moves to the end again when a poll brings in a message', () => {
+    scrolled.length = 0;
+    state.conversation = { conversation_id: 'c', open: true, can_send: true, messages: [MESSAGE({ id: 'm1', body: 'First.' })] };
+    const card = () => <BuilderStockConversation stockItemId="item-1" builderName="Proof Homes" />;
+    const view = render(card());
+    expect(scrolled).toContain(screen.getByRole('log'));
+    const before = scrolled.length;
+    state.conversation = { ...state.conversation, messages: [...state.conversation.messages, MESSAGE({ id: 'm2', body: 'Arrived by poll.' })] };
+    view.rerender(card());
+    expect(scrolled.length).toBeGreaterThan(before);
   });
 });

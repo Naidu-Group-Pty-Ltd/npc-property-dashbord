@@ -434,3 +434,13 @@ describe('the exact message contract: each value\'s JSON type', () => {
     expect(agencyPayloadContractViolation('agency.message.receipt', { ...receipt, reason: null })).toBeNull();
   });
 });
+
+describe('the conversation log', () => {
+  it('is scrolled to its newest message', async () => {
+    const { scrollLogToEnd } = await import('../marketplaceBuilderStock');
+    const log = { scrollTop: 0, scrollHeight: 1840 };
+    scrollLogToEnd(log);
+    expect(log.scrollTop).toBe(1840);
+    expect(() => scrollLogToEnd(null)).not.toThrow();
+  });
+});

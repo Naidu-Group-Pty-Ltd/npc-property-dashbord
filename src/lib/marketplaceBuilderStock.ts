@@ -293,3 +293,12 @@ export function useRetryBuilderMessage(stockItemId: string) {
     onSettled: () => queryClient.invalidateQueries({ queryKey: conversationKey(stockItemId) }),
   });
 }
+
+/**
+ * Keeps a conversation log on its newest message: a thread longer than its
+ * box opens at the end, and a message a poll brings in is not left below the
+ * visible area.
+ */
+export function scrollLogToEnd(log: { scrollTop: number; scrollHeight: number } | null | undefined): void {
+  if (log) log.scrollTop = log.scrollHeight;
+}

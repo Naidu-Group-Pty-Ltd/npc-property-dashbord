@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Loader2, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -6,7 +6,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import {
-  useBuilderConversation, useRetryBuilderMessage, useSendBuilderMessage,
+  scrollLogToEnd, useBuilderConversation, useRetryBuilderMessage, useSendBuilderMessage,
   type ConversationMessageView, type DeliveryState,
 } from '@/lib/marketplaceBuilderStock';
 
@@ -57,6 +57,10 @@ export function BuilderStockConversation({
   const conversation = query.data;
   const messages = conversation?.messages ?? [];
   const who = builderName ?? 'the builder';
+  // Open at the newest message, and follow it as polls bring more in.
+  const logRef = useRef<HTMLDivElement>(null);
+  const newestId = messages.length ? messages[messages.length - 1].id : null;
+  useEffect(() => { scrollLogToEnd(logRef.current); }, [stockItemId, newestId]);
 
   const submit = async () => {
     const body = draft.trim();
@@ -101,7 +105,7 @@ export function BuilderStockConversation({
             The conversation could not be loaded just now. It will try again shortly.
           </p>
         ) : messages.length ? (
-          <div role="log" aria-label={`Messages with ${who}`} aria-live="polite" className="max-h-[28rem] space-y-3 overflow-y-auto pr-1">
+          <div ref={logRef} role="log" aria-label={`Messages with ${who}`} aria-live="polite" className="max-h-[28rem] space-y-3 overflow-y-auto pr-1">
             {messages.map((message) => (
               <Message key={message.id} message={message} canRetry={!!conversation?.can_send && message.can_retry} onRetry={sendAgain} retrying={retry.isPending} />
             ))}
