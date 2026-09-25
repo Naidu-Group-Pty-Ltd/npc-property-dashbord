@@ -779,6 +779,24 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
       }
     }, 20_000);
 
+    it('a builder message applied while its property is being reassigned waits, and is refused', async () => {
+      const m = builderMessage({ body: 'Applied while the property changes hands.' });
+      land(CONN_A, 'agency.message.posted', `agency.message:${m.message_id}:1`, m);
+      const eventId = db.sql(`SELECT id FROM public.builder_network_inbound_events WHERE dedupe_key = 'agency.message:${m.message_id}:1'`);
+      const reassign = db.sqlAsync(`BEGIN; UPDATE public.builder_network_stock_items SET organisation_id = ${lit(ORG_B)}
+                                     WHERE id = ${lit(ITEM_A1)}; SELECT pg_sleep(1.5); COMMIT;`);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const apply = settled(db.sqlAsync(`SELECT public.builder_network_apply_message_event('${eventId}')`));
+      try {
+        const [, result] = await Promise.all([reassign, apply]);
+        expect(result).toBe('refused:stock_item_not_ours');
+        expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE id = ${lit(m.message_id)}`)).toBe('0');
+      } finally {
+        db.sql(`UPDATE public.builder_network_stock_items SET organisation_id = ${lit(ORG_A)} WHERE id = ${lit(ITEM_A1)}`);
+        db.sql(`UPDATE public.builder_network_inbound_events SET message_applied_at = now() WHERE id = '${eventId}'`);
+      }
+    }, 20_000);
+
     it('a builder message applied while a dispute begins waits for it, and is held', async () => {
       const m = builderMessage({ body: 'Applied while the dispute begins.' });
       land(CONN_A, 'agency.message.posted', `agency.message:${m.message_id}:1`, m);

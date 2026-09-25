@@ -589,6 +589,11 @@ BEGIN
   v_body := btrim(COALESCE(v_payload->>'body', ''));
   v_name := btrim(COALESCE(v_payload->>'sender_display_name', ''));
 
+  -- The property is held before who owns it is checked, so a reassignment
+  -- that lands now either commits first (and is seen) or waits for this.
+  IF v_item IS NOT NULL THEN
+    PERFORM 1 FROM public.builder_network_stock_items i WHERE i.id = v_item FOR SHARE;
+  END IF;
   IF v_item IS NULL OR v_sent IS NULL OR NOT isfinite(v_sent) OR length(v_body) NOT BETWEEN 1 AND 4000
      OR length(v_name) NOT BETWEEN 1 AND 200 THEN
     v_reason := 'invalid_message';
