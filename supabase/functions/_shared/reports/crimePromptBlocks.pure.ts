@@ -18,6 +18,7 @@
 
 import { CRIME_WEB_SEARCH_RULE } from './registerAuthority.pure.ts';
 import { elsewhereOnly, inHomeSection } from './adviserVoice.pure.ts';
+import { unratedRiskRow } from './investment/riskRegister.pure.ts';
 
 interface NumericishReading { [key: string]: unknown }
 
@@ -40,6 +41,7 @@ export function crimeStatBlocks(input: CrimePromptInput): string {
       + 'once, and say that the state police publish recorded crime by area. '
       + `${elsewhereOnly('environment')} Anywhere in the report, do NOT print a crime table, a safety score, a `
       + 'rating or an estimated rate. '
+      + `${unratedRiskRow('crime', 'Not checked', 'this report holds no recorded-crime figures for the area.')} `
       + CRIME_WEB_SEARCH_RULE;
   }
 

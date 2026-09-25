@@ -84,6 +84,29 @@ export const NOT_ASSESSED = RISK_EXPOSURE_LEVELS[3];
 
 /** Evidence vocabulary. Shares no value with the exposure levels, by test. */
 export const RISK_EVIDENCE_READINGS = ['Verified', 'Unverified', 'Conflicting', 'Not checked'] as const;
+export type RiskEvidenceReading = typeof RISK_EVIDENCE_READINGS[number];
+
+/**
+ * What the register's row for a subject IS, where this report holds no reading
+ * it may be rated from — handed over by the block that owns the subject.
+ *
+ * `riskRegisterInstruction` already says `Not assessed` is the level wherever
+ * the evidence is something this report did not confirm. The 60 Lawley Street
+ * Compass (25 Sep 2026) rated crime **High** from a council profile found by
+ * search, and called it "Verified", beside an Environment section that said —
+ * correctly — that no crime rating is stated; and it rated transport reliance
+ * **Moderate** from a places-directory count of zero stations, beside a
+ * Transport section that said the count must not be read as an absence. A
+ * general rule lost to a specific cue in front of the model. So the block that
+ * tells the sections what they may not say tells the register what its row
+ * reads, in the register's own two vocabularies — the permitted form beside
+ * the prohibition, which is what a model does not route around.
+ */
+export function unratedRiskRow(subject: string, evidence: RiskEvidenceReading, because: string): string {
+  return `In the Risk Dashboard's register the ${subject} row reads "${NOT_ASSESSED}" with evidence "${evidence}": `
+    + `${because} A row is rated only from a reading this report holds; a profile, report or page found by `
+    + 'search may be cited as context where the subject is discussed, and is never a rating and never "Verified".';
+}
 
 /**
  * The most words a register cell may carry.

@@ -81,6 +81,7 @@ import { areaCentreDisclosure, enrichmentPointOf } from './enrichmentPoint.pure.
 import type { TransportVerdict } from '../../transportReading.pure.ts';
 import { formatIsoDate } from '../reportDate.pure.ts';
 import { elsewhereOnly, inHomeSection } from '../adviserVoice.pure.ts';
+import { unratedRiskRow } from '../investment/riskRegister.pure.ts';
 
 export const AMENITY_WEB_SEARCH_RULE = webSearchIsNotARetrieval(
   'amenity',
@@ -375,6 +376,10 @@ export function transportFactBlocks(li: unknown): string {
     ? TRANSPORT_VERDICT_SENTENCE[verdict as TransportVerdict]
     : undefined;
   if (verdictSentence) parts.push(verdictSentence);
+  if (verdict === 'outside_loaded_networks') {
+    parts.push(unratedRiskRow('transport reliance', 'Not checked',
+      'the published stop data used for this report does not cover this area.'));
+  }
 
   /*
    * No operator feed covers the property, and the enrichment fell back to a
@@ -398,6 +403,8 @@ export function transportFactBlocks(li: unknown): string {
       + 'finding that the area has no public transport; the operator\'s published timetable shows the '
       + `services that run near the property. ${inHomeSection('transport')} say this once, in those words or `
       + `your own. ${elsewhereOnly('transport')}`,
+      unratedRiskRow('transport reliance', 'Unverified',
+        'a station count does not include bus stops, so it cannot say how the property is served.'),
     );
   }
 
@@ -411,6 +418,7 @@ export function transportFactBlocks(li: unknown): string {
       + `operator\'s published timetable). ${elsewhereOnly('transport')} In every section: do NOT name a `
       + 'station, state a distance or a commute time, and do NOT call the area well served or car-dependent. '
       + 'Car dependence is a finding that needs a measurement like any other.',
+      unratedRiskRow('transport reliance', 'Not checked', 'no public transport reading is held for this property.'),
       TRANSPORT_WEB_SEARCH_RULE,
       TRANSPORT_TIMETABLE_RULE,
     ]).join(' ');

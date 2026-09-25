@@ -163,6 +163,40 @@ table of the recorded attributes" (the likely source of the six "Recorded
 attribute" headings); and the attributes rule offered "not recorded for this
 assessment" as the permitted form.
 
+## The closing pages agree with the chapters
+
+The same document contradicted itself three times in its last pages, and none
+of it was a voice problem:
+
+- **Crime.** Environment, Climate & Safety said "this report states no crime
+  count, rate, period or safety rating for Spalding" — correct, because no
+  Western Australian recorded-crime register is read — and the Risk Dashboard
+  rated crime **High**, "Verified", from a council area profile found by
+  search.
+- **Transport.** Transport & Connectivity said the Google Places count of
+  zero stations "should not be treated as evidence that public transport is
+  absent", and the Risk Dashboard rated transport reliance **Moderate** from
+  it.
+- **Threats.** The verdict page listed "Rapid recent price growth may
+  indicate market cooling ahead" as a consideration; the SWOT said of Threats
+  "None identified".
+
+The register instruction already said `Not assessed` is the level wherever
+the evidence is something this report did not confirm. A general rule lost to
+a specific cue in front of the model. So the block that owns each subject now
+hands the register its row, in the register's own two vocabularies
+(`unratedRiskRow` in `riskRegister.pure.ts`): crime with no recorded figures
+reads `Not assessed` / `Not checked`; a station count alone reads
+`Not assessed` / `Unverified`; outside every loaded network, `Not assessed` /
+`Not checked` — each with the sentence that a searched page is context, never a
+rating and never "Verified". Where a real reading IS held, nothing is handed
+over and the rating stays the writer's. And the SWOT's Threats now read the
+market risks recorded with a V2 grade through `recordedMarketRisks` — the one
+reader the verdict page's watch points use — in the scorer's own words, V2
+only, because a V1 record's list carries statements about a purchase.
+`riskRowsAgreeWithTheirSections.spec.ts` pins all three, and removing either
+fix fails it.
+
 ## Stored reports
 
 - **No stored prose is rewritten.** The voice is in what the generator is
@@ -210,10 +244,14 @@ vocabulary on a branch no fixture took. `oneRecommendation.spec.ts` pins rule 5.
   register" were set by the owner in the S5 work and are unchanged; the
   sentence around them was reworded. Whether "the approved register" should
   read differently in a client's document is the owner's call.
-- **The Risk Dashboard's evidence vocabulary.** "Not searched" became "Not
-  checked"; a checked-and-clear register should read as a finding ("Not
-  mapped"), not as an absence, which is a change to what the register may
-  say rather than to its words.
+- **A checked-and-clear map in the Risk Dashboard.** Bushfire on the Lawley
+  document reads `Not assessed` beside "Checked register, no mapped control".
+  That is correct under §9 of `PLANNING_CONTROLS_IN_THE_REPORT.md` (an absence
+  is never rated, and a map that shows nothing is not a clearance), but a
+  client can read `Not assessed` as "not looked at". A level of its own
+  ("Not mapped") would change what the register may say rather than how it
+  says it, touches the rated-absence guards and the QA register check, and is
+  the owner's call.
 - **"register" is not banned.** A heritage register and a risk register are
   ordinary professional vocabulary; the composed blocks now use it far less,
   and the warning does not count it.

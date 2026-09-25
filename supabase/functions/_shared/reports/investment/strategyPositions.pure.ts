@@ -87,6 +87,7 @@ import {
   type ScoreAssessmentReading,
 } from '../market/scoreAssessmentReading.pure.ts';
 import type { SubjectPrice } from './subjectPrice.pure.ts';
+import { recordedMarketRisks } from './scoreSections.pure.ts';
 import { MONTHS_SHORT, formatReportDateShort } from '../reportDate.pure.ts';
 import { closeDoubledStops } from '../text.pure.ts';
 
@@ -305,6 +306,13 @@ export interface StrategyScore {
   notAssessed: Record<string, string>;
   /** The engine that calculated it, where the row records one. */
   authority: string | null;
+  /**
+   * The market risks recorded with the grade (`recordedMarketRisks`) — the list
+   * the verdict page's watch points read, so the SWOT's Threats cannot say
+   * "none" beside a page that lists one. Optional: a record built before it
+   * carries no key and every composer draws what it drew.
+   */
+  risks?: string[];
   /**
    * The full assessment — original nominal weights, adjusted weights,
    * contributions, composite, uncapped grade, ceiling and issued grade —
@@ -642,6 +650,20 @@ export function buildSwot(rec: StrategyRecord): Swot {
         + 'the whole market, not this dwelling, so the difference is not counted for or against the property.',
       );
     }
+  }
+  /*
+   * The market risks recorded with the grade are Threats, in the scorer's own
+   * words — the list the verdict page's watch points already print. Composing
+   * a threat here would be the rating this module refuses to invent; READING
+   * one the grade carries is what keeps the SWOT from saying "none identified"
+   * under a verdict page that lists one (60 Lawley Street, 25 Sep 2026).
+   */
+  for (const risk of rec.score.risks ?? []) {
+    t.push({
+      claim: /[.!?]$/.test(risk) ? risk : `${risk}.`,
+      basis: 'Recorded with the grade as a market risk. It describes the market, not this dwelling, and it is not '
+        + 'a forecast.',
+    });
   }
 
   // ── The dwelling itself ──
@@ -2090,6 +2112,7 @@ export function readStrategyRecord(row: StrategyRowInput, opts: StrategyRowOptio
       weightCovered: num(rec(score.coverage)?.weightCovered),
       notAssessed: readNotAssessed(score.notAssessed),
       authority: text(rec(score.v2)?.authority),
+      risks: recordedMarketRisks(row.investmentScore),
       // S5-1 item 1 — derived HERE, from the score this function already
       // holds, rather than taken as a parameter. A parameter is one a caller
       // can forget, and a forgotten one takes the whole grade-rationale table
