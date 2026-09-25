@@ -278,6 +278,16 @@ export function retryUnlessAccessLost(failureCount: number, error: unknown): boo
   return !conversationAccessLost(error) && failureCount < 1;
 }
 
+/**
+ * The poll stops once a read is refused: every later poll would be refused
+ * too, and each 403 counts towards the client's authentication breaker, so a
+ * few of them could clear an otherwise valid session. Remounting the page
+ * reads again.
+ */
+export function conversationRefetchInterval(state: { data?: { open?: boolean }; error?: unknown }): number | false {
+  return conversationAccessLost(state.error) ? false : builderConversationPollInterval(state.data);
+}
+
 export function useBuilderConversation(stockItemId: string, enabled = true) {
   return useQuery({
     queryKey: conversationKey(stockItemId),
@@ -285,7 +295,7 @@ export function useBuilderConversation(stockItemId: string, enabled = true) {
     queryFn: () => invoke<BuilderConversation>({
       operation: 'get_builder_conversation', stock_item_id: stockItemId,
     }),
-    refetchInterval: (query) => builderConversationPollInterval(query.state.data),
+    refetchInterval: (query) => conversationRefetchInterval(query.state),
     refetchIntervalInBackground: false,
     retry: retryUnlessAccessLost,
   });

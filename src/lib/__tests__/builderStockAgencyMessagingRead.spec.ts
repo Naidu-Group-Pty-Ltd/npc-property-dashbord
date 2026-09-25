@@ -185,7 +185,9 @@ describe('reading a property\'s conversation', () => {
     if (!next.ok) throw new Error('read failed');
     expect(next.messages.at(-1)?.body).toBe('Just arrived');
     expect(readCode('src/lib/marketplaceBuilderStock.ts'))
-      .toMatch(/refetchInterval:\s*\(query\)\s*=>\s*builderConversationPollInterval\(query\.state\.data\)/);
+      .toMatch(/refetchInterval:\s*\(query\)\s*=>\s*conversationRefetchInterval\(query\.state\)/);
+    expect(readCode('src/lib/marketplaceBuilderStock.ts'))
+      .toMatch(/conversationAccessLost\(state\.error\)\s*\?\s*false\s*:\s*builderConversationPollInterval\(state\.data\)/);
   });
 
   it('polls an open conversation, and a closed one only slowly, so a re-activation elsewhere still reopens it', () => {
@@ -616,5 +618,22 @@ describe('a refused conversation read is not retried before it is shown', () => 
     const start = src.indexOf('export function useBuilderConversation(');
     const body = src.slice(start, src.indexOf('\nexport ', start + 10));
     expect(body).toMatch(/retry:\s*retryUnlessAccessLost/);
+  });
+});
+
+describe('the conversation poll after a refusal', () => {
+  it('stops, and keeps polling through a transient failure', async () => {
+    const { conversationRefetchInterval, builderConversationPollInterval } = await import('@/lib/marketplaceBuilderStock');
+    const data = { open: true };
+    expect(conversationRefetchInterval({ data, error: Object.assign(new Error('x'), { status: 403 }) })).toBe(false);
+    expect(conversationRefetchInterval({ data, error: Object.assign(new Error('x'), { status: 401 }) })).toBe(false);
+    expect(conversationRefetchInterval({ data, error: Object.assign(new Error('x'), { code: 'builder_stock_disabled' }) })).toBe(false);
+    expect(conversationRefetchInterval({ data, error: Object.assign(new Error('x'), { status: 503 }) })).toBe(builderConversationPollInterval(data));
+    expect(conversationRefetchInterval({ data, error: null })).toBe(builderConversationPollInterval(data));
+  });
+
+  it('the poll reads it', () => {
+    const src = readFileSync(join(__dirname, '..', 'marketplaceBuilderStock.ts'), 'utf8');
+    expect(src).toMatch(/refetchInterval:\s*\(query\)\s*=>\s*conversationRefetchInterval\(query\.state\)/);
   });
 });
