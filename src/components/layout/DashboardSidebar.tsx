@@ -48,11 +48,11 @@ export function DashboardSidebar() {
   const groupedNavItems = useMemo(() => {
     const portalItems = visibleAdminItems.filter((item) => item.group === 'Portals');
     return NAVIGATION_GROUP_ORDER.map((title) => ({
-        title,
-        items: (title === 'Portals' ? portalItems : visibleNavItems).filter(
-          (item) => item.group === title && matchesFilter(item.title),
-        ),
-      })).filter((group) => group.items.length > 0);
+      title,
+      items: (title === 'Portals' ? portalItems : visibleNavItems).filter(
+        (item) => item.group === title && matchesFilter(item.title),
+      ),
+    })).filter((group) => group.items.length > 0);
   }, [visibleAdminItems, visibleNavItems, normalisedFilter]);
 
   const groupedAdminItems = useMemo(
@@ -62,7 +62,6 @@ export function DashboardSidebar() {
         (item) => item.group === 'Administration' && matchesFilter(item.title),
       ),
     }),
-     
     [visibleAdminItems, normalisedFilter],
   );
 

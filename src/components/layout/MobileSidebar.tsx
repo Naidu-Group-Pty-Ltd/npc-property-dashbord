@@ -43,11 +43,11 @@ export function MobileSidebar({ onNavigate }: MobileSidebarProps) {
       (item) => item.mobile !== false && item.group === 'Portals',
     );
     return NAVIGATION_GROUP_ORDER.map((title) => ({
-        title,
-        items: (title === 'Portals' ? portalItems : mobileNavItems).filter(
-          (item) => item.group === title,
-        ),
-      })).filter((group) => group.items.length > 0);
+      title,
+      items: (title === 'Portals' ? portalItems : mobileNavItems).filter(
+        (item) => item.group === title,
+      ),
+    })).filter((group) => group.items.length > 0);
   }, [mobileNavItems, visibleAdminItems]);
 
   const amlGroup = useMemo(
