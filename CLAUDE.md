@@ -2946,9 +2946,11 @@ database can override.
 
 ## A report carries the property's own photographs, and never the wrong ones
 Read [`PROPERTY_PHOTOGRAPHS.md`](./docs/reports/PROPERTY_PHOTOGRAPHS.md) before
-touching `_shared/reportPhotographs.pure.ts`, the
-`photographs` option on `get-investment-reports`, `adapters/reportPhotographs.ts`
-or a `property.images` binding.
+touching `_shared/reportPhotographs.pure.ts`,
+`_shared/listingPagePhotographs.pure.ts`, the `photographs` option on
+`get-investment-reports`, the `capture_report` op on `listing-images`,
+`urlExtractPhotographs.ts`, `adapters/reportPhotographs.ts` or a
+`property.images` binding.
 
 **Hero Image Studio's placements never reached the document a client
 receives.** Only the standard presentation reads them, it draws them on a
@@ -2969,10 +2971,25 @@ Three rules bite:
   also holds, and nothing at all when the reuse reading fails.
 - **A photograph never costs the document.** Every failure drops that one
   photograph.
-- **URL-extract reports and the other 45 masters get nothing yet, on
-  purpose.** A portal's photographs are a licence question (*readable is not
-  republishable*), and a photo slot on those covers is a design change that
-  goes through the design source and a new seed.
+- **The other 45 masters get nothing yet, on purpose.** A photo slot on those
+  covers is a design change that goes through the design source and a new
+  seed.
+
+**A URL-extract report carries the listing's own photographs** (the owner's
+decision, 25 Sep 2026; §6 of the same doc). The extraction names them — on
+realestate.com.au the gallery in the page's own data, attributed by the
+listing id so the "similar properties" beside it are never taken; elsewhere
+the page's `og:image` — and the report asks `listing-images` to keep them
+under the report, never in `listing_images`. Three rules bite. **The browser's
+minute is not the deadline**: the server writes down what was asked
+(`capture.json`, beside the photographs), answers, and does the work after
+answering, and a capture the host left unfinished is finished by the next
+document drawn, which waits at most 45 s and never fails for it. **Only the
+author starts a capture; anyone who may read the report may finish one**, and
+a finish continues exactly what the record says. **A photograph's name carries
+its place in the listing's gallery**, and a capture is not final while a place
+ahead of the sixth kept one is undecided, so a lead photograph whose host
+failed the first time still becomes the cover.
 
 The resale section also draws the published price history
 (`priceHistoryChart`, §6 of `MARKET_FIGURES_IN_THE_REPORT.md`): the latest

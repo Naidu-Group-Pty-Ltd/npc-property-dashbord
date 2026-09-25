@@ -1,9 +1,11 @@
 # The property's photographs in a client's report
 
 Read this before touching `_shared/reportPhotographs.pure.ts`,
-the `photographs` option on `get-investment-reports`,
+`_shared/listingPagePhotographs.pure.ts`, the `photographs` option on
+`get-investment-reports`, the `capture_report` operation on `listing-images`,
+`src/lib/reports/urlExtractPhotographs.ts`,
 `src/lib/reportTemplate/adapters/reportPhotographs.ts`, or the `property.images`
-binding in the Investment Compass masters.
+binding in the Investment Compass masters. §6 is the URL-extract path.
 
 ## 1. What was asked, and what was actually wrong
 
@@ -91,14 +93,8 @@ At most six photographs are carried: the largest number any master binds.
 
 ## 4. What this does not do
 
-- **A report made through URL extract has no photographs.** The scrape reads
-  the page as text and the report carries no listing id. The listing's lead
-  photograph is in the page metadata the scrape already receives, so capturing
-  it would cost nothing extra. It is not captured, and the reason is a licence
-  rather than code: a portal's photographs belong to the agency or its
-  photographer, and this platform's standing rule is that *readable is not
-  republishable*. Whether a client report may carry them is the owner's
-  decision.
+- **A report made through URL extract had no photographs.** The owner has
+  since decided it should carry the listing's own (25 Sep 2026); §6 is how.
 - **Forty-five masters have no photo slot.** The Lawley PDF was drawn with
   one of them: a dark cover with a large empty band where a photograph would
   sit. Adding a photograph to those covers is a design change. It goes
@@ -128,3 +124,111 @@ Verified locally:
 a photographic master.** That needs this deployed, a report whose listing holds
 analysed photographs, and one of the five masters above chosen for it. It is
 PENDING until someone does that and reads the PDF.
+
+## 6. A report made through URL extract
+
+The owner's decision, 25 Sep 2026: a report made from a listing link carries the
+photographs that listing publishes. It reverses the caution recorded in §4 for
+this one route, and only for the listing's own pictures.
+
+### The path
+
+1. **The extraction names them.** `scrape-property-listing` now asks the page
+   reader for the page as served (`rawHtml`) beside the markdown it already
+   read, and `photographCandidatesFromPage` names the listing's own
+   photographs from it. On realestate.com.au that is the gallery in the page's
+   embedded data, attributed by the listing id in the URL: the "similar
+   properties" beside it carry other ids and are never taken, and floor plans
+   are a separate list. Anywhere else it is the page's `og:image`, held to the
+   same URL rules as every other candidate. Domain answers this sandbox 403 on
+   every page, so its embedded gallery was never measured and it gets
+   `og:image` only. The names are URLs stored on the job; nothing is fetched,
+   and nothing about naming can fail the extraction.
+2. **The report asks for them to be kept.** Once the report row exists the
+   browser sends `listing-images` one request, `op: 'capture_report'`, naming
+   the report and the job. Only the report's author may start a capture, only
+   from their own finished extraction, and never for a derived report (a fork
+   or a condensed child reads its parent's photographs).
+3. **The server keeps what passes.** Each photograph is fetched through the
+   SSRF guard, must state at least 1,000 px on its long edge, must be judged a
+   photograph by the server's own reading of its pixels (a floor plan or a
+   graphic is refused), and must not be a copy of one already kept, by checksum
+   or by picture. It is filed under the report:
+   `report-photographs/<report id>/<place>-<w>x<h>-<checksum>-<signature>.<ext>`.
+   Nothing is written to `listing_images`, so the marketplace's reuse reading
+   is untouched.
+4. **Every document in the family reads them.** `get-investment-reports`
+   falls back to the report's folder when the report has no listing, reading
+   the parent's folder for a derived document, and signs them exactly as it
+   signs a listing's.
+
+### "What if the photographs are not fetched within the browser's minute?"
+
+The owner asked this, and the first version of this route deserved the
+question: it did all the work inside the one request the browser sent, so a
+closed tab, a dropped connection or a slow host could leave the report with
+none, and nothing tried again. Three changes answer it.
+
+- **The minute no longer matters.** The server writes down what was asked, in
+  a small record beside the photographs (`capture.json`: the job, the author,
+  the attempts, and which candidates are decided), answers at once, and does
+  the work after answering (`EdgeRuntime.waitUntil`, as the extraction job
+  itself runs). A report takes minutes to generate, and the photographs are
+  only needed when its document is drawn.
+- **An unfinished capture is finished by the next document drawn.** A picture
+  its host did not answer for, or one the time allowance could not reach, is
+  left for another attempt; a verdict about the picture itself (not a
+  photograph, too small, a copy, a 404) is final. The broker reports a capture
+  with work left over as `pending`, and the Investment adapter asks for the rest
+  before it draws, waiting at most 45 seconds and never failing the document.
+  After four attempts, whatever was kept is what the report carries.
+- **The listing's order survives a late photograph.** A photograph's file name
+  carries its place in the listing's gallery, not the order it was kept in, and
+  a capture is not final while a place ahead of the sixth kept one is
+  undecided. So a lead photograph whose host failed on the first attempt still
+  becomes the cover on the second.
+
+The start itself is sent again, twice, if it fails in transit (a network
+failure, a 429 or a 5xx), never after a refusal. The one case nothing recovers
+is a start that never reaches the server at all while the tab is closed within
+the same instant; that report is drawn without photographs, which is how every
+report was drawn before.
+
+### Why the record is a file and not a table
+
+The link from a report to the extraction it came from is stored nowhere else.
+`data_sources` is rebuilt when the report finishes, `manual_overrides` is the
+operator's own figures and reaches prompts and templates, and a new column is a
+migration. The report's own folder already holds everything else about its
+photographs, and the object names describe the photographs, so the one extra
+fact sits beside them. If the bucket ever refuses the record, the capture still
+keeps the photographs and logs the storage's own words; only the retry is lost.
+
+### Verified locally
+
+- `listingPagePhotographs.spec.ts` (which photographs a page attributes to its
+  listing) and `urlExtractPhotographs.spec.ts` pass. The second drives the
+  capture's decisions over several attempts against a scripted host: a lead
+  photograph that failed first still leads, a host that never answers is given
+  four attempts and no more, and a floor plan or a removed picture is never
+  asked about twice.
+- The same spec pins the joins by reading the source: who may start and who may
+  resume, the record written before anything is fetched, the answer given
+  before the work, fetches only through the SSRF guard, nothing written to
+  `listing_images`, the broker's reading of the family's folder, and the
+  adapter's bounded wait.
+- The REA image host was measured from this sandbox: it serves JPEG whatever
+  the request's `Accept` header says, so the server can always read the size and
+  judge the picture, and both renditions pass the page-furniture and
+  property-image rules.
+- The Deno type-check adds no error to `listing-images`,
+  `get-investment-reports` or `scrape-property-listing`.
+
+### Not verified
+
+- **A real capture has not run.** It needs the function deployed and an
+  extraction of a live listing. It is PENDING until someone does that and reads
+  the PDF: the cover should be the listing's lead photograph.
+- **Photographs are not removed when a report is deleted.** The folder stays,
+  as the image library's files do; at about 4 MB a report it is recorded rather
+  than built.

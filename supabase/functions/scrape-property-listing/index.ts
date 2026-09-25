@@ -8,6 +8,24 @@ import {
   brokeredPageReadUrl, refusePageReadUrl, resolvePageReadRoute, type PageReadRoute,
 } from '../_shared/pageRead/pageReadRoute.pure.ts';
 import { contradictionMessage, corroborateAddress } from './addressCorroboration.pure.ts';
+import {
+  photographCandidatesFromPage,
+  type PagePhotographCandidate,
+} from '../_shared/listingPagePhotographs.pure.ts';
+
+/**
+ * A listing page as a reader returned it.
+ *
+ * `photographEvidence` is what the page says about its own photographs — its
+ * markup as served and its `og:image` — kept only long enough for
+ * `photographCandidatesFromPage` to name them; the markup is never stored.
+ */
+type ScrapedPage = {
+  markdown: string;
+  title?: string;
+  description?: string;
+  photographEvidence?: { rawHtml?: string | null; ogImage?: unknown };
+};
 
 /**
  * The Model Hub agent whose binding drives this extraction
@@ -429,7 +447,7 @@ function buildListingMarkdown(inputUrl: string, extracted: ListingExtraction, ci
 async function readPageThroughBroker(
   url: string,
   route: Extract<PageReadRoute, { via: 'broker' }>,
-): Promise<{ markdown: string; title?: string; description?: string } | null> {
+): Promise<ScrapedPage | null> {
   // The broker enforces this too — it must not trust a caller — but refusing
   // here saves a round trip and keeps the refusal in this function's own log.
   const refusal = refusePageReadUrl(url);
@@ -464,10 +482,17 @@ async function readPageThroughBroker(
       console.warn('[scrape-property-listing] brokered read returned unusable markdown:', markdown.length);
       return null;
     }
+    const brokeredHtml = j?.data?.rawHtml ?? j?.rawHtml;
     return {
       markdown,
       title: j?.title ?? j?.data?.metadata?.title,
       description: j?.description ?? j?.data?.metadata?.description,
+      // Whatever the broker relays about the page's own photographs. It may
+      // relay nothing, and then the listing simply has none named.
+      photographEvidence: {
+        rawHtml: typeof brokeredHtml === 'string' ? brokeredHtml : null,
+        ogImage: j?.data?.metadata?.ogImage ?? j?.ogImage ?? null,
+      },
     };
   } catch (e) {
     console.error('[scrape-property-listing] brokered read exception', e);
@@ -485,7 +510,7 @@ async function readPageThroughBroker(
  * before and the caller falls through to the reader mode and then the model,
  * under the provenance warning the surface already draws.
  */
-async function scrapeWithFirecrawl(url: string): Promise<{ markdown: string; title?: string; description?: string } | null> {
+async function scrapeWithFirecrawl(url: string): Promise<ScrapedPage | null> {
   const route = resolvePageReadRoute({
     firecrawlKey: Deno.env.get("FIRECRAWL_API_KEY"),
     missionControlUrl: Deno.env.get("MISSION_CONTROL_URL"),
@@ -504,7 +529,12 @@ async function scrapeWithFirecrawl(url: string): Promise<{ markdown: string; tit
     return await readPageThroughBroker(url, route);
   }
 
-  const attempt = { formats: ["markdown"], onlyMainContent: false, waitFor: 1000, timeout: 25000 };
+  // `rawHtml` is the page as served, scripts included: realestate.com.au
+  // publishes the listing's own photographs in its embedded data, and nowhere
+  // else can they be told apart from the "similar properties" beside them
+  // (`listingPagePhotographs.pure.ts`). The markdown the extraction reads is
+  // unchanged, and no format asked for here is billed beyond the page.
+  const attempt = { formats: ["markdown", "rawHtml"], onlyMainContent: false, waitFor: 1000, timeout: 25000 };
   try {
     const resp = await fetch("https://api.firecrawl.dev/v2/scrape", {
       method: "POST",
@@ -531,14 +561,22 @@ async function scrapeWithFirecrawl(url: string): Promise<{ markdown: string; tit
       console.warn("[scrape-property-listing] Firecrawl returned empty/short markdown:", markdown.length);
       return null;
     }
-    return { markdown, title, description };
+    return {
+      markdown,
+      title,
+      description,
+      photographEvidence: {
+        rawHtml: typeof root?.rawHtml === 'string' ? root.rawHtml : null,
+        ogImage: root?.metadata?.ogImage ?? root?.metadata?.['og:image'] ?? null,
+      },
+    };
   } catch (e) {
     console.error("[scrape-property-listing] Firecrawl exception", e);
     return null;
   }
 }
 
-async function scrapeWithReaderMode(url: string): Promise<{ markdown: string; title?: string; description?: string } | null> {
+async function scrapeWithReaderMode(url: string): Promise<ScrapedPage | null> {
   try {
     const target = `https://r.jina.ai/${url}`;
     const resp = await fetch(target, {
@@ -563,7 +601,7 @@ async function scrapeWithReaderMode(url: string): Promise<{ markdown: string; ti
   }
 }
 
-async function searchExactListing(url: string, apiKey: string): Promise<{ markdown: string; title?: string; description?: string } | null> {
+async function searchExactListing(url: string, apiKey: string): Promise<ScrapedPage | null> {
   const hints = deriveListingHints(url);
   if (!hints.propertyId && !hints.addressHint) return null;
   const query = [
@@ -629,6 +667,30 @@ async function extractListingWithModel(url: string, propertyCategory = 'auto', u
   const pageContent = scraped?.markdown ?? null;
   if (pageContent) {
     console.log(`[scrape-property-listing] source markdown length: ${pageContent.length}`);
+  }
+
+  // The listing's own photographs, as the page attributes them. Named here and
+  // fetched later, for the report made from this extraction
+  // (`listing-images`, `op: 'capture_report'`). Nothing about it may cost the
+  // extraction: a page that says nothing, or says it in a shape no rule reads,
+  // leaves the listing with none named and the job exactly as it was.
+  let photographCandidates: PagePhotographCandidate[] = [];
+  if (scraped?.photographEvidence) {
+    try {
+      photographCandidates = photographCandidatesFromPage({
+        pageUrl: url,
+        rawHtml: scraped.photographEvidence.rawHtml ?? null,
+        ogImage: typeof scraped.photographEvidence.ogImage === 'string'
+          ? scraped.photographEvidence.ogImage
+          : Array.isArray(scraped.photographEvidence.ogImage)
+            ? scraped.photographEvidence.ogImage.find((v): v is string => typeof v === 'string') ?? null
+            : null,
+      });
+    } catch (e) {
+      console.warn('[scrape-property-listing] listing photographs could not be read', e);
+    }
+    const origins = [...new Set(photographCandidates.map((c) => c.origin))].join('+') || 'none';
+    console.log(`[scrape-property-listing] listing photographs named: ${photographCandidates.length} (${origins})`);
   }
 
   const system = [
@@ -987,6 +1049,7 @@ Return JSON only.`;
     modelUsed: result.modelUsed,
     routeUsed: result.routeUsed,
     schemaEnforced,
+    photographCandidates,
   };
 }
 
@@ -1077,7 +1140,17 @@ async function runScrapeJob(
 
     await supabase.from('property_scrape_jobs').update({
       status: 'succeeded',
-      result: { markdown, metadata, extractedDetails, sourceUrl: formattedUrl },
+      // `photographs.candidates`: the listing's own photographs this page
+      // attributes to it, for the report made from this job to keep
+      // (`listing-images`, `op: 'capture_report'`). URLs only; nothing is
+      // fetched until a report asks.
+      result: {
+        markdown,
+        metadata,
+        extractedDetails,
+        sourceUrl: formattedUrl,
+        photographs: { candidates: result.photographCandidates ?? [] },
+      },
       completed_at: new Date().toISOString(),
     }).eq('id', jobId);
   } catch (err) {

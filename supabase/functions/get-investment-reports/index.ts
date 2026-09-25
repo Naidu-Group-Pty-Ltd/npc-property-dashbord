@@ -7,7 +7,13 @@ import { familyParentId, isBaseReport, shapeFamily } from '../_shared/reports/in
 import { reconcileStoredFinancials } from '../_shared/reports/investment/financialEngine.pure.ts';
 import { resolveReportGeneratedAt } from '../_shared/reports/investment/reportGeneratedAt.pure.ts';
 import {
+  CAPTURE_RECORD_NAME,
+  captureFolder,
+  capturedPhotographsForReport,
+  captureStateOf,
+  parseCaptureRecord,
   photographsForReport,
+  type CaptureState,
   REPORT_PHOTOGRAPH_COLUMNS,
   sharedListingCounts,
   type ListingImageReuseRow,
@@ -97,7 +103,7 @@ const TABLE_SELECTS: Record<Exclude<TableName, 'investment_reports'>, string> = 
   generated_reports: 'id,title,created_at',
   property_comparisons: 'id,property_count,property_addresses,property_states,report_title,report_ids,created_at,analysis_summary,executive_summary,rankings,recommendations,financial_comparison,location_comparison,risk_comparison,red_flags',
 };
-const FUNCTION_VERSION = '2026-09-25.2';
+const FUNCTION_VERSION = '2026-09-25.3';
 const json = (body: unknown, status: number, headers: Record<string, string>, correlationId: string) => new Response(JSON.stringify(body), {
   status, headers: { ...headers, 'Content-Type': 'application/json', 'x-correlation-id': correlationId },
 });
@@ -206,6 +212,14 @@ async function hydrateCompleteAddresses(
 /** Long enough for one render to fetch them; a signed URL is a bearer credential. */
 const PHOTOGRAPH_URL_TTL_SECONDS = 10 * 60;
 
+type SignedPhotograph = { url: string; width: number | null; height: number | null };
+
+/** A report's photographs, and — for a captured set — where its capture stands. */
+interface PhotographReading {
+  photographs: SignedPhotograph[];
+  photographCapture?: { state: CaptureState; reportId: string };
+}
+
 /**
  * The property's own photographs, for a document drawn from this report.
  *
@@ -227,9 +241,18 @@ async function readReportPhotographs(
   supabase: SupabaseClient,
   row: ReportRow | undefined,
   correlationId: string,
-): Promise<Array<{ url: string; width: number | null; height: number | null }>> {
+): Promise<PhotographReading> {
   const listingId = typeof row?.property_listing_id === 'string' ? row.property_listing_id.trim() : '';
-  if (!listingId) return [];
+  if (!listingId) return await readCapturedPhotographs(supabase, row, correlationId);
+  return { photographs: await readListingPhotographs(supabase, listingId, correlationId) };
+}
+
+/** A listing-sourced report's photographs, from the image library. */
+async function readListingPhotographs(
+  supabase: SupabaseClient,
+  listingId: string,
+  correlationId: string,
+): Promise<SignedPhotograph[]> {
   try {
     const images = await supabase
       .from('listing_images')
@@ -269,6 +292,91 @@ async function readReportPhotographs(
   } catch (error) {
     console.warn('[get-investment-reports] photographs failed', { correlationId, technicalError: error });
     return [];
+  }
+}
+
+/**
+ * A URL-extract report's photographs: captured from its listing page by
+ * `listing-images` (`op: 'capture_report'`) and filed under the report that
+ * was made from it.
+ *
+ * A fork or a condensed child reads its parent's folder, so the four derived
+ * documents carry the photographs their Compass does without a copy of their
+ * own. The object names carry the order and the size, and only what passed
+ * the capture's checks is ever written there; `capturedPhotographsForReport`
+ * applies the print floor again on the way out. Every failure is an empty
+ * list, exactly as on the listing path.
+ *
+ * It also says where the capture stands, and for which report, because the
+ * capture is finished by whatever draws a document next: a `pending` capture
+ * is one the caller may ask `listing-images` to finish before it draws. A
+ * record that cannot be read says nothing, which asks for nothing.
+ */
+async function readCapturedPhotographs(
+  supabase: SupabaseClient,
+  row: ReportRow | undefined,
+  correlationId: string,
+): Promise<PhotographReading> {
+  const ownerId = row ? familyParentId(row) ?? row.id : null;
+  const folder = captureFolder(ownerId);
+  if (!folder || typeof ownerId !== 'string') return { photographs: [] };
+  try {
+    const listed = await supabase.storage.from('listing-images').list(folder, { limit: 100 });
+    if (listed.error) {
+      console.warn('[get-investment-reports] captured photographs unavailable', { correlationId });
+      return { photographs: [] };
+    }
+    const capture = await readCaptureState(supabase, folder, listed.data ?? [], correlationId);
+    const photographCapture = capture && capture !== 'none'
+      ? { state: capture, reportId: ownerId.trim().toLowerCase() }
+      : undefined;
+    const chosen = capturedPhotographsForReport(listed.data ?? []);
+    if (!chosen.length) return { photographs: [], photographCapture };
+    const signed = await supabase.storage
+      .from('listing-images')
+      .createSignedUrls(chosen.map((p) => `${folder}/${p.name}`), PHOTOGRAPH_URL_TTL_SECONDS);
+    if (signed.error) {
+      console.warn('[get-investment-reports] captured photographs could not be signed', { correlationId });
+      return { photographs: [], photographCapture };
+    }
+    const urlByPath = new Map<string, string>();
+    for (const entry of signed.data ?? []) {
+      if (entry.signedUrl && entry.path) urlByPath.set(entry.path, entry.signedUrl);
+    }
+    return {
+      photographs: chosen.flatMap((p) => {
+        const url = urlByPath.get(`${folder}/${p.name}`);
+        return url ? [{ url, width: p.width, height: p.height }] : [];
+      }),
+      photographCapture,
+    };
+  } catch (error) {
+    console.warn('[get-investment-reports] captured photographs failed', { correlationId, technicalError: error });
+    return { photographs: [] };
+  }
+}
+
+/** Where a report's capture stands, from its record; null where the record cannot be read. */
+async function readCaptureState(
+  supabase: SupabaseClient,
+  folder: string,
+  objects: ReadonlyArray<{ name?: unknown }>,
+  correlationId: string,
+): Promise<CaptureState | null> {
+  if (!objects.some((object) => object?.name === CAPTURE_RECORD_NAME)) {
+    // Photographs with no record were kept without one; there is nothing to finish.
+    return 'none';
+  }
+  const stored = await supabase.storage.from('listing-images').download(`${folder}/${CAPTURE_RECORD_NAME}`);
+  if (stored.error || !stored.data) {
+    console.warn('[get-investment-reports] capture record unavailable', { correlationId });
+    return null;
+  }
+  try {
+    const record = parseCaptureRecord(JSON.parse(await stored.data.text()));
+    return record ? captureStateOf(record, Date.now()) : null;
+  } catch {
+    return null;
   }
 }
 
@@ -449,10 +557,16 @@ Deno.serve(async (req) => {
     console.info('[get-investment-reports]', { correlationId, userId: auth.userId, projection, filters: { status: options.status, archived: options.isArchived, client: options.isClientReport, hasDateRange: Boolean(options.createdAfter || options.createdBefore) }, page, pageSize, durationMs: Math.round(performance.now() - started), returnedCount: responseData.length, functionVersion: FUNCTION_VERSION });
     if (body.reportId) {
       // Asked for, one report, behind the same `reports` permission as the row.
-      const photographs = table === 'investment_reports' && body.photographs === true
+      const reading = table === 'investment_reports' && body.photographs === true
         ? await readReportPhotographs(supabase, responseData[0] as unknown as ReportRow, correlationId)
         : null;
-      return json({ success: true, report: responseData[0], ...(photographs ? { photographs } : {}), correlationId }, 200, corsHeaders, correlationId);
+      return json({
+        success: true,
+        report: responseData[0],
+        ...(reading ? { photographs: reading.photographs } : {}),
+        ...(reading?.photographCapture ? { photographCapture: reading.photographCapture } : {}),
+        correlationId,
+      }, 200, corsHeaders, correlationId);
     }
     return json({ success: true, reports: responseData, count: totalRows, pagination: { page, pageSize, totalRows, totalPages, hasNextPage: page < totalPages, hasPreviousPage: page > 1 }, correlationId }, 200, corsHeaders, correlationId);
   } catch (error) {
