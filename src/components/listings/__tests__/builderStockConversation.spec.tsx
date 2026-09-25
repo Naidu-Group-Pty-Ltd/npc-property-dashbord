@@ -20,6 +20,7 @@ const code = (p: string) => readFileSync(join(REPO_ROOT, p), 'utf8')
 
 const state: { conversation: any; error: unknown } = { conversation: null, error: null };
 const sent: Array<{ clientMessageId: string; body: string }> = [];
+const sendFailures = { remaining: 0 };
 const retried: string[] = [];
 
 vi.mock('@/lib/marketplaceBuilderStock', () => ({
@@ -28,7 +29,11 @@ vi.mock('@/lib/marketplaceBuilderStock', () => ({
   }),
   useSendBuilderMessage: () => ({
     isPending: false,
-    mutateAsync: vi.fn(async (input: { clientMessageId: string; body: string }) => { sent.push(input); return {}; }),
+    mutateAsync: vi.fn(async (input: { clientMessageId: string; body: string }) => {
+      sent.push(input);
+      if (sendFailures.remaining > 0) { sendFailures.remaining -= 1; throw new Error('network'); }
+      return {};
+    }),
   }),
   useRetryBuilderMessage: () => ({
     isPending: false,
@@ -48,6 +53,7 @@ beforeEach(() => {
   state.conversation = null;
   state.error = null;
   sent.length = 0;
+  sendFailures.remaining = 0;
   retried.length = 0;
 });
 
@@ -105,6 +111,35 @@ describe('the builder conversation card', () => {
     fireEvent.click(screen.getByRole('button', { name: /^send$/i }));
     await screen.findByRole('textbox', { name: /message/i });
     expect(sent).toEqual([{ clientMessageId: expect.stringMatching(/^[0-9a-f-]{36}$/), body: 'Is it available?' }]);
+  });
+
+  it('repeats a send that failed in flight under the same key, and mints a new key once the text changes', async () => {
+    state.conversation = { conversation_id: null, open: true, can_send: true, messages: [] };
+    sendFailures.remaining = 2;
+    renderCard();
+    const box = screen.getByRole('textbox', { name: /message/i });
+    fireEvent.change(box, { target: { value: 'Is lot 12 still available?' } });
+    fireEvent.click(screen.getByRole('button', { name: /^send$/i }));
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    fireEvent.click(screen.getByRole('button', { name: /^send$/i }));
+    await vi.waitFor(() => expect(sent).toHaveLength(2));
+    expect(sent[1].clientMessageId).toBe(sent[0].clientMessageId);
+    fireEvent.change(box, { target: { value: 'Is lot 14 still available?' } });
+    fireEvent.click(screen.getByRole('button', { name: /^send$/i }));
+    await vi.waitFor(() => expect(sent).toHaveLength(3));
+    expect(sent[2].clientMessageId).not.toBe(sent[0].clientMessageId);
+  });
+
+  it('a message whose confirmation never came back says so, and its writer can send it again', () => {
+    state.conversation = {
+      conversation_id: 'c', open: true, can_send: true,
+      messages: [MESSAGE({ id: 'm-unconfirmed', body: 'Price still current?', delivery_state: 'failed', failure_reason: 'confirmation_timeout', can_retry: true })],
+    };
+    renderCard();
+    expect(screen.getByText('Not confirmed')).toBeInTheDocument();
+    expect(screen.queryByText('Not delivered')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /send again/i }));
+    expect(retried).toEqual(['m-unconfirmed']);
   });
 
   it('someone without Listings edit reads the thread but has no composer', () => {

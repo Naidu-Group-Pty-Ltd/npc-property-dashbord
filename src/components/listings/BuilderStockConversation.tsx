@@ -31,6 +31,14 @@ const DELIVERY_LABELS: Record<DeliveryState, string> = {
   failed: 'Not delivered',
 };
 
+/**
+ * `confirmation_timeout` is not a refusal: the message reached the builder and
+ * no receipt came back in time, so the builder may well hold it. It is named
+ * as unconfirmed, never as "not delivered".
+ */
+const deliveryLabel = (state: DeliveryState, failureReason: string | null) =>
+  state === 'failed' && failureReason === 'confirmation_timeout' ? 'Not confirmed' : DELIVERY_LABELS[state];
+
 const when = (iso: string) => new Date(iso).toLocaleString('en-AU');
 
 export function BuilderStockConversation({
@@ -119,7 +127,12 @@ export function BuilderStockConversation({
               placeholder={`Write to ${who}`}
               value={draft}
               maxLength={4000}
-              onChange={(event) => setDraft(event.target.value)}
+              onChange={(event) => {
+                // Different text is a different message: the key a failed send
+                // is repeated under belongs to the text it was sent with.
+                setDraft(event.target.value);
+                setClientMessageId(crypto.randomUUID());
+              }}
               disabled={send.isPending}
               rows={3}
             />
@@ -161,7 +174,7 @@ function Message({
       {message.delivery_state ? (
         <p className={cn('mt-1 flex items-center gap-2 text-xs',
           message.delivery_state === 'failed' ? 'text-destructive' : 'text-muted-foreground')}>
-          <span>{DELIVERY_LABELS[message.delivery_state]}</span>
+          <span>{deliveryLabel(message.delivery_state, message.failure_reason)}</span>
           {message.can_retry ? (
             <Button type="button" variant="outline" size="sm" className="h-6 px-2 text-xs"
               onClick={() => onRetry(message.id)} disabled={retrying}>

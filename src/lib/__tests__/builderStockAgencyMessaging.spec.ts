@@ -161,6 +161,14 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
       expect(outbox(`dedupe_key LIKE 'agency.message:${a}:%'`)).toBe('1');
       expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE body = 'Only once please.'`)).toBe('1');
     });
+
+    it('the same key with different text is refused, never answered with the original', () => {
+      const key = randomUUID();
+      post(ITEM_A1, OWNER, key, 'Is lot 101 available?');
+      expect(refusal(`SELECT public.builder_network_post_message(${lit(ITEM_A1)}, ${lit(OWNER)}, ${lit(key)}, 'Is lot 102 available?')`))
+        .toMatch(/AGENCY_MESSAGE_ID_REUSED/);
+      expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE client_message_id = ${lit(key)}`)).toBe('1');
+    });
   });
 
   describe('who may write where', () => {
@@ -276,6 +284,80 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
       receipt(m, 1, 'accepted', undefined, CONN_B);
       sweep();
       expect(db.sql(`SELECT delivery_state FROM public.builder_network_messages WHERE id = ${lit(m)}`)).toBe('queued');
+    });
+  });
+
+  describe('a receipt that never gets back', () => {
+    it('as RECEIVER (1, 2, 8, 9): the message is stored once, and a retry of it is answered again', () => {
+      const lostIn = builderMessage({ body: 'Did you get this one?' });
+      land(CONN_A, 'agency.message.posted', `agency.message:${lostIn.message_id}:1`, lostIn);
+      sweep();
+      expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE id = ${lit(lostIn.message_id)}`)).toBe('1');
+      db.sql(`UPDATE public.builder_network_outbox SET status = 'dead', last_error = 'http_503'
+              WHERE dedupe_key = 'agency.receipt:${lostIn.message_id}:1'`);
+      expect(outbox(`dedupe_key = 'agency.receipt:${lostIn.message_id}:1' AND status = 'dead'`)).toBe('1');
+      land(CONN_A, 'agency.message.posted', `agency.message:${lostIn.message_id}:2`, { ...lostIn, generation: 2 });
+      sweep();
+      expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE id = ${lit(lostIn.message_id)}`)).toBe('1');
+      expect(outbox(`dedupe_key = 'agency.receipt:${lostIn.message_id}:2' AND payload->>'outcome' = 'accepted' AND status = 'pending'`))
+        .toBe('1');
+    });
+
+    it('as SENDER (3–7, 10–12): unconfirmed past the window fails truthfully, and its writer\'s retry is confirmed once', () => {
+      const lost = post(ITEM_A1, OWNER, randomUUID(), 'Is the price still current?');
+      const pending = post(ITEM_A1, OWNER, randomUUID(), 'Still in the outbox.');
+      const fresh = post(ITEM_A1, COLLEAGUE, randomUUID(), 'Delivered a moment ago.');
+      db.sql(`UPDATE public.builder_network_outbox SET status = 'delivered', delivered_at = now()
+              WHERE dedupe_key IN ('agency.message:${lost}:1', 'agency.message:${fresh}:1')`);
+      sweep();
+      // 3. the transport succeeded; no receipt yet, so still queued.
+      expect(db.sql(`SELECT delivery_state FROM public.builder_network_messages WHERE id = ${lit(lost)}`)).toBe('queued');
+      db.sql(`UPDATE public.builder_network_outbox SET delivered_at = now() - interval '16 minutes'
+              WHERE dedupe_key = 'agency.message:${lost}:1';
+              UPDATE public.builder_network_outbox SET created_at = now() - interval '2 hours'
+              WHERE dedupe_key = 'agency.message:${pending}:1'`);
+      sweep();
+      // 4. past the confirmation window it fails, and says why truthfully.
+      expect(db.sql(`SELECT delivery_state || '|' || failure_reason FROM public.builder_network_messages WHERE id = ${lit(lost)}`))
+        .toBe('failed|confirmation_timeout');
+      // 12. neither the one still in transit nor the one just delivered is touched.
+      expect(db.sql(`SELECT delivery_state FROM public.builder_network_messages WHERE id = ${lit(pending)}`)).toBe('queued');
+      expect(db.sql(`SELECT delivery_state FROM public.builder_network_messages WHERE id = ${lit(fresh)}`)).toBe('queued');
+      // 6. a colleague may not retry it.
+      expect(refusal(`SELECT public.builder_network_retry_message(${lit(lost)}, ${lit(COLLEAGUE)})`)).toMatch(/NOT_RETRYABLE/);
+      // 5, 7. its writer can, under generation 2, as the same message.
+      db.sql(`SELECT public.builder_network_retry_message(${lit(lost)}, ${lit(OWNER)})`);
+      expect(db.sql(`SELECT delivery_state || '|' || delivery_generation || '|' || (failure_reason IS NULL)
+                     FROM public.builder_network_messages WHERE id = ${lit(lost)}`)).toBe('queued|2|true');
+      expect(outbox(`dedupe_key = 'agency.message:${lost}:2'`)).toBe('1');
+      expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE body = 'Is the price still current?'`)).toBe('1');
+      // 11. a late generation-1 receipt changes nothing.
+      receipt(lost, 1, 'accepted');
+      sweep();
+      expect(db.sql(`SELECT delivery_state || '|' || delivery_generation FROM public.builder_network_messages WHERE id = ${lit(lost)}`))
+        .toBe('queued|2');
+      // 10. the generation-2 receipt makes it Delivered.
+      receipt(lost, 2, 'accepted');
+      sweep();
+      expect(db.sql(`SELECT delivery_state || '|' || (delivered_at IS NOT NULL) FROM public.builder_network_messages WHERE id = ${lit(lost)}`))
+        .toBe('delivered|true');
+      receipt(lost, 1, 'refused', 'late');
+      sweep();
+      db.sql(`UPDATE public.builder_network_outbox SET delivered_at = now() - interval '16 minutes'
+              WHERE dedupe_key = 'agency.message:${lost}:1'`);
+      sweep();
+      expect(db.sql(`SELECT delivery_state FROM public.builder_network_messages WHERE id = ${lit(lost)}`)).toBe('delivered');
+    });
+
+    it('a failed message cannot be sent again once the activation is withdrawn', () => {
+      const m = post(ITEM_A1, OWNER, randomUUID(), 'Retry after withdrawal.');
+      receipt(m, 1, 'refused', 'x');
+      sweep();
+      db.sql(`UPDATE public.builder_stock_selections SET status = 'withdrawn' WHERE stock_item_id = ${lit(ITEM_A1)}`);
+      expect(refusal(`SELECT public.builder_network_retry_message(${lit(m)}, ${lit(OWNER)})`)).toMatch(/AGENCY_CONVERSATION_NOT_OPEN/);
+      expect(db.sql(`SELECT delivery_state || '|' || delivery_generation FROM public.builder_network_messages WHERE id = ${lit(m)}`))
+        .toBe('failed|1');
+      db.sql(`UPDATE public.builder_stock_selections SET status = 'selected' WHERE stock_item_id = ${lit(ITEM_A1)}`);
     });
   });
 

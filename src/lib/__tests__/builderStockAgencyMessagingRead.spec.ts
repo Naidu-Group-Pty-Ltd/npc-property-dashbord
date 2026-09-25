@@ -28,13 +28,14 @@ function standIn(tables: Record<string, Row[]>) {
     const entry = { table, filters: [] as Array<[string, string, unknown]> };
     log.push(entry);
     let orders: Array<[string, boolean]> = [];
+    let cap = Infinity;
     const builder: any = {
       select() { return builder; },
       eq(col: string, v: unknown) { entry.filters.push(['eq', col, v]); return builder; },
       neq(col: string, v: unknown) { entry.filters.push(['neq', col, v]); return builder; },
       contains(col: string, v: unknown[]) { entry.filters.push(['contains', col, v]); return builder; },
       order(col: string, o?: { ascending?: boolean; nullsFirst?: boolean }) { orders = [...orders, [col, o?.ascending !== false]]; return builder; },
-      limit() { return builder; },
+      limit(n: number) { cap = n; return builder; },
       maybeSingle() { return builder.then((r: any) => ({ data: r.data[0] ?? null, error: null })); },
       then(resolve: (v: unknown) => unknown) {
         let rows = (tables[table] ?? []).filter((row) => entry.filters.every(([op, col, v]) =>
@@ -43,7 +44,7 @@ function standIn(tables: Record<string, Row[]>) {
         for (const [col, asc] of [...orders].reverse()) {
           rows = [...rows].sort((a, b) => (String(a[col]) < String(b[col]) ? -1 : String(a[col]) > String(b[col]) ? 1 : 0) * (asc ? 1 : -1));
         }
-        return Promise.resolve({ data: rows, error: null }).then(resolve);
+        return Promise.resolve({ data: rows.slice(0, cap), error: null }).then(resolve);
       },
     };
     return builder;
@@ -98,6 +99,23 @@ describe('reading a property\'s conversation', () => {
     expect(JSON.stringify(read)).not.toContain('Not this one');
   });
 
+  it('past the cap, the thread shows the NEWEST messages, still in reading order', async () => {
+    const { tables, conversation } = fixture();
+    tables.builder_network_messages = Array.from({ length: 501 }, (_, i) => ({
+      id: `m${String(i).padStart(4, '0')}`, conversation_id: conversation, side: 'builder',
+      sender_display_name: 'Avery Builder', body: `Message ${i}`,
+      sent_at: new Date(Date.UTC(2026, 8, 25, 0, 0, i)).toISOString(), delivery_state: null,
+      delivered_at: null, failure_reason: null, sender_user_id: null, client_message_id: null,
+    }));
+    const read = await readBuilderConversation(standIn(tables).client, {
+      stockItemId: ITEM, organisationId: ORG, viewerUserId: ME,
+    });
+    if (!read.ok) throw new Error('read failed');
+    expect(read.messages).toHaveLength(500);
+    expect(read.messages[0].body).toBe('Message 1');
+    expect(read.messages[499].body).toBe('Message 500');
+  });
+
   it('a property with no live activation is closed, and one with no connection has no conversation', async () => {
     const { tables } = fixture();
     tables.builder_stock_selections[0].status = 'withdrawn';
@@ -106,6 +124,30 @@ describe('reading a property\'s conversation', () => {
     tables.builder_network_connections = [];
     const none = await readBuilderConversation(standIn(tables).client, { stockItemId: ITEM, organisationId: ORG, viewerUserId: ME });
     expect(none).toEqual({ ok: true, open: false, conversation_id: null, messages: [] });
+  });
+
+  it('18. polling refresh gets new messages: the next read carries what was written since the last', async () => {
+    const { tables, conversation } = fixture();
+    const first = await readBuilderConversation(standIn(tables).client, { stockItemId: ITEM, organisationId: ORG, viewerUserId: ME });
+    if (!first.ok) throw new Error('read failed');
+    expect(first.messages.map((m) => m.id)).not.toContain('m-new');
+    tables.builder_network_messages.push({
+      id: 'm-new', conversation_id: conversation, side: 'builder', sender_display_name: 'Avery Builder', body: 'Just arrived',
+      sent_at: '2026-09-25T13:00:00Z', delivery_state: null, delivered_at: null, failure_reason: null, sender_user_id: null, client_message_id: null,
+    });
+    const next = await readBuilderConversation(standIn(tables).client, { stockItemId: ITEM, organisationId: ORG, viewerUserId: ME });
+    if (!next.ok) throw new Error('read failed');
+    expect(next.messages.at(-1)?.body).toBe('Just arrived');
+    expect(readCode('src/lib/marketplaceBuilderStock.ts'))
+      .toMatch(/refetchInterval:\s*BUILDER_CONVERSATION_POLL_MS/);
+  });
+
+  it('20. a cross-organisation read returns nothing', async () => {
+    const { tables } = fixture();
+    const read = await readBuilderConversation(standIn(tables).client, {
+      stockItemId: ITEM, organisationId: 'another-builder-org', viewerUserId: ME,
+    });
+    expect(read.ok ? read.messages : []).toEqual([]);
   });
 
   it('never carries a user id, the client key, or anything about the client', async () => {

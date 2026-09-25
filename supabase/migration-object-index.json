@@ -72,6 +72,7 @@
     "function:public.builder_network_claim_outbox",
     "function:public.builder_network_clear_settled_mismatches",
     "function:public.builder_network_conversation_id",
+    "function:public.builder_network_expire_unconfirmed",
     "function:public.builder_network_halt_identity_mismatch",
     "function:public.builder_network_kick_outbox",
     "function:public.builder_network_mark_inbound_refused",
