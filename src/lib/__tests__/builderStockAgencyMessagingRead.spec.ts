@@ -16,7 +16,7 @@ import {
   projectConversationMessages,
 } from '../../../supabase/functions/_shared/builderStock/agencyMessages.pure';
 import { readBuilderConversation } from '../../../supabase/functions/_shared/builderStock/agencyMessages';
-import { agencyMessageRouteHeld } from '../../../supabase/functions/_shared/builderStock/agencyMessages.pure';
+import { agencyMessageRouteHeld, agencyPayloadContractViolation } from '../../../supabase/functions/_shared/builderStock/agencyMessages.pure';
 import {
   BUILDER_CONVERSATION_CLOSED_POLL_MS, BUILDER_CONVERSATION_POLL_MS, builderConversationPollInterval,
 } from '../marketplaceBuilderStock';
@@ -323,5 +323,45 @@ describe('a property the builder stopped listing', () => {
   it('writes nothing new to it: sending and activating still need active stock', () => {
     expect(opOf('send_builder_message')).toMatch(/await loadItem\(/);
     expect(opOf('select_for_client')).toMatch(/await loadItem\(/);
+  });
+});
+
+describe('the exact message contract, at the door', () => {
+  const posted = {
+    schema_version: 1, conversation_id: 'c', message_id: 'm', stock_item_id: 'i', body: 'Hello',
+    sender_display_name: 'Avery', sent_at: '2026-09-25T00:00:00Z', generation: 1,
+  };
+  const receipt = { schema_version: 1, message_id: 'm', conversation_id: 'c', generation: 1, outcome: 'accepted' };
+
+  it('accepts exactly the contract\'s keys, and a receipt\'s optional reason', () => {
+    expect(agencyPayloadContractViolation('agency.message.posted', posted)).toBeNull();
+    expect(agencyPayloadContractViolation('agency.message.receipt', receipt)).toBeNull();
+    expect(agencyPayloadContractViolation('agency.message.receipt', { ...receipt, outcome: 'refused', reason: 'x' })).toBeNull();
+  });
+
+  it('refuses any key outside the contract, naming the key and never its value', () => {
+    const extra = agencyPayloadContractViolation('agency.message.posted', { ...posted, customer_details: 'Jordan Buyer, 0400 000 000' });
+    expect(extra).toMatchObject({ unexpected: ['customer_details'], missing: [] });
+    expect(JSON.stringify(extra)).not.toContain('Jordan');
+    expect(agencyPayloadContractViolation('agency.message.receipt', { ...receipt, client_id: 'x' }))
+      .toMatchObject({ unexpected: ['client_id'] });
+  });
+
+  it('refuses a payload missing a contract key, and one that is not an object', () => {
+    const { body: _omit, ...short } = posted;
+    expect(agencyPayloadContractViolation('agency.message.posted', short)).toMatchObject({ missing: ['body'] });
+    expect(agencyPayloadContractViolation('agency.message.posted', null)).not.toBeNull();
+    expect(agencyPayloadContractViolation('agency.message.posted', ['x'])).not.toBeNull();
+  });
+
+  it('has no opinion on event types that are not messages', () => {
+    expect(agencyPayloadContractViolation('stock.selection.announced', { anything: 1 })).toBeNull();
+  });
+
+  it('the door checks the contract before it stores anything', () => {
+    const door = readCode('supabase/functions/builder-network-inbound/index.ts');
+    const check = door.indexOf('agencyPayloadContractViolation(');
+    expect(check).toBeGreaterThan(-1);
+    expect(check).toBeLessThan(door.indexOf(".from('builder_network_inbound_events')"));
   });
 });

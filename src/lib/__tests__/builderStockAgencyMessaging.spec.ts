@@ -512,7 +512,17 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
       expect(a.split('\n')[0]).toMatch(/^[0-9a-f-]{36}$/);
       expect(b).toBe(a.split('\n')[0]);
       expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE client_message_id = ${lit(key)}`)).toBe('1');
+      // One generation-1 event crosses, and no other.
+      expect(outbox(`dedupe_key = 'agency.message:${b}:1'`)).toBe('1');
+      expect(outbox(`dedupe_key LIKE 'agency.message:${b}:%'`)).toBe('1');
     }, 20_000);
+
+    it('the same key against another conversation is refused, never answered with the first', () => {
+      const key = randomUUID();
+      post(ITEM_A1, OWNER, key, 'Bound to its first conversation.');
+      expect(refusal(`SELECT public.builder_network_post_message(${lit(ITEM_A2)}, ${lit(OWNER)}, ${lit(key)}, 'Bound to its first conversation.')`))
+        .toMatch(/AGENCY_MESSAGE_ID_REUSED/);
+    });
   });
 
   describe('the last word on a disputed or unscoped connection', () => {
@@ -558,6 +568,21 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
       } finally {
         db.sql(`UPDATE public.builder_network_connections SET scopes = ARRAY['stock:publish'] WHERE id = ${lit(CONN_A)}`);
       }
+    });
+  });
+
+  describe('the exact contract, at the apply step too', () => {
+    it('refuses a message or a receipt carrying a key outside the contract', () => {
+      const extra = { ...builderMessage({ body: 'Carrying a field the contract does not have.' }), customer_details: 'Jordan Buyer' };
+      land(CONN_A, 'agency.message.posted', `agency.message:${extra.message_id}:1`, extra);
+      const waiting = post(ITEM_A1, OWNER, randomUUID(), 'Waiting on a clean receipt.');
+      land(CONN_A, 'agency.message.receipt', `agency.receipt:${waiting}:1:${randomUUID()}`,
+        { schema_version: 1, message_id: waiting, conversation_id: conversationId(NET_A, ITEM_A1), generation: 1, outcome: 'accepted', client_id: 'x' });
+      sweep();
+      expect(db.sql(`SELECT message_apply_error FROM public.builder_network_inbound_events
+                     WHERE dedupe_key = 'agency.message:${extra.message_id}:1'`)).toBe('refused:invalid_payload');
+      expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE id = ${lit(extra.message_id)}`)).toBe('0');
+      expect(db.sql(`SELECT delivery_state FROM public.builder_network_messages WHERE id = ${lit(waiting)}`)).toBe('queued');
     });
   });
 
