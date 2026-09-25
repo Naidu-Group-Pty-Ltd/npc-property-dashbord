@@ -561,6 +561,45 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
     });
   });
 
+  describe('a property the builder stopped listing, while its activation stands', () => {
+    const archive = (status: string) => db.sql(`UPDATE public.builder_network_stock_items SET lifecycle_status = '${status}' WHERE id = ${lit(ITEM_A1)}`);
+
+    it('takes no new message and no retry from this side', () => {
+      const failed = post(ITEM_A1, OWNER, randomUUID(), 'Failed before the property was archived.');
+      receipt(failed, 1, 'refused', 'x');
+      sweep();
+      archive('archived');
+      try {
+        expect(refusal(`SELECT public.builder_network_post_message(${lit(ITEM_A1)}, ${lit(OWNER)}, ${lit(randomUUID())}, 'After archiving.')`))
+          .toMatch(/AGENCY_CONVERSATION_NOT_FOUND/);
+        expect(refusal(`SELECT public.builder_network_retry_message(${lit(failed)}, ${lit(OWNER)})`)).toMatch(/AGENCY_CONVERSATION_NOT_OPEN/);
+        expect(db.sql(`SELECT delivery_state || '|' || delivery_generation FROM public.builder_network_messages WHERE id = ${lit(failed)}`))
+          .toBe('failed|1');
+      } finally {
+        archive('active');
+      }
+    });
+
+    it('stores no new builder message, and still acknowledges one it already holds', () => {
+      const stored = builderMessage({ body: 'Stored before archiving.' });
+      land(CONN_A, 'agency.message.posted', `agency.message:${stored.message_id}:1`, stored);
+      sweep();
+      archive('archived');
+      try {
+        land(CONN_A, 'agency.message.posted', `agency.message:${stored.message_id}:2`, { ...stored, generation: 2 });
+        const fresh = builderMessage({ body: 'Written after archiving.' });
+        land(CONN_A, 'agency.message.posted', `agency.message:${fresh.message_id}:1`, fresh);
+        sweep();
+        expect(outbox(`dedupe_key = 'agency.receipt:${stored.message_id}:2' AND payload->>'outcome' = 'accepted'`)).toBe('1');
+        expect(db.sql(`SELECT message_apply_error FROM public.builder_network_inbound_events
+                       WHERE dedupe_key = 'agency.message:${fresh.message_id}:1'`)).toBe('refused:conversation_not_open');
+        expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE id = ${lit(fresh.message_id)}`)).toBe('0');
+      } finally {
+        archive('active');
+      }
+    });
+  });
+
   describe('a check and the change it guards against, at the same moment', () => {
     const settled = (p: Promise<string>) => p.then((out) => out, (error) => `ERROR ${String((error as { stderr?: unknown }).stderr ?? error)}`);
 

@@ -298,7 +298,9 @@ describe('a reader who may not write', () => {
     const market = readCode('supabase/functions/builder-stock-marketplace/index.ts');
     const start = market.indexOf("operation === 'get_builder_conversation'");
     const op = market.slice(start, market.indexOf('operation ===', start + 20));
-    expect(op).toMatch(/const canSend = read\.open && item\.lifecycle_status === 'active' && listingsEdit\.ok && networkOn/);
+    expect(op).toMatch(/const open = read\.open && item\.lifecycle_status === 'active'/);
+    expect(op).toMatch(/const canSend = open && listingsEdit\.ok && networkOn/);
+    expect(op).toMatch(/open,\s*\n\s*closed_reason/);
     expect(op).toMatch(/can_send:\s*canSend/);
     expect(op).toMatch(/closed_reason:\s*item\.lifecycle_status === 'active' \? read\.closed_reason : 'delisted'/);
     expect(op).toMatch(/can_retry:\s*message\.can_retry\s*&&\s*canSend/);

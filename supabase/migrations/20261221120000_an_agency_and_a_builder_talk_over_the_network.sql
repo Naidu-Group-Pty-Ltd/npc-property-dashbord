@@ -251,8 +251,12 @@ BEGIN
   -- The builder and the connection are read from rows, never from the caller:
   -- the property names its builder, and the builder's authorised connection is
   -- the one the activation itself was announced over.
+  -- Only a property the builder still lists takes a new message; its history
+  -- stays readable after it is archived. Held, so an archive landing now waits.
   SELECT i.organisation_id INTO v_org
-    FROM public.builder_network_stock_items i WHERE i.id = _stock_item_id;
+    FROM public.builder_network_stock_items i
+   WHERE i.id = _stock_item_id AND i.lifecycle_status = 'active'
+   FOR SHARE;
   SELECT c.id, c.network_connection_id, c.identity_mismatch_since INTO v_connection
     FROM public.builder_network_connections c
    WHERE c.builder_organisation_id = v_org AND c.state = 'active'
@@ -379,6 +383,7 @@ BEGIN
   -- Sending again is writing: the conversation must still be open, exactly
   -- as for a new message, and what makes it open is held until it is sent.
   PERFORM 1 FROM public.builder_network_connections c WHERE c.id = v_conversation.connection_id FOR SHARE;
+  PERFORM 1 FROM public.builder_network_stock_items i WHERE i.id = v_conversation.stock_item_id FOR SHARE;
   PERFORM 1 FROM public.builder_stock_selections s
    WHERE s.stock_item_id = v_conversation.stock_item_id
      AND s.organisation_id = v_conversation.builder_organisation_id
@@ -397,7 +402,10 @@ BEGIN
     SELECT 1 FROM public.builder_stock_selections s
      WHERE s.stock_item_id = v_conversation.stock_item_id
        AND s.organisation_id = v_conversation.builder_organisation_id
-       AND s.status <> 'withdrawn') THEN
+       AND s.status <> 'withdrawn')
+     OR NOT EXISTS (
+    SELECT 1 FROM public.builder_network_stock_items i
+     WHERE i.id = v_conversation.stock_item_id AND i.lifecycle_status = 'active') THEN
     RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'AGENCY_CONVERSATION_NOT_OPEN';
   END IF;
 
@@ -536,6 +544,7 @@ BEGIN
   ELSIF v_conversation_id <> public.builder_network_conversation_id(v_connection.network_connection_id, v_item) THEN
     v_reason := 'conversation_mismatch';
   ELSE
+    PERFORM 1 FROM public.builder_network_stock_items i WHERE i.id = v_item FOR SHARE;
     PERFORM 1 FROM public.builder_stock_selections s
      WHERE s.stock_item_id = v_item AND s.organisation_id = v_connection.builder_organisation_id
        AND s.status <> 'withdrawn'
@@ -546,7 +555,11 @@ BEGIN
        AND s.status <> 'withdrawn'
      ORDER BY s.selected_at, s.id
      LIMIT 1;
-    IF NOT FOUND THEN
+    -- A property the builder no longer lists is closed to new messages the
+    -- same way a withdrawn activation is.
+    IF NOT FOUND OR NOT EXISTS (
+      SELECT 1 FROM public.builder_network_stock_items i
+       WHERE i.id = v_item AND i.lifecycle_status = 'active') THEN
       -- Closed to NEW messages. One already held here, unchanged, is this
       -- side's own record: its retry (a receipt lost on the way back) is
       -- acknowledged again, or the builder would record a refusal for words

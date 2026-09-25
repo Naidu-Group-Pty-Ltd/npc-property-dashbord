@@ -108,7 +108,9 @@ export function BuilderStockConversation({
           </div>
         ) : conversation?.open ? (
           <p className="rounded-md border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
-            No messages yet. Anything you write here goes to {who} about this property.
+            {conversation.can_send
+              ? `No messages yet. Anything you write here goes to ${who} about this property.`
+              : 'No messages yet. You can read this conversation but cannot write to it here.'}
           </p>
         ) : null}
 

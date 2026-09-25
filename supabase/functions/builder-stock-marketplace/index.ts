@@ -642,11 +642,12 @@ Deno.serve(async (req) => {
       // offered that the server would refuse.
       // A property the builder no longer lists keeps its history and takes
       // nothing new.
-      const canSend = read.open && item.lifecycle_status === 'active' && listingsEdit.ok && networkOn;
+      const open = read.open && item.lifecycle_status === 'active';
+      const canSend = open && listingsEdit.ok && networkOn;
       return json({
         success: true,
         conversation_id: read.conversation_id,
-        open: read.open,
+        open,
         closed_reason: item.lifecycle_status === 'active' ? read.closed_reason : 'delisted',
         can_send: canSend,
         messages: read.messages.map((message) => ({ ...message, can_retry: message.can_retry && canSend })),

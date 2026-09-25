@@ -184,6 +184,14 @@ describe('the builder conversation card', () => {
     expect(screen.getByText('Hello')).toBeInTheDocument();
   });
 
+  it('an empty open thread promises delivery only to somebody who can write', () => {
+    state.conversation = { conversation_id: null, open: true, can_send: false, messages: [] };
+    renderCard();
+    expect(screen.queryByText(/goes to/i)).toBeNull();
+    expect(screen.getByText(/no messages yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/cannot write to it here/i)).toBeInTheDocument();
+  });
+
   it('no model and no email: a message is text between people', () => {
     const source = code('src/components/listings/BuilderStockConversation.tsx');
     expect(source).not.toMatch(/openrouter|anthropic|openai|claude|resend|sendEmail/i);
