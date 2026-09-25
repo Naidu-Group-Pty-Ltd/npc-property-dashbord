@@ -265,8 +265,13 @@ describe('the worker holds a message whose route stopped being deliverable', () 
     const healthy = { identity_mismatch_since: null, scopes: ['stock:publish'] };
     expect(agencyMessageRouteHeld(healthy, 'agency.message.posted')).toBe(false);
     expect(agencyMessageRouteHeld({ ...healthy, identity_mismatch_since: '2026-09-25T00:00:00Z' }, 'agency.message.posted')).toBe(true);
-    expect(agencyMessageRouteHeld({ ...healthy, scopes: [] }, 'agency.message.receipt')).toBe(true);
+    expect(agencyMessageRouteHeld({ ...healthy, scopes: [] }, 'agency.message.posted')).toBe(true);
     expect(agencyMessageRouteHeld({ ...healthy, scopes: null }, 'agency.message.posted')).toBe(true);
+    // A withdrawn scope holds new CONTENT, not a receipt: the refusal that
+    // tells the builder why must reach it.
+    expect(agencyMessageRouteHeld({ ...healthy, scopes: [] }, 'agency.message.receipt')).toBe(false);
+    // An identity dispute holds everything.
+    expect(agencyMessageRouteHeld({ ...healthy, identity_mismatch_since: '2026-09-25T00:00:00Z' }, 'agency.message.receipt')).toBe(true);
     // Stock events are not this module's to hold.
     expect(agencyMessageRouteHeld({ ...healthy, identity_mismatch_since: '2026-09-25T00:00:00Z' }, 'stock.selection.announced')).toBe(false);
   });
@@ -282,10 +287,12 @@ describe('the worker holds a message whose route stopped being deliverable', () 
 });
 
 describe('a reader who may not write', () => {
-  it('is never offered "Send again": the read gates the retry on Listings edit', () => {
+  it('is never offered a button the server would refuse: send and retry follow edit, the activation and the network switch', () => {
     const market = readCode('supabase/functions/builder-stock-marketplace/index.ts');
     const start = market.indexOf("operation === 'get_builder_conversation'");
     const op = market.slice(start, market.indexOf('operation ===', start + 20));
-    expect(op).toMatch(/can_retry:\s*message\.can_retry\s*&&\s*listingsEdit\.ok/);
+    expect(op).toMatch(/const canSend = read\.open && listingsEdit\.ok && networkOn/);
+    expect(op).toMatch(/can_send:\s*canSend/);
+    expect(op).toMatch(/can_retry:\s*message\.can_retry\s*&&\s*canSend/);
   });
 });

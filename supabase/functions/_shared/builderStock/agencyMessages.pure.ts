@@ -85,5 +85,8 @@ export function agencyMessageRouteHeld(
   eventType: string,
 ): boolean {
   if (!eventType.startsWith('agency.message.')) return false;
-  return !!connection.identity_mismatch_since || !(connection.scopes ?? []).includes('stock:publish');
+  if (connection.identity_mismatch_since) return true;
+  // A withdrawn scope holds new CONTENT only: the receipt that tells the
+  // builder why must still reach it.
+  return eventType === 'agency.message.posted' && !(connection.scopes ?? []).includes('stock:publish');
 }

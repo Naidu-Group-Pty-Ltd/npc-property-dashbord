@@ -36,6 +36,7 @@ import {
   verifyAuth, createCorsHeaders, createUnauthorizedResponse, createForbiddenResponse,
 } from '../_shared/auth.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
+import { builderNetworkEnabled } from '../_shared/builderNetwork.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { internalError } from '../_shared/errorResponse.ts';
 import { STOCK_IMAGE_BUCKET } from '../_shared/builderStock/fileTypes.pure.ts';
@@ -614,14 +615,16 @@ Deno.serve(async (req) => {
       });
       if (!read.ok) return json({ success: false, error: 'conversation_could_not_be_read' }, 503);
       const listingsEdit = await requireModulePermission(supabase, actor, 'listings', 'can_edit');
+      const networkOn = await builderNetworkEnabled(supabase);
+      // Every gate the send and retry functions enforce, so no button is
+      // offered that the server would refuse.
+      const canSend = read.open && listingsEdit.ok && networkOn;
       return json({
         success: true,
         conversation_id: read.conversation_id,
         open: read.open,
-        can_send: read.open && listingsEdit.ok,
-        // The retry endpoint needs Listings edit, so a reader without it is
-        // never offered "Send again".
-        messages: read.messages.map((message) => ({ ...message, can_retry: message.can_retry && listingsEdit.ok })),
+        can_send: canSend,
+        messages: read.messages.map((message) => ({ ...message, can_retry: message.can_retry && canSend })),
       });
     }
 

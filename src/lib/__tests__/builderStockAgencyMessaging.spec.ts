@@ -463,6 +463,52 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
     }, 20_000);
   });
 
+  describe('the last word on a disputed or unscoped connection', () => {
+    it('a dispute that begins after the sweep selected an event still holds it, unconsumed', () => {
+      const late = builderMessage({ body: 'Selected just before the dispute.' });
+      land(CONN_A, 'agency.message.posted', `agency.message:${late.message_id}:1`, late);
+      const eventId = db.sql(`SELECT id FROM public.builder_network_inbound_events WHERE dedupe_key = 'agency.message:${late.message_id}:1'`);
+      db.sql(`UPDATE public.builder_network_connections SET identity_mismatch_since = now() WHERE id = ${lit(CONN_A)}`);
+      try {
+        expect(db.sql(`SELECT public.builder_network_apply_message_event('${eventId}')`)).toBe('held');
+        expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE id = ${lit(late.message_id)}`)).toBe('0');
+      } finally {
+        db.sql(`UPDATE public.builder_network_connections SET identity_mismatch_since = NULL WHERE id = ${lit(CONN_A)}`);
+      }
+      sweep();
+      expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE id = ${lit(late.message_id)}`)).toBe('1');
+    });
+
+    it('the sweep leaves a held event unstamped, without spending an attempt', () => {
+      db.sql(`UPDATE public.builder_network_connections SET identity_mismatch_since = now() WHERE id = ${lit(CONN_A)}`);
+      try {
+        const m = builderMessage({ body: 'Held at apply time.' });
+        land(CONN_A, 'agency.message.posted', `agency.message:${m.message_id}:1`, m);
+        // The sweep's own predicate skips the halted connection; the apply-time
+        // answer is the backstop, exercised directly above.
+        sweep();
+        expect(db.sql(`SELECT (message_applied_at IS NULL) || '|' || message_apply_attempts FROM public.builder_network_inbound_events
+                       WHERE dedupe_key = 'agency.message:${m.message_id}:1'`)).toBe('true|0');
+      } finally {
+        db.sql(`UPDATE public.builder_network_connections SET identity_mismatch_since = NULL WHERE id = ${lit(CONN_A)}`);
+        sweep();
+      }
+    });
+
+    it('a refusal to a builder that withdrew stock:publish is sent, not held behind the scope it withdrew', () => {
+      db.sql(`UPDATE public.builder_network_connections SET scopes = ARRAY[]::text[] WHERE id = ${lit(CONN_A)}`);
+      try {
+        const m = builderMessage({ body: 'After the scope went, again.' });
+        land(CONN_A, 'agency.message.posted', `agency.message:${m.message_id}:1`, m);
+        sweep();
+        expect(db.sql(`SELECT (available_at <> 'infinity') FROM public.builder_network_outbox
+                       WHERE dedupe_key = 'agency.receipt:${m.message_id}:1'`)).toBe('t');
+      } finally {
+        db.sql(`UPDATE public.builder_network_connections SET scopes = ARRAY['stock:publish'] WHERE id = ${lit(CONN_A)}`);
+      }
+    });
+  });
+
   describe('a receipt that never gets back', () => {
     it('as RECEIVER (1, 2, 8, 9): the message is stored once, and a retry of it is answered again', () => {
       const lostIn = builderMessage({ body: 'Did you get this one?' });

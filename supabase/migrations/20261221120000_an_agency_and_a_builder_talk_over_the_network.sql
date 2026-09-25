@@ -155,14 +155,19 @@ $fn$;
 -- Neither is the end of the relationship, so what is queued is HELD, never
 -- dropped: its outbox row waits (available_at = infinity, which the existing
 -- claim never reaches) and is released the moment the connection recovers.
-CREATE OR REPLACE FUNCTION public.builder_network_message_route_held(_connection_id uuid)
+CREATE OR REPLACE FUNCTION public.builder_network_message_route_held(
+  _connection_id uuid, _event_type text)
 RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
 AS $fn$
+  -- A disputed identity holds everything. A withdrawn stock:publish holds new
+  -- CONTENT only: the receipt that tells the builder why must still reach it.
   SELECT EXISTS (
     SELECT 1 FROM public.builder_network_connections c
      WHERE c.id = _connection_id
-       AND (c.identity_mismatch_since IS NOT NULL OR NOT ('stock:publish' = ANY (COALESCE(c.scopes, ARRAY[]::text[])))))
+       AND (c.identity_mismatch_since IS NOT NULL
+            OR (_event_type = 'agency.message.posted'
+                AND NOT ('stock:publish' = ANY (COALESCE(c.scopes, ARRAY[]::text[]))))))
 $fn$;
 
 CREATE OR REPLACE FUNCTION public.builder_network_message_enqueue(
@@ -173,7 +178,7 @@ AS $fn$
   INSERT INTO public.builder_network_outbox(connection_id, event_type, dedupe_key, payload, source_version, available_at)
   VALUES (_connection_id, _event_type, _dedupe_key, _payload,
           nextval('public.builder_network_message_version_seq'),
-          CASE WHEN public.builder_network_message_route_held(_connection_id) THEN 'infinity'::timestamptz ELSE now() END)
+          CASE WHEN public.builder_network_message_route_held(_connection_id, _event_type) THEN 'infinity'::timestamptz ELSE now() END)
   ON CONFLICT (dedupe_key) DO NOTHING
 $fn$;
 
@@ -386,10 +391,17 @@ BEGIN
   SELECT * INTO v_event FROM public.builder_network_inbound_events WHERE id = _event_id;
   v_payload := COALESCE(v_event.payload, '{}'::jsonb);
 
-  SELECT c.id, c.state, c.builder_organisation_id, c.network_connection_id INTO v_connection
+  SELECT c.id, c.state, c.builder_organisation_id, c.network_connection_id, c.identity_mismatch_since
+    INTO v_connection
     FROM public.builder_network_connections c WHERE c.id = v_event.connection_id;
   IF v_connection.id IS NULL OR v_connection.state <> 'active' THEN
     RETURN 'refused:connection_not_active';
+  END IF;
+  -- The sweep skips a disputed connection, but the dispute can begin after
+  -- the row was selected: this is the last word, and it leaves the event
+  -- unconsumed for the replay after repair.
+  IF v_connection.identity_mismatch_since IS NOT NULL THEN
+    RETURN 'held';
   END IF;
   -- A builder that withdrew stock:publish has withdrawn this conversation's
   -- grant too: no new message from it is stored. Receipts for what we sent
@@ -608,6 +620,10 @@ BEGIN
   LOOP
     BEGIN
       v_result := public.builder_network_apply_message_event(v_event.id);
+      IF v_result = 'held' THEN
+        -- Not an attempt and not an answer: left exactly as it was.
+        CONTINUE;
+      END IF;
       UPDATE public.builder_network_inbound_events
          SET message_applied_at = now(),
              message_apply_attempts = message_apply_attempts + 1,
@@ -691,22 +707,20 @@ CREATE OR REPLACE FUNCTION public.builder_network_message_route_changed()
 RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
 AS $fn$
-DECLARE
-  v_was boolean := OLD.identity_mismatch_since IS NOT NULL
-                   OR NOT ('stock:publish' = ANY (COALESCE(OLD.scopes, ARRAY[]::text[])));
-  v_is boolean := NEW.identity_mismatch_since IS NOT NULL
-                  OR NOT ('stock:publish' = ANY (COALESCE(NEW.scopes, ARRAY[]::text[])));
 BEGIN
-  IF v_is AND NOT v_was THEN
-    UPDATE public.builder_network_outbox
-       SET available_at = 'infinity'
-     WHERE connection_id = NEW.id AND status = 'pending' AND event_type LIKE 'agency.message.%';
-  ELSIF v_was AND NOT v_is THEN
-    UPDATE public.builder_network_outbox
-       SET available_at = now()
-     WHERE connection_id = NEW.id AND status = 'pending' AND event_type LIKE 'agency.message.%'
-       AND available_at = 'infinity';
-  END IF;
+  -- Each pending message row is held or released by the same rule the
+  -- enqueue applies: a dispute holds everything, a withdrawn scope holds
+  -- posted content only. A released row goes out now; one that was never
+  -- held keeps its own schedule.
+  UPDATE public.builder_network_outbox o
+     SET available_at = CASE
+           WHEN NEW.identity_mismatch_since IS NOT NULL
+             OR (o.event_type = 'agency.message.posted'
+                 AND NOT ('stock:publish' = ANY (COALESCE(NEW.scopes, ARRAY[]::text[]))))
+             THEN 'infinity'::timestamptz
+           WHEN o.available_at = 'infinity' THEN now()
+           ELSE o.available_at END
+   WHERE o.connection_id = NEW.id AND o.status = 'pending' AND o.event_type LIKE 'agency.message.%';
   RETURN NEW;
 END
 $fn$;
@@ -731,7 +745,7 @@ REVOKE ALL ON FUNCTION public.builder_network_conversation_id(uuid, uuid) FROM P
 REVOKE ALL ON FUNCTION public.builder_network_message_payload(uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_kick_outbox() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_message_enqueue(uuid, text, text, jsonb) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.builder_network_message_route_held(uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.builder_network_message_route_held(uuid, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_message_route_changed() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_post_message(uuid, uuid, uuid, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_retry_message(uuid, uuid) FROM PUBLIC, anon, authenticated;
