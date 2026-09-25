@@ -289,6 +289,9 @@ describe('the worker holds a message whose route stopped being deliverable', () 
     // The park is one locked statement in the database, so a recovery that
     // lands between the check and the park cannot be overwritten by it.
     expect(drain).toMatch(/rpc\('builder_network_park_held_message'/);
+    // A message never overtakes the activation it depends on.
+    expect(drain.indexOf("rpc('builder_network_defer_message_behind_activation'")).toBeGreaterThan(-1);
+    expect(drain.indexOf("rpc('builder_network_defer_message_behind_activation'")).toBeLessThan(drain.indexOf('fetch('));
     expect(drain).not.toMatch(/available_at:\s*'infinity'/);
   });
 });

@@ -53,6 +53,12 @@ async function drainBuilderNetworkOutbox(db: any, workerIdValue: string): Promis
         .select('id, state, outbound_hmac_secret, network_inbound_url, network_connection_id, identity_mismatch_since, scopes')
         .eq('id', event.connection_id).maybeSingle();
       if (!connection || connection.state === 'revoked') { await release(event, 'connection_revoked', { dead: true }); dead++; continue; }
+      // A message never overtakes the activation it depends on: while an
+      // earlier activation on this connection is undelivered, it waits.
+      if (event.event_type === 'agency.message.posted') {
+        const { data: deferred } = await db.rpc('builder_network_defer_message_behind_activation', { _outbox_id: event.id, _worker_id: workerIdValue });
+        if (deferred === true) { retried++; continue; }
+      }
       if (agencyMessageRouteHeld(connection, String(event.event_type ?? ''))) {
         // Claimed before the hold began: put it back to wait, spending no
         // delivery attempt. The database re-decides under the connection's

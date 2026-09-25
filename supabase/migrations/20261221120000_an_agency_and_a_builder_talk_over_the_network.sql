@@ -216,6 +216,41 @@ BEGIN
 END
 $fn$;
 
+-- A message written right after activating depends on the activation having
+-- reached the network: sent first, it would be refused there as not open. The
+-- outbox claim promises no order between rows, so a posted message whose
+-- connection still holds an earlier, undelivered activation event waits
+-- behind it, spending no delivery attempt. A dead activation does not hold it:
+-- the message then goes and is refused visibly, never held for ever.
+CREATE OR REPLACE FUNCTION public.builder_network_defer_message_behind_activation(
+  _outbox_id uuid, _worker_id text)
+RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $fn$
+DECLARE
+  v_row public.builder_network_outbox%ROWTYPE;
+BEGIN
+  SELECT * INTO v_row FROM public.builder_network_outbox o
+   WHERE o.id = _outbox_id AND o.locked_by = _worker_id AND o.status = 'pending'
+     AND o.event_type = 'agency.message.posted';
+  IF v_row.id IS NULL THEN RETURN false; END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.builder_network_outbox e
+     WHERE e.connection_id = v_row.connection_id AND e.id <> v_row.id
+       AND e.event_type LIKE 'stock.selection.%' AND e.status = 'pending'
+       AND e.created_at <= v_row.created_at) THEN
+    RETURN false;
+  END IF;
+  UPDATE public.builder_network_outbox o
+     SET available_at = now() + interval '15 seconds',
+         locked_at = NULL, locked_by = NULL,
+         attempts = greatest(0, o.attempts - 1),
+         last_error = 'deferred:behind_activation'
+   WHERE o.id = _outbox_id AND o.locked_by = _worker_id;
+  RETURN true;
+END
+$fn$;
+
 -- ---------------------------------------------------------------------------
 -- 3. Writing a message (the Command Centre's side).
 -- ---------------------------------------------------------------------------
@@ -553,8 +588,18 @@ BEGIN
                      WHERE c.id = v_connection.id AND 'stock:publish' = ANY (c.scopes)) THEN
     -- A builder that withdrew stock:publish has withdrawn this conversation's
     -- grant too: nothing new from it is stored, and it is told so rather than
-    -- left to time out. Receipts for what we sent still land.
-    v_reason := 'scope_revoked';
+    -- left to time out. Receipts for what we sent still land, and so does the
+    -- retry of a message already held here unchanged (a receipt lost on the
+    -- way back): refusing it would tell the builder words this side keeps
+    -- were rejected.
+    SELECT * INTO v_existing FROM public.builder_network_messages WHERE id = v_message_id;
+    IF v_existing.id IS NULL
+       OR v_existing.conversation_id <> v_conversation_id OR v_existing.side <> 'builder'
+       OR v_existing.body <> v_body OR v_existing.sender_display_name <> left(v_name, 200)
+       OR v_existing.sent_at <> v_sent THEN
+      v_reason := 'scope_revoked';
+    END IF;
+    v_existing := NULL;
   ELSIF NOT EXISTS (
     SELECT 1 FROM public.builder_network_stock_items i
      WHERE i.id = v_item AND i.organisation_id = v_connection.builder_organisation_id) THEN
@@ -842,6 +887,7 @@ REVOKE ALL ON FUNCTION public.builder_network_kick_outbox() FROM PUBLIC, anon, a
 REVOKE ALL ON FUNCTION public.builder_network_message_enqueue(uuid, text, text, jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_message_route_held(uuid, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_park_held_message(uuid, text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.builder_network_defer_message_behind_activation(uuid, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_message_route_changed() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_post_message(uuid, uuid, uuid, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_retry_message(uuid, uuid) FROM PUBLIC, anon, authenticated;
@@ -856,6 +902,7 @@ GRANT EXECUTE ON FUNCTION public.builder_network_retry_message(uuid, uuid) TO se
 GRANT EXECUTE ON FUNCTION public.builder_network_apply_message_events(integer) TO service_role;
 GRANT EXECUTE ON FUNCTION public.builder_network_expire_unconfirmed(interval) TO service_role;
 GRANT EXECUTE ON FUNCTION public.builder_network_park_held_message(uuid, text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.builder_network_defer_message_behind_activation(uuid, text) TO service_role;
 
 DO $$
 BEGIN

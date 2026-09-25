@@ -16,7 +16,7 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   postgresAvailable, startThrowawayPostgres, type ThrowawayPostgres,
@@ -587,6 +587,79 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
         expect(outbox(`dedupe_key LIKE 'agency.message:${original}:%'`)).toBe('1');
       } finally {
         db.sql(`UPDATE public.builder_network_connections SET ${restore} WHERE id = ${lit(CONN_A)}`);
+      }
+    });
+  });
+
+  describe('a message never overtakes the activation it depends on', () => {
+    const claim = (dedupe: string, worker: string) => db.sql(`UPDATE public.builder_network_outbox
+        SET locked_at = now(), locked_by = '${worker}', attempts = attempts + 1
+      WHERE dedupe_key = '${dedupe}' RETURNING id`);
+    // Earlier tests withdraw and restore selections, which leaves real pending
+    // activation events on this connection; each test here sets them aside so
+    // it measures only the rows it writes, and puts them back.
+    let asideIds = '';
+    beforeEach(() => {
+      asideIds = db.sql(`WITH aside AS (
+          UPDATE public.builder_network_outbox SET status = 'delivered', delivered_at = now()
+           WHERE connection_id = ${lit(CONN_A)} AND event_type LIKE 'stock.selection.%' AND status = 'pending'
+          RETURNING id)
+        SELECT coalesce(string_agg(quote_literal(id::text), ','), '') FROM aside`);
+    });
+    afterEach(() => {
+      if (asideIds) db.sql(`UPDATE public.builder_network_outbox SET status = 'pending', delivered_at = NULL WHERE id::text IN (${asideIds})`);
+    });
+
+    it('waits, spending no attempt, while an earlier activation on the connection is still undelivered', () => {
+      const announce = `stock.selection:${randomUUID()}:1`;
+      db.sql(`INSERT INTO public.builder_network_outbox(connection_id, event_type, dedupe_key, payload, source_version)
+              VALUES (${lit(CONN_A)}, 'stock.selection.announced', '${announce}', '{}'::jsonb, 1)`);
+      const m = post(ITEM_A1, OWNER, randomUUID(), 'Written right after activating.');
+      const row = claim(`agency.message:${m}:1`, 'order-w');
+      try {
+        expect(db.sql(`SELECT public.builder_network_defer_message_behind_activation('${row}', 'order-w')`)).toBe('t');
+        expect(db.sql(`SELECT (available_at > now()) || '|' || (locked_by IS NULL) || '|' || attempts
+                       FROM public.builder_network_outbox WHERE id = '${row}'`)).toBe('true|true|0');
+        db.sql(`UPDATE public.builder_network_outbox SET status = 'delivered', delivered_at = now() WHERE dedupe_key = '${announce}'`);
+        claim(`agency.message:${m}:1`, 'order-w');
+        expect(db.sql(`SELECT public.builder_network_defer_message_behind_activation('${row}', 'order-w')`)).toBe('f');
+      } finally {
+        db.sql(`DELETE FROM public.builder_network_outbox WHERE dedupe_key = '${announce}'`);
+      }
+    });
+
+    it('is not held behind an activation that was written after it, or one that dead-lettered', () => {
+      const m = post(ITEM_A1, OWNER, randomUUID(), 'Written before the next activation.');
+      const dead = `stock.selection:${randomUUID()}:1`;
+      const later = `stock.selection:${randomUUID()}:1`;
+      db.sql(`INSERT INTO public.builder_network_outbox(connection_id, event_type, dedupe_key, payload, source_version, status, created_at)
+              VALUES (${lit(CONN_A)}, 'stock.selection.announced', '${dead}', '{}'::jsonb, 1, 'dead', now() - interval '1 minute'),
+                     (${lit(CONN_A)}, 'stock.selection.announced', '${later}', '{}'::jsonb, 1, 'pending', now() + interval '1 minute')`);
+      const row = claim(`agency.message:${m}:1`, 'order-w2');
+      try {
+        expect(db.sql(`SELECT public.builder_network_defer_message_behind_activation('${row}', 'order-w2')`)).toBe('f');
+      } finally {
+        db.sql(`DELETE FROM public.builder_network_outbox WHERE dedupe_key IN ('${dead}', '${later}')`);
+      }
+    });
+  });
+
+  describe('a stored builder message, redelivered after stock:publish was withdrawn', () => {
+    it('is acknowledged again, while new content is still refused', () => {
+      const stored = builderMessage({ body: 'Stored before the scope went.' });
+      land(CONN_A, 'agency.message.posted', `agency.message:${stored.message_id}:1`, stored);
+      sweep();
+      db.sql(`UPDATE public.builder_network_connections SET scopes = ARRAY[]::text[] WHERE id = ${lit(CONN_A)}`);
+      try {
+        land(CONN_A, 'agency.message.posted', `agency.message:${stored.message_id}:2`, { ...stored, generation: 2 });
+        const fresh = builderMessage({ body: 'New after the scope went.' });
+        land(CONN_A, 'agency.message.posted', `agency.message:${fresh.message_id}:1`, fresh);
+        sweep();
+        expect(outbox(`dedupe_key = 'agency.receipt:${stored.message_id}:2' AND payload->>'outcome' = 'accepted'`)).toBe('1');
+        expect(db.sql(`SELECT message_apply_error FROM public.builder_network_inbound_events
+                       WHERE dedupe_key = 'agency.message:${fresh.message_id}:1'`)).toBe('refused:scope_revoked');
+      } finally {
+        db.sql(`UPDATE public.builder_network_connections SET scopes = ARRAY['stock:publish'] WHERE id = ${lit(CONN_A)}`);
       }
     });
   });
