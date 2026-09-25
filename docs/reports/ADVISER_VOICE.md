@@ -96,6 +96,20 @@ sentence that must be written once are different kinds of instruction.
 6. **Prose is never scrubbed.** `compassQAValidator` reports what still reaches
    a finished document as the `platform-vocabulary` warning. Deleting a phrase
    leaves a sentence that no longer says what it said.
+7. **The four derived documents speak the same way — each by the route it is
+   made.** The Financial Analysis and the Due Diligence Report are the fork's:
+   no model, the parent's prose copied plus chapters composed in code, so the
+   composed chapters (the strategy sections, the checklist status, the
+   Financial chapter introductions, the tier standfirst) were rewritten and are
+   now read by the same literal scan. The Executive Briefing and the Snapshot
+   are the condenser's: one model call that rewrites the parent, and
+   `documentRules` returns nothing for their tiers, so the condenser's system
+   message now carries `condensedVoiceRules()` and
+   `condensedRecommendationContract()` — **appended after** the template,
+   because the template can be replaced from the database and an override must
+   not take them with it. The condensed rules name no Compass section (a
+   Briefing has none of them) and share their worked example with the Compass
+   rules rather than restating it.
 
 ## What the rewrite found
 
@@ -120,6 +134,27 @@ Four defects, each invisible until the wording moved:
   of this report" — the section the registers left on 25 Sep 2026, when they
   moved inside the chapters they are evidence for. It now names the headings
   the page prints, from the same constants the generator writes them with.
+
+Two more, found carrying the voice into the derived documents:
+
+- **The one permitted absence could be removed.** `PERMITTED_ABSENCE_RE` —
+  the corrector's exemption for "checked and not mapped", excluded by name —
+  still read "at this coordinate" after the planning table's lead became
+  "Checked and not mapped at the property". Its own test could not see it: the
+  sentence it kept named neither a portal nor a neighbouring lot, so it was kept
+  with or without the exemption. The pattern reads both spellings now, a spec
+  holds it to `CHECKED_NOT_MAPPED_LEAD`, and a test that CAN fail puts the
+  permitted absence beside an adjoining lot (both fail on the old pattern).
+- **The land-use block printed the service's notes verbatim.** Wherever no
+  land use table was read, "What may be built on this land" opened with the
+  table's `note` — "No zone was retrieved for this coordinate, so the
+  instrument's land use table could not be asked for" on the Lawley document,
+  and on a failed request the request's own diagnostic ("HTTP 503",
+  "unparseable JSON body"). The spec said it covered the land-use block, and
+  none of its fixtures carried a `landUse`. The notes now pass through
+  `readerNote` like every other planning note (on the way to the page, which
+  reaches cached answers), a failed request is stated as a check not made, and
+  the fixtures carry every note the service can write.
 
 And three instructions that were producing the vocabulary directly: the
 planning section's purpose asked for the sentence "the cadastral area of the
@@ -149,13 +184,14 @@ assessment" as the permitted form.
 | `_shared/planning/serviceNote.pure.ts` | `readerNote`, `uncheckedSentence` |
 | `_shared/reports/investment/registerTables.pure.ts` | The register headings and header rows, both spellings |
 | `_shared/compassQAValidator.ts` | Rule 17, `platform-vocabulary` (warning) |
+| `condense-investment-report/index.ts` | The Briefing and Snapshot system message: template, then `condensedVoiceRules()`, then `condensedRecommendationContract()` |
 
 ## What pins it
 
 `adviserVoice.spec.ts` drives the planning table, the infrastructure outlook and
 the major-projects block in all eight jurisdictions and asserts none carries the
 vocabulary; holds `DISCLOSURE_HOMES` to both registry mirrors; asserts every
-composed "say that" rule names its home; and **reads the string literals of 23
+composed "say that" rule names its home; and **reads the string literals of 35
 composer modules** and fails on any platform term, with status enum values
 named explicitly — because a fixture reaches only the branches it was written
 for, and the SWOT, the monitoring plan and the market block each carried the
@@ -163,10 +199,17 @@ vocabulary on a branch no fixture took. `oneRecommendation.spec.ts` pins rule 5.
 
 ## Still open
 
-- **The four derived formats.** `documentRules` returns nothing for any tier
-  but the Compass, so the voice reaches Compass generation only. The Financial,
-  Strategic, Snapshot and Briefing are produced by the fork and the condenser
-  and need the same treatment.
+- **A fork copies its parent's prose.** The Financial Analysis and the Due
+  Diligence Report make no model call, so their narrative is the parent
+  Compass's, word for word. A Compass written before 25 Sep 2026 carries the
+  old vocabulary and its forks carry it too: regenerate the Compass, then
+  derive the other four. (The Briefing and the Snapshot are rewritten, so the
+  voice rules reach them whatever the parent says.)
+- **Two labels are the owner's.** "Accepted CGR assumption used by the
+  financial model" and "Historical market growth observed in the approved
+  register" were set by the owner in the S5 work and are unchanged; the
+  sentence around them was reworded. Whether "the approved register" should
+  read differently in a client's document is the owner's call.
 - **The Risk Dashboard's evidence vocabulary.** "Not searched" became "Not
   checked"; a checked-and-clear register should read as a finding ("Not
   mapped"), not as an absence, which is a change to what the register may

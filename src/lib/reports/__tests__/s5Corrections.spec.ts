@@ -125,7 +125,7 @@ describe('correction 1 — the accepted CGR and the observed market rate are sep
     expect(doc).not.toMatch(/taken from .{0,80}the measured rate for this market/i);
     expect(doc).toContain('Accepted CGR assumption used by the financial model');
     expect(doc).toContain('Historical market growth observed in the approved register');
-    expect(doc).toContain('nothing on this record states that the assumption was derived from the measurement');
+    expect(doc).toContain('nothing in this analysis shows that the assumption was derived from the measurement');
   });
 
   it('states both labels where the two differ', () => {

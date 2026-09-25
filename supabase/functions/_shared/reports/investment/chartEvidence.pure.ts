@@ -478,7 +478,7 @@ export function assessChartEvidence(
       kind: r.kind,
       directive: r.directive.length > 190 ? `${r.directive.slice(0, 189)}…` : r.directive,
       reason:
-        `The scoring engine did not record ${r.values.join(', ')}. `
+        `The scoring method did not record ${r.values.join(', ')}. `
         + (inv.recordedScores.length
           ? `What it recorded is ${inv.recordedScores.join(', ')}.`
           : 'It issued no grade at all for this report, so no rating on the page can be its own.'),
@@ -635,9 +635,9 @@ export function claimSupportRules(inv: EvidenceInventory): string {
 
   rules.push(
     inv.recordedScores.length
-      ? `3. The scoring engine recorded ${inv.recordedScores.join(', ')}. A rating may be stated `
+      ? `3. The scores recorded with this report's grade are ${inv.recordedScores.join(', ')}. A rating may be stated `
         + 'only where it is one of those, and only with what it rates and out of what.'
-      : '3. The scoring engine issued NO grade for this property. Do not state a rating, a score, '
+      : '3. NO grade was issued for this property. Do not state a rating, a score, '
         + 'a rank, a percentile or a band — in figures OR in words. "Rates strongly", "scores '
         + 'well", "sits in the upper tier", "an above-average performer" and "a solid 7 out of 10" '
         + 'are all ratings, and this record supports none of them.',

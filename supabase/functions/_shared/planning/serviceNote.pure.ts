@@ -73,6 +73,37 @@ const READER_SENTENCES: readonly ReaderSentence[] = [
     say: () => 'The Northern Territory’s planning maps could not be consulted for this report. The NT planning portal '
       + 'and a zoning certificate from the Northern Territory Planning Commission confirm it.',
   },
+  // ── the land use table ─────────────────────────────────────────────────────
+  // `renderLandUseTable` prints the table's note as the block's first line
+  // wherever no table was read, and the 60 Lawley Street Compass printed the
+  // first of these under "What may be built on this land". The block's own
+  // closing sentence names what settles it, so each says only what is not
+  // covered.
+  {
+    match: /^No zone was retrieved for this coordinate/i,
+    say: () => 'The zone has not been confirmed for this property, so what may be built here is not covered by this '
+      + 'report.',
+  },
+  {
+    match: /^The zone was retrieved without the instrument that names it/i,
+    say: () => 'The zone was identified but the planning instrument that sets it was not, so what the zone permits '
+      + 'is not covered by this report.',
+  },
+  {
+    match: /^[A-Z]{2,3} publishes no structured land use table/,
+    say: (where) => `${where.charAt(0).toUpperCase()}${where.slice(1)} does not publish its land use tables in a `
+      + 'form this report can include; what a zone permits is set out in the planning scheme itself.',
+  },
+  {
+    match: /^The instrument[’']s land use table carries no zone (\S+?)\.?$/i,
+    say: (_where, m) => `The planning instrument's land use table does not list zone ${m[1]}, so what the zone `
+      + 'permits is not covered by this report.',
+  },
+  {
+    match: /^The service answered for zone (\S+) and returned no land uses/i,
+    say: (_where, m) => `No land uses are published for zone ${m[1]} in the planning instrument's table, so what the `
+      + 'zone permits is not covered by this report.',
+  },
   // ── the parcel ─────────────────────────────────────────────────────────────
   {
     match: /^South Australia[’']s planning layers are published by a state spatial service/i,
@@ -135,7 +166,7 @@ const READER_SENTENCES: readonly ReaderSentence[] = [
  * Notes that describe a failed request rather than the property. The caller's
  * own sentence for the subject stands in their place.
  */
-const DIAGNOSTIC = /could not be read\b|\bwas not reached\b|needs the council from the zoning answer|refusing rather than reporting|\(HTTP \d{3}|\bstatus \d{3}\b/i;
+const DIAGNOSTIC = /could not be read\b|\bwas not reached\b|needs the council from the zoning answer|refusing rather than reporting|\(HTTP \d{3}|^HTTP \d{3}\b|\bstatus \d{3}\b|unparseable JSON body|answered a body this could not read/i;
 
 export function readerNote(note: string | null, jurisdiction: string | null): string | null {
   if (!note) return note;

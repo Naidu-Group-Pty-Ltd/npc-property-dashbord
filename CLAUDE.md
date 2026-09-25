@@ -2934,7 +2934,15 @@ Prose is never scrubbed — `platform-vocabulary` is a QA warning. One thing the
 rewrite found is worth knowing before renaming anything: **a header row is a
 KEY** — `REGISTER_TABLE_HEADERS` dedupes a reproduced register by its whole
 header row, so both spellings are listed and a spec reads every header the
-composers draw.
+composers draw (the corrector's `PERMITTED_ABSENCE_RE` was the same key and
+went stale the same way). **The four derived documents follow the route they
+are made by**: the fork (Financial Analysis, Due Diligence) makes no model call
+and copies its parent's prose, so its composed chapters are held to the same
+literal scan and a stale Compass is regenerated before it is derived; the
+condenser (Briefing, Snapshot) rewrites, and `documentRules` gives its tiers
+nothing, so its system message carries `condensedVoiceRules()` and
+`condensedRecommendationContract()` — appended AFTER the template, which the
+database can override.
 
 ## A premium document, and the eighteen per cent that was bold
 

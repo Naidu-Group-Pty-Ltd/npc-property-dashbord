@@ -657,7 +657,7 @@ export function buildSwot(rec: StrategyRecord): Swot {
   if (isNum(baths) && isNum(beds) && baths === 1 && beds >= 3) {
     w.push({
       claim: `One bathroom serving ${beds} bedrooms.`,
-      basis: 'The recorded configuration of this dwelling. A single bathroom narrows the households the layout '
+      basis: 'The dwelling\'s configuration as described for this report. A single bathroom narrows the households the layout '
         + 'suits against homes of the same size that have two; it is a limitation of the layout, not a defect.',
     });
   }
@@ -666,7 +666,7 @@ export function buildSwot(rec: StrategyRecord): Swot {
   if (isNum(built) && isNum(asOfYear) && built > 1800 && asOfYear - built >= OLDER_DWELLING_YEARS) {
     w.push({
       claim: `An older dwelling, built in ${built}.`,
-      basis: `The recorded construction year, ${asOfYear - built} years before this report. Age is not a defect; `
+      basis: `Built ${asOfYear - built} years before this report. Age is not a defect; `
         + 'it is why the condition of the roof, wiring, plumbing and any later alterations is a matter for the '
         + 'building inspection rather than something this report can assume.',
     });
@@ -798,11 +798,11 @@ export function buildSwot(rec: StrategyRecord): Swot {
           ? `The accepted CGR assumption and the observed market rate agree at ${pct(f.capitalGrowth, 1)} a year.`
           : `The accepted CGR assumption is ${pct(f.capitalGrowth, 1)} a year; the observed market rate is `
             + `${longest.value} a year.`,
-        basis: `**Accepted CGR assumption used by the financial model:** ${pct(f.capitalGrowth, 1)} a year, recorded `
-          + 'through the override workflow before this report was generated and carried unchanged into the loan, '
+        basis: `**Accepted CGR assumption used by the financial model:** ${pct(f.capitalGrowth, 1)} a year, set as `
+          + 'an assumption for this analysis before the report was prepared, and carried unchanged into the loan, '
           + 'the cash flow and the ten-year projection. **Historical market growth observed in the approved '
           + `register:** ${longest.value} a year — ${citeRow(longest)}. They are separate facts from separate `
-          + 'sources; nothing on this record states that the assumption was derived from the measurement, and '
+          + 'sources; nothing in this analysis shows that the assumption was derived from the measurement, and '
           + (agrees ? 'the two agreeing does not make it so.' : 'the difference is information rather than an error.'),
       });
     }
@@ -885,8 +885,8 @@ export function composeSwot(rec: StrategyRecord, heading: string): string {
   const swot = buildSwot(rec);
   const lines: string[] = [`## ${heading}`, ''];
   lines.push(
-    'Each entry names the recorded figure it rests on. Measures not published for this market, and registers not '
-    + 'read, are listed under *What this rests on* rather than counted for or against the property.',
+    'Each entry names the figure it rests on. Measures not published for this market, and sources this report does '
+    + 'not cover, are listed under *What this rests on* rather than counted for or against the property.',
     '',
   );
   const groups: Array<[keyof Omit<Swot, 'coverage'>, string]> = [
@@ -1011,7 +1011,7 @@ export function composeScoreDimensionTable(rec: StrategyRecord): string | null {
         + 'The record does not state which scoring methodology issued its grade, so the grade is reported as it '
         + 'was issued, without a rule being attributed to it.'
       : a.weightBasis === 'recorded'
-      ? 'Five dimensions carry the method. Each has an **original weight**; the scoring service re-spreads those '
+      ? 'Five dimensions carry the method. Each has an **original weight**; the scoring method re-spreads those '
         + 'weights across the dimensions the evidence could measure — discounted by how much of each '
         + "dimension's own method actually ran — giving the **adjusted weight** the composite is built from. "
         + 'That is why a dimension scored on part of its inputs can carry less than its original weight. The '
@@ -1028,7 +1028,7 @@ export function composeScoreDimensionTable(rec: StrategyRecord): string | null {
         + 'assessment is stated with the result instead.'
       : 'Five dimensions carry the method. Each has an **original weight**; where a dimension could not be scored '
         + 'its weight is redistributed across the ones that could, giving the **adjusted weight** the composite is '
-        + 'built from. This record does not hold the adjusted weights the service used, so they are reconstructed '
+        + 'built from. This record does not hold the adjusted weights the scoring method used, so they are reconstructed '
         + 'here from the original weights of the dimensions that were measured. A dimension that could not be '
         + 'assessed is disclosed rather than deducted: it lowers no score and caps no grade, and the scope of the '
         + 'assessment is stated with the result instead.',
@@ -1274,7 +1274,7 @@ export function composeSuitability(rec: StrategyRecord, heading: string): string
     lines.push('');
   } else {
     lines.push(
-      '*The record holds no figure from which a requirement can be stated. Nothing is inferred in its place.*',
+      '*No figure in this analysis states what holding this asset requires, and none is inferred in its place.*',
       '',
     );
   }
@@ -1325,7 +1325,7 @@ export function composeHoldingStrategy(rec: StrategyRecord, heading: string): st
   if (f && isNum(f.capitalGrowth)) {
     holds.push({
       claim: `The base case grows value at the accepted CGR assumption of ${pct(f.capitalGrowth, 1)} a year.`,
-      basis: 'Recorded on this report\'s assumptions through the override workflow, before generation, and carried '
+      basis: 'Set as an assumption for this analysis before the report was prepared, and carried '
         + 'unchanged into the loan, the cash flow and the ten-year projection. It is a modelling input, not a '
         + 'forecast, and not a measurement of this market'
         + (longest?.value
@@ -1337,7 +1337,7 @@ export function composeHoldingStrategy(rec: StrategyRecord, heading: string): st
     holds.push({
       claim: `Historical market growth observed in the approved register is ${longest.value} a year.`,
       basis: `${citeRow(longest)}. This is a measurement of what this market DID over that window. The accepted CGR `
-        + 'assumption the financial model runs on is a separate, recorded input and is the Financial Analysis '
+        + 'assumption the financial model runs on is a separate input, set for this analysis, and is the Financial Analysis '
         + 'Report\'s subject; the two are never the same statement.',
     });
   }
@@ -1386,8 +1386,8 @@ export function composeHoldingStrategy(rec: StrategyRecord, heading: string): st
       claim: `The zone in force is ${rec.planning.zone}, and it can change.`,
       basis: `${rec.planning.zoneSource ?? 'the planning layer'}`
         + (rec.planning.zoneEffectiveDate ? `, current at ${dayOf(rec.planning.zoneEffectiveDate)}` : '')
-        + '. A zone admits uses; it is not approval for any of them, and a planning proposal in this locality would '
-        + 'change what the register says without anything happening on this lot.',
+        + '. A zone admits uses; it is not approval for any of them, and a planning proposal in this locality could '
+        + 'change the zone without anything happening on this lot.',
     });
   }
 
@@ -1408,9 +1408,9 @@ export function composeHoldingStrategy(rec: StrategyRecord, heading: string): st
   }
   if (longest) {
     breaks.push(`Historical market growth observed in the approved register stops resembling ${longest.value} a `
-      + `year. The register behind that figure (${longest.publisher}) republishes and can be re-read; the section `
-      + 'below says when. This is the market measurement, not the accepted CGR assumption — the assumption changes '
-      + 'only when somebody records a new one.');
+      + `year. ${longest.publisher} publishes that series again each period, and the section below says when to `
+      + 'check it. This is the market measurement, not the accepted CGR assumption — the assumption changes only '
+      + 'when a new one is set for the analysis.');
   }
   if (breaks.length) {
     lines.push('### What would break it', '');
@@ -1452,10 +1452,10 @@ export function composeExitOutlook(rec: StrategyRecord, heading: string): string
   lines.push(
     projects
       ? 'Two different questions, answered from two different kinds of evidence. **What the market recorded** comes '
-        + 'from a published register. **What the position looks like at a future year** is an output of this '
+        + 'from published sales records. **What the position looks like at a future year** is an output of this '
         + 'report\'s own projection under the accepted CGR assumption. The first is a count of what happened; the '
         + 'second is a model.'
-      : '**What the market recorded** comes from a published register: it is a record of what happened in this '
+      : '**What the market recorded** comes from published sales records: it is a record of what happened in this '
         + 'market, not a forecast of what a sale of this property would achieve.',
     '',
     /*
@@ -1508,7 +1508,7 @@ export function composeExitOutlook(rec: StrategyRecord, heading: string): string
     // "4 periods, 2021-03 to 2026-03" — the count, then the span, each said once.
     const [count, ...span] = periodsIn(series.value).split(',');
     liquidity.push({
-      claim: `The register holds ${count.trim()} of price history for this market${span.length ? ` (${span.join(',').trim()})` : ''}.`,
+      claim: `Published price history for this market covers ${count.trim()}${span.length ? ` (${span.join(',').trim()})` : ''}.`,
       basis: 'A long series is what makes a growth rate a measurement rather than an impression.',
     });
   }
@@ -1525,8 +1525,8 @@ export function composeExitOutlook(rec: StrategyRecord, heading: string): string
     }
     if (rec.property.landSqm) {
       lines.push(
-        `*This property's land is ${rec.property.landSqm} m² — recorded on the property rather than by any `
-        + 'register above. Land size is one of the attributes a median cannot see, and it is among the first '
+        `*This property's land is ${rec.property.landSqm} m² — a fact about this lot, not part of the published `
+        + 'figures above. Land size is one of the attributes a median cannot see, and it is among the first '
         + 'things a comparison against one has to account for.*',
         '',
       );
@@ -1621,7 +1621,7 @@ export function buildMonitorRows(rec: StrategyRecord): MonitorRow[] {
       register: g1.publisher,
       cadence: 'Quarterly, from the same series',
       lastRead: g1.value ?? '—',
-      changesIf: 'The shortest window the register publishes, and therefore the one most affected by how few or how '
+      changesIf: 'The shortest window the publisher reports, and therefore the one most affected by how few or how '
         + 'many dwellings happened to sell. It moves before the longer-run rates do, and it also moves when nothing '
         + 'has changed.',
     });
@@ -1769,7 +1769,7 @@ export function composeMonitoringPlan(rec: StrategyRecord, heading: string): str
   if (firstChecks.length) {
     lines.push('### First checks still owed', '');
     lines.push(
-      'No register answered these for this report. Each is research to complete before exchange, not a reading to '
+      'These were not confirmed for this report. Each is research to complete before exchange, not a reading to '
       + 'monitor.',
       '',
     );
@@ -1850,8 +1850,8 @@ export function strategySectionRules(
         + 'quadrant or table.',
     '2. Every entry names the fact it rests on. If you refer to one of them in another section, carry that fact and '
     + 'its publisher with it.',
-    '3. An absence is never a strength, a weakness, an opportunity or a threat. A register that was not read, and a '
-    + 'measure nobody published, are recorded under "What this rests on" and must not be turned into a finding, a '
+    '3. An absence is never a strength, a weakness, an opportunity or a threat. A source this report does not cover, '
+    + 'and a measure nobody published, are listed under "What this rests on" and must not be turned into a finding, a '
     + 'rating or a reassurance anywhere in the report.',
     // Rule 4 used to open "The suitability profile describes what the ASSET
     // requires", on a document that has no suitability profile — which is the
@@ -2298,7 +2298,7 @@ function competingSupply(rec: StrategyRecord): string | null {
   const floor = isNum(p.rowsRead) && isNum(p.totalStated) && p.rowsRead < p.totalStated;
   return `**What it competes with.** ${floor ? 'At least ' : ''}${count} new dwellings were stated on development `
     + `applications in ${p.council}${p.window ? `, ${periodsIn(p.window)}` : ''}`
-    + (floor ? ` — a floor, summed from ${p.rowsRead} of the ${p.totalStated} applications the register states.` : '.')
+    + (floor ? ` — a floor, summed from ${p.rowsRead} of the ${p.totalStated} applications the council lists.` : '.')
     + ' That is supply arriving in the same local government area, which a buyer reselling or letting a comparable '
     + 'dwelling will meet.';
 }
@@ -2324,14 +2324,14 @@ export function composeStrategicRead(rec: StrategyRecord, heading: string): stri
     .filter((p): p is string => p !== null);
   if (!paragraphs.length) return '';
   paragraphs.push(
-    '**What decides it.** The case turns on what no register can answer: the condition and lawful status of the '
+    '**What decides it.** The case turns on what no published source can answer: the condition and lawful status of the '
     + 'dwelling, the title, and the council\'s planning certificate. The Due Diligence Checklist sets them out in '
     + 'the order they are owed.',
   );
   return [
     `## ${heading}`,
     '',
-    'What this purchase is, what its value rests on and what the decision turns on, drawn from the registers read '
+    'What this purchase is, what its value rests on and what the decision turns on, drawn from the sources checked '
     + 'for this report. The chapters that follow carry the evidence; this is what it adds up to.',
     '',
     ...paragraphs.flatMap((p) => [p, '']),

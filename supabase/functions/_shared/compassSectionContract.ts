@@ -284,6 +284,62 @@ export function recommendationContract(
 }
 
 /**
+ * The sections of a condensed document that state its recommendation, by the
+ * headings its structure guide asks for. The Snapshot's `Investment Score`
+ * section also prints it, but that one is composed from the record after the
+ * model call, and is the reading this rule makes the prose agree with.
+ */
+export const CONDENSED_RECOMMENDATION_SECTIONS: Readonly<Record<'briefing' | 'snapshot', readonly string[]>> = {
+  briefing: ['Executive Summary', 'Recommendation'],
+  snapshot: ['Quick Recommendation'],
+};
+
+/**
+ * The one-recommendation rule for a document condensed from a Compass — the
+ * Executive Briefing and the Snapshot.
+ *
+ * A condensed document carries its parent's `investment_score`, so its cover
+ * prints exactly the verdict its parent's cover prints (`printedVerdict`). Its
+ * prose is a model's rewrite of the parent's, and nothing told that rewrite what
+ * the cover says — so a parent written before 25 Sep 2026, whose Executive
+ * Verdict said "Proceed with caution" under a STRONG BUY cover, handed the
+ * second verdict straight on. The same reading the Compass's two sections are
+ * handed is handed here, with the same list of labels it may not use instead.
+ */
+export function condensedRecommendationContract(
+  tier: 'briefing' | 'snapshot',
+  issued: IssuedRecommendation | null,
+): string {
+  const sections = CONDENSED_RECOMMENDATION_SECTIONS[tier].map((s) => `"${s}"`).join(' and ');
+  const voice = '- Write as the adviser issuing this document: the report recommends, finds and advises. Never describe the recommendation as a score, a model\'s output or a classification.';
+  if (!issued) {
+    return [
+      RECOMMENDATION_HEADING,
+      '',
+      `The cover of this document prints no verdict, so its recommendation is the source material's own: exactly one of ${ADVISER_RECOMMENDATION_LABELS.map((l) => `**${l}**`).join(', ')}, carried unchanged into ${sections}.`,
+      '- Where the source material states more than one, use the one its Final Recommendation states.',
+      '- Do not discuss a grade or a score in those sections.',
+      voice,
+    ].join('\n');
+  }
+  const opening = /\bBUY\b/.test(issued.action)
+    ? `**${issued.label} — subject to the due diligence set out in this report**`
+    : `**${issued.label}**`;
+  const others = COMPETING_RECOMMENDATION_LABELS
+    .filter((l) => l.toLowerCase() !== issued.label.toLowerCase())
+    .map((l) => `"${l}"`)
+    .join(', ');
+  return [
+    RECOMMENDATION_HEADING,
+    '',
+    `This document's recommendation is **${issued.label}**. Its cover prints it as "${issued.statement}", and it is the only recommendation the document makes.`,
+    `- ${sections} open${CONDENSED_RECOMMENDATION_SECTIONS[tier].length > 1 ? '' : 's'} with it, in bold, on its own line: ${opening}. Then the case for it, keeping every condition it depends on as a condition.`,
+    `- State no other recommendation and no second verdict: never ${others} as a verdict of your own, softer or stronger — including where the source material uses a different one. The cover's is the one this document issues.`,
+    voice,
+  ].join('\n');
+}
+
+/**
  * What each registry component IS, in a reader's words.
  *
  * The guide used to list the registry's own identifiers — "Required

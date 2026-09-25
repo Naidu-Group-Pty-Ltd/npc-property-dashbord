@@ -21,8 +21,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   adviserVoiceRules,
+  condensedVoiceRules,
   DISCLOSURE_HOMES,
-  type DisclosureTopic,
   elsewhereOnly,
   inHomeSection,
   PLATFORM_VOCABULARY,
@@ -30,6 +30,7 @@ import {
   platformVocabularyIn,
   REGISTER_CHECKED_EMPTY,
   REGISTER_NOT_COVERED,
+  type DisclosureTopic,
 } from '../../../../supabase/functions/_shared/reports/adviserVoice.pure';
 import { COMPASS_40_SECTIONS as EDGE_SECTIONS } from '../../../../supabase/functions/_shared/compassSectionRegistry';
 import { COMPASS_40_SECTIONS as FRONTEND_SECTIONS } from '../compassSectionRegistry';
@@ -38,6 +39,7 @@ import { runQAValidation } from '../../../../supabase/functions/_shared/compassQ
 import {
   buildPlanningFacts,
   planningFactBlocks,
+  renderLandUseTable,
   renderPlanningControls,
 } from '../../../../supabase/functions/_shared/planning/planningFacts.pure';
 import {
@@ -114,6 +116,39 @@ function planningAnswers(): Array<[string, unknown]> {
         source: 'NSW Planning Portal — Principal Planning Layers', currencyDate: '2026-02-27' },
     ],
   }]);
+  /*
+   * Every note the land use table can carry. The block prints the note as its
+   * first line wherever no table was read, and until 25 Sep 2026 no fixture
+   * here carried a `landUse` at all — so "No zone was retrieved for this
+   * coordinate…" reached the 60 Lawley Street Compass under a test that said it
+   * covered the land-use block.
+   */
+  const landUseNote = (status: string, note: string) => ({
+    status, note, instrument: null, zoneCode: null, objectives: null,
+    permittedWithoutConsent: [], permittedWithConsent: [], prohibited: [],
+    source: null, sourceUrl: null, licence: null, retrievedAt: null,
+  });
+  const LAND_USE_NOTES: Array<[string, string, string]> = [
+    ['WA', 'not_served', 'No zone was retrieved for this coordinate, so the instrument\'s land use table could not be asked for.'],
+    ['VIC', 'not_served', 'VIC publishes no structured land use table; what a zone permits is read from the planning scheme itself.'],
+    ['ACT', 'not_served', 'ACT publishes no structured land use table; what a zone permits is read from the planning scheme itself.'],
+    ['NSW', 'not_served', 'The zone was retrieved without the instrument that names it, so the land use table could not be asked for.'],
+    ['NSW', 'none_at_point', 'The instrument\'s land use table carries no zone R2'],
+    ['NSW', 'none_at_point', 'The service answered for zone R2 and returned no land uses'],
+    ['NSW', 'unavailable', 'HTTP 503'],
+    ['NSW', 'unavailable', 'unparseable JSON body'],
+    ['NSW', 'unavailable', 'The permissibility service answered a body this could not read'],
+    ['NSW', 'unavailable', 'error sending request for url (https://api.apps1.nsw.gov.au/eplanning/data/v0/FetchEPILandUsePermissibility)'],
+  ];
+  for (const [j, status, note] of LAND_USE_NOTES) {
+    out.push([`${j}: land use table ${status} — "${note.slice(0, 40)}…"`, {
+      jurisdiction: j,
+      fetchedAt: '2026-09-25T01:32:00.000Z',
+      zoning: j === 'NSW' ? { status: 'stated', value: 'R2 — Low Density Residential', source: 'NSW Planning Portal' }
+        : { status: 'not_integrated', note: 'No integrated planning layer covers this point.' },
+      landUse: landUseNote(status, note),
+    }]);
+  }
   out.push(['QLD: council-set zone, instruments checked clear (262 Pallas Street)', {
     jurisdiction: 'QLD',
     fetchedAt: '2026-09-16T04:12:33.000Z',
@@ -228,6 +263,14 @@ describe('what the page prints verbatim carries none of it', () => {
     }
   });
 
+  it('the land-use block never lends the page a failed request\'s own words', () => {
+    for (const [name, answer] of planningAnswers()) {
+      const block = renderLandUseTable(buildPlanningFacts({ planningData: answer }));
+      expect(block, name).not.toMatch(/HTTP \d{3}|unparseable|answered a body|error sending request|the service answered/i);
+      expect(block, name).not.toMatch(/could not be asked for/i);
+    }
+  });
+
   it('the infrastructure outlook, in every jurisdiction', () => {
     for (const [name, answer] of planningAnswers()) {
       const page = renderInfrastructureOutlook(buildInfrastructureEvidence({ planningData: answer }));
@@ -333,6 +376,23 @@ const VOICED_MODULES = [
   'supabase/functions/_shared/reports/investment/riskRegister.pure.ts',
   'supabase/functions/_shared/reports/investment/subjectPrice.pure.ts',
   'supabase/functions/_shared/compassSectionContract.ts',
+  // The four derived documents. The Financial Analysis and the Due Diligence
+  // Report are the fork's (no model: the parent's prose plus these composed
+  // chapters); the Briefing and the Snapshot are the condenser's (one model
+  // call, then these composed sections). Added 25 Sep 2026 — every one of them
+  // printed on a client's page and none had ever been read for the vocabulary.
+  'supabase/functions/_shared/reports/investment/forkSplit.pure.ts',
+  'supabase/functions/_shared/reports/investment/forkSectionContracts.pure.ts',
+  'supabase/functions/_shared/reports/investment/financialChapters.pure.ts',
+  'supabase/functions/_shared/reports/investment/condenseCompose.pure.ts',
+  'supabase/functions/_shared/reports/investment/condenseFacts.pure.ts',
+  'supabase/functions/_shared/reports/investment/scoreSections.pure.ts',
+  'supabase/functions/_shared/reports/investment/tierContent.pure.ts',
+  'supabase/functions/_shared/reports/investment/tierIdentity.pure.ts',
+  'supabase/functions/_shared/reportSplitRegistry.ts',
+  'supabase/functions/_shared/reportBindingProjection.pure.ts',
+  'supabase/functions/_shared/reports/market/scoreAssessmentReading.pure.ts',
+  'supabase/functions/condense-investment-report/index.ts',
 ] as const;
 
 /** Status values: compared in code, never printed. */
@@ -382,5 +442,46 @@ describe('what reached a finished document is measured, never scrubbed', () => {
   it('is silent on a document written in the adviser\'s voice', () => {
     const md = '## Infrastructure and Growth Context\n\nNo major public project is recorded within 15 km of the property.\n';
     expect(runQAValidation(md, 'compass-40').findings.map((f) => f.rule)).not.toContain('platform-vocabulary');
+  });
+});
+
+/*
+ * The Briefing and the Snapshot are a model's rewrite of a Compass, and
+ * `documentRules` returns nothing for any tier but the Compass — so until
+ * 25 Sep 2026 the condenser handed its model the parent whole and asked for
+ * "the same professional tone as the original", which carried every
+ * "register", "retrieved" and "Not searched" of a stored parent straight into
+ * the child. A condensation is a rewrite: exactly where the words can change
+ * and the findings cannot.
+ */
+describe('a condensed document is told the same voice', () => {
+  const rules = condensedVoiceRules();
+
+  it('names every platform phrase, as the Compass rules do', () => {
+    for (const term of PLATFORM_VOCABULARY) expect(rules, term.phrase).toContain(`"${term.phrase}"`);
+  });
+
+  it('keeps the two absences apart, in the one spelling the page prints', () => {
+    expect(rules).toContain(REGISTER_CHECKED_EMPTY);
+    expect(rules).toContain(REGISTER_NOT_COVERED);
+  });
+
+  it('names no Compass section, because a Briefing has none of them', () => {
+    for (const home of Object.values(DISCLOSURE_HOMES)) {
+      expect(rules, home.sectionName).not.toContain(home.sectionName);
+    }
+  });
+
+  it('shares its worked example with the Compass rules rather than restating it', () => {
+    const compass = adviserVoiceRules();
+    for (const line of rules.split('\n').filter((l) => /^\s+(Not|But): /.test(l))) {
+      expect(compass, line).toContain(line);
+    }
+  });
+
+  it('is handed to the condenser\'s model in the system message', () => {
+    const condense = readFileSync('supabase/functions/condense-investment-report/index.ts', 'utf8');
+    expect(condense).toContain("import { condensedVoiceRules } from '../_shared/reports/adviserVoice.pure.ts';");
+    expect(condense).toMatch(/const systemPrompt = \[[\s\S]*condensedVoiceRules\(\),[\s\S]*\]\.join\('\\n\\n'\);/);
   });
 });

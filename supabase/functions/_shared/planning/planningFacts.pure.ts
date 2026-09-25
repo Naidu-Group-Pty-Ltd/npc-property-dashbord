@@ -354,6 +354,35 @@ const DA_UNCHECKED = uncheckedSentence('Development applications',
   'The council\u2019s own application tracker shows activity near the property.');
 
 /**
+ * Where the land use table was asked for and the request failed. The block
+ * that prints it closes on what settles the question, so this says only that
+ * the check was not made.
+ */
+const LAND_USE_UNCHECKED = 'What this zone permits could not be checked when this report was prepared.';
+
+/**
+ * A stored land use table, with the note a reader will see.
+ *
+ * `renderLandUseTable` prints the note as the block's first line wherever no
+ * table was read, and the service writes it for the people who maintain it:
+ * "No zone was retrieved for this coordinate, so the instrument's land use
+ * table could not be asked for" reached the 60 Lawley Street Compass under
+ * "What may be built on this land", and a failed request stores its own
+ * diagnostic ("HTTP 503", "unparseable JSON body") in the same field. So the
+ * note is read through `readerNote` like every other planning note \u2014 on the
+ * way to the page, which reaches answers cached before the translation too \u2014
+ * and a failed request never lends the page its diagnostic: the status says
+ * the request failed, whatever the note says. The lists are untouched.
+ */
+function landUseForReader(table: LandUseTable, jurisdiction: string | null): LandUseTable {
+  if (table.status === 'retrieved') return table;
+  const note = table.status === 'unavailable'
+    ? LAND_USE_UNCHECKED
+    : (readerNote(table.note ?? null, jurisdiction) ?? LAND_USE_UNCHECKED);
+  return note === table.note ? table : { ...table, note };
+}
+
+/**
  * The lead-in of the checked-and-clear line. Exported because the QA
  * validator recognises it: a sentence the page composes must not be read back
  * as a claim the prose made.
@@ -675,7 +704,7 @@ export function buildPlanningFacts(input: PlanningFactsInput): PlanningFacts {
    */
   const landUseRaw = isRecord(data?.landUse) ? (data!.landUse as unknown as LandUseTable) : null;
   const landUseTable: LandUseTable = landUseRaw && typeof landUseRaw.status === 'string'
-    ? landUseRaw
+    ? landUseForReader(landUseRaw, jurisdiction)
     : emptyLandUseTable(
       'not_served',
       data

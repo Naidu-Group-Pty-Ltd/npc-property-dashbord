@@ -133,9 +133,22 @@ export const PLATFORM_VOCABULARY: readonly PlatformTerm[] = [
     instead: '"not covered by this report", with where the client can check it',
   },
   {
-    pattern: /\bregisters? (?:this|the) (?:report|platform|assessment) (?:reads|read|asks|asked)\b/i,
+    // "No register answered these", "drawn from the registers read for this
+    // report" — the same statement about our reading, found in the strategy
+    // sections on 25 Sep 2026 after the first form was already listed.
+    pattern: /\bregisters? (?:this|the) (?:report|platform|assessment) (?:reads|read|asks|asked)\b|\bregisters? read for (?:this|the) (?:report|assessment)\b|\bno register (?:answered|can answer)\b/i,
     phrase: 'the registers this report reads',
     instead: '"the government sources checked for this report"',
+  },
+  {
+    pattern: /\boverride workflow\b|\bmanual data override\b/i,
+    phrase: 'override workflow',
+    instead: '"set as an assumption for this analysis"',
+  },
+  {
+    pattern: /\bscoring (?:service|engine)\b/i,
+    phrase: 'scoring service',
+    instead: '"the scoring method"',
   },
 ];
 
@@ -259,9 +272,27 @@ export function elsewhereOnly(topic: DisclosureTopic): string {
   return `Every other section may refer to it in a few words (for example "see ${home.sectionName}") and does not explain it again.`;
 }
 
+/** The vocabulary as the writer is shown it: every phrase, quoted, in order. */
+function vocabularyList(): string {
+  return PLATFORM_VOCABULARY.map((t) => `"${t.phrase}"`).join(', ');
+}
+
+/** How a source is named — the one sentence every document's rules end the vocabulary with. */
+const CITE_AS_AN_ADVISER = 'Name a source the way an adviser cites it — the publisher and the product ("DFES Map of Bush Fire Prone Areas", "ABS 2021 Census") — never the system that read it.';
+
+/** How a limitation is said, and the worked pair every document's rules show. */
+const LIMITATION_RULE = [
+  '- Where something could not be confirmed, say so plainly, once, and say how the client confirms it: the certificate, search, inspection or enquiry that settles it, and who provides it.',
+  '  Not: "No zone was retrieved for this coordinate, so the land-use table could not be asked for."',
+  '  But: "The zoning has not been confirmed. A zoning certificate from the local council settles it, and should be obtained before exchange."',
+  '  Not: "No operator stop file was available for this assessment."',
+  '  But: "Bus routes and service frequency should be confirmed on the operator\'s published timetable."',
+] as const;
+
+const WRITE_AS_THE_ADVISER = '- Write as the adviser: "we", "our searches", "this report". Never "the model", "the platform", "the system".';
+
 /** The ADVISER VOICE rules, as `documentRules` hands them to the writer. */
 export function adviserVoiceRules(): string {
-  const terms = PLATFORM_VOCABULARY.map((t) => `"${t.phrase}"`).join(', ');
   const homes = (Object.keys(DISCLOSURE_HOMES) as DisclosureTopic[])
     .map((k) => `${DISCLOSURE_HOMES[k].subject} → ${DISCLOSURE_HOMES[k].sectionName}`)
     .join('; ');
@@ -269,14 +300,39 @@ export function adviserVoiceRules(): string {
     '## ADVISER VOICE — how this report speaks',
     'This report is written by a property adviser for a client deciding whether to buy. Every sentence is about the property, its location, or what the client should do next.',
     '- Say what was found and what it means for the purchase, then move on.',
-    `- Never describe how this report was produced. These words do not appear in it: ${terms}. Name a source the way an adviser cites it — the publisher and the product ("DFES Map of Bush Fire Prone Areas", "ABS 2021 Census") — never the system that read it.`,
-    '- Where something could not be confirmed, say so plainly, once, and say how the client confirms it: the certificate, search, inspection or enquiry that settles it, and who provides it.',
-    '  Not: "No zone was retrieved for this coordinate, so the land-use table could not be asked for."',
-    '  But: "The zoning has not been confirmed. A zoning certificate from the local council settles it, and should be obtained before exchange."',
-    '  Not: "No operator stop file was available for this assessment."',
-    '  But: "Bus routes and service frequency should be confirmed on the operator\'s published timetable."',
+    `- Never describe how this report was produced. These words do not appear in it: ${vocabularyList()}. ${CITE_AS_AN_ADVISER}`,
+    ...LIMITATION_RULE,
     `- A limitation is explained ONCE, in the section that owns its subject: ${homes}. Every other section may point to it in a few words and does not explain it again. That includes the Executive Verdict, the Risk Dashboard and the Final Recommendation.`,
     '- Do not re-tabulate what another section already sets out (the property\'s features, the planning controls, the population figures). Refer to it.',
-    '- Write as the adviser: "we", "our searches", "this report". Never "the model", "the platform", "the system".',
+    WRITE_AS_THE_ADVISER,
+  ].join('\n');
+}
+
+/**
+ * The same voice for a document CONDENSED from a Compass — the Executive
+ * Briefing and the Snapshot.
+ *
+ * `documentRules` returns nothing for any tier but the Compass, and the
+ * condenser's prompt carried none of this: it pasted the whole parent in as
+ * source material and asked for "the same professional tone as the original".
+ * So a Briefing inherited whatever its parent said, in the parent's words — and
+ * every Compass written before 25 Sep 2026 says "register", "retrieved" and
+ * "Not searched". A condensation is a rewrite, which is exactly where the
+ * words can change and the findings cannot.
+ *
+ * The homes are not handed over: `DISCLOSURE_HOMES` names Compass sections a
+ * Briefing does not have, and a rule naming sections the document does not
+ * contain is one a model satisfies by inventing them. The rule that travels is
+ * the one the homes serve — say it once, where its subject is.
+ */
+export function condensedVoiceRules(): string {
+  return [
+    '## ADVISER VOICE — how this document speaks',
+    'This document is written by a property adviser for a client deciding whether to buy. Every sentence is about the property, its location, or what the client should do next.',
+    `- The source material may describe how its evidence was gathered; this document never does. These words do not appear in it: ${vocabularyList()}. Say what was found and what it means for the purchase. ${CITE_AS_AN_ADVISER}`,
+    ...LIMITATION_RULE,
+    `- Keep the source material's distinction between a source that was checked and records nothing at the property ("${REGISTER_CHECKED_EMPTY}") and one this report does not cover ("${REGISTER_NOT_COVERED}"), in those words. The first is a finding; the second is a limitation. Neither is a clearance.`,
+    '- A limitation is stated ONCE, in the section closest to its subject. A risk section may name the check that is owed in a few words; it does not explain the limitation again.',
+    WRITE_AS_THE_ADVISER,
   ].join('\n');
 }

@@ -22,10 +22,13 @@ import { compassSections } from '../../../../supabase/functions/_shared/compassS
 import {
   ADVISER_RECOMMENDATION_LABELS,
   COMPETING_RECOMMENDATION_LABELS,
+  CONDENSED_RECOMMENDATION_SECTIONS,
+  condensedRecommendationContract,
   issuedRecommendation,
   RECOMMENDATION_SECTION_IDS,
   recommendationContract,
 } from '../../../../supabase/functions/_shared/compassSectionContract';
+import { markdownHeadingsForTier } from '../../../../supabase/functions/_shared/reports/investment/sectionRegistry.pure';
 import { projectInvestmentReport } from '../../../../supabase/functions/_shared/reportBindingProjection.pure';
 import { printedVerdict } from '../../../../supabase/functions/_shared/reports/printedVerdict.pure';
 import {
@@ -217,5 +220,64 @@ describe('the generator hands the recommendation to the two sections', () => {
     expect(call).toBeGreaterThan(generator.indexOf('const recommendationRules = recommendationContract('));
     // The contract is the system message's never-trimmed block.
     expect(generator).toContain("const sectionContractBlock = [sectionDef.contract ?? '', correction ?? '']");
+  });
+});
+
+/*
+ * The Briefing and the Snapshot are a model's rewrite of their parent Compass,
+ * and carry the parent's `investment_score` — so their covers print the
+ * parent's verdict. Nothing told the rewrite what that verdict was: a parent
+ * written before 25 Sep 2026 opened its Executive Verdict with "Proceed with
+ * caution" under a STRONG BUY cover, and the condensation carried the second
+ * verdict straight into the child.
+ */
+describe('a condensed document issues the recommendation its cover prints', () => {
+  const condense = readFileSync('supabase/functions/condense-investment-report/index.ts', 'utf8');
+
+  it('names only sections the condensed tier actually writes', () => {
+    for (const tier of ['briefing', 'snapshot'] as const) {
+      const declared = markdownHeadingsForTier(tier).map((h) => h.toLowerCase());
+      for (const heading of CONDENSED_RECOMMENDATION_SECTIONS[tier]) {
+        expect(declared, `${tier}: ${heading}`).toContain(heading.toLowerCase());
+        expect(condense, `${tier}: ${heading}`).toContain(`## ${heading}`);
+      }
+    }
+  });
+
+  it('opens with the cover\'s label, conditioned where it is a buy, and forbids every other (60 Lawley Street)', () => {
+    const issued = issuedRecommendation(LAWLEY)!;
+    for (const tier of ['briefing', 'snapshot'] as const) {
+      const rule = condensedRecommendationContract(tier, issued);
+      expect(rule, tier).toContain('**Strong Buy — subject to the due diligence set out in this report**');
+      expect(rule, tier).toContain(issued.statement);
+      for (const other of COMPETING_RECOMMENDATION_LABELS.filter((l) => l !== 'Strong Buy')) {
+        expect(rule, `${tier}: ${other}`).toContain(`"${other}"`);
+      }
+      // The parent's own words lose to the cover's, which is the defect.
+      expect(rule, tier).toMatch(/including where the source material uses a different one/);
+    }
+  });
+
+  it('keeps the adviser\'s three labels, and one of them only, where the cover prints no verdict', () => {
+    const rule = condensedRecommendationContract('briefing', issuedRecommendation(RECORDS.ungraded));
+    for (const label of ADVISER_RECOMMENDATION_LABELS) expect(rule).toContain(`**${label}**`);
+    expect(rule).toMatch(/exactly one of/);
+    expect(rule).not.toMatch(/Strong Buy/);
+  });
+
+  it('is appended after the template, so a database override of the template cannot drop it', () => {
+    const resolve = condense.indexOf("_resolveCondensePrompt('condense.system_template'");
+    const voice = condense.indexOf('condensedVoiceRules(),');
+    const rec = condense.indexOf('condensedRecommendationContract(reportVariant, issuedRecommendation(parentReport.investment_score)),');
+    expect(resolve).toBeGreaterThan(0);
+    expect(voice).toBeGreaterThan(resolve);
+    expect(rec).toBeGreaterThan(voice);
+    // …and the system message is what carries them to the model.
+    expect(condense).toMatch(/\{ role: 'system', content: systemPrompt \}/);
+  });
+
+  it('no longer forbids the Snapshot to state the recommendation it must state', () => {
+    expect(condense).not.toMatch(/Do not restate the grade, the score out of 100, the recommendation/);
+    expect(condense).toContain('THE\nRECOMMENDATION THIS DOCUMENT ISSUES');
   });
 });

@@ -364,7 +364,7 @@ describe('the grade\'s method leaves the SWOT for the appendix (pages 16-18: thr
   it('says the record HOLDS the adjusted weights, and never "reconstructed" beside "nothing is re-derived"', () => {
     const method = composeGradeMethodology(lawleyStrategy()) ?? '';
     expect(method).not.toContain('This record does not hold them, so they are reconstructed');
-    expect(method).not.toContain('This record does not hold the adjusted weights the service used');
+    expect(method).not.toContain('This record does not hold the adjusted weights the scoring method used');
     expect(method).toMatch(/adjusted weights (below )?are the ones the record holds/);
     expect(method).toContain('No figure in this table is re-derived by this report');
   });
