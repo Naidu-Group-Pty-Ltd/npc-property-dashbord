@@ -269,6 +269,15 @@ export function conversationAccessLost(error: unknown): boolean {
   return status === 401 || status === 403 || code === 'builder_stock_disabled';
 }
 
+/**
+ * A refusal is not retried: the query error is set only once retries are
+ * spent, and until then the card would keep showing what the reader may no
+ * longer see. Anything else is retried once, as every query in the app is.
+ */
+export function retryUnlessAccessLost(failureCount: number, error: unknown): boolean {
+  return !conversationAccessLost(error) && failureCount < 1;
+}
+
 export function useBuilderConversation(stockItemId: string, enabled = true) {
   return useQuery({
     queryKey: conversationKey(stockItemId),
@@ -278,6 +287,7 @@ export function useBuilderConversation(stockItemId: string, enabled = true) {
     }),
     refetchInterval: (query) => builderConversationPollInterval(query.state.data),
     refetchIntervalInBackground: false,
+    retry: retryUnlessAccessLost,
   });
 }
 

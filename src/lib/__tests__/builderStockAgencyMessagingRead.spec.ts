@@ -601,3 +601,20 @@ describe('a conversation the reader may no longer see', () => {
     expect(src).toMatch(/failure\.status\s*=\s*error\?\.status/);
   });
 });
+
+describe('a refused conversation read is not retried before it is shown', () => {
+  it('retries a transient failure once and a refusal never', async () => {
+    const { retryUnlessAccessLost } = await import('@/lib/marketplaceBuilderStock');
+    expect(retryUnlessAccessLost(0, Object.assign(new Error('x'), { status: 503 }))).toBe(true);
+    expect(retryUnlessAccessLost(1, Object.assign(new Error('x'), { status: 503 }))).toBe(false);
+    expect(retryUnlessAccessLost(0, Object.assign(new Error('x'), { status: 403 }))).toBe(false);
+    expect(retryUnlessAccessLost(0, Object.assign(new Error('x'), { code: 'builder_stock_disabled' }))).toBe(false);
+  });
+
+  it('the conversation poll uses it', () => {
+    const src = readFileSync(join(__dirname, '..', 'marketplaceBuilderStock.ts'), 'utf8');
+    const start = src.indexOf('export function useBuilderConversation(');
+    const body = src.slice(start, src.indexOf('\nexport ', start + 10));
+    expect(body).toMatch(/retry:\s*retryUnlessAccessLost/);
+  });
+});
