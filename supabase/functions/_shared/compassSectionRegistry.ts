@@ -240,7 +240,7 @@ export const COMPASS_40_SECTIONS: CompassSectionDefinition[] = [
     sectionPriority: 'Protected',
     maxWordCount: 550,
     visualComponents: ['kpiTiles', 'scorecard'],
-    purpose: 'The verdict, first: location call, property fit, tenant demand, the top 2–3 risks, and a Proceed / Proceed with caution / Not suitable recommendation. The grade printed beside this section carries the scoring model\'s own classification (for example \u201cStrong Buy\u201d): that is the model\'s reading of the dimensions it measured, not a recommendation to purchase. Where you give your recommendation, say in one sentence that it also weighs what the model does not measure \u2014 title, building condition, planning controls and the other checks still owed \u2014 and never restate the classification as your own verdict. Write it as findings, not as a preview of the sections below. NO purchase price, LVR, yield, cashflow or any financial figure — those belong in the Financial Analysis Report.',
+    purpose: 'The verdict, first. Open with the recommendation this document issues, exactly as your instructions give it, then the case for it: the location call, how the property fits its market, who will want to live in it, and the two or three matters that most need checking before exchange, each written as a condition of the recommendation with the check that settles it. One recommendation, stated the same way here, on the cover and in the Final Recommendation. Write it as findings, not as a preview of the sections below. NO purchase price, LVR, yield, cashflow or any financial figure — those belong in the Financial Analysis Report.',
   },
   {
     id: 'compass.propertyLocalitySnapshot',
@@ -567,7 +567,7 @@ export const COMPASS_40_SECTIONS: CompassSectionDefinition[] = [
     sectionPriority: 'Protected',
     maxWordCount: 350,
     visualComponents: ['narrative'],
-    purpose: 'Open with the verdict in bold on its own line — **Proceed**, **Proceed with caution** or **Not suitable** — then 150–250 words of continuous rationale tied to location, tenant demand and risk, then the immediate actions as a short list. Where your verdict is more guarded than the scoring model\'s classification printed with the grade, the rationale says why in one sentence: the classification reads only the dimensions the model measured, and this recommendation is conditional on the checks listed here. Keep every qualification; do not soften the verdict to match the classification. Write the rationale as one unlabelled passage: this section carried four labelled commentary blocks in v2.0 and they were 39% of it. NO financial verdict and no financial figures.',
+    purpose: 'Open with the recommendation this document issues, in bold on its own line, exactly as your instructions give it — the same recommendation the cover and the Executive Verdict state — then 150–250 words of continuous rationale tied to location, tenant demand and risk, with every condition the recommendation depends on kept and stated as a condition, then the immediate actions as a short list in the order they should be done. Write the rationale as one unlabelled passage: this section carried four labelled commentary blocks in v2.0 and they were 39% of it. NO financial verdict and no financial figures.',
   },
   {
     id: 'compass.disclaimer',

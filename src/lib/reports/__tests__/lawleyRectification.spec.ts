@@ -553,17 +553,31 @@ describe('our own words never reach the page as labels (page 10 "ConfidenceChip:
   });
 });
 
-describe('the model\'s classification and the recommendation are explained, never merged (cover "STRONG BUY", p.21 "proceed only after")', () => {
-  it('both sections are told what the classification is, and neither may soften the recommendation to match it', () => {
+describe('one recommendation (cover "STRONG BUY", p.21 "proceed only after"; then "Proceed with caution" on the regeneration)', () => {
+  /*
+   * RENEGOTIATED 25 Sep 2026. Item 9 was first answered by telling both
+   * sections what "the scoring model's classification" is and that their own
+   * Proceed / Proceed with caution / Not suitable verdict must not be softened
+   * to match it. The regeneration obeyed: its cover said STRONG BUY, its
+   * Executive Verdict and Final Recommendation said "Proceed with caution",
+   * and it told the client the difference was what "the model does not
+   * measure". Two verdicts, explained in the platform's vocabulary. This block
+   * pinned that instruction; it now pins its removal. The rule itself — one
+   * recommendation, the one the cover prints, with its conditions kept as
+   * conditions — is `oneRecommendation.spec.ts`.
+   */
+  it('neither section is told the grade is a model\'s classification, in either registry mirror', () => {
     for (const list of [COMPASS_40_SECTIONS, FRONTEND_COMPASS_SECTIONS]) {
       const verdict = list.find((s) => s.id === 'compass.executiveVerdict')!.purpose;
       const closing = list.find((s) => s.id === 'compass.finalRecommendation')!.purpose;
-      expect(verdict).toContain('the model\'s reading of the dimensions it measured, not a recommendation to purchase');
-      expect(verdict).toContain('never restate the classification as your own verdict');
-      expect(closing).toContain('the classification reads only the dimensions the model measured');
-      expect(closing).toContain('do not soften the verdict to match the classification');
-      // The three verdict words the section has always used are still the ones it asks for.
-      expect(closing).toMatch(/\*\*Proceed\*\*, \*\*Proceed with caution\*\* or \*\*Not suitable\*\*/);
+      for (const purpose of [verdict, closing]) {
+        expect(purpose).not.toContain('classification');
+        expect(purpose).not.toContain('the model does not measure');
+        expect(purpose).toContain('the recommendation this document issues');
+      }
+      // The qualification is kept — as a condition of the one recommendation.
+      expect(verdict).toContain('each written as a condition of the recommendation with the check that settles it');
+      expect(closing).toContain('with every condition the recommendation depends on kept and stated as a condition');
     }
   });
 });

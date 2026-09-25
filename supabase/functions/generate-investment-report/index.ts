@@ -10,6 +10,8 @@ import { insertTargetedNotification } from '../_shared/notify.ts';
 import { compassSections, financialSections, EDITORIAL_LABELS, type CompassSectionDefinition as CanonicalSectionDefinition } from '../_shared/compassSectionRegistry.ts';
 import {
   documentOutline,
+  issuedRecommendation,
+  recommendationContract,
   sectionContract,
   sectionRepairNote,
   sectionShapeShortfall,
@@ -7558,8 +7560,24 @@ YOUR DEDICATED PROPERTY PARTNER
       ? Math.max(...completedSectionIndices) + 1
       : 0;
 
+    // ONE RECOMMENDATION. The verdict the cover and the verdict page will print
+    // is read here, from the score this invocation's sections are written from
+    // (after the evidence-basis decision above), by the rule the page reads it
+    // with — and handed to the two sections that state a recommendation, so the
+    // prose cannot issue a second one. 60 Lawley Street (25 Sep 2026) printed
+    // STRONG BUY on its cover and "Proceed with caution" in its text. See
+    // `recommendationContract` in `compassSectionContract.ts`.
+    const issuedRec = issuedRecommendation(enhancedData?.investmentScore);
+    if (issuedRec) console.log(`🧾 Recommendation the document issues: ${issuedRec.action}${issuedRec.grade ? ` (${issuedRec.grade})` : ''}`);
+
     for (let i = 0; i < filteredSections.length; i++) {
-      const sectionDef = filteredSections[i];
+      const baseSectionDef = filteredSections[i];
+      // The recommendation travels in the section's contract — the system
+      // message, never trimmed. Empty for every section but the two.
+      const recommendationRules = recommendationContract(baseSectionDef.registryId, issuedRec);
+      const sectionDef = recommendationRules
+        ? { ...baseSectionDef, contract: [baseSectionDef.contract, recommendationRules].filter(Boolean).join('\n\n') }
+        : baseSectionDef;
       const _chunkStart = Date.now();
 
       // CONTINUATION MODE: Skip already-completed sections
