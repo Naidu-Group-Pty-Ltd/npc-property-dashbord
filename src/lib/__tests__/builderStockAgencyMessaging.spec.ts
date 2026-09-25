@@ -220,6 +220,25 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
       expect(outbox(`dedupe_key LIKE 'agency.receipt:${reply.message_id}:%'`)).toBe('2');
     });
 
+    it('a stored message id arriving with changed content is refused, and the stored message is untouched', () => {
+      const original = builderMessage({ body: 'The original words.' });
+      land(CONN_A, 'agency.message.posted', `agency.message:${original.message_id}:1`, original);
+      sweep();
+      for (const [n, change] of [
+        [2, { body: 'Different words.' }],
+        [3, { sender_display_name: 'Someone Else' }],
+        [4, { sent_at: '2026-09-26T09:00:00.000000Z' }],
+      ] as Array<[number, Record<string, unknown>]>) {
+        land(CONN_A, 'agency.message.posted', `agency.message:${original.message_id}:${n}`, { ...original, ...change, generation: n });
+        sweep();
+        expect(db.sql(`SELECT message_apply_error FROM public.builder_network_inbound_events
+                       WHERE dedupe_key = 'agency.message:${original.message_id}:${n}'`)).toBe('refused:message_conflict');
+        expect(outbox(`dedupe_key = 'agency.receipt:${original.message_id}:${n}' AND payload->>'outcome' = 'refused'`)).toBe('1');
+      }
+      expect(db.sql(`SELECT body || '|' || sender_display_name FROM public.builder_network_messages WHERE id = ${lit(original.message_id)}`))
+        .toBe('The original words.|Avery Builder');
+    });
+
     it.each([
       ['9. a conversation computed for another connection (wrong workspace)', () => builderMessage({ conversation_id: conversationId(NET_B, ITEM_A1) }), 'conversation_mismatch'],
       ['8. another builder\'s property', () => builderMessage({ stock_item_id: ITEM_B1, conversation_id: conversationId(NET_A, ITEM_B1) }), 'stock_item_not_ours'],
