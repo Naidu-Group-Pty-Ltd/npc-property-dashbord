@@ -685,6 +685,17 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
     });
   });
 
+  describe('a value of the wrong JSON type', () => {
+    it('a builder message whose body is an object is refused and stored nowhere', () => {
+      const typed = { ...builderMessage(), body: { text: 'hello there' } };
+      land(CONN_A, 'agency.message.posted', `agency.message:${typed.message_id}:1`, typed);
+      sweep();
+      expect(db.sql(`SELECT message_apply_error FROM public.builder_network_inbound_events
+                     WHERE dedupe_key = 'agency.message:${typed.message_id}:1'`)).toBe('refused:invalid_payload');
+      expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE id = ${lit(typed.message_id)}`)).toBe('0');
+    });
+  });
+
   describe('a time that is not a time', () => {
     it.each(['infinity', '-infinity'])('a builder message sent at %s is refused as malformed and stored nowhere', (when) => {
       const odd = builderMessage({ body: `Sent at ${when}.`, sent_at: when });
