@@ -112,7 +112,7 @@ function judge(rows: GnafRow[], row: GnafRow, plan: ReturnType<typeof planGeocod
   const asked = askedAddressOf(gnafStreetLineOf(plan.ask));
   if (!asked.street || (!asked.number && !asked.lot)) return { outcome: 'not_found', reason: 'the ask names no street number or lot' };
   const choice = chooseGnafRow(rows, asked, plan.localityCandidates);
-  if (!choice.ok) {
+  if (choice.ok === false) {
     const ambiguous = /more than one place|localities of the postal area/.test(choice.reason);
     return { outcome: ambiguous ? 'ambiguous' : 'not_found', reason: choice.reason };
   }
