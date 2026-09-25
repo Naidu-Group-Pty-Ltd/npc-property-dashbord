@@ -63,8 +63,10 @@
  *  - `author.*`, `client.*` — there is no `profiles` table for an adviser and
  *    no client-name column on this row (`client_property_id` is set on 2 of the
  *    1,182). The masters no longer bind either.
- *  - `property.images.*` — no adapter emits photographs; see
- *    `docs/template-library/07-investment-compass-families.md`.
+ *  - `property.images.*` — not on this row. The Investment adapter binds
+ *    them from the image library after this projection runs, where the
+ *    report's listing holds any a client's document may carry — see
+ *    `docs/reports/PROPERTY_PHOTOGRAPHS.md`.
  *
  * `org.*` was on that list until August 2026 and should not have been. The
  * sentence "organisation data lives outside this row" is true of the *row* and

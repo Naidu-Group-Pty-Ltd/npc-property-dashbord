@@ -2944,6 +2944,40 @@ nothing, so its system message carries `condensedVoiceRules()` and
 `condensedRecommendationContract()` — appended AFTER the template, which the
 database can override.
 
+## A report carries the property's own photographs, and never the wrong ones
+Read [`PROPERTY_PHOTOGRAPHS.md`](./docs/reports/PROPERTY_PHOTOGRAPHS.md) before
+touching `_shared/reportPhotographs.pure.ts`, the
+`photographs` option on `get-investment-reports`, `adapters/reportPhotographs.ts`
+or a `property.images` binding.
+
+**Hero Image Studio's placements never reached the document a client
+receives.** Only the standard presentation reads them, it draws them on a
+figures page after the body, and only with a switch that is off by default.
+Five Compass masters were built to bind `property.images.N` (Atelier, Atelier
+Plate and Grand Folio on the cover; plates in those three, Frontispiece and
+Elevation). Nothing filled that binding, while the image library held every
+listing-sourced report's photographs. The Investment adapter fills it now,
+through the report broker, and inlines each photograph as a `data:` URI,
+because the renderer may fetch nothing.
+
+Three rules bite:
+
+- **A report filters where a gallery demotes.** Every photo slot is designed
+  to print nothing when empty, so a missing photograph costs nothing, while
+  the wrong one puts somebody else's house on a client's cover. A report takes
+  only what the server has seen to be a photograph, never one another listing
+  also holds, and nothing at all when the reuse reading fails.
+- **A photograph never costs the document.** Every failure drops that one
+  photograph.
+- **URL-extract reports and the other 45 masters get nothing yet, on
+  purpose.** A portal's photographs are a licence question (*readable is not
+  republishable*), and a photo slot on those covers is a design change that
+  goes through the design source and a new seed.
+
+The resale section also draws the published price history
+(`priceHistoryChart`, §6 of `MARKET_FIGURES_IN_THE_REPORT.md`): the latest
+quarter of each of ten years, from the record, or nothing.
+
 ## A premium document, and the eighteen per cent that was bold
 
 Read [`A_PREMIUM_DOCUMENT.md`](./docs/reports/A_PREMIUM_DOCUMENT.md) before

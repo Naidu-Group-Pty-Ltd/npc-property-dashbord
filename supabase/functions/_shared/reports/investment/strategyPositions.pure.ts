@@ -88,7 +88,7 @@ import {
 } from '../market/scoreAssessmentReading.pure.ts';
 import type { SubjectPrice } from './subjectPrice.pure.ts';
 import { recordedMarketRisks } from './scoreSections.pure.ts';
-import { MONTHS_SHORT, formatReportDateShort } from '../reportDate.pure.ts';
+import { MONTHS_LONG, MONTHS_SHORT, formatReportDateShort } from '../reportDate.pure.ts';
 import { closeDoubledStops } from '../text.pure.ts';
 
 /**
@@ -457,6 +457,78 @@ function subjectRow(market: MarketFacts, key: EvidenceKey): MarketFactRow | null
 /** "the NSW Department of … median sale price of houses, postcode 2155, March 2026 quarter". */
 function citeRow(row: MarketFactRow): string {
   return periodsIn(`${row.publisher} — ${row.describes}`);
+}
+
+/**
+ * How many years of the published series the resale section draws.
+ *
+ * Ten, because ten years is the longest window any growth rate in this report
+ * is measured over (`growth10YearCagr`), so the drawing and the longest figure
+ * quoted from the same series describe the same stretch of time: eleven
+ * points, the two ends of that window and every year between.
+ */
+export const PRICE_HISTORY_YEARS = 10;
+
+/** Fewer yearly points than this is a comparison, not a history, and is not drawn. */
+const MIN_PRICE_HISTORY_POINTS = 4;
+
+/**
+ * The published price history, drawn: one bar a year.
+ *
+ * ## Why this exists
+ *
+ * The 60 Lawley Street Compass (25 Sep 2026) told its reader that the price
+ * history "covers 60 periods (Sep 2011 to Jun 2026)" and that "a long series
+ * is what makes a growth rate a measurement rather than an impression" — a
+ * sentence about the data, where an adviser shows the data. The record held
+ * all sixty points under an open licence; the row that carried them wrote
+ * them as their extent and dropped the rest.
+ *
+ * ## What it draws, and what it refuses to
+ *
+ *  - **Only the publisher's own figures.** Every value is a point of the
+ *    stored series, as published. Nothing is smoothed, interpolated, indexed
+ *    or extended, and no trend is drawn through it — which is what
+ *    `CHART_IS_A_CLAIM` asks of a model, kept here by construction.
+ *  - **The same quarter every year.** A quarterly series is sampled at the
+ *    latest point's own quarter, so no bar is a different season from the one
+ *    beside it; an annual series (every point a December figure, which is how
+ *    a calendar-year median is stored) is drawn as calendar years.
+ *  - **Only past the licence gate.** `series` exists only on a row that may
+ *    reach a client, so a series nobody may publish is never drawn.
+ *  - **All or nothing.** A missing year inside the window leaves a gap a
+ *    reader would take for a year nothing sold, so a window with a hole in it
+ *    is not drawn at all; neither is one of fewer than four years.
+ *
+ * The title names the geography because a state series in a suburb's report
+ * reads as the suburb's unless it says otherwise, and the source line under it
+ * names the publisher and the measure — a mean of the dwelling stock is not a
+ * median sale price, and the two are not drawn under one word.
+ */
+export function priceHistoryChart(row: MarketFactRow | null | undefined): string | null {
+  const points = [...(row?.series?.points ?? [])].sort((a, b) => (a.period < b.period ? -1 : a.period > b.period ? 1 : 0));
+  if (points.length < MIN_PRICE_HISTORY_POINTS) return null;
+  const annual = points.every((p) => p.period.endsWith('-12'));
+  const quarterly = points.every((p) => ['03', '06', '09', '12'].includes(p.period.slice(5)));
+  const month = points[points.length - 1].period.slice(5);
+  const yearly = points.filter((p) => p.period.slice(5) === month).slice(-(PRICE_HISTORY_YEARS + 1));
+  if (yearly.length < MIN_PRICE_HISTORY_POINTS) return null;
+  for (let i = 1; i < yearly.length; i += 1) {
+    if (Number(yearly[i].period.slice(0, 4)) !== Number(yearly[i - 1].period.slice(0, 4)) + 1) return null;
+  }
+  const monthIndex = Number(month) - 1;
+  const monthShort = MONTHS_SHORT[monthIndex];
+  const monthName = MONTHS_LONG[monthIndex];
+  if (!annual && (!monthShort || !monthName)) return null;
+  const items = yearly.map((p) => {
+    const year = p.period.slice(0, 4);
+    return `${annual ? year : `${monthShort} ${year}`} ${money(p.value)}`;
+  });
+  // The directive grammar's own separators may not appear in a name it carries.
+  const area = String(row?.series?.area ?? '').replace(/[|{}]/g, ' ').replace(/\s+/g, ' ').trim();
+  const when = annual ? 'by calendar year' : `${monthName}${quarterly ? ' quarter' : ''} of each year`;
+  const title = `Published price history${area ? ` — ${area}` : ''}, ${when}`;
+  return `{{bars: ${items.join(', ')} | title=${title}}}`;
 }
 
 /**
@@ -1538,6 +1610,10 @@ export function composeExitOutlook(rec: StrategyRecord, heading: string): string
     lines.push('### What the market recorded', '');
     lines.push(...writeEntries(liquidity));
     lines.push('');
+    // The series itself, where the record holds it and may publish it — drawn
+    // before the source line, so the one citation covers the drawing too.
+    const history = priceHistoryChart(series);
+    if (history) lines.push(history, '');
     // The source, once. Each bullet used to carry the full citation — the same
     // forty words three times in three bullets on the 23 Sep 2026 Compass.
     const sourced = [volume, median, series].filter((r): r is MarketFactRow => Boolean(r?.value));

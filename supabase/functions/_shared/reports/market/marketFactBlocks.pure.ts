@@ -194,6 +194,25 @@ function writeValue(value: unknown, unit: (typeof MEASURE)[EvidenceKey]['unit'])
   }
 }
 
+/**
+ * The points of a stored series, or null.
+ *
+ * All or nothing: a series with one unreadable point is not charted with a
+ * gap where that point was, because a gap in a price line reads as a period
+ * nothing sold in, and nobody measured that.
+ */
+function seriesPoints(value: unknown): Array<{ period: string; value: number }> | null {
+  if (!Array.isArray(value) || !value.length) return null;
+  const out: Array<{ period: string; value: number }> = [];
+  for (const p of value) {
+    const period = isRecord(p) && typeof p.period === 'string' ? p.period.trim() : '';
+    const v = isRecord(p) ? p.value : null;
+    if (!/^\d{4}-\d{2}$/.test(period) || typeof v !== 'number' || !Number.isFinite(v) || v <= 0) return null;
+    out.push({ period, value: v });
+  }
+  return out;
+}
+
 export interface MarketFactsInput {
   /** `enhancedData.marketEvidence` — what the adapters extracted, or absent. */
   marketEvidence?: unknown;
@@ -210,6 +229,26 @@ export interface MarketFactRow {
   /** Anything a reader needs in order not to over-read it. */
   note: string | null;
   benchmark: boolean;
+  /**
+   * The published series itself, on the price-series row alone.
+   *
+   * `value` writes a series as its extent — "60 periods, 2011-09 to 2026-06" —
+   * which is right for the table: a series is what the figures above it were
+   * computed from, not a figure a client reads off a row. A chart of the
+   * series needs the points, and they were already on the evidence point this
+   * row was built from; only the row threw them away.
+   *
+   * Carried only past the same licence gate as every other row, so a series
+   * the right to publish is not confirmed for never reaches a page as points
+   * any more than it reaches one as a row. `statedNumbers` does not read it:
+   * the table does not print these values, so a model's chart may not claim
+   * them — a composed chart draws them from the record instead.
+   */
+  series?: {
+    /** The geography the series describes, in the publisher's own words. */
+    area: string;
+    points: ReadonlyArray<{ period: string; value: number }>;
+  };
 }
 
 export interface MarketFacts {
@@ -264,6 +303,7 @@ export function buildMarketFacts(input: MarketFactsInput): MarketFacts {
     }
     const value = writeValue((point as EvidencePoint<unknown>).value, measure.unit);
     if (value === null) continue;
+    const series = key === 'priceSeries' ? seriesPoints((point as EvidencePoint<unknown>).value) : null;
     rows.push({
       key,
       label: measure.label,
@@ -272,6 +312,7 @@ export function buildMarketFacts(input: MarketFactsInput): MarketFacts {
       publisher,
       note: point.sourceNote,
       benchmark: IS_BENCHMARK(key),
+      ...(series ? { series: { area: point.areaName, points: series } } : {}),
     });
   }
 
