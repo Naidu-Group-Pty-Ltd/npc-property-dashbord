@@ -298,6 +298,77 @@ describe('what the writer is told to write carries none of it', () => {
   });
 });
 
+/**
+ * Every string a client- or writer-facing composer can emit, read out of its
+ * own source.
+ *
+ * The rendered checks above drive fixtures, and a fixture can only reach the
+ * branches it was written for — the market block's absence, the SWOT's
+ * transport basis and the monitoring plan's cadence each carried the machine
+ * room's words on a branch no fixture here takes. The literals are the
+ * complete set, so they are read directly. A status enum is data, never
+ * printed, and is named in `ENUM_VALUES` rather than exempted by pattern.
+ */
+const VOICED_MODULES = [
+  'supabase/functions/_shared/planning/planningFacts.pure.ts',
+  'supabase/functions/_shared/planning/infrastructureEvidence.pure.ts',
+  'supabase/functions/_shared/planning/infrastructureGuide.pure.ts',
+  'supabase/functions/_shared/planning/planningControlGuide.pure.ts',
+  'supabase/functions/_shared/planning/landUsePermissibility.pure.ts',
+  'supabase/functions/_shared/planning/publishedProjectRegister.pure.ts',
+  'supabase/functions/_shared/planning/serviceNote.pure.ts',
+  'supabase/functions/_shared/reports/market/approvalsFactBlocks.pure.ts',
+  'supabase/functions/_shared/reports/market/openData/forwardDemand.pure.ts',
+  'supabase/functions/_shared/reports/market/openData/projectionRegister.pure.ts',
+  'supabase/functions/_shared/reports/market/marketFactBlocks.pure.ts',
+  'supabase/functions/_shared/reports/location/amenityFactBlocks.pure.ts',
+  'supabase/functions/_shared/reports/crimePromptBlocks.pure.ts',
+  'supabase/functions/_shared/reports/climatePromptBlocks.pure.ts',
+  'supabase/functions/_shared/reports/planningPromptBlocks.pure.ts',
+  'supabase/functions/_shared/reports/regionalPromptBlocks.pure.ts',
+  'supabase/functions/_shared/reports/registerAuthority.pure.ts',
+  'supabase/functions/_shared/reports/investment/strategyPositions.pure.ts',
+  'supabase/functions/_shared/reports/investment/chartEvidence.pure.ts',
+  'supabase/functions/_shared/reports/investment/compassDocumentContract.pure.ts',
+  'supabase/functions/_shared/reports/investment/riskRegister.pure.ts',
+  'supabase/functions/_shared/reports/investment/subjectPrice.pure.ts',
+  'supabase/functions/_shared/compassSectionContract.ts',
+] as const;
+
+/** Status values: compared in code, never printed. */
+const ENUM_VALUES = new Set(['retrieved']);
+
+/** A module's string literals, comments removed and interpolations blanked. */
+function stringLiterals(src: string): string[] {
+  const code = src
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:'"`\\])\/\/.*$/gm, '$1');
+  const out: string[] = [];
+  for (const m of code.matchAll(/'((?:[^'\\\n]|\\.)*)'|`((?:[^`\\]|\\.)*)`|"((?:[^"\\\n]|\\.)*)"/g)) {
+    out.push((m[1] ?? m[2] ?? m[3]).replace(/\$\{[^}]*\}/g, ' '));
+  }
+  return out;
+}
+
+describe('no composer can emit the vocabulary, on any branch', () => {
+  it.each(VOICED_MODULES)('%s', (file) => {
+    const offending = stringLiterals(readFileSync(file, 'utf8'))
+      .filter((lit) => !ENUM_VALUES.has(lit) && platformVocabularyIn(lit).length > 0)
+      .map((lit) => `${platformVocabularyIn(lit).join(', ')} :: ${lit.slice(0, 100)}`);
+    expect(offending).toEqual([]);
+  });
+
+  it('the scan can see the vocabulary it guards against', () => {
+    // A scan that reads nothing passes everything. Its own fixture proves it reads.
+    const sample = "const a = 'No register was retrieved for this coordinate.'; // the platform\n"
+      + 'const b = `Loaded ${x} on this deployment`;';
+    const lits = stringLiterals(sample);
+    expect(lits).toHaveLength(2);
+    expect(platformVocabularyIn(lits[0])).toEqual(['retrieved', 'coordinate']);
+    expect(platformVocabularyIn(lits[1])).toEqual(['this deployment']);
+  });
+});
+
 describe('what reached a finished document is measured, never scrubbed', () => {
   it('reports it as a warning that never fails the document', () => {
     const md = '## Infrastructure and Growth Context\n\nNo infrastructure project was retrieved for this coordinate.\n';

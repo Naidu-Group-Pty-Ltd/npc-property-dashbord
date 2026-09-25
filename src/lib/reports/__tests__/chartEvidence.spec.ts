@@ -397,7 +397,7 @@ describe('the prose half of the same contract', () => {
     // are families". Removing the drawing and leaving the sentence moves an
     // unsupported figure rather than withdrawing it.
     const rules = claimSupportRules(HELD_NOTHING);
-    expect(rules).toMatch(/NO population or household composition was retrieved/);
+    expect(rules).toMatch(/NO population or household composition is held/);
     expect(rules).toMatch(/not as "roughly", not as "around half", not as "predominantly"/);
     // §3's rule, restated where the sentence is written.
     expect(rules).toMatch(/not the predicted tenant mix\s+of this particular property/);

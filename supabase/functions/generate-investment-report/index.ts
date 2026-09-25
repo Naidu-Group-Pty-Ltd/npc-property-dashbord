@@ -170,7 +170,7 @@ import {
   PLANNING_REGISTER_HEADING,
   PLANNING_REGISTER_SECTION,
 } from '../_shared/reports/investment/registerTables.pure.ts';
-import { DISCLOSURE_HOMES } from '../_shared/reports/adviserVoice.pure.ts';
+import { DISCLOSURE_HOMES, elsewhereOnly, inHomeSection } from '../_shared/reports/adviserVoice.pure.ts';
 import { applyDisplayOverrides, buildAnnualCostOverrides, normalisePropertyType, toFiniteNumber } from '../_shared/reports/investment/overrides.pure.ts';
 import { attributeTableYearBuilt, composePropertySpecs } from '../_shared/reports/investment/propertyRecord.pure.ts';
 import { reconcileNearestSchool, reconcileSchoolDistances } from '../_shared/reports/schoolDistance.pure.ts';
@@ -1698,7 +1698,7 @@ VISUAL-FIRST RULES (CRITICAL):
 - Any "median grew from X to Y" / trend sentence MUST include either \`~~[…]~~\` inline or a \`::: stat\` callout nearby.
 - Any "subject vs suburb vs metro/state" comparison MUST use \`{{bars: Subject X, Suburb Y, Metro Z | title=…}}\`.
 - **A RATING YOU INVENTED MAY NOT BE DRAWN, IN ANY PRIMITIVE.** A 0-100 rating is a SCORE, and the only scores that exist are the ones supplied to you above — the Investment Score and the dimensions the engine actually scored. Do NOT mint a rating for appeal, suitability, confidence, affordability, land quality, certainty, risk, "focus", "emphasis" or any other attribute, and do NOT draw one as a \`{{gauge}}\`, a \`{{wheel}}\`, a \`{{bars}}\`, a \`{{heatmap}}\`, a \`{{radar}}\` or anything else. In particular: do NOT write \`max=100\` on a chart whose numbers you chose. Where no score was supplied, state the finding in WORDS and draw no chart of it. A number on a scale is read as a measurement however it is drawn, and the reader has no way to tell one you assigned from one that was calculated.
-- **AN ABSENCE MAY NOT BE RATED, IN ANY PRIMITIVE.** Where something was not assessed, not searched, not available or not held, it gets NO position on a scale — not the top of it, not the bottom of it, and never a convention that stands in for one. Do NOT write a legend such as \`Not assessed shown as 5\`, \`n/a = 0\` or \`unknown treated as 3\`: a number on a scale is read as a measurement, so an absence drawn at 5 is a reader being told this is a high risk. Leave the unmeasured item OUT of the chart and name it in the register or the prose, where \`Not assessed\` is a level in its own right. A chart that declares such a convention is withheld from the document in full, so the whole drawing is lost — including the items that were measured.
+- **AN ABSENCE MAY NOT BE RATED, IN ANY PRIMITIVE.** Where something was not assessed, not checked, not covered, not available or not held, it gets NO position on a scale — not the top of it, not the bottom of it, and never a convention that stands in for one. Do NOT write a legend such as \`Not assessed shown as 5\`, \`n/a = 0\` or \`unknown treated as 3\`: a number on a scale is read as a measurement, so an absence drawn at 5 is a reader being told this is a high risk. Leave the unmeasured item OUT of the chart and name it in the register or the prose, where \`Not assessed\` is a level in its own right. A chart that declares such a convention is withheld from the document in full, so the whole drawing is lost — including the items that were measured.
 - Any list of 3+ ranked metrics MUST be rendered as \`{{bars: …}}\` instead of a table — where the metrics are MEASURED quantities that came from the data supplied to you (distances, counts, prices, shares, times, rates), each carrying its own real unit. A list of qualities you are ranking yourself is not a set of metrics: write it as prose or as a table with the reasons in it.
 - Any "X of Y households / dwellings / buyers" stat MUST use \`{{pictograph: …}}\`.
 - Any composition / share-of-total (tenure mix, age bands, expense split, capital
@@ -6280,16 +6280,18 @@ The table above contains every physical attribute on record for this property.
 Do not add a row to it, and do not state a land size, floor area, bedroom or
 bathroom count, parking count, year built or condition that is not in it — not
 as an estimate, not as a range, and not as what is "typical for the suburb".
-Where an attribute is absent you may say it is not recorded, and you may
+Where a feature is absent you may say it is to be confirmed, and you may
 discuss the suburb's housing stock in general terms provided you do not
 attribute any of it to this property. Nobody has inspected this property, so
 no statement about its condition, its compliance or its maintenance history
-is available to you.
+is available to you. Describe the property's features in your own sentences;
+do not reproduce this table under a heading of its own, and never call a
+feature a "recorded attribute".
 
 An attribute you find in a listing or any other search is not a record: never
 describe it as recorded, supplied or on record. Where the discussion needs one
-that is absent above, write that it is not recorded for this assessment and is
-to be confirmed against the contract, the listing and the building inspection.
+that is absent above, write that it is to be confirmed against the contract,
+the listing and the building inspection.
 `;
 
     const pinnedPlanningContext = [
@@ -6531,12 +6533,13 @@ ${(() => {
   const list = top.length ? top : all;
   if (list.length) parts.push(`\n| School | Distance | Type |\n|---|---|---|\n${rows(list)}`);
   if (!parts.length) {
-    return 'No school register reading was retrieved for this property. Say that no school data '
-      + 'was retrieved; do NOT name a school, state a distance, a rating or a catchment, and do '
-      + 'NOT describe the area as well or poorly served by schools.';
+    return `Schools near this property were not assessed for this report. ${inHomeSection('amenity')} say `
+      + `once that the schools near the property were not assessed and that the state education department's `
+      + `school finder shows them; ${elsewhereOnly('amenity')} Do NOT name a school, state a distance, a rating `
+      + 'or a catchment, and do NOT describe the area as well or poorly served by schools.';
   }
   return `${parts.join('\n')}\n\nEvery school named in the report must be one of these, at the distance stated here. `
-    + 'A school rating is not retrieved and must not be stated.';
+    + 'No school rating is held for this report, and none may be stated.';
 })()}
 
 ---

@@ -126,7 +126,10 @@ describe('the block a report may print', () => {
     // The date a reader sees is the reader's format (`auDate`), never an ISO
     // prefix — this assertion pinned `2026-09-24` until the prose-date rule
     // reached the register.
-    expect(block).toContain('Taken into this platform\'s register on 24 Sep 2026.');
+    // When the figures were read, as a citation states it — never a note
+    // about this platform's own register (`adviserVoice.pure.ts`).
+    expect(block).toContain('Accessed 24 Sep 2026.');
+    expect(block).not.toMatch(/platform/i);
     expect(block).not.toMatch(/\b\d{4}-\d{2}-\d{2}\b/);
     expect(block).toContain(A_PROJECTION_IS_NOT_A_MEASUREMENT);
     expect(block).toMatch(/State no other projected population, growth rate or horizon/);

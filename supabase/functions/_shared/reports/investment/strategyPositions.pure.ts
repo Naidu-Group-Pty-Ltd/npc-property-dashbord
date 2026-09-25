@@ -512,23 +512,23 @@ function transportBasis(t: StrategyTransport): string {
   const parts: string[] = [];
   if (t.sources.length) parts.push(t.sources.join('; ') + '.');
   parts.push(
-    'Counted from the operator\'s own published stop file: straight-line distance from this property\'s '
-    + 'verified coordinate, with a station and its platforms counted as one place.',
+    'Counted from the transport operator\'s own published stop data, as straight-line distance from the '
+    + 'property, with a station and its platforms counted as one place.',
   );
   if (t.countReading?.radiusAssumed) {
-    parts.push('The radius is not recorded on this reading and is taken as the platform default.');
+    parts.push('The search radius is not recorded for this count; the standard radius is assumed.');
   }
   // A feed-load date is not a measurement date. The count was taken when the
   // enrichment ran; the stop file behind it is current as at the feed's load.
   // Stating only the load stamp presented the publisher's currency as ours.
   if (t.measuredAt) {
     parts.push(t.feedLoadedAt
-      ? `Counted on ${dayOf(t.measuredAt)}, against a stop file last loaded on ${dayOf(t.feedLoadedAt)}.`
-      : `Counted on ${dayOf(t.measuredAt)}. When the stop file behind it was loaded is not recorded on this reading.`);
+      ? `Counted on ${dayOf(t.measuredAt)}, from the operator\'s stop data current at ${dayOf(t.feedLoadedAt)}.`
+      : `Counted on ${dayOf(t.measuredAt)}. The date of the operator\'s stop data behind it is not recorded.`);
   } else {
     parts.push(t.feedLoadedAt
-      ? `The stop file behind this count was last loaded on ${dayOf(t.feedLoadedAt)}. When the count itself was taken is not recorded on this reading.`
-      : 'Neither the date this count was taken nor the date the stop file behind it was loaded is recorded on this reading.');
+      ? `Counted from the operator\'s stop data current at ${dayOf(t.feedLoadedAt)}; the date of the count itself is not recorded.`
+      : 'Neither the date of this count nor the date of the operator\'s stop data behind it is recorded.');
   }
   if (t.nearestName && isNum(t.nearestKm)) {
     parts.push(`Nearest boarding place: ${t.nearestName}, ${t.nearestKm} km straight-line.`);
@@ -697,9 +697,10 @@ export function buildSwot(rec: StrategyRecord): Swot {
     });
   } else if (rec.transport.verdict === 'outside_loaded_networks') {
     coverage.push(
-      'The property is **outside every transport network loaded on this platform**, which is a fact about the '
-      + 'feeds rather than about the area. It is not evidence that the area is poorly served, and nothing in this '
-      + 'section counts it either way.',
+      'The property is **outside the public transport networks whose stop data this report covers**, which is a '
+      + 'limit of this report rather than a fact about the area. It is not evidence that the area is poorly served, '
+      + 'and nothing in this section counts it either way; the local operator\'s published timetable shows the '
+      + 'services that run near the property.',
     );
   } else if (rec.transport.source && rec.transport.source !== 'gtfs') {
     /*
@@ -719,11 +720,11 @@ export function buildSwot(rec: StrategyRecord): Swot {
      * true of what each read; neither said which.
      */
     coverage.push(
-      `Public transport was **not read from an operator's own stop file** for this property. The reading came from `
-      + `${transportSourceName(rec.transport.source)}, which counts one amenity category rather than boarding `
-      + 'places, so nothing here states how this property is served and no conclusion is drawn either way. A route '
-      + 'or timetable described elsewhere in this report comes from the operator\'s or council\'s own published '
-      + 'pages; it is not a register measurement and is not scored.',
+      `Public transport was **not measured from an operator's own published stop data** for this property. The count `
+      + `available comes from ${transportSourceName(rec.transport.source)}, which counts one kind of place rather than `
+      + 'boarding points, so nothing here states how this property is served and no conclusion is drawn either way. A '
+      + 'route or timetable described elsewhere in this report comes from the operator\'s or council\'s own published '
+      + 'pages; it is not a measurement and is not scored.',
     );
   }
 
@@ -758,8 +759,8 @@ export function buildSwot(rec: StrategyRecord): Swot {
     if (f.interestOnlyAssumed && isNum(f.interestOnlyYears) && f.interestOnlyYears > 0) {
       t.push({
         claim: `The interest-only term is an assumption, not a recorded fact — ${f.interestOnlyYears} years.`,
-        basis: 'The overrides named an interest-only product and not its term, so the ledger assumed the platform '
-          + 'default and says so. When the term ends the payment steps up to principal and interest over the '
+        basis: 'The loan was set up as interest-only without a term, so the standard term is assumed and stated as '
+          + 'an assumption. When the term ends the payment steps up to principal and interest over the '
           + 'remaining years, and the real term is the one on the loan offer.',
       });
     }
@@ -834,10 +835,10 @@ export function buildSwot(rec: StrategyRecord): Swot {
      * registers this assessment reads hold. The sentence now says which.
      */
     coverage.push(
-      'The registers this assessment reads hold no figure for vacancy, days on market, advertised rent, vendor '
+      'The sources checked for this report hold no figure for vacancy, days on market, advertised rent, vendor '
       + 'discount or auction clearance in this market. A figure a listing portal reports, where the report quotes '
-      + 'one, is that portal\'s own statistic: it is not a register measurement, it is not scored, and it is not '
-      + 'counted here. Each would bear on the entries above; none is estimated, and their absence is not counted '
+      + 'one, is that portal\'s own statistic: it is not a measurement from those sources, it is not scored, and it '
+      + 'is not counted here. Each would bear on the entries above; none is estimated, and their absence is not counted '
       + 'as a strength or a weakness.',
     );
   }
@@ -871,13 +872,13 @@ export function buildSwot(rec: StrategyRecord): Swot {
  * reading is a reassurance the record does not support.
  */
 const QUADRANT_NOTE: Record<keyof Omit<Swot, 'coverage'>, string> = {
-  strengths: 'None identified from the market register, the planning layer, the transport feeds or the recorded '
-    + 'financial position. The evidence examined is listed below.',
-  weaknesses: 'None identified from the same sources or from the dwelling\'s recorded attributes. That is a statement '
+  strengths: 'None identified from the market figures, the planning controls, the public transport data or the '
+    + 'financial position in this report. The evidence examined is listed below.',
+  weaknesses: 'None identified from the same sources or from the dwelling\'s recorded features. That is a statement '
     + 'about what was examined, not a clearance: the condition of the dwelling is for the building inspection.',
   opportunities: 'None identified: no recorded figure supports one, and none is inferred.',
-  threats: 'None identified in the registers read for this property. Registers not read are listed below — an '
-    + 'unread register is not a clean one.',
+  threats: 'None identified in the sources checked for this property. Sources this report does not cover are listed '
+    + 'below — a source that was not checked is not a clean one.',
 };
 
 export function composeSwot(rec: StrategyRecord, heading: string): string {
@@ -1162,11 +1163,11 @@ export function composeScoreDimensionTable(rec: StrategyRecord): string | null {
   // report reconstructed — the contradiction the 60 Lawley Street table
   // printed. Where the weights are the record's own (whole or exact), it may.
   lines.push(
-    "Calculated by this platform's investment scoring service"
+    'Calculated by the investment scoring method described above'
     + (rec.score.authority ? ` (${rec.score.authority})` : '')
     + (a.weightBasis === 'recorded' || weightsHeld
-      ? '. No figure in this table is re-derived by this report; the arithmetic above restates the engine\'s own.'
-      : '. The scores and the composite are the engine\'s own; the adjusted weights are reconstructed as stated '
+      ? '. No figure in this table is re-derived by this report; the arithmetic above restates the scoring method\'s own.'
+      : '. The scores and the composite are the scoring method\'s own; the adjusted weights are reconstructed as stated '
         + 'above, because this record does not hold them.'),
     '',
   );
@@ -1226,8 +1227,8 @@ export function composeSuitability(rec: StrategyRecord, heading: string): string
         claim: `Tolerance for vacancy: every untenanted week costs ${money(f.weeklyRent)} of income and none of the costs.`,
         basis: `The projection assumes ${f.occupancyWeeks} occupied weeks a year. `
           + (f.occupancyWeeks >= 52
-            ? 'That is full occupancy, which is an assumption rather than a measurement — no vacancy figure was '
-              + 'returned for this market by the registers this report reads, so none is applied.'
+            ? 'That is full occupancy, which is an assumption rather than a measurement — no vacancy figure is '
+              + 'published for this market in the sources checked for this report, so none is applied.'
             : `The remaining ${52 - f.occupancyWeeks} weeks are already allowed for.`),
       });
     }
@@ -1464,10 +1465,10 @@ export function composeExitOutlook(rec: StrategyRecord, heading: string): string
      * and it is what the reader needs: no register this assessment reads holds
      * such a measure, and a portal's own figure is not one.
      */
-    'Neither answers *how easily this sells*. No register this assessment reads holds days on market, time to sell '
-    + 'or buyer depth for this market. A figure a listing portal reports, where the report quotes one, is that '
-    + 'portal\'s own statistic, not a register measurement, and no figure below should be read as standing in for '
-    + 'any of them.',
+    'Neither answers *how easily this sells*. None of the sources checked for this report holds days on market, time '
+    + 'to sell or buyer depth for this market. A figure a listing portal reports, where the report quotes one, is that '
+    + 'portal\'s own statistic, not a measurement from those sources, and no figure below should be read as standing '
+    + 'in for any of them.',
     '',
   );
 
@@ -1489,7 +1490,7 @@ export function composeExitOutlook(rec: StrategyRecord, heading: string): string
       claim: `${volume.value} dwellings settled in the latest published quarter.`,
       basis: 'A count of completed transactions at the geography and dwelling split named — not at this street, and '
         + 'not a measure of liquidity. **Days on market, time to sell and buyer depth are not held for this market:** '
-        + 'the registers this report reads did not return them, and nothing here estimates them.',
+        + 'the sources checked for this report do not publish them, and nothing here estimates them.',
     });
   }
   if (median?.value) {
@@ -1632,7 +1633,7 @@ export function buildMonitorRows(rec: StrategyRecord): MonitorRow[] {
       cadence: 'On gazettal — no schedule; the layer carries its own currency date',
       lastRead: rec.planning.zoneEffectiveDate
         ? `current at ${dayOf(rec.planning.zoneEffectiveDate)}`
-        : (rec.planning.retrievedAt ? `retrieved ${dayOf(rec.planning.retrievedAt)}` : 'retrieved for this report'),
+        : (rec.planning.retrievedAt ? `checked ${dayOf(rec.planning.retrievedAt)}` : 'checked for this report'),
       changesIf: 'A planning proposal, a new overlay or an amended instrument changes what may be built here and '
         + 'nearby. A spatial layer is indicative — a planning certificate from the council is what settles it.',
     });
@@ -1651,8 +1652,8 @@ export function buildMonitorRows(rec: StrategyRecord): MonitorRow[] {
         : 'the council — planning certificate or property enquiry',
       cadence: 'When the council amends its planning scheme; a certificate states the controls as at the day it is '
         + 'issued',
-      lastRead: 'Not read from a register for this report',
-      changesIf: 'This is a first check, not a re-check: the controls were never read from a register here, and a '
+      lastRead: 'Not confirmed in this report',
+      changesIf: 'This is a first check, not a re-check: the controls have not been confirmed in this report, and a '
         + 'planning certificate or property enquiry obtained before exchange is the way to establish them. After '
         + 'that, look again before any works, a refinance or a sale, and when the council gives notice of a scheme '
         + 'amendment affecting the area.',
@@ -1664,11 +1665,11 @@ export function buildMonitorRows(rec: StrategyRecord): MonitorRow[] {
       what: 'Boarding places near the property',
       register: rec.transport.sources.length
         ? rec.transport.sources.join('; ')
-        : 'The operator\'s published stop file',
-      cadence: 'Each time the feed is reloaded on this platform',
+        : 'The operator\'s published stop data',
+      cadence: 'When the operator publishes updated stop data',
       lastRead: rec.transport.countReading
         ? transportCountPhrase(rec.transport.countReading)
-          + (rec.transport.feedLoadedAt ? `, feed loaded ${dayOf(rec.transport.feedLoadedAt)}` : '')
+          + (rec.transport.feedLoadedAt ? `, operator data current at ${dayOf(rec.transport.feedLoadedAt)}` : '')
         : '—',
       changesIf: 'A count changes when the network changes. Mode, service frequency, walking distance and travel '
         + 'time are not measured at all here, so a change in any of them would not show in this reading.',
@@ -1703,12 +1704,13 @@ export function composeMonitoringPlan(rec: StrategyRecord, heading: string): str
   const lines: string[] = [`## ${heading}`, ''];
   lines.push(
     'A report is a reading taken on a day. Each item below is a thing that reading depends on, where it is published, '
-    + 'how often it changes, and what a different answer would mean. **Nothing on this platform watches these on '
-    + 'your behalf** — each is a check to make, or to ask an adviser to make.',
+    + 'how often it changes, and what a different answer would mean. **These are not monitored on your behalf** — '
+    + 'each is a check to make, or to ask an adviser to make.',
     '',
   );
   if (!rows.length) {
-    lines.push('*No register answered for this property, so there is nothing here to re-read.*');
+    lines.push('*None of the sources this report relies on could be checked for this property, so there is nothing '
+      + 'here to re-check.*');
     return lines.join('\n').trimEnd();
   }
   /*
@@ -2238,14 +2240,14 @@ function purchaseKind(rec: StrategyRecord): string | null {
   const table = rec.site?.landUse ?? null;
   if (!table) {
     if (!asset) return null;
-    return `**What kind of purchase this is.** ${asset} No land use table was retrieved for this property, so `
-      + 'nothing here says what may or may not be added to it — the council\'s planning certificate settles that.';
+    return `**What kind of purchase this is.** ${asset} The land use table for this property has not been confirmed, `
+      + 'so nothing here says what may or may not be added to it — the council\'s planning certificate settles that.';
   }
   const { sentence, dwellingStated, dwellingPermitted, prohibited, permitted } = landUseStanding(table);
   if (!sentence && !permitted.length) {
     return asset
-      ? `**What kind of purchase this is.** ${asset} The land use table that was retrieved does not name the `
-        + 'residential uses this report asks about, so it settles nothing here — the council\'s planning certificate does.'
+      ? `**What kind of purchase this is.** ${asset} The land use table does not name the residential uses this `
+        + 'report asks about, so it settles nothing here — the council\'s planning certificate does.'
       : null;
   }
   const standing = sentence ?? '';

@@ -337,7 +337,7 @@ function assessStatFences(markdown: string, inv: EvidenceInventory): ChartEviden
         kind: 'stat',
         directive,
         reason: withheld
-          ? 'The report-time snapshot records this quantity as absent, which is the platform\u2019s own '
+          ? 'The report-time snapshot records this quantity as absent, which is this report\u2019s own '
             + 'refusal to publish it. A stat card of it restores what the gate withheld.'
           : 'The figure describes a population or a workforce and no demographics producer answered '
             + 'for this report, so there is no table behind it and no period it belongs to.',
@@ -459,7 +459,7 @@ export function assessChartEvidence(
         kind: d.kind,
         directive,
         reason:
-          `The report-time snapshot records "${withheld}" as absent, which is this platform's own `
+          `The report-time snapshot records "${withheld}" as absent, which is this report's own `
           + 'refusal to publish that quantity. A chart of it restores what the gate withheld.',
       });
     }
@@ -603,15 +603,15 @@ export function claimSupportRules(inv: EvidenceInventory): string {
     + 'a table row, a stat card or a timeline stop does not make it supported, and a chart this '
     + 'report declined to draw may not reappear as a list of the same numbers. They override any '
     + 'example elsewhere in this prompt, and a figure a live web search returns is still a figure '
-    + 'this report did not retrieve.',
+    + 'this report does not hold.',
   ];
 
   rules.push(
     inv.demographics
-      ? '1. Population and household composition were retrieved for this report. A share of the '
+      ? '1. Population and household composition are held for this report. A share of the '
         + 'population may be stated only with the dataset, the period and the geography it '
         + 'describes, in the same sentence.'
-      : '1. NO population or household composition was retrieved for this report. Do not state, '
+      : '1. NO population or household composition is held for this report. Do not state, '
         + 'estimate, approximate or characterise what proportion of residents or tenants are '
         + 'families, professionals, owner-occupiers, renters, retirees or any other group — not as '
         + 'a percentage, not as "roughly", not as "around half", not as "predominantly", and not '
@@ -621,9 +621,9 @@ export function claimSupportRules(inv: EvidenceInventory): string {
 
   rules.push(
     inv.marketData
-      ? '2. Market data was retrieved. A proportion of sales, listings or transactions may be '
+      ? '2. Market data is held for this report. A proportion of sales, listings or transactions may be '
         + 'stated only with the source, the period and the geography.'
-      : '2. NO transaction, sales or listing data was retrieved for this report. Do not state what '
+      : '2. NO transaction, sales or listing data is held for this report. Do not state what '
         + 'proportion of sales, listings, buyers or transactions anything represents — not as a '
         + 'percentage, not as "7 in 10", not as "the majority", not as "most". There is no '
         + 'denominator in this record for any such claim. The same applies to every OTHER market '
@@ -658,8 +658,8 @@ export function claimSupportRules(inv: EvidenceInventory): string {
     '5. A source note names what a figure CAME FROM, and may be written only where that provider '
     + 'actually supplied that figure to this report. A provider appearing in the record means it '
     + 'answered; it does not mean its answer contains the number beside your citation. Do not '
-    + 'write "Source: …", "according to …" or "data from …" for a figure this report '
-    + 'did not retrieve from that source, and do not cite a document nobody read. '
+    + 'write "Source: …", "according to …" or "data from …" for a figure that source '
+    + 'did not supply to this report, and do not cite a document nobody read. '
     + 'The report’s OWN evidence base is not a measured quantity either: nothing here counts what '
     + 'share of this report rests on official statistics, property portals, commercial data, local '
     + 'intelligence or advisory interpretation, so do not state one — not as an "evidence mix", a '
@@ -692,10 +692,10 @@ export function claimSupportRules(inv: EvidenceInventory): string {
    */
   rules.push(
     inv.location
-      ? '6. Location and amenity measurements were retrieved for this report. A distance, a '
+      ? '6. Location and amenity measurements are held for this report. A distance, a '
         + 'travel time or a catchment may be stated only as the record measured it, in the units '
         + 'it measured, and a facility the record does not name is not named as measured.'
-      : '6. NO location, amenity, transport or school measurement was retrieved for this report. '
+      : '6. NO location, amenity, transport or school measurement is held for this report. '
         + 'Do not state a distance, a travel time, a walk score, a catchment or a count of '
         + 'facilities near this property — not in kilometres, not in metres, not in minutes, not '
         + 'as a range ("2-3 km", "5-10 minutes"), and not softened ("a short drive", "within '

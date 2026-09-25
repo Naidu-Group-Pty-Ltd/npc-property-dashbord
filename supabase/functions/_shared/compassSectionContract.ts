@@ -297,7 +297,7 @@ export function recommendationContract(
  */
 const COMPONENT_DESCRIPTION: Readonly<Record<string, string>> = {
   amenityMatrix: 'a table of nearby amenities, each with its distance and how that distance was measured',
-  attributeTable: 'a short two-column table of the recorded attributes',
+  attributeTable: 'a short two-column table of the property\'s features (Feature | Detail)',
   chart: 'one chart of measured figures',
   confidenceChip: 'one closing line on how far the evidence goes, opening with the word "Confidence:"',
   dueDiligenceChecklist: 'a checklist of the checks still owed, in the order they are owed',

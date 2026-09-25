@@ -348,8 +348,8 @@ describe('the SWOT reads the dwelling (page 16: "no weakness identified" beside 
   it('says which evidence it read — a council route is not a register measurement, a portal figure is not a register reading', () => {
     const swot = composeSwot(lawleyStrategy(), 'SWOT Analysis');
     expect(swot).toContain('A route or timetable described elsewhere in this report comes from the operator\'s '
-      + 'or council\'s own published pages; it is not a register measurement and is not scored.');
-    expect(swot).toContain('The registers this assessment reads hold no figure for vacancy, days on market');
+      + 'or council\'s own published pages; it is not a measurement and is not scored.');
+    expect(swot).toContain('The sources checked for this report hold no figure for vacancy, days on market');
   });
 });
 
@@ -389,7 +389,7 @@ describe('the exit outlook describes only what it draws (page 19 introduced a pr
   it('a Compass (no modelling) promises no future-year position', () => {
     const exit = composeExitOutlook(lawleyStrategy(), 'Resale Liquidity & Exit Outlook');
     expect(exit).not.toContain('What the position looks like at a future year');
-    expect(exit).toContain('No register this assessment reads holds days on market, time to sell or buyer depth');
+    expect(exit).toContain('None of the sources checked for this report holds days on market, time to sell or buyer depth');
   });
 });
 
@@ -750,7 +750,7 @@ describe('the generator pins the evidence it used to trim away, and moves the sy
     expect(generator).toContain('${recordedAttributesBlock}');
     // The prohibition keeps its permitted form beside it.
     expect(generator).toContain('An attribute you find in a listing or any other search is not a record');
-    expect(generator).toContain('is not recorded for this assessment');
+    expect(generator).toContain('write that it is to be confirmed against the contract,');
   });
 
   it('carries the shortcode vocabulary in the system message, not in every section\'s user message', () => {
