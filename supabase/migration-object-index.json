@@ -438,6 +438,7 @@
     "index:builder_network_inbound_events_message_pending_idx",
     "index:builder_network_inbound_events_rank_pending_idx",
     "index:builder_network_inbound_events_unprocessed_idx",
+    "index:builder_network_messages_arrival_idx",
     "index:builder_network_messages_client_key",
     "index:builder_network_messages_thread_idx",
     "index:builder_network_outbox_claim_idx",

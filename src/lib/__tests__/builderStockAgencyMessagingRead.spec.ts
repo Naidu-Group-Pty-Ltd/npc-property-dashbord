@@ -113,6 +113,7 @@ describe('reading a property\'s conversation', () => {
       sender_display_name: 'Avery Builder', body: `Message ${i}`,
       sent_at: new Date(Date.UTC(2026, 8, 25, 0, 0, i)).toISOString(), delivery_state: null,
       delivered_at: null, failure_reason: null, sender_user_id: null, client_message_id: null,
+      created_at: new Date(Date.UTC(2026, 8, 25, 0, 0, i)).toISOString(),
     }));
     const read = await readBuilderConversation(standIn(tables).client, {
       stockItemId: ITEM, organisationId: ORG, viewerUserId: ME,
@@ -141,6 +142,23 @@ describe('reading a property\'s conversation', () => {
     expect(read.messages[0].body).toBe('Written earlier, arrived late');
     expect(read.messages.filter((m) => m.id === 'late')).toHaveLength(1);
     expect(read.messages[read.messages.length - 1].body).toBe('Message 499');
+  });
+
+  it('a late message stays in the thread while later messages arrive, until 500 newer ones have', async () => {
+    const { tables, conversation } = fixture();
+    const at = (minute: number) => new Date(Date.UTC(2026, 8, 25, 1, minute)).toISOString();
+    const row = (id: string, sent: string, created: string) => ({
+      id, conversation_id: conversation, side: 'builder', sender_display_name: 'Avery Builder', body: id, sent_at: sent, created_at: created,
+      delivery_state: null, delivered_at: null, failure_reason: null, sender_user_id: null, client_message_id: null,
+    });
+    tables.builder_network_messages = Array.from({ length: 500 }, (_, i) => row(`old${String(i).padStart(3, '0')}`, at(100 + i), at(100 + i)));
+    tables.builder_network_messages.push(row('late', at(0), at(700)));
+    for (let i = 0; i < 60; i += 1) tables.builder_network_messages.push(row(`after${String(i).padStart(2, '0')}`, at(800 + i), at(800 + i)));
+    const read = await readBuilderConversation(standIn(tables).client, { stockItemId: ITEM, organisationId: ORG, viewerUserId: ME });
+    if (!read.ok) throw new Error('read failed');
+    expect(read.messages).toHaveLength(500);
+    expect(read.messages[0].id).toBe('late');
+    expect(read.messages[read.messages.length - 1].id).toBe('after59');
   });
 
   it('a property with no live activation is closed, and one with no connection has no conversation', async () => {

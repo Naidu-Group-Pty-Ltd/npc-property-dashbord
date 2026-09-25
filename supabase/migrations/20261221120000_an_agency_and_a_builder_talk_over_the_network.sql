@@ -88,6 +88,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS builder_network_messages_client_key
   WHERE client_message_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS builder_network_messages_thread_idx
   ON public.builder_network_messages (conversation_id, sent_at, id);
+-- The read window: the newest rows by arrival here.
+CREATE INDEX IF NOT EXISTS builder_network_messages_arrival_idx
+  ON public.builder_network_messages (conversation_id, created_at DESC, id DESC);
 
 ALTER TABLE public.builder_network_conversations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.builder_network_messages ENABLE ROW LEVEL SECURITY;
