@@ -428,7 +428,7 @@ BEGIN
   SELECT c.id, c.state, c.builder_organisation_id, c.network_connection_id, c.identity_mismatch_since
     INTO v_connection
     FROM public.builder_network_connections c WHERE c.id = v_event.connection_id;
-  IF v_connection.id IS NULL OR v_connection.state <> 'active' THEN
+  IF v_connection.id IS NULL THEN
     RETURN 'refused:connection_not_active';
   END IF;
   -- The sweep skips a disputed connection, but the dispute can begin after
@@ -485,6 +485,12 @@ BEGIN
   END IF;
 
   -- ── The builder's message ─────────────────────────────────────────────
+  -- A receipt above settles a message this side already sent and carries no
+  -- content, so one that landed before a revocation still applies. New
+  -- content needs the relationship to be live when it is stored.
+  IF v_connection.state <> 'active' THEN
+    RETURN 'refused:connection_not_active';
+  END IF;
   BEGIN
     v_item := (v_payload->>'stock_item_id')::uuid;
     v_sent := (v_payload->>'sent_at')::timestamptz;

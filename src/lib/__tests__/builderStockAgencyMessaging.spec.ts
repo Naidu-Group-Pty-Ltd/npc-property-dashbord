@@ -561,6 +561,26 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
     });
   });
 
+  describe('a receipt that landed before the connection was revoked', () => {
+    it('still settles our message; new content that landed with it is still refused', () => {
+      const ours = post(ITEM_A1, OWNER, randomUUID(), 'Sent just before the revocation.');
+      db.sql(`UPDATE public.builder_network_outbox SET status = 'delivered', delivered_at = now() WHERE dedupe_key = 'agency.message:${ours}:1'`);
+      receipt(ours, 1, 'accepted');
+      const theirs = builderMessage({ body: 'Landed just before the revocation.' });
+      land(CONN_A, 'agency.message.posted', `agency.message:${theirs.message_id}:1`, theirs);
+      db.sql(`UPDATE public.builder_network_connections SET state = 'revoked', revoked_at = now() WHERE id = ${lit(CONN_A)}`);
+      try {
+        sweep();
+        expect(db.sql(`SELECT delivery_state FROM public.builder_network_messages WHERE id = ${lit(ours)}`)).toBe('delivered');
+        expect(db.sql(`SELECT message_apply_error FROM public.builder_network_inbound_events
+                       WHERE dedupe_key = 'agency.message:${theirs.message_id}:1'`)).toBe('refused:connection_not_active');
+        expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE id = ${lit(theirs.message_id)}`)).toBe('0');
+      } finally {
+        db.sql(`UPDATE public.builder_network_connections SET state = 'active', revoked_at = NULL WHERE id = ${lit(CONN_A)}`);
+      }
+    });
+  });
+
   describe('a receipt that never gets back', () => {
     it('as RECEIVER (1, 2, 8, 9): the message is stored once, and a retry of it is answered again', () => {
       const lostIn = builderMessage({ body: 'Did you get this one?' });
