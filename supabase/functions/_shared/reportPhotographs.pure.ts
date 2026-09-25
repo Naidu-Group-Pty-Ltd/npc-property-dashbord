@@ -64,7 +64,7 @@
  * signs what this returns.
  */
 import { bandOf, selectListingGallery } from './listingImageSelection.pure.ts';
-import { isSameProperty } from './addressMatch.pure.ts';
+import { isSameProperty, parseAddress, STREET_TYPES } from './addressMatch.pure.ts';
 
 /** The most photographs any master binds (`six_with_bleed`: a cover and five plates). */
 export const REPORT_PHOTOGRAPH_LIMIT = 6;
@@ -677,5 +677,229 @@ export function finishCaptureAttempt(
     refused,
     leaseUntil: null,
     finished: final ? { at: instant(args.now), reason: final } : null,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Photographs chosen from a brochure, for a report made from a PDF            */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * A report made from an uploaded PDF has no listing and no listing page. For a
+ * new build that PDF is nearly always the builder's brochure, and a brochure
+ * carries the property's own pictures: the facade render of the design on this
+ * lot, and often its interiors.
+ *
+ * The brochure never reaches the server — the browser renders its pages for
+ * the parser and sends only page images — so the browser reads the pictures
+ * out of it as well (`src/lib/reports/brochurePhotographs.ts`, through pdf.js),
+ * the adviser confirms which ones the report may carry, and each is sent to
+ * `listing-images` (`op: 'capture_brochure_photograph'`). The server holds it
+ * to what it holds a listing page's photograph to: the print floor, one copy of
+ * each picture, and its own verdict on the pixels that it is a photograph. It
+ * is filed under the report with the same object name, so every reader of
+ * captured photographs reads these too.
+ *
+ * `brochure.json` sits beside them where a capture keeps `capture.json`: which
+ * brochure (its SHA-256), the address the brochure states, and who filed them.
+ * It is written before the first photograph, for the same reason the capture's
+ * record is: a reader serves only what a record vouches is of the report's
+ * address (rule 4).
+ *
+ * The server cannot read the brochure, so the address it states is the one
+ * the adviser's browser read from it, which is the same parse that named the
+ * report. What the server does hold is that this address is the REPORT's, when
+ * the photographs are filed and on every read after, so a report re-pointed at
+ * another property does not keep them.
+ */
+
+/** The brochure's record, inside the report's folder. Not a photograph name. */
+export const BROCHURE_RECORD_NAME = 'brochure.json';
+
+/** The most bytes one brochure photograph may be, as sent and as stored. */
+export const BROCHURE_PHOTOGRAPH_MAX_BYTES = 8 * 1024 * 1024;
+
+/**
+ * A lot designation as a new build's address writes it: `Lot 12`,
+ * `LOT 1234A`, `Lot No. 7`, `Proposed Lot 12`. The word must stand alone, so
+ * `Allotment 12`, `Plot 5` and `Lots Road` name no lot.
+ */
+const LOT = /\b(?:proposed\s+)?lot\s*(?:no\.?\s*|number\s*|#\s*)?0*(\d{1,6}[a-z]?)\b/i;
+
+const normaliseLot = (value: string): string => value.toLowerCase();
+
+/** The lot an address names, without leading zeros and lowercased; null where it names none. */
+export function lotDesignation(text: unknown): string | null {
+  if (typeof text !== 'string') return null;
+  const match = LOT.exec(text);
+  return match ? normaliseLot(match[1]) : null;
+}
+
+/** Every lot a text names, once each, in the order it first names them. */
+export function lotsNamedIn(text: unknown): string[] {
+  if (typeof text !== 'string' || !text) return [];
+  const out: string[] = [];
+  for (const match of text.matchAll(new RegExp(LOT.source, 'gi'))) {
+    const lot = normaliseLot(match[1]);
+    if (!out.includes(lot)) out.push(lot);
+  }
+  return out;
+}
+
+/**
+ * The address with its lot designation taken out, so the street line under
+ * it can be read the way `parseAddress` reads any other: `Lot 12, 34 Smith
+ * Street` is `34 Smith Street`, `Lot 12 (No. 34) Smith Street` is `34) Smith
+ * Street` (the bracket is punctuation to `parseAddress`), and `Lot 12 Smith
+ * Street` is `Smith Street`, which has no street number to read.
+ */
+export function streetLineWithoutLot(text: string): string {
+  const match = LOT.exec(text);
+  if (!match) return text.trim();
+  return `${text.slice(0, match.index)} ${text.slice(match.index + match[0].length)}`
+    .replace(/^[\s,/:;\-–—]+/, '')
+    .replace(/^\(?\s*(?:no\.?|number|#)\s*(?=\d)/i, '')
+    .trim();
+}
+
+/**
+ * The words of an address as `addressMatch.pure.ts` reads them: lowercased,
+ * punctuation gone except `/` and `-` (which belong to `1/72` and `36-38`),
+ * and every street type collapsed to one spelling — so `34 Smith St.` and
+ * `34 SMITH STREET` are the same three words.
+ */
+export function addressTokens(text: unknown): string[] {
+  if (typeof text !== 'string') return [];
+  return text
+    .toLowerCase()
+    .replace(/&amp;/g, '&')
+    .replace(/[.,]/g, ' ')
+    .replace(/[^a-z0-9/\- ]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((token) => STREET_TYPES[token] ?? token);
+}
+
+/** Whether every word of `suburb` longer than two letters is a word of `text`. */
+function suburbNamedIn(text: string, suburb: string): boolean {
+  const words = new Set(addressTokens(text));
+  const needed = addressTokens(suburb).filter((token) => token.length > 2);
+  return needed.length > 0 && needed.every((token) => words.has(token));
+}
+
+/**
+ * Whether photographs a brochure states are of `source` may appear in a report
+ * written for `reportAddress`.
+ *
+ * Rule 4, for the addresses a new build actually has. `isSameProperty` needs a
+ * street number on both sides and reads a lot as a UNIT, because on the
+ * marketplace a lot is not a street number — so a house-and-land package,
+ * whose brochure and report both say `Lot 12 Smith Street`, could never
+ * match. Where both sides carry a street number, that rule decides, unchanged.
+ * Otherwise both must name the SAME LOT, and everything either states must
+ * agree:
+ *   - a street number, where both have one;
+ *   - a unit, where either names one;
+ *   - the street, after its type is collapsed;
+ *   - the suburb, which must be in the report as whole words.
+ * A lot alone (`Lot 12`, `Lot 12, Box Hill`) never matches — a lot number is
+ * unique only within its plan, and a suburb holds many plans — and neither
+ * does an address the parser could not read, such as a placeholder named
+ * after the file.
+ */
+export function brochurePhotographsAreOfReportAddress(
+  reportAddress: unknown,
+  source: { address?: unknown; suburb?: unknown } | null | undefined,
+): boolean {
+  const report = typeof reportAddress === 'string' ? reportAddress.trim() : '';
+  const address = typeof source?.address === 'string' ? source.address.trim() : '';
+  const suburb = typeof source?.suburb === 'string' ? source.suburb.trim() : '';
+  if (!report || !address || !suburb) return false;
+  if (photographsAreOfReportAddress(report, { address, suburb })) return true;
+
+  const lot = lotDesignation(address);
+  if (!lot || lotDesignation(report) !== lot) return false;
+  const left = parseAddress(streetLineWithoutLot(address));
+  const right = parseAddress(streetLineWithoutLot(report));
+  if (!left.street || !right.street) return false;
+  if (left.number && right.number && left.number !== right.number) return false;
+  if ((left.unit || right.unit) && left.unit !== right.unit) return false;
+  // The report's street segment usually has the suburb glued onto its end, so
+  // containment either way is the test, exactly as `isSameProperty` makes it.
+  const streetsAgree =
+    left.street === right.street ||
+    right.street.startsWith(`${left.street} `) ||
+    left.street.startsWith(`${right.street} `);
+  return streetsAgree && suburbNamedIn(report, suburb);
+}
+
+/** The address a brochure states, from the parts its parse extracted; null without a street line and a suburb. */
+export function brochurePhotographSource(parts: { address?: unknown; suburb?: unknown } | null | undefined): PhotographSource | null {
+  const address = typeof parts?.address === 'string' ? parts.address.trim() : '';
+  const suburb = typeof parts?.suburb === 'string' ? parts.suburb.trim() : '';
+  return address && suburb ? { address, suburb } : null;
+}
+
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+/** Whether a value is a SHA-256 digest, as the browser states the brochure's. */
+export function isDocumentDigest(value: unknown): value is string {
+  return typeof value === 'string' && SHA256_HEX.test(value.trim().toLowerCase());
+}
+
+export interface BrochureRecord {
+  version: 1;
+  /** The SHA-256 of the brochure file the photographs were read from. */
+  documentSha256: string;
+  /**
+   * The address the brochure states, which was the report's own when the
+   * first photograph was filed. Every reader holds the report's address
+   * against it again (rule 4), because a report can be edited after.
+   */
+  source: PhotographSource;
+  /** The report's author, who chose the photographs. */
+  requestedBy: string;
+  requestedAt: string;
+}
+
+/** A new record, for a report no brochure photograph has been filed for yet. */
+export function newBrochureRecord(args: {
+  documentSha256: string;
+  source: PhotographSource;
+  requestedBy: string;
+  now: number;
+}): BrochureRecord {
+  return {
+    version: 1,
+    documentSha256: args.documentSha256.trim().toLowerCase(),
+    source: { address: args.source.address.trim(), suburb: args.source.suburb.trim() },
+    requestedBy: args.requestedBy,
+    requestedAt: new Date(args.now).toISOString(),
+  };
+}
+
+/** A stored record, or null for anything that is not one — which is then treated as never written. */
+export function parseBrochureRecord(value: unknown): BrochureRecord | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const v = value as Record<string, unknown>;
+  if (v.version !== 1) return null;
+  if (!isDocumentDigest(v.documentSha256)) return null;
+  if (typeof v.requestedBy !== 'string' || !v.requestedBy.trim()) return null;
+  const requestedAt = typeof v.requestedAt === 'string' && Number.isFinite(Date.parse(v.requestedAt))
+    ? v.requestedAt
+    : null;
+  if (!requestedAt) return null;
+  // As with a capture: a record that cannot say whose address its photographs
+  // are of is not one any reader may act on.
+  const source = v.source && typeof v.source === 'object' && !Array.isArray(v.source)
+    ? brochurePhotographSource(v.source as Record<string, unknown>)
+    : null;
+  if (!source) return null;
+  return {
+    version: 1,
+    documentSha256: v.documentSha256.trim().toLowerCase(),
+    source,
+    requestedBy: v.requestedBy,
+    requestedAt,
   };
 }

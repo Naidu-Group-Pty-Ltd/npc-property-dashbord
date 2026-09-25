@@ -8,13 +8,17 @@ import { reconcileStoredFinancials } from '../_shared/reports/investment/financi
 import { projectAirtableRecord } from '../_shared/airtableListing.pure.ts';
 import { resolveReportGeneratedAt } from '../_shared/reports/investment/reportGeneratedAt.pure.ts';
 import {
+  BROCHURE_RECORD_NAME,
+  brochurePhotographsAreOfReportAddress,
   CAPTURE_RECORD_NAME,
   captureFolder,
   capturedPhotographsForReport,
   captureStateOf,
+  parseBrochureRecord,
   parseCaptureRecord,
   photographsAreOfReportAddress,
   photographsForReport,
+  type BrochureRecord,
   type CaptureRecord,
   type CaptureState,
   REPORT_PHOTOGRAPH_COLUMNS,
@@ -328,7 +332,10 @@ async function readListingPhotographs(
 /**
  * A URL-extract report's photographs: captured from its listing page by
  * `listing-images` (`op: 'capture_report'`) and filed under the report that
- * was made from it.
+ * was made from it. A report made from a PDF keeps its photographs in the
+ * same folder under the same names — its author chose them from the brochure
+ * (`op: 'capture_brochure_photograph'`) — with `brochure.json` where a capture
+ * keeps `capture.json`.
  *
  * A fork or a condensed child reads its parent's folder, so the four derived
  * documents carry the photographs their Compass does without a copy of their
@@ -360,13 +367,25 @@ async function readCapturedPhotographs(
     // the report's address. Photographs with no readable record, or of an
     // address the report no longer has, are not this report's.
     const record = await readCaptureRecord(supabase, folder, listed.data ?? [], correlationId);
-    if (!record) return { photographs: [] };
-    if (!photographsAreOfReportAddress(row?.property_address, record.source)) {
-      console.info('[get-investment-reports] captured photographs are of another address', { correlationId });
-      return { photographs: [] };
+    if (record) {
+      if (!photographsAreOfReportAddress(row?.property_address, record.source)) {
+        console.info('[get-investment-reports] captured photographs are of another address', { correlationId });
+        return { photographs: [] };
+      }
+    } else {
+      // A report made from a PDF: its author chose these from its brochure
+      // (`brochure.json`), and the lot-aware form of the rule holds a new
+      // build's `Lot 12 Smith Street` to its report.
+      const brochure = await readBrochureRecord(supabase, folder, listed.data ?? [], correlationId);
+      if (!brochure) return { photographs: [] };
+      if (!brochurePhotographsAreOfReportAddress(row?.property_address, brochure.source)) {
+        console.info('[get-investment-reports] brochure photographs are of another address', { correlationId });
+        return { photographs: [] };
+      }
     }
-    const photographCapture = {
-      state: captureStateOf(record, Date.now()),
+    const photographCapture: { state: CaptureState; reportId: string } = {
+      // A brochure's were chosen once, by the author: nothing is left to finish.
+      state: record ? captureStateOf(record, Date.now()) : 'complete',
       reportId: ownerId.trim().toLowerCase(),
     };
     const chosen = capturedPhotographsForReport(listed.data ?? []);
@@ -410,6 +429,26 @@ async function readCaptureRecord(
   }
   try {
     return parseCaptureRecord(JSON.parse(await stored.data.text()));
+  } catch {
+    return null;
+  }
+}
+
+/** A report's brochure record; null where there is none, or it cannot be read. */
+async function readBrochureRecord(
+  supabase: SupabaseClient,
+  folder: string,
+  objects: ReadonlyArray<{ name?: unknown }>,
+  correlationId: string,
+): Promise<BrochureRecord | null> {
+  if (!objects.some((object) => object?.name === BROCHURE_RECORD_NAME)) return null;
+  const stored = await supabase.storage.from('listing-images').download(`${folder}/${BROCHURE_RECORD_NAME}`);
+  if (stored.error || !stored.data) {
+    console.warn('[get-investment-reports] brochure record unavailable', { correlationId });
+    return null;
+  }
+  try {
+    return parseBrochureRecord(JSON.parse(await stored.data.text()));
   } catch {
     return null;
   }

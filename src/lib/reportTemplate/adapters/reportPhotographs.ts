@@ -74,7 +74,9 @@ async function redrawAsJpeg(blob: Blob, maxLongEdge: number): Promise<string | n
 }
 
 const DEFAULT_DEPS: PhotographDeps = {
-  fetch: (...args) => fetch(...args),
+  // Called through the global, never as a method of this object: a browser
+  // refuses `fetch` invoked with any other `this`.
+  fetch: (input, init) => fetch(input, init),
   toDataUrl: blobToDataUrl,
   redraw: redrawAsJpeg,
 };

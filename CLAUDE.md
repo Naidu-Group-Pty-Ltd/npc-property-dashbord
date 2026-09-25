@@ -2948,8 +2948,9 @@ database can override.
 Read [`PROPERTY_PHOTOGRAPHS.md`](./docs/reports/PROPERTY_PHOTOGRAPHS.md) before
 touching `_shared/reportPhotographs.pure.ts`,
 `_shared/listingPagePhotographs.pure.ts`, the `photographs` option on
-`get-investment-reports`, the `capture_report` op on `listing-images`,
-`urlExtractPhotographs.ts`, `adapters/reportPhotographs.ts` or a
+`get-investment-reports`, the `capture_report` or `capture_brochure_photograph`
+ops on `listing-images`, `urlExtractPhotographs.ts`,
+`brochurePhotographs*.ts`, `adapters/reportPhotographs.ts` or a
 `property.images` binding.
 
 **Hero Image Studio's placements never reached the document a client
@@ -3012,6 +3013,25 @@ a finish continues exactly what the record says. **A photograph's name carries
 its place in the listing's gallery**, and a capture is not final while a place
 ahead of the sixth kept one is undecided, so a lead photograph whose host
 failed the first time still becomes the cover.
+
+**A report made from a PDF brochure carries the brochure's own pictures**
+(the owner, 25 Sep 2026; §8 of the same doc). Read §8 before touching
+`src/lib/reports/brochurePhotographs*.ts`, `BrochurePhotographsPicker`,
+`useBrochurePhotographs` or `op: 'capture_brochure_photograph'`. The browser
+reads the brochure with pdf.js beside the parse, the server's own vision
+module judges each picture on the same 64-pixel square, the adviser ticks
+what goes in, and the ticks are filed once the report row exists. Three
+rules bite. **Only a page that names this property can offer a picture**:
+the owner's example names its lot on page 1 beside the facade render, and
+its pages 5 and 6 are another estate and four homes built elsewhere, which
+nothing in the pixels tells apart. **A page's words are its runs joined by
+position, never by a space** (`joinPageText`): the same brochure prints
+`L` · `ot` · `1` · `629` as separate runs, and a space-join made its lot
+unreadable. And **a lot is an address only against the same lot**
+(`brochurePhotographsAreOfReportAddress`): `isSameProperty` refuses a
+lot-only address, which is a new build's only address, so the brochure's
+form requires one lot on both sides and everything either side states to
+agree.
 
 The resale section also draws the published price history
 (`priceHistoryChart`, §6 of `MARKET_FIGURES_IN_THE_REPORT.md`): the latest

@@ -2,11 +2,13 @@
 
 Read this before touching `_shared/reportPhotographs.pure.ts`,
 `_shared/listingPagePhotographs.pure.ts`, the `photographs` option on
-`get-investment-reports`, the `capture_report` operation on `listing-images`,
-`src/lib/reports/urlExtractPhotographs.ts`,
+`get-investment-reports`, the `capture_report` or `capture_brochure_photograph`
+operations on `listing-images`, `src/lib/reports/urlExtractPhotographs.ts`,
+`src/lib/reports/brochurePhotographs*.ts`, `BrochurePhotographsPicker`,
 `src/lib/reportTemplate/adapters/reportPhotographs.ts`, `withCoverPhotograph`, or
 the `property.images` binding in the Investment Compass masters. §6 is the
-URL-extract path; §7 is the cover photograph on the other masters.
+URL-extract path; §7 is the cover photograph on the other masters; §8 is the
+PDF brochure path.
 
 ## 1. What was asked, and what was actually wrong
 
@@ -330,3 +332,129 @@ no picture of a similar house. The binding has no fallback.
 - **The Claude Design catalogue does not draw it.** The slot is composed in
   code from a ground the catalogue declares. `source.json` is untouched, so
   the Design file still shows these covers without a photograph.
+
+## 8. A report made from a PDF brochure
+
+The owner, 25 Sep 2026: a new-build report is usually made from the builder's
+PDF brochure, uploaded in the PDF section of the Reports page, and the
+brochure holds images of the property or its design that the report should
+carry. Nothing read them: the browser rendered the brochure's pages for the
+parser and the report was written without a photograph. The same rules as
+every other route hold here, and rule 4 is the one that decides most: only
+this address and property, and never a picture chosen to fill a slot.
+
+### The path
+
+1. **The browser reads the brochure beside the parse** (`readBrochurePhotographs`).
+   pdf.js walks each page's operator list, so the walk knows where every
+   picture is drawn and how large, whether it is drawn on the page, inside a
+   form (how a Canva or InDesign export arrives), or in a form field's
+   appearance (how a filled-in template carries its facade). pdf.js decodes
+   every encoding the format allows, so no encoding is guessed at.
+2. **Floors that need no pixels** refuse a logo or an icon (under 6% of its
+   page), a banner (a shape more extreme than 1:4), anything under the 1,000 px
+   print floor, and a raster that IS the page: a scan, whose "photograph" has
+   the brochure's type baked into it. A picture drawn more than once on a page,
+   or on three pages or more, is furniture and is never offered.
+3. **The server's own judgement of the pixels** (`listingImageVision.pure.ts`,
+   the same module on the same 64-pixel square) says which survivors are
+   photographs. A floor plan or a graphic is not offered here, because the
+   server would refuse it.
+4. **The pages are read for the property, in the words the page prints.** A
+   page that names the property's lot, or its street number and street, is
+   where its pictures are; a page naming another lot is that lot's.
+5. **Only a page that names this property can offer a picture.** This is the
+   rule the owner's own brochure decided, and §8's measurement below is why.
+   The largest photograph on such a page is ticked as the cover; the adviser
+   can tick up to six and untick any.
+6. **The ticks are filed once the report exists** (`op:
+   'capture_brochure_photograph'`, one request a photograph, in order, never
+   awaited by the generation). The server authenticates, asks for the
+   `reports` permission, meters (30 a minute for a person, 60 for an address),
+   files only for the report's author, never for a derived report and never
+   beside a listing capture. It writes `brochure.json` first (the brochure's
+   SHA-256, the address it names, who asked and when), holds the report's
+   address to that address, then keeps a photograph only on its own verdict:
+   at print size, judged a photograph, not a copy of one already kept. Each is
+   filed where a capture's are, named by its place.
+7. **Every document in the family reads them.** The broker reads
+   `brochure.json` where the folder holds no `capture.json`, and serves the
+   photographs only while the report's address, as it reads now, is the
+   brochure's. The Financial, Due Diligence, Briefing and Snapshot documents
+   are made only from a Compass (the condense route refuses any other parent,
+   the fork forks the composite), so all five read the same folder.
+
+### What the owner's brochure measured
+
+The example the owner sent (a VERV "NEX 20" house-and-land package, nine pages,
+Lot 1629 Hornsea Street, Palomino Estate, Armstrong Creek) found two faults
+the synthetic tests could not.
+
+- **The lot line was unreadable.** pdf.js hands a page's text over in runs,
+  and a run ends wherever the PDF changes font, which a designed brochure does
+  mid-word. That line is seven runs: `L` · `ot` · ` ` · `1` · `629` · ` ` ·
+  `Hornsea Street`. Joining every run with a space read it as `L ot 1 629`, so
+  no page could name its own lot. pdf.js already writes the spaces the page has,
+  so `joinPageText` joins runs with nothing, and separates them only where the
+  page does: a line ends, the next run sits on another line, or it starts clear
+  of where the last one finished.
+- **A builder's brochure is one page about the lot and eight about the
+  builder.** Seven pictures pass the floors: page 1's facade render (a
+  photograph) and floor plan, a couple walking through another estate on
+  page 5, and four homes the builder built elsewhere on page 6. The first cut
+  offered every photograph on a page naming no property, unticked, for the
+  adviser to judge. That put five pictures of other places in front of the
+  person choosing a client's cover, with nothing on screen to tell them apart,
+  so a page that names no property now offers nothing, and the picker says
+  why. Measured through the real page in Chromium after the change: one
+  photograph offered, the 1,280 × 720 facade render, ticked as the cover, and
+  filed byte-identical to the brochure's own.
+
+### The address rule for a lot
+
+`isSameProperty` refuses an address that is only a lot, which is right for a
+listing and wrong for a new build: `Lot 1629 Hornsea Street` is the only
+address the property has. `brochurePhotographsAreOfReportAddress` accepts it on
+one condition, that both sides name the same lot, and then everything either
+side states must agree: street number, unit, street and suburb. Any other
+address goes through `isSameProperty` unchanged.
+
+### What this does not do
+
+- **Floor plans.** The owner's page 1 carries one as a picture (1,199 × 751,
+  judged a floor plan), and the owner asked for it (25 Sep 2026). A report's
+  photograph slots crop to fill their frame and a plan must never be cropped,
+  so it needs a slot of its own. Not built yet.
+- **A design render on a page that names only the design.** A brochure that
+  shows the facade on a page titled "NEX 20" and names the lot elsewhere offers
+  nothing from that page. That is the conservative side of the rule above.
+- **A brochure whose text is drawn as outlines.** It has no words to read, so
+  no page names the property and nothing is offered.
+- **The standard presentation.** It draws no captured photographs, whichever
+  route found them; only a chosen template does (§7).
+
+### Verified locally
+
+- `brochurePhotographs.spec.ts` (the walk, the floors, the lot rule, the page
+  reading, the offer, the filing and the source scans of `listing-images`, the
+  broker and the generator), `brochurePhotographsPdf.spec.ts` (the walk through
+  the real pdf.js over a brochure built for it, with a picture on the page,
+  inside a form, in a form field's appearance, and a full-page scan) and
+  `brochurePhotographsPicker.spec.tsx` pass.
+- The whole flow on the real Reports page in Chromium, every Supabase call
+  answered by the harness double: parse, picker, generate, then one filing
+  request a ticked photograph with its place, the brochure's digest and its
+  address. Run against synthetic brochures (one lot, several lots, no lot) and
+  against the owner's brochure.
+- The Deno type-check adds no error to `listing-images` or
+  `get-investment-reports`.
+
+### Not verified
+
+- **The parse's answer for the owner's brochure was simulated.** The journey's
+  double answered `Lot 1629 Hornsea Street`, `Armstrong Creek`, which is what
+  page 1 prints; `parse-property-pdf` was not called, because it spends a model
+  call. PENDING.
+- **A real filing has not run.** It needs `listing-images` and
+  `get-investment-reports` deployed, a report made from a brochure, and the
+  PDF read: the cover should be the brochure's facade. PENDING.

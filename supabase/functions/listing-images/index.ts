@@ -67,6 +67,10 @@ import {
 import { INTAKE_FIELDS } from '../_shared/airtableIntakeFields.pure.ts';
 import {
   beginCaptureAttempt,
+  BROCHURE_PHOTOGRAPH_MAX_BYTES,
+  BROCHURE_RECORD_NAME,
+  brochurePhotographsAreOfReportAddress,
+  brochurePhotographSource,
   candidatesToTry,
   CAPTURE_MAX_ATTEMPTS,
   CAPTURE_RECORD_NAME,
@@ -77,15 +81,19 @@ import {
   extractionPhotographSource,
   finishCaptureAttempt,
   heldCapturedPhotographs,
+  isDocumentDigest,
   isLastingRefusal,
   isRecordId,
   MIN_PRINT_LONG_EDGE_PX,
+  newBrochureRecord,
   newCaptureRecord,
+  parseBrochureRecord,
   parseCaptureObjectName,
   parseCaptureRecord,
   photographsAreOfReportAddress,
   placesTakenBefore,
   REPORT_PHOTOGRAPH_LIMIT,
+  type BrochureRecord,
   type CapturedPhotograph,
   type CaptureFinish,
   type CaptureRecord,
@@ -138,6 +146,10 @@ type ListingImagesClient = SupabaseClient;
  *                  by the next document drawn while work is left over. Filed
  *                  under the report, never in `listing_images`; see
  *                  `captureReportPhotographs`.
+ *   op: 'capture_brochure_photograph' (the report's author) — keep one
+ *                  photograph the author chose from the brochure a PDF-made
+ *                  report was made from, held to the capture's checks and
+ *                  filed beside it the same way; see `fileBrochurePhotograph`.
  *
  * The bytes live in the private `listing-images` bucket. The browser only ever
  * receives short-lived signed URLs, never a bucket path and never a source URL.
@@ -1711,6 +1723,11 @@ async function captureReportPhotographs(
         : { status: 404, reason: 'nothing_requested' };
     }
     if (report.generated_by !== args.userId) return { status: 403, reason: 'not_the_author' };
+    // A report's photographs come from one source. One whose author chose
+    // them from its brochure is not topped up from a listing page.
+    if ((listed.data ?? []).some((object) => object?.name === BROCHURE_RECORD_NAME)) {
+      return { status: 409, reason: 'brochure_photographs', held: held.length };
+    }
   } else {
     if (args.scrapeJobId && args.scrapeJobId.trim().toLowerCase() !== record.scrapeJobId) {
       return { status: 409, reason: 'different_extraction', held: held.length };
@@ -1819,6 +1836,189 @@ async function captureReportPhotographs(
     console.error('[listing-images] capture_report attempt failed', redactError(error));
     return { status: 503, reason: 'attempt_failed', held: held.length };
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* A PDF-made report's photographs, chosen from its brochure                   */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * A report made from an uploaded PDF has no listing page to capture from. Its
+ * brochure is read in the author's browser (`src/lib/reports/brochurePhotographs.ts`),
+ * the author ticks the photographs the report may carry, and each is sent here,
+ * one to a request. Nothing about it is taken on trust: it is held to what a
+ * listing page's photograph is held to (`runCaptureAttempt`) — a header stating
+ * the print floor, one copy of each picture, and this server's own verdict on
+ * the pixels that it is a photograph — and filed under the report with the same
+ * object name, so the report broker reads it exactly as it reads a capture.
+ *
+ * `brochure.json` is written before the first photograph and holds the report
+ * against the address the brochure states (rule 4, in its lot-aware form); a
+ * report re-pointed at another property stops accepting them, and every reader
+ * stops serving them.
+ */
+
+/** Time to look at the one photograph a request carries. */
+const BROCHURE_BUDGET_MS = 10_000;
+const BROCHURE_SCOPE = 'report_brochure_photograph';
+
+interface BrochureAnswer {
+  status: number;
+  reason?: string;
+  /** Photographs the report holds, as far as this request knows. */
+  held?: number;
+  /** The stored name, where this photograph was kept. */
+  name?: string;
+}
+
+/** The base64 a request carries, as bytes; null for anything that is not base64 or is too large. */
+function decodeImagePayload(value: unknown): Uint8Array | null {
+  if (typeof value !== 'string' || !value) return null;
+  // Four characters carry three bytes; anything longer cannot be within the cap.
+  if (value.length > Math.ceil(BROCHURE_PHOTOGRAPH_MAX_BYTES / 3) * 4 + 4) return null;
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return null;
+  try {
+    const text = atob(value);
+    const bytes = new Uint8Array(text.length);
+    for (let index = 0; index < text.length; index += 1) bytes[index] = text.charCodeAt(index);
+    return bytes;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Files one photograph the report's author chose from its brochure, or says why not.
+ *
+ * Only the author, of a report that is not derived (a fork or a condensed child
+ * reads its parent's photographs), and never beside a listing page's capture:
+ * a report's photographs come from one source.
+ */
+async function fileBrochurePhotograph(
+  supabase: ListingImagesClient,
+  args: {
+    reportId: string;
+    userId: string;
+    documentSha256: unknown;
+    source: unknown;
+    place: unknown;
+    image: unknown;
+  },
+): Promise<BrochureAnswer> {
+  const folder = captureFolder(args.reportId);
+  if (!folder) return { status: 400, reason: 'invalid_report_id' };
+  if (!isDocumentDigest(args.documentSha256)) return { status: 400, reason: 'invalid_document' };
+  const documentSha256 = args.documentSha256.trim().toLowerCase();
+  const place = Number(args.place);
+  if (!Number.isInteger(place) || place < 0 || place >= REPORT_PHOTOGRAPH_LIMIT) {
+    return { status: 400, reason: 'invalid_place' };
+  }
+  const bytes = decodeImagePayload(args.image);
+  if (!bytes || bytes.length < MIN_IMAGE_BYTES || bytes.length > BROCHURE_PHOTOGRAPH_MAX_BYTES) {
+    return { status: 400, reason: 'invalid_image' };
+  }
+
+  const { data: report, error: reportError } = await supabase
+    .from('investment_reports')
+    .select('id, generated_by, parent_report_id, derived_from_report_id, property_address')
+    .eq('id', args.reportId)
+    .maybeSingle();
+  if (reportError) return { status: 503, reason: 'report_unreadable' };
+  if (!report) return { status: 404, reason: 'report_not_found' };
+  if (report.parent_report_id || report.derived_from_report_id) return { status: 409, reason: 'derived_report' };
+  if (report.generated_by !== args.userId) return { status: 403, reason: 'not_the_author' };
+
+  const listed = await supabase.storage.from(BUCKET).list(folder, { limit: 100 });
+  if (listed.error) return { status: 503, reason: 'storage_unreadable' };
+  const objects = listed.data ?? [];
+  const held = heldCapturedPhotographs(objects);
+  if (objects.some((object) => object?.name === CAPTURE_RECORD_NAME)) {
+    return { status: 409, reason: 'listing_capture', held: held.length };
+  }
+
+  if (objects.some((object) => object?.name === BROCHURE_RECORD_NAME)) {
+    const stored = await supabase.storage.from(BUCKET).download(`${folder}/${BROCHURE_RECORD_NAME}`);
+    // A record that is there and cannot be read is not a record that is absent.
+    if (stored.error || !stored.data) return { status: 503, reason: 'record_unreadable', held: held.length };
+    let record: BrochureRecord | null;
+    try {
+      record = parseBrochureRecord(JSON.parse(await stored.data.text()));
+    } catch {
+      record = null;
+    }
+    if (!record) return { status: 409, reason: 'record_unreadable', held: held.length };
+    if (record.requestedBy !== report.generated_by) return { status: 409, reason: 'record_mismatch', held: held.length };
+    if (record.documentSha256 !== documentSha256) return { status: 409, reason: 'different_document', held: held.length };
+    // Rule 4 again: the report may have been re-pointed since the first photograph.
+    if (!brochurePhotographsAreOfReportAddress(report.property_address, record.source)) {
+      return { status: 409, reason: 'address_changed', held: held.length };
+    }
+  } else {
+    // Rule 4: the photographs are of the address the brochure states, and they
+    // are kept for this report only if that is the report's own address.
+    const source = brochurePhotographSource(
+      args.source && typeof args.source === 'object' ? args.source as Record<string, unknown> : null,
+    );
+    if (!source) return { status: 400, reason: 'address_unknown' };
+    if (!brochurePhotographsAreOfReportAddress(report.property_address, source)) {
+      return { status: 409, reason: 'address_mismatch' };
+    }
+    // No record, no photographs: nothing is written until this is.
+    const record = newBrochureRecord({ documentSha256, source, requestedBy: report.generated_by, now: Date.now() });
+    const { error } = await supabase.storage
+      .from(BUCKET)
+      .upload(`${folder}/${BROCHURE_RECORD_NAME}`, new TextEncoder().encode(JSON.stringify(record)), {
+        contentType: 'application/json',
+        upsert: true,
+      });
+    if (error) {
+      console.warn(`[listing-images] brochure record not written for ${folder}: ${error.message}`);
+      return { status: 503, reason: 'record_unwritable' };
+    }
+  }
+
+  const size = readDecodableDimensions(bytes);
+  if (!size) return { status: 422, reason: 'unreadable', held: held.length };
+  if (Math.max(size.width, size.height) < MIN_PRINT_LONG_EDGE_PX) {
+    return { status: 422, reason: 'below_print_floor', held: held.length };
+  }
+  const checksum = (await sha256Hex(bytes)).slice(0, 16);
+  const atPlace = held.find((photo) => photo.place === place);
+  // The same photograph at the same place is a retry that already landed.
+  if (atPlace?.checksum === checksum) return { status: 200, held: held.length, name: atPlace.name };
+  if (atPlace) return { status: 409, reason: 'place_taken', held: held.length };
+  if (held.length >= REPORT_PHOTOGRAPH_LIMIT) return { status: 409, reason: 'limit', held: held.length };
+  if (held.some((photo) => photo.checksum === checksum)) return { status: 409, reason: 'duplicate', held: held.length };
+
+  const judged = await judgeForCapture(newAnalysisBudget(BROCHURE_BUDGET_MS), bytes);
+  if ('refusal' in judged) {
+    // Out of time or pixels says nothing about the photograph; undecodable does.
+    const lasting = judged.refusal === 'undecodable';
+    return { status: lasting ? 422 : 503, reason: judged.refusal, held: held.length };
+  }
+  const { analysis } = judged;
+  if (analysis.kind !== 'photo') return { status: 422, reason: analysis.kind, held: held.length };
+  const repeat = held.some((photo) => {
+    const distance = signatureDistance(photo.signature, analysis.signature);
+    return distance !== null && distance <= SIGNATURE_MATCH_BITS;
+  });
+  if (repeat) return { status: 409, reason: 'duplicate', held: held.length };
+
+  const contentType = `image/${size.format}`;
+  const name = captureObjectName({
+    place,
+    width: size.width,
+    height: size.height,
+    checksum,
+    signature: analysis.signature,
+    contentType,
+  });
+  if (!name || !parseCaptureObjectName(name)) return { status: 422, reason: 'unnameable', held: held.length };
+  const upload = await supabase.storage
+    .from(BUCKET)
+    .upload(`${folder}/${name}`, bytes, { contentType, upsert: true });
+  if (upload.error) return { status: 503, reason: 'upload_failed', held: held.length };
+  return { status: 200, held: held.length + 1, name };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2102,6 +2302,52 @@ Deno.serve(async (req) => {
         wait: body.wait === true,
       });
       return j({ success: status < 400, op, ...captured }, status);
+    }
+
+    /* -- A PDF-made report's photographs, chosen from its brochure -------- */
+    if (op === 'capture_brochure_photograph') {
+      const auth = await verifyAuth(supabase, req.headers, body as { session_token?: string });
+      if (auth.error || !auth.userId) {
+        return createUnauthorizedResponse(auth.error || 'Authentication required', corsHeaders);
+      }
+      // The report permission, as for a capture: this files photographs under
+      // a report, which is what the report broker later signs them from.
+      const reportsPermission = await requireModulePermission(
+        supabase,
+        { userId: auth.userId, authMethod: auth.authMethod },
+        'reports',
+        'can_view',
+      );
+      if (!reportsPermission.ok) {
+        return createForbiddenResponse(reportsPermission.error || 'Reports access required', corsHeaders);
+      }
+      // One photograph a request, and a report carries six: room for a retry
+      // of each, and for an author filing two reports in a minute.
+      const brochureActorQuota = await enforceActorQuota(supabase, auth.userId, BROCHURE_SCOPE, {
+        limit: 30,
+        windowMs: 60_000,
+      });
+      const brochureIpQuota = await enforceIpQuota(supabase, getClientIp(req), BROCHURE_SCOPE, {
+        limit: 60,
+        windowMs: 60_000,
+      });
+      if (!brochureActorQuota.ok || !brochureIpQuota.ok) return j({ success: false, error: 'rate_limited' }, 429);
+
+      const reportId = typeof body.reportId === 'string' ? body.reportId : '';
+      const { status, ...filed } = await fileBrochurePhotograph(supabase, {
+        reportId,
+        userId: auth.userId,
+        documentSha256: body.documentSha256,
+        source: body.source,
+        place: body.place,
+        image: body.image,
+      });
+      // One line a photograph; nobody reads the answer but the browser that sent it.
+      console.log(
+        `[listing-images] capture_brochure_photograph: report=${captureFolder(reportId) ? reportId : 'invalid'} ` +
+          `status=${status} ${filed.reason ? `refused=${filed.reason}` : 'kept'} held=${filed.held ?? 0}`,
+      );
+      return j({ success: status < 400, op, ...filed }, status);
     }
 
     /* -- User-facing resolve --------------------------------------------- */

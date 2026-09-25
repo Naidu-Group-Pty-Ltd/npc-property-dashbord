@@ -618,7 +618,9 @@ describe('the broker reads a URL-extract report\'s photographs, and where their 
 
   it('reads the family\'s folder for a derived document, and names that report as the capture\'s', () => {
     expect(fn).toContain('const ownerId = row ? familyParentId(row) ?? row.id : null;');
-    expect(fn).toContain('state: captureStateOf(record, Date.now()),');
+    // A folder with no capture record may hold a brochure's (a report made from
+    // a PDF), whose photographs were chosen once and leave nothing to finish.
+    expect(fn).toContain("state: record ? captureStateOf(record, Date.now()) : 'complete',");
     expect(fn).toContain('reportId: ownerId.trim().toLowerCase(),');
     expect(fn).toContain('capturedPhotographsForReport(listed.data ?? [])');
   });
@@ -626,12 +628,19 @@ describe('the broker reads a URL-extract report\'s photographs, and where their 
   it('serves nothing without a readable record, and nothing of another address', () => {
     const reader = fn.slice(fn.indexOf('async function readCaptureRecord('));
     expect(reader).toMatch(/if \(stored\.error \|\| !stored\.data\) \{[\s\S]*?return null;/);
-    const noRecord = fn.indexOf('if (!record) return { photographs: [] };');
+    // Without a capture record the folder is read for a brochure's record
+    // instead, and without either nothing is served. Each is held to the
+    // report's address before a single photograph is chosen.
+    const read = fn.indexOf('const record = await readCaptureRecord(');
     const address = fn.indexOf('if (!photographsAreOfReportAddress(row?.property_address, record.source)) {');
+    const noBrochure = fn.indexOf('if (!brochure) return { photographs: [] };');
+    const brochureAddress = fn.indexOf('if (!brochurePhotographsAreOfReportAddress(row?.property_address, brochure.source)) {');
     const chosen = fn.indexOf('capturedPhotographsForReport(listed.data ?? [])');
-    expect(noRecord).toBeGreaterThan(-1);
-    expect(address).toBeGreaterThan(noRecord);
-    expect(chosen).toBeGreaterThan(address);
+    for (const at of [read, address, noBrochure, brochureAddress, chosen]) expect(at).toBeGreaterThan(-1);
+    expect(address).toBeGreaterThan(read);
+    expect(noBrochure).toBeGreaterThan(address);
+    expect(brochureAddress).toBeGreaterThan(noBrochure);
+    expect(chosen).toBeGreaterThan(brochureAddress);
   });
 
   it('holds a listing report to its listing\'s address before it reads a photograph', () => {
