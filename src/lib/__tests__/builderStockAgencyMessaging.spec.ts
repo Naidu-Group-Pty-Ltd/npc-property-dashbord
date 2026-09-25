@@ -679,6 +679,42 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
     });
   });
 
+  describe('a property that changed hands', () => {
+    const reassign = (org: string) => db.sql(`UPDATE public.builder_network_stock_items SET organisation_id = ${lit(org)} WHERE id = ${lit(ITEM_A1)}`);
+
+    it('a failed message cannot be sent again to the builder who no longer holds the property', () => {
+      const failed = post(ITEM_A1, OWNER, randomUUID(), 'Failed before the property changed hands.');
+      receipt(failed, 1, 'refused', 'x');
+      sweep();
+      reassign(ORG_B);
+      try {
+        expect(refusal(`SELECT public.builder_network_retry_message(${lit(failed)}, ${lit(OWNER)})`)).toMatch(/AGENCY_CONVERSATION_NOT_OPEN/);
+        expect(db.sql(`SELECT delivery_state || '|' || delivery_generation FROM public.builder_network_messages WHERE id = ${lit(failed)}`))
+          .toBe('failed|1');
+      } finally {
+        reassign(ORG_A);
+      }
+    });
+
+    it('a stored message redelivered after it changed hands is acknowledged again; new content from the former builder is refused', () => {
+      const stored = builderMessage({ body: 'Stored before the property changed hands.' });
+      land(CONN_A, 'agency.message.posted', `agency.message:${stored.message_id}:1`, stored);
+      sweep();
+      reassign(ORG_B);
+      try {
+        land(CONN_A, 'agency.message.posted', `agency.message:${stored.message_id}:2`, { ...stored, generation: 2 });
+        const fresh = builderMessage({ body: 'New from the former builder.' });
+        land(CONN_A, 'agency.message.posted', `agency.message:${fresh.message_id}:1`, fresh);
+        sweep();
+        expect(outbox(`dedupe_key = 'agency.receipt:${stored.message_id}:2' AND payload->>'outcome' = 'accepted'`)).toBe('1');
+        expect(db.sql(`SELECT message_apply_error FROM public.builder_network_inbound_events
+                       WHERE dedupe_key = 'agency.message:${fresh.message_id}:1'`)).toBe('refused:stock_item_not_ours');
+      } finally {
+        reassign(ORG_A);
+      }
+    });
+  });
+
   describe('a stored builder message, redelivered after stock:publish was withdrawn', () => {
     it('is acknowledged again, while new content is still refused', () => {
       const stored = builderMessage({ body: 'Stored before the scope went.' });
@@ -722,7 +758,7 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
   });
 
   describe('a time that is not a time', () => {
-    it.each(['infinity', '-infinity'])('a builder message sent at %s is refused as malformed and stored nowhere', (when) => {
+    it.each(['infinity', '-infinity', 'now', 'today', 'epoch', '2026-09-25'])('a builder message sent at %s is refused as malformed and stored nowhere', (when) => {
       const odd = builderMessage({ body: `Sent at ${when}.`, sent_at: when });
       land(CONN_A, 'agency.message.posted', `agency.message:${odd.message_id}:1`, odd);
       sweep();

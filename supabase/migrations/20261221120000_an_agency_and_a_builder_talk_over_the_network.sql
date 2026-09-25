@@ -445,8 +445,11 @@ BEGIN
        AND s.organisation_id = v_conversation.builder_organisation_id
        AND s.status <> 'withdrawn')
      OR NOT EXISTS (
+    -- Still listed, and still this builder's: a property that changed hands
+    -- takes no retry toward the builder who no longer holds it.
     SELECT 1 FROM public.builder_network_stock_items i
-     WHERE i.id = v_conversation.stock_item_id AND i.lifecycle_status = 'active') THEN
+     WHERE i.id = v_conversation.stock_item_id AND i.lifecycle_status = 'active'
+       AND i.organisation_id = v_conversation.builder_organisation_id) THEN
     RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'AGENCY_CONVERSATION_NOT_OPEN';
   END IF;
 
@@ -594,7 +597,12 @@ BEGIN
   IF v_item IS NOT NULL THEN
     PERFORM 1 FROM public.builder_network_stock_items i WHERE i.id = v_item FOR SHARE;
   END IF;
-  IF v_item IS NULL OR v_sent IS NULL OR NOT isfinite(v_sent) OR length(v_body) NOT BETWEEN 1 AND 4000
+  -- The time is a canonical RFC 3339 instant: a word PostgreSQL resolves in
+  -- context ('now', 'today', 'epoch') would read differently on every retry
+  -- and turn a lost-receipt recovery into a conflict.
+  IF v_item IS NULL OR v_sent IS NULL OR NOT isfinite(v_sent)
+     OR (v_payload->>'sent_at') !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?(Z|[+-][0-9]{2}(:?[0-9]{2})?)$'
+     OR length(v_body) NOT BETWEEN 1 AND 4000
      OR length(v_name) NOT BETWEEN 1 AND 200 THEN
     v_reason := 'invalid_message';
   ELSIF NOT EXISTS (SELECT 1 FROM public.builder_network_connections c
@@ -616,7 +624,17 @@ BEGIN
   ELSIF NOT EXISTS (
     SELECT 1 FROM public.builder_network_stock_items i
      WHERE i.id = v_item AND i.organisation_id = v_connection.builder_organisation_id) THEN
-    v_reason := 'stock_item_not_ours';
+    -- Not this builder's (or no longer): nothing new is stored, but the retry
+    -- of a message already held here unchanged is acknowledged again, or the
+    -- builder would record a refusal for words this side keeps.
+    SELECT * INTO v_existing FROM public.builder_network_messages WHERE id = v_message_id;
+    IF v_existing.id IS NULL
+       OR v_existing.conversation_id <> v_conversation_id OR v_existing.side <> 'builder'
+       OR v_existing.body <> v_body OR v_existing.sender_display_name <> left(v_name, 200)
+       OR v_existing.sent_at <> v_sent THEN
+      v_reason := 'stock_item_not_ours';
+    END IF;
+    v_existing := NULL;
   ELSIF v_conversation_id <> public.builder_network_conversation_id(v_connection.network_connection_id, v_item) THEN
     v_reason := 'conversation_mismatch';
   ELSE
