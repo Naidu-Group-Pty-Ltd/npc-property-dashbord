@@ -37,6 +37,11 @@ vi.mock('@/lib/marketplaceBuilderStock', async (original) => ({
   },
   useMarketplaceClientSearch: () => ({ data: { records: [] }, isLoading: false }),
   useSelectBuilderStockForClient: () => ({ mutate: vi.fn(), isPending: false }),
+  useBuilderConversation: () => ({
+    data: { conversation_id: null, open: true, can_send: true, messages: [] }, isLoading: false, error: null,
+  }),
+  useSendBuilderMessage: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useRetryBuilderMessage: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
 const record = {
@@ -137,6 +142,11 @@ describe('what the page states', () => {
     }
   });
 
+  it('carries the conversation with the property\'s builder', async () => {
+    await renderAt('/listings/builder-stock/stock-1');
+    expect(screen.getByRole('heading', { name: /messages with proof homes/i })).toBeInTheDocument();
+  });
+
   it('the activation record: status, who, when — and the client where the reader may see clients', async () => {
     await renderAt('/listings/builder-stock/stock-1');
     const section = screen.getByRole('region', { name: /activation/i });
@@ -160,6 +170,15 @@ describe('what the page states', () => {
   it('withholds Activate from a reader without client edit permission', async () => {
     permissions = { canView: true, canEdit: false };
     await renderAt('/listings/builder-stock/stock-1');
+    const button = screen.queryByRole('button', { name: /activate builder/i }) as HTMLButtonElement | null;
+    expect(button === null || button.disabled).toBe(true);
+  });
+
+  it('a property the builder stopped listing still opens, with its conversation, and offers no activation', async () => {
+    detail = { ...baseDetail(), record: { ...record, lifecycle_status: 'archived' } as typeof record };
+    await renderAt('/listings/builder-stock/stock-1');
+    expect(screen.getByText(/no longer listed by the builder/i)).toBeTruthy();
+    expect(screen.getByRole('heading', { name: /messages with/i })).toBeTruthy();
     const button = screen.queryByRole('button', { name: /activate builder/i }) as HTMLButtonElement | null;
     expect(button === null || button.disabled).toBe(true);
   });
