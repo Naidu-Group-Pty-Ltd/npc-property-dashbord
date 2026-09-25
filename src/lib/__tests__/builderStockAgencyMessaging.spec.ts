@@ -330,6 +330,45 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
     });
   });
 
+  describe('a connection that stops being deliverable', () => {
+    const heldOf = (m: string) => db.sql(`SELECT (available_at = 'infinity') FROM public.builder_network_outbox
+                                          WHERE dedupe_key = 'agency.message:${m}:1'`);
+    it('queued messages are held, not sent, while the identity is disputed — and released once it is repaired', () => {
+      const m = post(ITEM_A1, OWNER, randomUUID(), 'Queued just before the dispute.');
+      expect(heldOf(m)).toBe('f');
+      db.sql(`UPDATE public.builder_network_connections SET identity_mismatch_since = now() WHERE id = ${lit(CONN_A)}`);
+      expect(heldOf(m)).toBe('t');
+      expect(db.sql(`SELECT count(*) FROM public.builder_network_claim_outbox('spec', 100) WHERE dedupe_key = 'agency.message:${m}:1'`))
+        .toBe('0');
+      db.sql(`UPDATE public.builder_network_connections SET identity_mismatch_since = NULL WHERE id = ${lit(CONN_A)}`);
+      expect(heldOf(m)).toBe('f');
+      expect(db.sql(`SELECT delivery_state FROM public.builder_network_messages WHERE id = ${lit(m)}`)).toBe('queued');
+    });
+
+    it('the same when stock:publish is withdrawn; a retry needs the scope; a builder message needs it too', () => {
+      const queued = post(ITEM_A1, OWNER, randomUUID(), 'Queued just before the scope went.');
+      const failed = post(ITEM_A1, OWNER, randomUUID(), 'Failed before the scope went.');
+      receipt(failed, 1, 'refused', 'x');
+      sweep();
+      db.sql(`UPDATE public.builder_network_connections SET scopes = ARRAY[]::text[] WHERE id = ${lit(CONN_A)}`);
+      try {
+        expect(heldOf(queued)).toBe('t');
+        expect(refusal(`SELECT public.builder_network_retry_message(${lit(failed)}, ${lit(OWNER)})`)).toMatch(/AGENCY_CONVERSATION_NOT_OPEN/);
+        expect(db.sql(`SELECT delivery_state || '|' || delivery_generation FROM public.builder_network_messages WHERE id = ${lit(failed)}`))
+          .toBe('failed|1');
+        const inbound = builderMessage({ body: 'Written after the scope went.' });
+        land(CONN_A, 'agency.message.posted', `agency.message:${inbound.message_id}:1`, inbound);
+        sweep();
+        expect(db.sql(`SELECT message_apply_error FROM public.builder_network_inbound_events
+                       WHERE dedupe_key = 'agency.message:${inbound.message_id}:1'`)).toBe('refused:scope_revoked');
+        expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE id = ${lit(inbound.message_id)}`)).toBe('0');
+      } finally {
+        db.sql(`UPDATE public.builder_network_connections SET scopes = ARRAY['stock:publish'] WHERE id = ${lit(CONN_A)}`);
+      }
+      expect(heldOf(queued)).toBe('f');
+    });
+  });
+
   describe('two sends of one message at once', () => {
     it('the one that loses the race returns the winner\'s message instead of failing', async () => {
       const key = randomUUID();

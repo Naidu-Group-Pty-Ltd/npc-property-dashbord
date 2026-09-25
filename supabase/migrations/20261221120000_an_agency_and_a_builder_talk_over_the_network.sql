@@ -150,14 +150,30 @@ BEGIN
 END
 $fn$;
 
+-- A connection a message may not cross right now: its builder identity is
+-- disputed (20261211000000's halt) or the builder has withdrawn stock:publish.
+-- Neither is the end of the relationship, so what is queued is HELD, never
+-- dropped: its outbox row waits (available_at = infinity, which the existing
+-- claim never reaches) and is released the moment the connection recovers.
+CREATE OR REPLACE FUNCTION public.builder_network_message_route_held(_connection_id uuid)
+RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
+AS $fn$
+  SELECT EXISTS (
+    SELECT 1 FROM public.builder_network_connections c
+     WHERE c.id = _connection_id
+       AND (c.identity_mismatch_since IS NOT NULL OR NOT ('stock:publish' = ANY (COALESCE(c.scopes, ARRAY[]::text[])))))
+$fn$;
+
 CREATE OR REPLACE FUNCTION public.builder_network_message_enqueue(
   _connection_id uuid, _event_type text, _dedupe_key text, _payload jsonb)
 RETURNS void
 LANGUAGE sql SECURITY DEFINER SET search_path = public
 AS $fn$
-  INSERT INTO public.builder_network_outbox(connection_id, event_type, dedupe_key, payload, source_version)
+  INSERT INTO public.builder_network_outbox(connection_id, event_type, dedupe_key, payload, source_version, available_at)
   VALUES (_connection_id, _event_type, _dedupe_key, _payload,
-          nextval('public.builder_network_message_version_seq'))
+          nextval('public.builder_network_message_version_seq'),
+          CASE WHEN public.builder_network_message_route_held(_connection_id) THEN 'infinity'::timestamptz ELSE now() END)
   ON CONFLICT (dedupe_key) DO NOTHING
 $fn$;
 
@@ -311,7 +327,8 @@ BEGIN
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM public.builder_network_connections c
-     WHERE c.id = v_conversation.connection_id AND c.state = 'active')
+     WHERE c.id = v_conversation.connection_id AND c.state = 'active'
+       AND 'stock:publish' = ANY (c.scopes))
      OR NOT EXISTS (
     SELECT 1 FROM public.builder_stock_selections s
      WHERE s.stock_item_id = v_conversation.stock_item_id
@@ -363,6 +380,14 @@ BEGIN
     FROM public.builder_network_connections c WHERE c.id = v_event.connection_id;
   IF v_connection.id IS NULL OR v_connection.state <> 'active' THEN
     RETURN 'refused:connection_not_active';
+  END IF;
+  -- A builder that withdrew stock:publish has withdrawn this conversation's
+  -- grant too: no new message from it is stored. Receipts for what we sent
+  -- still land — they carry no content.
+  IF v_event.event_type = 'agency.message.posted'
+     AND NOT EXISTS (SELECT 1 FROM public.builder_network_connections c
+                      WHERE c.id = v_connection.id AND 'stock:publish' = ANY (c.scopes)) THEN
+    RETURN 'refused:scope_revoked';
   END IF;
 
   BEGIN
@@ -611,6 +636,35 @@ BEGIN
 END
 $fn$;
 
+CREATE OR REPLACE FUNCTION public.builder_network_message_route_changed()
+RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $fn$
+DECLARE
+  v_was boolean := OLD.identity_mismatch_since IS NOT NULL
+                   OR NOT ('stock:publish' = ANY (COALESCE(OLD.scopes, ARRAY[]::text[])));
+  v_is boolean := NEW.identity_mismatch_since IS NOT NULL
+                  OR NOT ('stock:publish' = ANY (COALESCE(NEW.scopes, ARRAY[]::text[])));
+BEGIN
+  IF v_is AND NOT v_was THEN
+    UPDATE public.builder_network_outbox
+       SET available_at = 'infinity'
+     WHERE connection_id = NEW.id AND status = 'pending' AND event_type LIKE 'agency.message.%';
+  ELSIF v_was AND NOT v_is THEN
+    UPDATE public.builder_network_outbox
+       SET available_at = now()
+     WHERE connection_id = NEW.id AND status = 'pending' AND event_type LIKE 'agency.message.%'
+       AND available_at = 'infinity';
+  END IF;
+  RETURN NEW;
+END
+$fn$;
+
+DROP TRIGGER IF EXISTS trg_builder_network_message_route_changed ON public.builder_network_connections;
+CREATE TRIGGER trg_builder_network_message_route_changed
+  AFTER UPDATE OF identity_mismatch_since, scopes ON public.builder_network_connections
+  FOR EACH ROW EXECUTE FUNCTION public.builder_network_message_route_changed();
+
 DROP TRIGGER IF EXISTS trg_builder_network_message_transport_dead ON public.builder_network_outbox;
 CREATE TRIGGER trg_builder_network_message_transport_dead
   AFTER UPDATE OF status ON public.builder_network_outbox
@@ -626,6 +680,8 @@ REVOKE ALL ON FUNCTION public.builder_network_conversation_id(uuid, uuid) FROM P
 REVOKE ALL ON FUNCTION public.builder_network_message_payload(uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_kick_outbox() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_message_enqueue(uuid, text, text, jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.builder_network_message_route_held(uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.builder_network_message_route_changed() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_post_message(uuid, uuid, uuid, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_retry_message(uuid, uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_apply_message_event(uuid) FROM PUBLIC, anon, authenticated;

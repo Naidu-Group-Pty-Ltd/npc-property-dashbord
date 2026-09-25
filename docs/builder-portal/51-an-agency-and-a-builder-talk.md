@@ -61,7 +61,7 @@ Both main inbound sweeps refuse an event type they do not handle, and the refusa
 - The message sweep (`builder_network_apply_message_events` here, `builder_agency_apply_message_events` on the network) keeps its own stamp (`message_applied_at`).
 - It runs each minute, and the network door also runs it once when an envelope lands.
 - The main, media and rank sweeps are unchanged.
-- Like the main sweep, it holds (never consumes) a connection's events while `identity_mismatch_since` is set, and replays them once the identity is repaired. Outbound it is the same rule: while the stamp is set, posting and retrying are refused (`AGENCY_CONNECTION_HALTED`), so nothing new crosses a disputed relationship.
+- Like the main sweep, it holds (never consumes) a connection's events while `identity_mismatch_since` is set, and replays them once the identity is repaired. Outbound it is the same rule: while the stamp is set, posting and retrying are refused (`AGENCY_CONNECTION_HALTED`), so nothing new crosses a disputed relationship. What was already queued is HELD rather than dropped: while a connection is disputed or has lost `stock:publish`, its pending message rows wait (`available_at = infinity`, which the outbox claim never reaches) and are released the moment it recovers. A connection without `stock:publish` also cannot retry a message, and a builder message arriving over it is refused (`scope_revoked`).
 
 **Failure handling.** One message that cannot be applied is retried on later sweeps. After five attempts it is dead-lettered with a critical operational event. It never blocks the messages after it: each claim takes its own row with `SKIP LOCKED`, and each row runs in its own exception block.
 
