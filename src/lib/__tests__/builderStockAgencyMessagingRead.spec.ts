@@ -445,6 +445,18 @@ describe('the conversation log', () => {
   });
 });
 
+describe('a refusal at the door says which keys were wrong', () => {
+  it('names mistyped keys (a skewed schema_version) as well as unexpected and missing ones, and never a value', () => {
+    const door = readCode('supabase/functions/builder-network-inbound/index.ts');
+    const start = door.indexOf('message contract violation');
+    const block = door.slice(start, door.indexOf("'message_contract_failed'", start));
+    expect(block).toMatch(/mistyped:\s*contract\.mistyped\.slice\(0,\s*20\)/);
+    expect(block).toMatch(/unexpected:\s*contract\.unexpected/);
+    expect(block).toMatch(/missing:\s*contract\.missing/);
+    expect(block).not.toMatch(/envelope\.payload\[/);
+  });
+});
+
 describe('following what a poll brings in', () => {
   it('opens at the end, follows a new last message, brings a late one into view, and stays put otherwise', async () => {
     const { arrivalScrollTarget } = await import('../marketplaceBuilderStock');

@@ -101,6 +101,9 @@ Deno.serve(async (req) => {
         event_type: eventType,
         unexpected: contract.unexpected.slice(0, 20),
         missing: contract.missing.slice(0, 20),
+        // A key present with the wrong type or value, e.g. a schema_version
+        // this side cannot apply: the only trace of a skewed peer.
+        mistyped: contract.mistyped.slice(0, 20),
       });
       return json({ error: 'message_contract_failed' }, 422);
     }
