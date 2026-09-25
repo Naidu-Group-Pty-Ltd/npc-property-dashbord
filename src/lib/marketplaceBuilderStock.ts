@@ -236,6 +236,15 @@ export interface BuilderConversation {
 /** How often an open conversation re-reads itself. Polling is the transport's floor. */
 export const BUILDER_CONVERSATION_POLL_MS = 10_000;
 
+/**
+ * An open conversation is re-read every few seconds; a closed one is history
+ * and is not. Activating the property from this page invalidates the query,
+ * so a closed conversation that opens is read without being polled for.
+ */
+export function builderConversationPollInterval(data: { open?: boolean } | undefined): number | false {
+  return data?.open === false ? false : BUILDER_CONVERSATION_POLL_MS;
+}
+
 const conversationKey = (stockItemId: string) =>
   [...marketplaceStockKeys.root(), 'conversation', stockItemId] as const;
 
@@ -246,7 +255,7 @@ export function useBuilderConversation(stockItemId: string, enabled = true) {
     queryFn: () => invoke<BuilderConversation>({
       operation: 'get_builder_conversation', stock_item_id: stockItemId,
     }),
-    refetchInterval: BUILDER_CONVERSATION_POLL_MS,
+    refetchInterval: (query) => builderConversationPollInterval(query.state.data),
     refetchIntervalInBackground: false,
   });
 }

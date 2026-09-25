@@ -16,6 +16,7 @@ import {
   projectConversationMessages,
 } from '../../../supabase/functions/_shared/builderStock/agencyMessages.pure';
 import { readBuilderConversation } from '../../../supabase/functions/_shared/builderStock/agencyMessages';
+import { BUILDER_CONVERSATION_POLL_MS, builderConversationPollInterval } from '../marketplaceBuilderStock';
 
 const REPO_ROOT = join(__dirname, '..', '..', '..');
 const readCode = (p: string) => readFileSync(join(REPO_ROOT, p), 'utf8')
@@ -139,7 +140,17 @@ describe('reading a property\'s conversation', () => {
     if (!next.ok) throw new Error('read failed');
     expect(next.messages.at(-1)?.body).toBe('Just arrived');
     expect(readCode('src/lib/marketplaceBuilderStock.ts'))
-      .toMatch(/refetchInterval:\s*BUILDER_CONVERSATION_POLL_MS/);
+      .toMatch(/refetchInterval:\s*\(query\)\s*=>\s*builderConversationPollInterval\(query\.state\.data\)/);
+  });
+
+  it('polls an open conversation, and stops once the server says it is closed', () => {
+    expect(builderConversationPollInterval(undefined)).toBe(BUILDER_CONVERSATION_POLL_MS);
+    expect(builderConversationPollInterval({ open: true })).toBe(BUILDER_CONVERSATION_POLL_MS);
+    expect(builderConversationPollInterval({ open: false })).toBe(false);
+    // Activating from this page invalidates the conversation, so a closed one
+    // opens without having to be polled for.
+    expect(readCode('src/lib/marketplaceBuilderStock.ts'))
+      .toMatch(/useSelectBuilderStockForClient[\s\S]*?invalidateQueries\(\{ queryKey: marketplaceStockKeys\.root\(\) \}\)/);
   });
 
   it('20. a cross-organisation read returns nothing', async () => {
