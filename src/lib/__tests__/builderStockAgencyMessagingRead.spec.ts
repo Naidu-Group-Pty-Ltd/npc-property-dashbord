@@ -184,6 +184,7 @@ describe('refusals', () => {
     ['AGENCY_MESSAGE_NOT_RETRYABLE', 409],
     ['AGENCY_SENDER_NOT_A_MEMBER', 403],
     ['AGENCY_NETWORK_DISABLED', 409],
+    ['AGENCY_CONNECTION_HALTED', 409],
   ])('%s → %i', (raw, status) => {
     expect(agencyMessageRefusal(`ERROR: ${raw}`)?.status).toBe(status);
   });

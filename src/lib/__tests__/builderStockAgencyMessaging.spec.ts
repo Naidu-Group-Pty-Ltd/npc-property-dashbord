@@ -302,6 +302,40 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
     });
   });
 
+  describe('a relationship whose two ends disagree — outbound', () => {
+    it('nothing new is written to, or re-sent over, a halted connection', () => {
+      const failed = post(ITEM_A1, OWNER, randomUUID(), 'Failed before the halt.');
+      receipt(failed, 1, 'refused', 'x');
+      sweep();
+      db.sql(`UPDATE public.builder_network_connections SET identity_mismatch_since = now() WHERE id = ${lit(CONN_A)}`);
+      const before = outbox(`event_type = 'agency.message.posted'`);
+      expect(refusal(`SELECT public.builder_network_post_message(${lit(ITEM_A1)}, ${lit(OWNER)}, gen_random_uuid(), 'During the halt.')`))
+        .toMatch(/AGENCY_CONNECTION_HALTED/);
+      expect(refusal(`SELECT public.builder_network_retry_message(${lit(failed)}, ${lit(OWNER)})`)).toMatch(/AGENCY_CONNECTION_HALTED/);
+      expect(outbox(`event_type = 'agency.message.posted'`)).toBe(before);
+      expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE body = 'During the halt.'`)).toBe('0');
+      db.sql(`UPDATE public.builder_network_connections SET identity_mismatch_since = NULL WHERE id = ${lit(CONN_A)}`);
+      expect(post(ITEM_A1, OWNER, randomUUID(), 'After the repair.')).toMatch(/^[0-9a-f-]{36}$/);
+    });
+  });
+
+  describe('two sends of one message at once', () => {
+    it('the one that loses the race returns the winner\'s message instead of failing', async () => {
+      const key = randomUUID();
+      const send = `SELECT id FROM public.builder_network_post_message(${lit(ITEM_A1)}, ${lit(OWNER)}, ${lit(key)}, 'Raced send.')`;
+      // Two real sessions. The first holds its message uncommitted; the second
+      // misses it at the lookup, then waits on the unique index until the
+      // first commits — the window a double click or a retried request shares.
+      const first = db.sqlAsync(`BEGIN; ${send}; SELECT pg_sleep(1.5); COMMIT;`);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const second = db.sqlAsync(send);
+      const [a, b] = await Promise.all([first, second]);
+      expect(a.split('\n')[0]).toMatch(/^[0-9a-f-]{36}$/);
+      expect(b).toBe(a.split('\n')[0]);
+      expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE client_message_id = ${lit(key)}`)).toBe('1');
+    }, 20_000);
+  });
+
   describe('a receipt that never gets back', () => {
     it('as RECEIVER (1, 2, 8, 9): the message is stored once, and a retry of it is answered again', () => {
       const lostIn = builderMessage({ body: 'Did you get this one?' });

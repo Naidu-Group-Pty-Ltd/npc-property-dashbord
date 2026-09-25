@@ -65,6 +65,7 @@ export function agencyMessageRefusal(message: string): { status: number; code: s
     ['AGENCY_SENDER_NOT_A_MEMBER', 403, 'not_a_member', 'Your account cannot send messages.'],
     ['AGENCY_MESSAGE_ID_REUSED', 409, 'message_id_reused', 'That message was already sent to a different conversation.'],
     ['AGENCY_NETWORK_DISABLED', 409, 'network_disabled', 'The builder network is switched off for this workspace.'],
+    ['AGENCY_CONNECTION_HALTED', 409, 'connection_halted', 'Messages to this builder are paused while the connection is checked. Try again later.'],
   ];
   for (const [raw, status, code, error] of table) {
     if (message.includes(raw)) return { status, code, error };

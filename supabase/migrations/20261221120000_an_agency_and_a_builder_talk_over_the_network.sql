@@ -198,7 +198,7 @@ BEGIN
   -- the one the activation itself was announced over.
   SELECT i.organisation_id INTO v_org
     FROM public.builder_network_stock_items i WHERE i.id = _stock_item_id;
-  SELECT c.id, c.network_connection_id INTO v_connection
+  SELECT c.id, c.network_connection_id, c.identity_mismatch_since INTO v_connection
     FROM public.builder_network_connections c
    WHERE c.builder_organisation_id = v_org AND c.state = 'active'
      AND 'stock:publish' = ANY (c.scopes)
@@ -206,6 +206,11 @@ BEGIN
    LIMIT 1;
   IF v_org IS NULL OR v_connection.id IS NULL THEN
     RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'AGENCY_CONVERSATION_NOT_FOUND';
+  END IF;
+  -- A relationship whose two ends disagree about who the builder is carries
+  -- nothing new until it is repaired (20261211000000's halt, outbound).
+  IF v_connection.identity_mismatch_since IS NOT NULL THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'AGENCY_CONNECTION_HALTED';
   END IF;
   v_conversation := public.builder_network_conversation_id(v_connection.network_connection_id, _stock_item_id);
 
@@ -248,11 +253,26 @@ BEGIN
   ON CONFLICT (id) DO NOTHING;
 
   v_id := gen_random_uuid();
-  INSERT INTO public.builder_network_messages(
-    id, conversation_id, side, sender_user_id, client_message_id,
-    sender_display_name, body, sent_at, delivery_state, delivery_generation)
-  VALUES (v_id, v_conversation, 'command_centre', _sender_user_id, _client_message_id,
-          left(v_name, 200), v_body, clock_timestamp(), 'queued', 1);
+  BEGIN
+    INSERT INTO public.builder_network_messages(
+      id, conversation_id, side, sender_user_id, client_message_id,
+      sender_display_name, body, sent_at, delivery_state, delivery_generation)
+    VALUES (v_id, v_conversation, 'command_centre', _sender_user_id, _client_message_id,
+            left(v_name, 200), v_body, clock_timestamp(), 'queued', 1);
+  EXCEPTION WHEN unique_violation THEN
+    -- Two overlapping sends of one message (a double click, a retried request):
+    -- the other committed first. Its row IS this send; answer with it.
+    SELECT * INTO v_existing FROM public.builder_network_messages m
+     WHERE m.sender_user_id = _sender_user_id AND m.client_message_id = _client_message_id;
+    IF v_existing.id IS NULL THEN
+      RAISE;
+    END IF;
+    IF v_existing.conversation_id <> v_conversation OR v_existing.body <> v_body THEN
+      RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'AGENCY_MESSAGE_ID_REUSED';
+    END IF;
+    RETURN NEXT v_existing;
+    RETURN;
+  END;
 
   UPDATE public.builder_network_conversations
      SET last_message_at = GREATEST(COALESCE(last_message_at, '-infinity'), now())
@@ -284,6 +304,11 @@ BEGIN
   SELECT * INTO v_conversation FROM public.builder_network_conversations WHERE id = v_message.conversation_id;
   -- Sending again is writing: the conversation must still be open, exactly
   -- as for a new message.
+  IF EXISTS (
+    SELECT 1 FROM public.builder_network_connections c
+     WHERE c.id = v_conversation.connection_id AND c.identity_mismatch_since IS NOT NULL) THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'AGENCY_CONNECTION_HALTED';
+  END IF;
   IF NOT EXISTS (
     SELECT 1 FROM public.builder_network_connections c
      WHERE c.id = v_conversation.connection_id AND c.state = 'active')
