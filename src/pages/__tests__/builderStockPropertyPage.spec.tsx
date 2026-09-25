@@ -171,6 +171,19 @@ describe('what the page states', () => {
   });
 });
 
+describe('a frontend published ahead of its function', () => {
+  it('opens on the old read (the record alone): the card picture, no documents, no activation yet', async () => {
+    // What `get_stock_item` answered before this page existed, and what any
+    // deployment whose functions have not caught up still answers.
+    detail = { record } as unknown as MarketplaceStockDetail;
+    await renderAt('/listings/builder-stock/stock-1');
+    expect(screen.getByText('$650,000')).toBeTruthy();
+    expect(screen.queryByRole('list', { name: /documents/i })).toBeNull();
+    expect(within(screen.getByRole('region', { name: /activation/i }))
+      .getByText(/not activated/i)).toBeTruthy();
+  });
+});
+
 describe('nothing on the page is written by a model', () => {
   it('names no model provider', () => {
     const page = read('src/pages/BuilderStockProperty.tsx');
