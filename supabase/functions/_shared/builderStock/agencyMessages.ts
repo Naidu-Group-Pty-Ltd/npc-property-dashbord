@@ -71,18 +71,30 @@ export async function readBuilderConversation(
   const current = route ? threads.find((c) => c.connection_id === route.id) ?? null : null;
   if (!threads.length) return { ok: true, conversation_id: null, open, closed_reason, messages: [] };
 
-  const { data: messages, error: messagesError } = await supabase
-    .from('builder_network_messages')
-    .select('id, conversation_id, side, sender_user_id, sender_display_name, body, sent_at, delivery_state, delivered_at, failure_reason')
-    .in('conversation_id', threads.map((c) => c.id))
+  const columns = 'id, conversation_id, side, sender_user_id, sender_display_name, body, sent_at, delivery_state, delivered_at, failure_reason';
+  const threadIds = threads.map((c) => c.id);
+  const [{ data: newest, error: newestError }, { data: arrived, error: arrivedError }] = await Promise.all([
     // The NEWEST page: a thread past the cap must keep showing what was just
     // written. The projection puts it back in reading order.
-    .order('sent_at', { ascending: false })
-    .order('id', { ascending: false })
-    .limit(500);
-  if (messagesError) return { ok: false };
+    supabase.from('builder_network_messages').select(columns)
+      .in('conversation_id', threadIds)
+      .order('sent_at', { ascending: false })
+      .order('id', { ascending: false })
+      .limit(500),
+    // And what arrived most recently HERE, whatever time it carries: a message
+    // written earlier that arrived late sorts below the newest page, and would
+    // otherwise never reach the reader at all.
+    supabase.from('builder_network_messages').select(columns)
+      .in('conversation_id', threadIds)
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .limit(50),
+  ]);
+  if (newestError || arrivedError) return { ok: false };
 
-  const rows = (messages ?? []) as Record<string, unknown>[];
+  const byId = new Map<string, Record<string, unknown>>();
+  for (const row of [...(newest ?? []), ...(arrived ?? [])] as Record<string, unknown>[]) byId.set(String(row.id), row);
+  const rows = [...byId.values()];
   const inCurrent = new Set(rows.filter((row) => current && row.conversation_id === current.id).map((row) => String(row.id)));
   return {
     ok: true,
