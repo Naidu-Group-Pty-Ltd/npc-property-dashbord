@@ -279,6 +279,17 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
         .toBe('failed|refused:conversation_not_open');
     });
 
+    it('a receipt with no outcome, or a null one, is refused and changes nothing', () => {
+      const m = post(ITEM_A1, OWNER, randomUUID(), 'A receipt with no outcome must not fail me.');
+      for (const extra of [{}, { outcome: null }]) {
+        land(CONN_A, 'agency.message.receipt', `agency.receipt:${m}:1:${randomUUID()}`, {
+          schema_version: 1, message_id: m, conversation_id: conversationId(NET_A, ITEM_A1), generation: 1, ...extra,
+        });
+        sweep();
+        expect(db.sql(`SELECT delivery_state FROM public.builder_network_messages WHERE id = ${lit(m)}`)).toBe('queued');
+      }
+    });
+
     it('a receipt over another connection cannot touch this conversation\'s message', () => {
       const m = post(ITEM_A1, OWNER, randomUUID(), 'Cross-connection receipt.');
       receipt(m, 1, 'accepted', undefined, CONN_B);
