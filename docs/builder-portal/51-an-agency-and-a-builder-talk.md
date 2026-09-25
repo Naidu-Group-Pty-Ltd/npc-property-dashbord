@@ -98,6 +98,8 @@ Wrong builder, wrong workspace (connection), wrong property and a malformed mess
 - `send_agency_message`: `inventory` edit.
 - `retry_agency_message`: `inventory` edit.
 
+History is read from every conversation the property has held with its builder, so a revoked connection, or one replaced by a new relationship, never hides what was said. Only the conversation on the current active connection can be written to or retried in.
+
 On both sides the sender is the session's user, and the request names no user or organisation. The thread re-reads itself every 10 seconds while the page is visible. Polling is the whole transport, and nothing depends on realtime.
 
 ## 7. Proof

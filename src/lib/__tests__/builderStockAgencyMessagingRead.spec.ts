@@ -38,12 +38,14 @@ function standIn(tables: Record<string, Row[]>) {
       eq(col: string, v: unknown) { entry.filters.push(['eq', col, v]); return builder; },
       neq(col: string, v: unknown) { entry.filters.push(['neq', col, v]); return builder; },
       contains(col: string, v: unknown[]) { entry.filters.push(['contains', col, v]); return builder; },
+      in(col: string, v: unknown[]) { entry.filters.push(['in', col, v]); return builder; },
       order(col: string, o?: { ascending?: boolean; nullsFirst?: boolean }) { orders = [...orders, [col, o?.ascending !== false]]; return builder; },
       limit(n: number) { cap = n; return builder; },
       maybeSingle() { return builder.then((r: any) => ({ data: r.data[0] ?? null, error: null })); },
       then(resolve: (v: unknown) => unknown) {
         let rows = (tables[table] ?? []).filter((row) => entry.filters.every(([op, col, v]) =>
           op === 'eq' ? row[col] === v : op === 'neq' ? row[col] !== v
+            : op === 'in' ? (v as unknown[]).includes(row[col])
             : (v as unknown[]).every((x) => (row[col] ?? []).includes(x))));
         for (const [col, asc] of [...orders].reverse()) {
           rows = [...rows].sort((a, b) => (String(a[col]) < String(b[col]) ? -1 : String(a[col]) > String(b[col]) ? 1 : 0) * (asc ? 1 : -1));
@@ -127,6 +129,7 @@ describe('reading a property\'s conversation', () => {
     const closed = await readBuilderConversation(standIn(tables).client, { stockItemId: ITEM, organisationId: ORG, viewerUserId: ME });
     expect(closed).toMatchObject({ ok: true, open: false, closed_reason: 'not_activated' });
     tables.builder_network_connections = [];
+    tables.builder_network_conversations = [];
     const none = await readBuilderConversation(standIn(tables).client, { stockItemId: ITEM, organisationId: ORG, viewerUserId: ME });
     expect(none).toEqual({ ok: true, open: false, closed_reason: 'not_connected', conversation_id: null, messages: [] });
   });
@@ -187,6 +190,34 @@ describe('reading a property\'s conversation', () => {
     expect(read.messages).toHaveLength(3);
     expect(read.open).toBe(false);
     expect(read.closed_reason).toBe('connection_paused');
+  });
+
+  it('a revoked connection keeps its history readable, and nothing can be sent or retried', async () => {
+    const { tables } = fixture();
+    tables.builder_network_connections[0].state = 'revoked';
+    const read = await readBuilderConversation(standIn(tables).client, { stockItemId: ITEM, organisationId: ORG, viewerUserId: ME });
+    if (!read.ok) throw new Error('read failed');
+    expect(read.messages.map((m) => m.body)).toEqual(['Question', 'Reply', 'Follow-up']);
+    expect(read).toMatchObject({ open: false, closed_reason: 'not_connected' });
+    expect(read.messages.some((m) => m.can_retry)).toBe(false);
+  });
+
+  it('after reconnecting, the old thread\'s history still reads, beside the new one, and only the open thread can retry', async () => {
+    const { tables } = fixture();
+    tables.builder_network_connections[0].state = 'revoked';
+    tables.builder_network_connections.push({ id: 'conn-new', network_connection_id: 'net-new', builder_organisation_id: ORG,
+      state: 'active', scopes: ['stock:publish'], accepted_at: '2026-11-01' });
+    tables.builder_network_conversations.push({ id: 'conv-new', connection_id: 'conn-new', stock_item_id: ITEM, builder_organisation_id: ORG });
+    tables.builder_network_messages.push({ id: 'm4', conversation_id: 'conv-new', side: 'command_centre', sender_display_name: 'Olive Owner',
+      body: 'After reconnecting', sent_at: '2026-11-02T10:00:00Z', delivery_state: 'failed', delivered_at: null,
+      failure_reason: 'not_delivered', sender_user_id: ME, client_message_id: 'client-4' });
+    const read = await readBuilderConversation(standIn(tables).client, { stockItemId: ITEM, organisationId: ORG, viewerUserId: ME });
+    if (!read.ok) throw new Error('read failed');
+    expect(read.conversation_id).toBe('conv-new');
+    expect(read.messages.map((m) => m.body)).toEqual(['Question', 'Reply', 'Follow-up', 'After reconnecting']);
+    expect(read.messages.find((m) => m.body === 'Question')?.can_retry).toBe(false);
+    expect(read.messages.find((m) => m.body === 'After reconnecting')?.can_retry).toBe(true);
+    expect(JSON.stringify(read)).not.toContain('Not this one');
   });
 
   it('20. a cross-organisation read returns nothing', async () => {
