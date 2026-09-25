@@ -131,10 +131,6 @@ export const NAVIGATION_ITEMS: readonly NavItemDef[] = [
   { title: 'Feedback', url: '/feedback', icon: MessageSquareQuote, moduleKey: '__always__', group: 'Help & Usage' },
   { title: 'Support', url: '/support', icon: LifeBuoy, moduleKey: '__always__', group: 'Help & Usage', keywords: ['help', 'ticket', 'issue', 'incident', 'support portal'] },
 
-  // Portals
-  { title: 'Finance Portal', url: '/admin/finance-portal', icon: ShieldCheck, moduleKey: 'finance_portal_admin', group: 'Portals' },
-  { title: 'Solicitor Portal', url: '/admin/solicitor-portal', icon: Scale, moduleKey: 'solicitor_portal_admin', group: 'Portals', keywords: ['solicitor', 'conveyancer', 'legal', 'matter'] },
-  { title: 'Client Portal', url: '/portal-config', icon: Globe, moduleKey: 'portal_config', group: 'Portals', keywords: ['portal config', 'portal configuration'] },
 ];
 
 export const ADMIN_NAVIGATION_ITEMS: readonly NavItemDef[] = [
@@ -159,6 +155,9 @@ export const ADMIN_NAVIGATION_ITEMS: readonly NavItemDef[] = [
   { title: 'Activity Logs', url: '/admin/activity-logs', icon: History, moduleKey: 'activity_logs', group: 'Administration' },
   { title: 'Settings', url: '/settings', icon: Settings, moduleKey: 'settings', group: 'Administration' },
   { title: 'User Management', url: '/admin/users', icon: Users, moduleKey: 'user_management', group: 'Administration' },
+  { title: 'Finance Portal', url: '/admin/finance-portal', icon: ShieldCheck, moduleKey: 'finance_portal_admin', group: 'Portals' },
+  { title: 'Solicitor Portal', url: '/admin/solicitor-portal', icon: Scale, moduleKey: 'solicitor_portal_admin', group: 'Portals', keywords: ['solicitor', 'conveyancer', 'legal', 'matter'] },
+  { title: 'Client Portal', url: '/portal-config', icon: Globe, moduleKey: 'portal_config', group: 'Portals', keywords: ['portal config', 'portal configuration'] },
   { title: 'Token Audit Log', url: '/admin/token-audit', icon: Coins, moduleKey: '__superadmin_only__', group: 'Administration' },
   { title: 'PDF Import Engine', url: '/admin/pdf-import-engine', icon: Cpu, moduleKey: '__superadmin_only__', group: 'Administration' },
   { title: 'PDF Import Diagnostics', url: '/admin/pdf-import-diagnostics', icon: Activity, moduleKey: '__superadmin_only__', group: 'Administration' },
