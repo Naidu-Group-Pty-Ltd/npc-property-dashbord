@@ -75,6 +75,7 @@ import {
   CAPTURE_MAX_ATTEMPTS,
   CAPTURE_RECORD_NAME,
   captureFolder,
+  floorPlanFolder,
   captureIsFinal,
   captureObjectName,
   captureStateOf,
@@ -92,6 +93,7 @@ import {
   parseCaptureRecord,
   photographsAreOfReportAddress,
   placesTakenBefore,
+  REPORT_FLOOR_PLAN_LIMIT,
   REPORT_PHOTOGRAPH_LIMIT,
   type BrochureRecord,
   type CapturedPhotograph,
@@ -149,7 +151,9 @@ type ListingImagesClient = SupabaseClient;
  *   op: 'capture_brochure_photograph' (the report's author) — keep one
  *                  photograph the author chose from the brochure a PDF-made
  *                  report was made from, held to the capture's checks and
- *                  filed beside it the same way; see `fileBrochurePhotograph`.
+ *                  filed beside it the same way; with `kind: 'floorplan'`,
+ *                  one of its floor plans, filed in `plans/`; see
+ *                  `fileBrochurePhotograph`.
  *
  * The bytes live in the private `listing-images` bucket. The browser only ever
  * receives short-lived signed URLs, never a bucket path and never a source URL.
@@ -1865,7 +1869,7 @@ const BROCHURE_SCOPE = 'report_brochure_photograph';
 interface BrochureAnswer {
   status: number;
   reason?: string;
-  /** Photographs the report holds, as far as this request knows. */
+  /** Photographs (or, for a plan, plans) the report holds, as far as this request knows. */
   held?: number;
   /** The stored name, where this photograph was kept. */
   name?: string;
@@ -1888,11 +1892,27 @@ function decodeImagePayload(value: unknown): Uint8Array | null {
 }
 
 /**
- * Files one photograph the report's author chose from its brochure, or says why not.
+ * What a brochure picture is filed as. A plan is kept apart from the
+ * photographs, in the capture folder's `plans/`, because every photo slot
+ * crops to fill its frame and a plan must be drawn whole
+ * (`reportPhotographs.pure.ts`, "Floor plans").
+ */
+type BrochureKind = 'photo' | 'floorplan';
+
+function brochureKindOf(value: unknown): BrochureKind | null {
+  if (value === undefined || value === null || value === 'photo') return 'photo';
+  return value === 'floorplan' ? 'floorplan' : null;
+}
+
+/**
+ * Files one photograph (or floor plan) the report's author chose from its
+ * brochure, or says why not.
  *
  * Only the author, of a report that is not derived (a fork or a condensed child
  * reads its parent's photographs), and never beside a listing page's capture:
- * a report's photographs come from one source.
+ * a report's photographs come from one source. A plan is held to every rule a
+ * photograph is, with one word changed: the server's own reading of the pixels
+ * must call it a plan.
  */
 async function fileBrochurePhotograph(
   supabase: ListingImagesClient,
@@ -1903,14 +1923,21 @@ async function fileBrochurePhotograph(
     source: unknown;
     place: unknown;
     image: unknown;
+    kind?: unknown;
   },
 ): Promise<BrochureAnswer> {
   const folder = captureFolder(args.reportId);
   if (!folder) return { status: 400, reason: 'invalid_report_id' };
+  const kind = brochureKindOf(args.kind);
+  if (!kind) return { status: 400, reason: 'invalid_kind' };
+  // Where this picture is filed, and how many of its kind a report carries.
+  const target = kind === 'floorplan' ? floorPlanFolder(args.reportId) : folder;
+  const limit = kind === 'floorplan' ? REPORT_FLOOR_PLAN_LIMIT : REPORT_PHOTOGRAPH_LIMIT;
+  if (!target) return { status: 400, reason: 'invalid_report_id' };
   if (!isDocumentDigest(args.documentSha256)) return { status: 400, reason: 'invalid_document' };
   const documentSha256 = args.documentSha256.trim().toLowerCase();
   const place = Number(args.place);
-  if (!Number.isInteger(place) || place < 0 || place >= REPORT_PHOTOGRAPH_LIMIT) {
+  if (!Number.isInteger(place) || place < 0 || place >= limit) {
     return { status: 400, reason: 'invalid_place' };
   }
   const bytes = decodeImagePayload(args.image);
@@ -1931,7 +1958,13 @@ async function fileBrochurePhotograph(
   const listed = await supabase.storage.from(BUCKET).list(folder, { limit: 100 });
   if (listed.error) return { status: 503, reason: 'storage_unreadable' };
   const objects = listed.data ?? [];
-  const held = heldCapturedPhotographs(objects);
+  let held = heldCapturedPhotographs(objects);
+  if (kind === 'floorplan') {
+    // A plan is counted, de-duplicated and placed among the plans alone.
+    const plans = await supabase.storage.from(BUCKET).list(target, { limit: 100 });
+    if (plans.error) return { status: 503, reason: 'storage_unreadable' };
+    held = heldCapturedPhotographs(plans.data ?? []);
+  }
   if (objects.some((object) => object?.name === CAPTURE_RECORD_NAME)) {
     return { status: 409, reason: 'listing_capture', held: held.length };
   }
@@ -1987,7 +2020,7 @@ async function fileBrochurePhotograph(
   // The same photograph at the same place is a retry that already landed.
   if (atPlace?.checksum === checksum) return { status: 200, held: held.length, name: atPlace.name };
   if (atPlace) return { status: 409, reason: 'place_taken', held: held.length };
-  if (held.length >= REPORT_PHOTOGRAPH_LIMIT) return { status: 409, reason: 'limit', held: held.length };
+  if (held.length >= limit) return { status: 409, reason: 'limit', held: held.length };
   if (held.some((photo) => photo.checksum === checksum)) return { status: 409, reason: 'duplicate', held: held.length };
 
   const judged = await judgeForCapture(newAnalysisBudget(BROCHURE_BUDGET_MS), bytes);
@@ -1997,7 +2030,9 @@ async function fileBrochurePhotograph(
     return { status: lasting ? 422 : 503, reason: judged.refusal, held: held.length };
   }
   const { analysis } = judged;
-  if (analysis.kind !== 'photo') return { status: 422, reason: analysis.kind, held: held.length };
+  // The server's own verdict, never the browser's: a plan is kept only where
+  // the pixels read as a plan, a photograph only where they read as one.
+  if (analysis.kind !== kind) return { status: 422, reason: analysis.kind, held: held.length };
   const repeat = held.some((photo) => {
     const distance = signatureDistance(photo.signature, analysis.signature);
     return distance !== null && distance <= SIGNATURE_MATCH_BITS;
@@ -2016,7 +2051,7 @@ async function fileBrochurePhotograph(
   if (!name || !parseCaptureObjectName(name)) return { status: 422, reason: 'unnameable', held: held.length };
   const upload = await supabase.storage
     .from(BUCKET)
-    .upload(`${folder}/${name}`, bytes, { contentType, upsert: true });
+    .upload(`${target}/${name}`, bytes, { contentType, upsert: true });
   if (upload.error) return { status: 503, reason: 'upload_failed', held: held.length };
   return { status: 200, held: held.length + 1, name };
 }
@@ -2321,8 +2356,9 @@ Deno.serve(async (req) => {
       if (!reportsPermission.ok) {
         return createForbiddenResponse(reportsPermission.error || 'Reports access required', corsHeaders);
       }
-      // One photograph a request, and a report carries six: room for a retry
-      // of each, and for an author filing two reports in a minute.
+      // One picture a request, and a report carries six photographs and two
+      // plans: room for a retry of each, and for an author filing two reports
+      // in a minute.
       const brochureActorQuota = await enforceActorQuota(supabase, auth.userId, BROCHURE_SCOPE, {
         limit: 30,
         windowMs: 60_000,
@@ -2341,10 +2377,12 @@ Deno.serve(async (req) => {
         source: body.source,
         place: body.place,
         image: body.image,
+        kind: body.kind,
       });
       // One line a photograph; nobody reads the answer but the browser that sent it.
       console.log(
         `[listing-images] capture_brochure_photograph: report=${captureFolder(reportId) ? reportId : 'invalid'} ` +
+          `kind=${body.kind === 'floorplan' ? 'floorplan' : 'photo'} ` +
           `status=${status} ${filed.reason ? `refused=${filed.reason}` : 'kept'} held=${filed.held ?? 0}`,
       );
       return j({ success: status < 400, op, ...filed }, status);

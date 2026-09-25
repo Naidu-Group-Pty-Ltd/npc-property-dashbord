@@ -5,10 +5,12 @@ Read this before touching `_shared/reportPhotographs.pure.ts`,
 `get-investment-reports`, the `capture_report` or `capture_brochure_photograph`
 operations on `listing-images`, `src/lib/reports/urlExtractPhotographs.ts`,
 `src/lib/reports/brochurePhotographs*.ts`, `BrochurePhotographsPicker`,
-`src/lib/reportTemplate/adapters/reportPhotographs.ts`, `withCoverPhotograph`, or
-the `property.images` binding in the Investment Compass masters. §6 is the
-URL-extract path; §7 is the cover photograph on the other masters; §8 is the
-PDF brochure path.
+`src/lib/reportTemplate/adapters/reportPhotographs.ts`, `withCoverPhotograph`,
+`floorPlanPage`, `src/lib/reports/investment/investmentPdfPictures.ts`, or the
+`property.images` / `property.floorPlans` bindings in the Investment Compass
+masters. §6 is the URL-extract path; §7 is the cover photograph on the other
+masters; §8 is the PDF brochure path; §9 is the floor plan; §10 is the standard
+presentation, which is what a report comes out in when no template is chosen.
 
 ## 1. What was asked, and what was actually wrong
 
@@ -126,7 +128,13 @@ At most six photographs are carried: the largest number any master binds.
   twice is two listings holding the same pictures, and rule 2 cannot tell that
   from a stock render, because the reuse reading carries counts, not addresses.
   This is the conservative side on purpose.
-- **The standard presentation's cover is unchanged.** It is a static page.
+- **The standard presentation's cover was unchanged** when this section was
+  written: it is a static page. §10 puts the lead photograph in the field below
+  its lockup, measured off the page, without changing the page itself.
+- **A URL-extract report carries no floor plan.** realestate.com.au publishes a
+  listing's plans as a separate list in the same page data (§6), and the
+  capture does not read it yet. A report made from a listing in the intake
+  does carry its plans (§9), from the image library.
 - **A document already produced in a tab is not redrawn** when a photograph is
   harvested later, because the template path's cache fingerprint does not
   include the images.
@@ -358,8 +366,8 @@ this address and property, and never a picture chosen to fill a slot.
    or on three pages or more, is furniture and is never offered.
 3. **The server's own judgement of the pixels** (`listingImageVision.pure.ts`,
    the same module on the same 64-pixel square) says which survivors are
-   photographs. A floor plan or a graphic is not offered here, because the
-   server would refuse it.
+   photographs and which are floor plans. A graphic is never offered. A floor
+   plan is offered apart from the photographs and filed apart from them (§9).
 4. **The pages are read for the property, in the words the page prints.** A
    page that names the property's lot, or its street number and street, is
    where its pictures are; a page naming another lot is that lot's.
@@ -421,17 +429,11 @@ address goes through `isSameProperty` unchanged.
 
 ### What this does not do
 
-- **Floor plans.** The owner's page 1 carries one as a picture (1,199 × 751,
-  judged a floor plan), and the owner asked for it (25 Sep 2026). A report's
-  photograph slots crop to fill their frame and a plan must never be cropped,
-  so it needs a slot of its own. Not built yet.
 - **A design render on a page that names only the design.** A brochure that
   shows the facade on a page titled "NEX 20" and names the lot elsewhere offers
   nothing from that page. That is the conservative side of the rule above.
 - **A brochure whose text is drawn as outlines.** It has no words to read, so
   no page names the property and nothing is offered.
-- **The standard presentation.** It draws no captured photographs, whichever
-  route found them; only a chosen template does (§7).
 
 ### Verified locally
 
@@ -458,3 +460,228 @@ address goes through `isSameProperty` unchanged.
 - **A real filing has not run.** It needs `listing-images` and
   `get-investment-reports` deployed, a report made from a brochure, and the
   PDF read: the cover should be the brochure's facade. PENDING.
+
+## 9. A floor plan, on a sheet of its own
+
+The owner, 25 Sep 2026: "maybe we should consider inserting the design and
+floor plan if applicable … and in the brochure". A new build's brochure
+usually carries the plan the house will be built to; the owner's example
+carries one on page 1, beside the facade render (1,199 × 751, which the server
+judges a floor plan). A buyer reads a plan before almost anything else a report
+says about a house.
+
+### Why a sheet of its own, and never a photo slot
+
+Every photo slot in the catalogue fills its frame and crops what does not fit.
+That is right for a facade and wrong for a plan: a cropped plan is a plan with
+a room missing, and nothing on the page says so. So a plan is never bound to
+`property.images`; it has its own binding, `property.floorPlans`, and its own
+page, on which it is drawn whole (`contain`), centred, never rotated (a rotated
+plan has lost its north). Two rules follow from "whole":
+
+- **The sheet is conditional on the plan.** Most reports have none, and a
+  report without one loses the page rather than printing an empty sheet.
+- **A plan is not a photograph, in storage or in the broker.** It is filed
+  under `report-photographs/<report>/plans/` (`floorPlanFolder`), judged
+  `floorplan` by the server before it is kept, capped at
+  `REPORT_FLOOR_PLAN_LIMIT` (2), and served as `floorPlans` beside
+  `photographs`. A listing report's plans are the image library's
+  `visual_kind = 'floorplan'` rows, under the same reuse and print-floor rules
+  as its photographs.
+
+### The path
+
+1. **Offered in the picker, apart.** `buildBrochureOffer` keeps a picture the
+   server's vision reads as a plan in `plans`, under the same page rule as a
+   photograph: only a page naming this property. The picker shows them under
+   "Floor plan", drawn whole (`object-contain`), up to two ticked.
+2. **Filed with `kind: 'floorplan'`.** The same `capture_brochure_photograph`
+   operation, with a second target folder and limit; it refuses anything its
+   own judgement does not call a plan (422 with the reading), so a photograph
+   cannot be filed as a plan or a plan as a photograph.
+3. **Served and bound.** The broker lists the plans folder beside the
+   photographs, signs them, and the Investment adapter inlines them as
+   `property.floorPlans`.
+4. **Drawn.** Every Investment master (seed v22) carries two sheets, "Floor
+   plan" and "Floor plan, continued" (`floorPlanPage`), each conditional on its
+   own plan: the family's own section heading and the address, the plan in the
+   room between, and a three-line title block at the foot: not to scale, where
+   it came from, and to check it against the contract drawings.
+
+### Where the sheet goes
+
+After the cover, the contents and any photographic plates, and before the
+executive dashboard, in all fifty masters. The owner chose "own page after the
+overview"; the overview is not a page, though. The front matter flows straight
+into the report's body on the same sheet (seed v20), so a page placed after it
+would stand between the body's first page and its second. The first place a
+page can stand without splitting prose is before the verdict, where the
+pictures of the property are met together: the cover shows the home, the plan
+shows its layout, and the assessment follows. Moving it to the back of the
+document is a one-line change in `templates.ts` if the owner prefers.
+
+It has no running head, like the plates beside it. A running head names a part,
+and giving the sheet a part would renumber every later page's head in all fifty
+masters, which would break the promise below.
+
+### What the release is, measured rather than claimed
+
+Parsed out of the v21 and v22 seed files, 543 rows each:
+
+- **50 of 543 differ**, exactly the Investment masters. The other nine formats'
+  450 masters and the 43 voice templates are byte-identical.
+- Each gains **exactly two pages**; every existing page is byte-identical, in
+  its old order, under its old id. 44 gain 10 blocks and 6 gain 8.
+- Outside `schema`, only `page_count` (+2) and `required_bindings`
+  (`property.floorPlans.0` and `.1`) change.
+
+`20261223100000` refreshes the active masters by the v15 mechanism, unchanged.
+
+### Verified locally
+
+- `investmentCompassFloorPlan.spec.ts` renders all fifty masters through the
+  production renderer: without a plan each draws **byte for byte** what the
+  same master draws with the two sheets taken out of its schema; one plan
+  prints one sheet, two print two, each drawn `contain`; all five documents
+  keep the sheets, graded or not.
+- `templates:compass:qa` with both sheets drawn: 410 renders, no overflow, no
+  collision, no unresolved binding.
+- `templates:library:seed:check`: the v22 file is byte-identical to what the
+  definitions produce.
+- The owner's plan drawn on the sheet in ten families, wide and turned tall.
+
+### Not verified
+
+- **v22 is not applied.** The seed and the refresh go through the reviewed
+  "Apply a migration" workflow after merge. PENDING.
+- **A real filing of a plan has not run**, for the same reason as §8's. PENDING.
+
+## 10. The standard presentation
+
+The standard presentation is what a report comes out in when no template is
+chosen: `investmentPdfDocument.ts`, drawn with pdf-lib over the brand cover and
+the content page of `public/templates/npc_template.pdf`. Before this it drew no
+photograph and no plan, whichever route found them; §7's covers and §9's
+sheets reached only a chosen template. It now draws both, from the same reader
+(`loadInvestmentReportWithPhotographs`, exported from the adapter), so a report
+does not gain a floor plan or lose its photograph by being left on the default.
+The pictures are read only when this presentation is the one being drawn, after
+the template route has declined, so a templated document costs no second read.
+
+### The cover
+
+The cover is a finished brand page, so everything was measured off it
+(`investmentPdfPictures.ts` header) rather than assumed:
+
+- the gold borders end at x 12.5 and resume at 581.5;
+- the divider under the tagline runs x 59.5–554.5, its lower edge 560.5pt
+  down, centred ten points right of the page (like the tagline);
+- the bottom-right ornament's first grey is 592pt down.
+
+The lead photograph takes the whole field below the lockup, from 590pt down to
+the trim between the borders, so the ornament lies under it rather than beside
+it. It fills the band and is clipped to it, and a gold hairline closes its top.
+The address is set between the divider and the band in ivory capitals, because
+a photograph on a cover should say which property it shows. Ivory, not gold:
+REPORT_RULES §2 forbids a saturated accent below 10pt.
+
+Two things only a render found:
+
+- **The template's box does not start at zero.** Its MediaBox is
+  [0 7.83 595.5 850.08], so a band placed against a 0–842 page sat 7pt low and
+  left the ornament's tip standing above the photograph. Every vertical
+  measurement is taken from the sheet's visible top edge and placed against
+  the page's own box.
+- **The ornament overlaps the right border.** From 592pt down the border's gold
+  starts at 586.5, not 581.5, so a photograph covering the ornament to 581.5
+  left a five-point sliver of it beside the band. The border's own gold (flat
+  across its width, graded down its height, both sampled) is drawn back over it.
+
+Without a photograph the cover is the page it always was.
+
+### Whose cover it is
+
+That cover is **NPC's artwork**: the monogram over NAIDU PROPERTY CONSULTING
+SERVICES · YOUR DEDICATED PROPERTY PARTNER. Nothing chose it per deployment, so
+until 25 Sep 2026 every clone's standard document opened on another business's
+name. The file also said `NPC Services` wrote it and `NPC Command Centre` made
+it. The closing page already resolved its issuer through
+`issuerIdentity.pure.ts`; the cover, the first page a reader sees, never asked.
+
+The rule (`standardCover.pure.ts`): **the artwork opens NPC's document on NPC's
+deployment, and nothing else.** Both conditions matter, because each alone has
+a case it gets wrong:
+
+- a clone seeded from the prime's settings holds NPC's name in its rows. It must
+  still not print NPC's artwork, so the prime is recognised by the backend it
+  talks to (`isPrimeDeployment`), never by a name a row can hold;
+- the prime renamed on its Branding or Report Settings page is issuing as
+  somebody else, and a cover that ignored that would not be white-labelled.
+
+Every other document opens on a cover drawn for its issuer
+(`investmentPdfCover.ts`):
+
+- **Name and mark.** The issuer's name in serif capitals, and its knockout mark
+  from the Branding page, because the cover is a dark ground.
+- **Title.** The document's title under the name.
+- **Photograph and address.** The divider, address and photograph band sit
+  exactly where the artwork cover has them, so the photograph lands in the same
+  place on either cover. Without a photograph, the document's one-line
+  standfirst takes the band's place.
+- **Colour.** The field and gold are the closing page's, from the one default
+  palette, so the first and last pages are a pair.
+
+The issuer is resolved once, from the resolver every surface uses: the report
+contact's company name, then the Branding page's name, then the platform. An
+unbranded clone therefore issues as Aurixa Systems, with the platform's emblem
+and the platform's own disclaimer. It never prints a stored disclaimer written
+by nobody, which the closing page did until this change.
+
+**Nothing of the artwork is carried into another issuer's file.** Such a
+document starts from an empty PDF and copies only the content page. Drawing
+over the artwork would still leave NPC's name and monogram in the file, where
+a text search or a screen reader finds them. The file's author, creator and
+producer name the issuer.
+
+The prime's own document was checked before and after the change: same size to
+the byte, same text and metadata, and all four pages pixel-identical. The only
+differing bytes are the timestamps.
+
+### The plan
+
+One sheet a plan, after the contents and before the report's first page,
+matching the templates. The sheet uses the body's own section heading (gold
+bar, navy title, gold rule), the address beneath it, the plan whole in the room
+left, and the same title block at the foot. It is embedded before the page is
+added, so a plan that will not embed costs no page. It is not listed in the
+contents, which numbers the report's sections.
+
+### Verified locally
+
+- `standardPresentationPictures.spec.ts` draws the real document through
+  `generateInvestmentPdfBlob` and reads it back with pdf.js: with no pictures it
+  is the same document; a photograph adds one image to the cover, and the
+  address, and nothing else changes; each plan adds one sheet in the right
+  place; a picture that will not embed costs nothing. Disabling either feature
+  fails three of its tests.
+- The owner's facade render and plan drawn through it, and every edge of the
+  band looked at at 600 dpi.
+
+- The white-label cover, drawn for a tenant with a mark and a photograph, a
+  tenant with neither, an unbranded clone (with and without a photograph) and
+  a long name on a Snapshot, and each looked at. `standardCover.spec.ts` holds
+  the decision, the name setting and the layout; the pictures spec reads the
+  file back and finds none of the artwork's faces or its 640 × 512 monogram in a
+  clone's document. Forcing the artwork everywhere fails ten tests.
+
+### Not verified
+
+- **Not yet drawn from a real report in the browser.** It needs a report whose
+  folder holds a photograph and a plan, which needs §8's filing live. PENDING.
+- **Not yet seen on a real clone.** The white-label cover reads the clone's own
+  `whitelabel_settings` and `global_report_settings`; no clone has drawn one
+  yet. PENDING.
+- **Colour is the product's, not the tenant's.** The white-label cover, like
+  the closing page and the body, uses the standard palette's dark field and
+  gold; a tenant's own brand colour is not applied to this presentation.
+  A chosen template is where a tenant's design system applies.

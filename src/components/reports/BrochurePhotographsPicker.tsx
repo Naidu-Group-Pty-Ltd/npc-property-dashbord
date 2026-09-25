@@ -21,7 +21,10 @@ import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { cn } from '@/lib/utils';
 import { brochurePageLabel, type BrochureOffer } from '@/lib/reports/brochurePhotographs.pure';
-import { REPORT_PHOTOGRAPH_LIMIT } from '../../../supabase/functions/_shared/reportPhotographs.pure';
+import {
+  REPORT_FLOOR_PLAN_LIMIT,
+  REPORT_PHOTOGRAPH_LIMIT,
+} from '../../../supabase/functions/_shared/reportPhotographs.pure';
 
 export type BrochurePickerStatus = 'reading' | 'ready' | 'failed';
 
@@ -32,6 +35,9 @@ export interface BrochurePhotographsPickerProps {
   previews: ReadonlyMap<string, string>;
   selected: ReadonlySet<string>;
   onSelectedChange: (next: Set<string>) => void;
+  /** The floor plans ticked; a plan is printed whole, on a page of its own. */
+  selectedPlans?: ReadonlySet<string>;
+  onSelectedPlansChange?: (next: Set<string>) => void;
   /** Whether the brochure's address names a street and a suburb, so its photographs can be tied to one property. */
   addressUsable: boolean;
   disabled?: boolean;
@@ -51,6 +57,8 @@ export function BrochurePhotographsPicker({
   previews,
   selected,
   onSelectedChange,
+  selectedPlans = new Set<string>(),
+  onSelectedPlansChange = () => {},
   addressUsable,
   disabled = false,
 }: BrochurePhotographsPickerProps) {
@@ -88,6 +96,7 @@ export function BrochurePhotographsPicker({
   }
 
   const offered = (offer?.offered ?? []).filter((candidate) => previews.has(candidate.key));
+  const plans = (offer?.plans ?? []).filter((candidate) => previews.has(candidate.key));
   const leftOut = offer?.leftOut;
 
   if (offer && !offer.namesProperty) {
@@ -113,16 +122,16 @@ export function BrochurePhotographsPicker({
         </Note>
       )}
       {Boolean(leftOut?.notPhotographs) && (
-        <Note>Floor plans and graphics aren&apos;t used as photographs.</Note>
+        <Note>Logos and other graphics aren&apos;t used.</Note>
       )}
     </>
   );
 
-  if (!offered.length) {
+  if (!offered.length && !plans.length) {
     return (
       <div className="space-y-1" data-testid="brochure-photographs">
         <Heading />
-        <Note>The pages naming this address carry no photograph of it.</Note>
+        <Note>The pages naming this address carry no photograph or floor plan of it.</Note>
         {notes}
       </div>
     );
@@ -131,6 +140,19 @@ export function BrochurePhotographsPicker({
   const chosen = offered.filter((candidate) => selected.has(candidate.key));
   const coverKey = chosen[0]?.key ?? null;
   const full = chosen.length >= REPORT_PHOTOGRAPH_LIMIT;
+  const plansChosen = plans.filter((candidate) => selectedPlans.has(candidate.key)).length;
+  const plansFull = plansChosen >= REPORT_FLOOR_PLAN_LIMIT;
+
+  const togglePlan = (key: string, on: boolean) => {
+    const next = new Set([...selectedPlans].filter((picked) => plans.some((candidate) => candidate.key === picked)));
+    if (on) {
+      if (next.size >= REPORT_FLOOR_PLAN_LIMIT) return;
+      next.add(key);
+    } else {
+      next.delete(key);
+    }
+    onSelectedPlansChange(next);
+  };
 
   const toggle = (key: string, on: boolean) => {
     const next = new Set([...selected].filter((picked) => offered.some((candidate) => candidate.key === picked)));
@@ -147,8 +169,11 @@ export function BrochurePhotographsPicker({
     <div className="space-y-3" data-testid="brochure-photographs">
       <div className="space-y-1">
         <Heading />
-        <Note>Ticked photographs go into the report, in this order. The first is its cover.</Note>
+        {offered.length > 0
+          ? <Note>Ticked photographs go into the report, in this order. The first is its cover.</Note>
+          : <Note>The pages naming this address carry no photograph of it.</Note>}
       </div>
+      {offered.length > 0 && (
       <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3" aria-label="Photographs from the brochure">
         {offered.map((candidate) => {
           const checked = selected.has(candidate.key);
@@ -190,7 +215,58 @@ export function BrochurePhotographsPicker({
           );
         })}
       </ul>
+      )}
       {full && <Note>A report carries up to {REPORT_PHOTOGRAPH_LIMIT} photographs.</Note>}
+      {plans.length > 0 && (
+        <div className="space-y-2" data-testid="brochure-floor-plans">
+          <div className="space-y-1">
+            <p className="text-sm font-semibold text-foreground">{plans.length === 1 ? 'Floor plan' : 'Floor plans'}</p>
+            <Note>A ticked plan is printed whole, on a page of its own.</Note>
+          </div>
+          <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3" aria-label="Floor plans from the brochure">
+            {plans.map((candidate) => {
+              const checked = selectedPlans.has(candidate.key);
+              const locked = disabled || (!checked && plansFull);
+              const where = brochurePageLabel(candidate);
+              const id = `brochure-plan-${candidate.key}`;
+              return (
+                <li key={candidate.key}>
+                  <label
+                    htmlFor={id}
+                    className={cn(
+                      'relative block overflow-hidden rounded-2xl border transition-colors',
+                      checked ? 'border-primary ring-2 ring-primary/40' : 'border-border/60',
+                      locked ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:border-primary/40',
+                    )}
+                  >
+                    {/* Contained, never cropped: the preview shows the whole plan, as the page will. */}
+                    <img
+                      src={previews.get(candidate.key)}
+                      alt={`Floor plan from the brochure, ${where.toLowerCase()}`}
+                      className="aspect-[4/3] w-full bg-muted/40 object-contain p-2"
+                      loading="lazy"
+                      draggable={false}
+                    />
+                    <span className="absolute left-2 top-2 flex rounded-md bg-background/85 p-1">
+                      <Checkbox
+                        id={id}
+                        checked={checked}
+                        disabled={locked}
+                        onCheckedChange={(value) => togglePlan(candidate.key, value === true)}
+                        aria-label={`Use the floor plan from ${where.toLowerCase()}`}
+                      />
+                    </span>
+                    <span className="block px-2 py-1.5 text-xs text-muted-foreground">{where}</span>
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+          {plansFull && plans.length > REPORT_FLOOR_PLAN_LIMIT && (
+            <Note>A report carries up to {REPORT_FLOOR_PLAN_LIMIT} floor plans.</Note>
+          )}
+        </div>
+      )}
       {notes}
     </div>
   );

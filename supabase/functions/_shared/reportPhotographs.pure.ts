@@ -63,7 +63,7 @@
  * Pure: no fetch, no storage, no clock. The edge function reads the rows and
  * signs what this returns.
  */
-import { bandOf, selectListingGallery } from './listingImageSelection.pure.ts';
+import { bandOf, selectListingGallery, SHARED_LISTING_LIMIT } from './listingImageSelection.pure.ts';
 import { isSameProperty, parseAddress, STREET_TYPES } from './addressMatch.pure.ts';
 
 /** The most photographs any master binds (`six_with_bleed`: a cover and five plates). */
@@ -172,6 +172,90 @@ export function photographsForReport(
       const { width, height } = image.row;
       return !(knownPositive(width) && knownPositive(height) && Math.max(width, height) < MIN_PRINT_LONG_EDGE_PX);
     })
+    .slice(0, Math.max(0, limit))
+    .map((image) => ({
+      storagePath: image.row.storage_path as string,
+      width: image.row.width,
+      height: image.row.height,
+    }));
+}
+
+/* -------------------------------------------------------------------------- */
+/* Floor plans                                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A report's floor plans: found beside its photographs, kept apart from them.
+ *
+ * The owner asked for the plan (25 Sep 2026): a new build's brochure carries
+ * it beside the design's facade, a listing's gallery often ends with one, and a
+ * client buying off the plan is buying the plan. It is kept apart for one
+ * reason: every photo slot fills its frame and crops what does not fit, and a
+ * cropped plan is a wrong plan, with a room missing and nothing to say so. So a
+ * plan never enters `property.images` and never leads a cover. It is stored in
+ * its own subfolder, bound as `property.floorPlans`, and drawn on a page of its
+ * own, fitted whole.
+ *
+ * Every rule that holds a photograph holds a plan, with one word changed:
+ * positive evidence from the server's own reading of the pixels that it IS a
+ * plan, never a guess from a URL; nothing another listing also holds; the
+ * print floor; and the report's own address (rule 4).
+ */
+
+/** The most plans a report carries: a ground floor and one above it. */
+export const REPORT_FLOOR_PLAN_LIMIT = 2;
+
+/** The subfolder of a report's capture folder its plans are filed in. */
+export const FLOOR_PLAN_SUBFOLDER = 'plans';
+
+/** The folder for one report's floor plans, or null for anything that is not a report id. */
+export function floorPlanFolder(reportId: unknown): string | null {
+  const folder = captureFolder(reportId);
+  return folder ? `${folder}/${FLOOR_PLAN_SUBFOLDER}` : null;
+}
+
+/**
+ * The floor plans a listing's stored images give a report, in the listing's
+ * order.
+ *
+ * Only what the server's reading called a plan, only what no other listing
+ * also holds (a stock plan is a plan of a design, not of this property), at a
+ * size that prints, one of each picture. `reuse` null is a reading that could
+ * not be taken, and then there are none, as for photographs.
+ */
+export function floorPlansForReport(
+  rows: readonly StoredListingPhotograph[] | null | undefined,
+  reuse: ReadonlyMap<string, number> | null,
+  limit = REPORT_FLOOR_PLAN_LIMIT,
+): ReportPhotograph[] {
+  if (!reuse || !rows?.length) return [];
+  const byPosition = [...rows].sort((a, b) =>
+    (a.position ?? Number.MAX_SAFE_INTEGER) - (b.position ?? Number.MAX_SAFE_INTEGER));
+  const candidates = byPosition
+    .filter((row) => row.status === 'stored' && Boolean(row.storage_path) && row.visual_kind === 'floorplan')
+    .map((row) => ({
+      url: row.source_url ?? row.storage_path ?? row.image_identity,
+      position: row.position,
+      checksum: row.checksum,
+      bytes: row.bytes,
+      width: row.width,
+      height: row.height,
+      kind: 'floorplan' as const,
+      signature: row.visual_signature,
+      sharedListings: reuse.get(`${row.listing_id}:${row.image_identity}`) ?? null,
+      row,
+    }));
+  if (!candidates.length) return [];
+  // The gallery's de-duplication, never its ranking: a plan is banded `plan`,
+  // below every photograph, which is the right order for a card and says
+  // nothing about which of two plans comes first.
+  return selectListingGallery(candidates).images
+    .filter((image) => !(typeof image.sharedListings === 'number' && image.sharedListings > SHARED_LISTING_LIMIT))
+    .filter((image) => {
+      const { width, height } = image.row;
+      return !(knownPositive(width) && knownPositive(height) && Math.max(width, height) < MIN_PRINT_LONG_EDGE_PX);
+    })
+    .sort((a, b) => (a.row.position ?? Number.MAX_SAFE_INTEGER) - (b.row.position ?? Number.MAX_SAFE_INTEGER))
     .slice(0, Math.max(0, limit))
     .map((image) => ({
       storagePath: image.row.storage_path as string,
@@ -383,6 +467,17 @@ export function capturedPhotographsForReport(
   return heldCapturedPhotographs(objects)
     .filter((photo) => Math.max(photo.width, photo.height) >= MIN_PRINT_LONG_EDGE_PX)
     .slice(0, Math.max(0, limit));
+}
+
+/**
+ * The captured floor plans a report carries, in place order: the objects of
+ * its `plans/` subfolder, named and floored exactly as its photographs are.
+ */
+export function capturedFloorPlansForReport(
+  objects: ReadonlyArray<{ name?: unknown }> | null | undefined,
+  limit = REPORT_FLOOR_PLAN_LIMIT,
+): CapturedPhotograph[] {
+  return capturedPhotographsForReport(objects, limit);
 }
 
 /* -------------------------------------------------------------------------- */

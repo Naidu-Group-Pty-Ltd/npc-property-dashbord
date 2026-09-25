@@ -2380,6 +2380,8 @@ export function InvestmentReportGenerator() {
                       previews={brochurePhotographs.state.previews}
                       selected={brochurePhotographs.state.selected}
                       onSelectedChange={brochurePhotographs.setSelected}
+                      selectedPlans={brochurePhotographs.state.selectedPlans}
+                      onSelectedPlansChange={brochurePhotographs.setSelectedPlans}
                       addressUsable={brochurePhotographs.state.source !== null}
                       disabled={isPdfGenerating}
                     />

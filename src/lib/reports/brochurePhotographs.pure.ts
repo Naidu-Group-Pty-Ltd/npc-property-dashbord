@@ -25,8 +25,9 @@
  *     page, whose "photograph" has the brochure's type baked into it.
  *  3. The server's own judgement of the pixels (`listingImageVision.pure.ts`,
  *     the same module, run on the same 64-pixel square) says which survivors
- *     are photographs. A floor plan or a graphic is never offered, because the
- *     server would refuse it.
+ *     are photographs and which are floor plans. A plan is offered apart from
+ *     the photographs, because it is drawn apart: whole, on a page of its own,
+ *     never in a photo slot that crops. A graphic is never offered.
  *  4. The pages are read for the property, in the words the page prints
  *     (`joinPageText`). A page that names this property's lot, or its street
  *     number and street, is where its pictures are; a page naming another lot
@@ -67,6 +68,7 @@ import {
   lotDesignation,
   lotsNamedIn,
   MIN_PRINT_LONG_EDGE_PX,
+  REPORT_FLOOR_PLAN_LIMIT,
   REPORT_PHOTOGRAPH_LIMIT,
   streetLineWithoutLot,
   type PhotographSource,
@@ -518,6 +520,9 @@ export function readBrochurePage(text: string | null | undefined, identity: Broc
 /** The most pictures the picker shows. A brochure is not a gallery. */
 export const MAX_BROCHURE_OFFER = 12;
 
+/** The most floor plans the picker shows: one a storey, and a spare. */
+export const MAX_BROCHURE_PLAN_OFFER = 4;
+
 export interface BrochureOffer {
   /** Lead first, then in the brochure's own order. */
   offered: BrochureCandidate[];
@@ -528,8 +533,15 @@ export interface BrochureOffer {
   /** Some page names this property. */
   namesProperty: boolean;
   /**
-   * What was read and not offered, by why. `otherProperties` is a picture on a
-   * page naming another lot; `unnamedPages` one on pages naming no property.
+   * The floor plans on this property's pages, in the brochure's order: offered
+   * apart from the photographs, and filed apart (`kind: 'floorplan'`).
+   */
+  plans: BrochureCandidate[];
+  /**
+   * What was read and not offered, by why. `notPhotographs` is a picture that
+   * is neither a photograph nor a plan (a logo, a graphic); `otherProperties`
+   * one on a page naming another lot; `unnamedPages` one on pages naming no
+   * property.
    */
   leftOut: {
     notPhotographs: number;
@@ -544,10 +556,11 @@ export interface BrochureOffer {
  * The pictures to offer, and the one to suggest.
  *
  * `readings[n]` is page `n + 1`'s reading. A candidate is offered when it is a
- * photograph, is not furniture, is drawn on a page naming this property, and
- * is drawn on no page naming another. The lead is the offered photograph drawn
- * largest on a page naming this property, so there is one whenever anything
- * is offered.
+ * photograph or a floor plan, is not furniture, is drawn on a page naming this
+ * property, and is drawn on no page naming another. The lead is the offered
+ * photograph drawn largest on a page naming this property, so there is one
+ * whenever a photograph is offered. Plans are offered apart, in the
+ * brochure's order.
  */
 export function offerBrochurePhotographs(
   candidates: readonly BrochureCandidate[],
@@ -562,8 +575,9 @@ export function offerBrochurePhotographs(
   const leftOut = { notPhotographs: 0, furniture: 0, otherProperties: 0, unnamedPages: 0, overLimit: 0 };
 
   const eligible: BrochureCandidate[] = [];
+  const plans: BrochureCandidate[] = [];
   for (const candidate of candidates) {
-    if (candidate.kind !== 'photo') { leftOut.notPhotographs += 1; continue; }
+    if (candidate.kind !== 'photo' && candidate.kind !== 'floorplan') { leftOut.notPhotographs += 1; continue; }
     if (isFurniture(candidate)) { leftOut.furniture += 1; continue; }
     const pages = candidate.pages.map(readingOf);
     if (pages.includes('other') || (!pages.includes('this') && pages.includes('mixed'))) {
@@ -571,7 +585,7 @@ export function offerBrochurePhotographs(
       continue;
     }
     if (!pages.includes('this')) { leftOut.unnamedPages += 1; continue; }
-    eligible.push(candidate);
+    (candidate.kind === 'floorplan' ? plans : eligible).push(candidate);
   }
 
   let lead: BrochureCandidate | null = null;
@@ -591,11 +605,17 @@ export function offerBrochurePhotographs(
   const offered = ordered.slice(0, Math.max(0, limit));
   leftOut.overLimit = ordered.length - offered.length;
 
+  const offeredPlans = [...plans]
+    .sort((a, b) => a.pages[0] - b.pages[0] || largestShare(b) - largestShare(a))
+    .slice(0, MAX_BROCHURE_PLAN_OFFER);
+  leftOut.overLimit += plans.length - offeredPlans.length;
+
   return {
     offered,
     lead: lead ? lead.key : null,
     multiProperty,
     namesProperty: namingPages.size > 0 || readings.includes('mixed'),
+    plans: offeredPlans,
     leftOut,
   };
 }
@@ -616,6 +636,18 @@ export function brochureSelection(
     .map((candidate, place) => ({ key: candidate.key, place }));
 }
 
+/**
+ * The floor plans to file, in the order offered, no more than a report
+ * carries. `place` is that order: the first plan is drawn first.
+ */
+export function brochurePlanSelection(
+  plans: readonly BrochureCandidate[],
+  ticked: ReadonlySet<string>,
+  limit = REPORT_FLOOR_PLAN_LIMIT,
+): Array<{ key: string; place: number }> {
+  return brochureSelection(plans, ticked, limit);
+}
+
 /** Where in the brochure a picture is drawn, in the words a person uses. */
 export function brochurePageLabel(candidate: Pick<BrochureCandidate, 'pages'>): string {
   const pages = candidate.pages;
@@ -634,10 +666,12 @@ export interface BrochurePhotographRequest {
   documentSha256: string;
   /** The address the brochure states, as its parse extracted it. */
   source: PhotographSource;
-  /** Its place in the report's photographs: 0 is the cover. */
+  /** Its place among the report's photographs (0 is the cover), or among its plans. */
   place: number;
-  /** The photograph, base64, as a JPEG. */
+  /** The picture, base64: a photograph as a JPEG, a plan as a PNG. */
   image: string;
+  /** Sent for a plan only; a request without it is a photograph, as before. */
+  kind?: 'floorplan';
 }
 
 /** The transport's answer, as much of it as a decision needs. */
@@ -650,7 +684,10 @@ export interface BrochureTransportAnswer {
 export const BROCHURE_UPLOAD_RETRY_DELAYS_MS: readonly number[] = [2_000, 8_000];
 
 export interface BrochureFiling {
+  /** Photographs kept. */
   filed: number;
+  /** Floor plans kept; absent where none were sent, so a photographs-only filing reads as it always did. */
+  filedPlans?: number;
   /** Photographs the server looked at and would not keep, by its reason. */
   refused: Record<string, number>;
   /** Photographs whose request never landed. */
@@ -671,13 +708,13 @@ function refusalReason(answer: BrochureTransportAnswer): string {
 }
 
 /**
- * Sends the chosen photographs one at a time, in place order.
+ * Sends the chosen photographs one at a time, in place order, then the plans.
  *
  * One at a time because each is a decode on the server, which is paid for in
  * that request's CPU; and in place order so the cover is filed first. A
  * failure a second try can cure is tried again after each delay; a refusal is
- * the server's verdict on that photograph and is not repeated. Never throws:
- * a report without photographs is not a failed report.
+ * the server's verdict on that picture and is not repeated. Never throws: a
+ * report without photographs is not a failed report.
  */
 export async function fileBrochurePhotographs(
   invoke: (request: BrochurePhotographRequest) => Promise<BrochureTransportAnswer>,
@@ -687,7 +724,9 @@ export async function fileBrochurePhotographs(
   const delays = options.delaysMs ?? BROCHURE_UPLOAD_RETRY_DELAYS_MS;
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const outcome: BrochureFiling = { filed: 0, refused: {}, failed: 0 };
-  const ordered = [...requests].sort((a, b) => a.place - b.place);
+  const isPlan = (request: BrochurePhotographRequest) => request.kind === 'floorplan';
+  const ordered = [...requests].sort((a, b) => Number(isPlan(a)) - Number(isPlan(b)) || a.place - b.place);
+  if (ordered.some(isPlan)) outcome.filedPlans = 0;
 
   for (const request of ordered) {
     let answer: BrochureTransportAnswer | null = null;
@@ -700,7 +739,11 @@ export async function fileBrochurePhotographs(
       }
       if (!answer.error || !isRetryableBrochureFailure(answer.error)) break;
     }
-    if (!answer || !answer.error) { outcome.filed += 1; continue; }
+    if (!answer || !answer.error) {
+      if (isPlan(request)) outcome.filedPlans = (outcome.filedPlans ?? 0) + 1;
+      else outcome.filed += 1;
+      continue;
+    }
     if (isRetryableBrochureFailure(answer.error)) { outcome.failed += 1; continue; }
     const reason = refusalReason(answer);
     outcome.refused[reason] = (outcome.refused[reason] ?? 0) + 1;
@@ -711,6 +754,7 @@ export async function fileBrochurePhotographs(
 /** What the server's reason for not keeping a photograph means, in the adviser's words. */
 const REFUSAL_WORDS: Record<string, string> = {
   floorplan: 'it is a floor plan',
+  photo: 'it is not a floor plan',
   graphic: 'it is not a photograph',
   below_print_floor: 'it is too small to print',
   duplicate: 'it repeats another',
@@ -721,7 +765,7 @@ const REFUSAL_WORDS: Record<string, string> = {
   address_unknown: "the brochure's address names no street and suburb",
   listing_capture: 'this report takes its photographs from its listing',
   different_document: 'the report already holds photographs from another brochure',
-  limit: 'the report already holds six',
+  limit: 'the report already holds as many as it carries',
 };
 
 /**
@@ -732,25 +776,38 @@ const REFUSAL_WORDS: Record<string, string> = {
 export function describeBrochureFiling(outcome: BrochureFiling): { title: string; description: string } | null {
   const refusedCount = Object.values(outcome.refused).reduce((sum, count) => sum + count, 0);
   const notUsed = refusedCount + outcome.failed;
-  if (outcome.filed === 0 && notUsed === 0) return null;
+  const plans = outcome.filedPlans ?? 0;
+  const kept = outcome.filed + plans;
+  if (kept === 0 && notUsed === 0) return null;
   const photographs = (count: number) => `${count} photograph${count === 1 ? '' : 's'}`;
+  const floorPlans = (count: number) => `${count === 1 ? 'the floor plan' : `${count} floor plans`}`;
+  const keptWords = [
+    ...(outcome.filed ? [photographs(outcome.filed)] : []),
+    ...(plans ? [floorPlans(plans)] : []),
+  ].join(' and ');
+  const keptTitle = outcome.filed && plans
+    ? 'photographs and floor plan'
+    : plans ? (plans === 1 ? 'floor plan' : 'floor plans') : 'photographs';
+  // A filing that sent plans speaks of pictures; one that did not reads as it always did.
+  const noun = outcome.filedPlans === undefined ? 'photograph' : 'picture';
+  const pictures = (count: number) => `${count} ${noun}${count === 1 ? '' : 's'}`;
   const reasons = [...new Set(Object.keys(outcome.refused).map((reason) => REFUSAL_WORDS[reason] ?? 'it could not be checked'))];
   if (outcome.failed) reasons.push('the request did not go through');
   const why = reasons.length ? ` (${reasons.join('; ')})` : '';
   if (!notUsed) {
     return {
-      title: 'Brochure photographs added',
-      description: `${photographs(outcome.filed)} from the brochure will appear in the report.`,
+      title: `Brochure ${keptTitle} added`,
+      description: `${keptWords.charAt(0).toUpperCase()}${keptWords.slice(1)} from the brochure will appear in the report.`,
     };
   }
-  if (outcome.filed) {
+  if (kept) {
     return {
-      title: 'Some brochure photographs added',
-      description: `${photographs(outcome.filed)} will appear in the report; ${photographs(notUsed)} could not be used${why}.`,
+      title: `Some brochure ${keptTitle} added`,
+      description: `${keptWords.charAt(0).toUpperCase()}${keptWords.slice(1)} will appear in the report; ${pictures(notUsed)} could not be used${why}.`,
     };
   }
   return {
-    title: 'Brochure photographs not added',
-    description: `None of the ${photographs(notUsed)} could be used${why}. The report is made without them.`,
+    title: `Brochure ${noun}s not added`,
+    description: `None of the ${pictures(notUsed)} could be used${why}. The report is made without them.`,
   };
 }

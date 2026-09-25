@@ -21,6 +21,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   BROCHURE_FLOORS,
   brochurePageLabel,
+  brochurePlanSelection,
   brochurePropertyIdentity,
   brochureSelection,
   describeBrochureFiling,
@@ -33,6 +34,7 @@ import {
   isRetryableBrochureFailure,
   joinPageText,
   MAX_BROCHURE_OFFER,
+  MAX_BROCHURE_PLAN_OFFER,
   offerBrochurePhotographs,
   pageShare,
   passesBrochureFloors,
@@ -49,6 +51,10 @@ import {
   BROCHURE_RECORD_NAME,
   brochurePhotographsAreOfReportAddress,
   brochurePhotographSource,
+  capturedFloorPlansForReport,
+  FLOOR_PLAN_SUBFOLDER,
+  floorPlanFolder,
+  floorPlansForReport,
   isDocumentDigest,
   lotDesignation,
   lotsNamedIn,
@@ -56,8 +62,10 @@ import {
   newBrochureRecord,
   parseBrochureRecord,
   photographsAreOfReportAddress,
+  REPORT_FLOOR_PLAN_LIMIT,
   REPORT_PHOTOGRAPH_LIMIT,
   streetLineWithoutLot,
+  type StoredListingPhotograph,
 } from '../../../../supabase/functions/_shared/reportPhotographs.pure';
 
 /** pdf.js 4.4's own numbers, written out so the walk is tested without pdf.js. */
@@ -416,7 +424,9 @@ describe('the adviser is offered the brochure\'s photographs, and one is suggest
     ], ['this', 'this']);
     expect(offer.lead).toBe('facade');
     expect(offer.offered.map((c) => c.key)).toEqual(['facade', 'interior']);
-    expect(offer.leftOut).toEqual({ notPhotographs: 1, furniture: 0, otherProperties: 0, unnamedPages: 0, overLimit: 0 });
+    // A plan is offered, but apart from the photographs: it is never a cover.
+    expect(offer.plans.map((c) => c.key)).toEqual(['plan']);
+    expect(offer.leftOut).toEqual({ notPhotographs: 0, furniture: 0, otherProperties: 0, unnamedPages: 0, overLimit: 0 });
     expect(offer.multiProperty).toBe(false);
     expect(offer.namesProperty).toBe(true);
   });
@@ -509,6 +519,122 @@ describe('the adviser is offered the brochure\'s photographs, and one is suggest
     expect(brochurePageLabel({ pages: [3] })).toBe('Page 3');
     expect(brochurePageLabel({ pages: [1, 4] })).toBe('Pages 1 and 4');
     expect(brochurePageLabel({ pages: [1, 2, 5] })).toBe('Pages 1, 2 and 5');
+  });
+});
+
+describe('a floor plan is offered, filed and served apart from the photographs, and never cropped into a photo slot', () => {
+  const plan = (key: string, page: number, share = 0.28) =>
+    candidate({ key, kind: 'floorplan', width: 1199, height: 751, pages: [page], shareByPage: { [page]: share } });
+
+  it('offers the plans on this property\'s pages, in the brochure\'s order, and none from anywhere else', () => {
+    const offer = offerBrochurePhotographs([
+      plan('ground', 1),
+      plan('upper', 2, 0.4),
+      plan('estate-masterplan', 3),
+      plan('neighbour', 4),
+      candidate({ key: 'facade', pages: [1], shareByPage: { 1: 0.13 } }),
+    ], ['this', 'this', 'unnamed', 'other']);
+    expect(offer.plans.map((c) => c.key)).toEqual(['ground', 'upper']);
+    expect(offer.offered.map((c) => c.key)).toEqual(['facade']);
+    // A plan is never the suggested cover, however large it is drawn.
+    expect(offer.lead).toBe('facade');
+    expect(offer.leftOut).toMatchObject({ unnamedPages: 1, otherProperties: 1 });
+  });
+
+  it('never offers a plan drawn on every page, and offers a bounded number', () => {
+    const repeated = candidate({ key: 'banner-plan', kind: 'floorplan', pages: [1, 2, 3], shareByPage: { 1: 0.2, 2: 0.2, 3: 0.2 } });
+    const many = Array.from({ length: MAX_BROCHURE_PLAN_OFFER + 2 }, (_, index) => plan(`p${index}`, 1, 0.1 + index / 100));
+    const offer = offerBrochurePhotographs([repeated, ...many], ['this', 'this', 'this']);
+    expect(offer.plans.map((c) => c.key)).not.toContain('banner-plan');
+    expect(offer.plans).toHaveLength(MAX_BROCHURE_PLAN_OFFER);
+    expect(offer.leftOut.overLimit).toBe(2);
+  });
+
+  it('files no more plans than a report carries, in the order offered', () => {
+    const offered = [plan('a', 1), plan('b', 2), plan('c', 3)];
+    expect(REPORT_FLOOR_PLAN_LIMIT).toBe(2);
+    expect(brochurePlanSelection(offered, new Set(['c', 'a', 'b']))).toEqual([{ key: 'a', place: 0 }, { key: 'b', place: 1 }]);
+  });
+
+  it('sends the photographs first, cover first, then the plans, and counts the plans apart', async () => {
+    const order: string[] = [];
+    const planRequest = (place: number): BrochurePhotographRequest => ({ ...request(place), kind: 'floorplan' });
+    const outcome = await fileBrochurePhotographs(
+      async (req) => { order.push(`${req.kind ?? 'photo'}:${req.place}`); return { data: { success: true }, error: null }; },
+      [planRequest(1), request(1), planRequest(0), request(0)],
+      { delaysMs: [1, 1], sleep: async () => {} },
+    );
+    expect(order).toEqual(['photo:0', 'photo:1', 'floorplan:0', 'floorplan:1']);
+    expect(outcome).toEqual({ filed: 2, filedPlans: 2, refused: {}, failed: 0 });
+    // A photograph's request is exactly what it always was: no `kind`.
+    expect('kind' in request(0)).toBe(false);
+  });
+
+  it('tells the adviser the plan went in, and reads as it always did where no plan was sent', () => {
+    expect(describeBrochureFiling({ filed: 1, refused: {}, failed: 0 })?.title).toBe('Brochure photographs added');
+    expect(describeBrochureFiling({ filed: 1, filedPlans: 1, refused: {}, failed: 0 })).toEqual({
+      title: 'Brochure photographs and floor plan added',
+      description: '1 photograph and the floor plan from the brochure will appear in the report.',
+    });
+    expect(describeBrochureFiling({ filed: 0, filedPlans: 1, refused: {}, failed: 0 })).toEqual({
+      title: 'Brochure floor plan added',
+      description: 'The floor plan from the brochure will appear in the report.',
+    });
+    expect(describeBrochureFiling({ filed: 0, filedPlans: 0, refused: { photo: 1 }, failed: 0 })).toEqual({
+      title: 'Brochure pictures not added',
+      description: 'None of the 1 picture could be used (it is not a floor plan). The report is made without them.',
+    });
+  });
+
+  it('keeps a report\'s plans in their own subfolder, named and floored as its photographs are', () => {
+    const report = '11111111-2222-4333-8444-555555555555';
+    expect(FLOOR_PLAN_SUBFOLDER).toBe('plans');
+    expect(floorPlanFolder(report)).toBe(`report-photographs/${report}/plans`);
+    expect(floorPlanFolder('not-a-report')).toBeNull();
+    const plans = capturedFloorPlansForReport([
+      { name: '00-1199x751-0123456789abcdef-0123456789abcdef.png' },
+      { name: '01-800x500-1123456789abcdef-1123456789abcdef.png' },
+      { name: '01-2400x1600-2123456789abcdef-2123456789abcdef.png' },
+      { name: '02-2400x1600-3123456789abcdef-3123456789abcdef.png' },
+      { name: 'plans' },
+    ]);
+    // Place 1's second copy is below the print floor and does not print; the
+    // third plan is one more than a report carries.
+    expect(plans.map((p) => p.place)).toEqual([0, 1]);
+    expect(plans.every((p) => Math.max(p.width, p.height) >= MIN_PRINT_LONG_EDGE_PX)).toBe(true);
+  });
+
+  it('takes a listing\'s plans only where the server read a plan, no other listing holds it, and it prints', () => {
+    const row = (overrides: Partial<StoredListingPhotograph>): StoredListingPhotograph => ({
+      listing_id: 'rec1',
+      image_identity: overrides.image_identity ?? 'id',
+      storage_path: `listings/rec1/${overrides.image_identity ?? 'id'}.png`,
+      position: 0,
+      status: 'stored',
+      width: 1600,
+      height: 1000,
+      bytes: 200_000,
+      checksum: overrides.image_identity ?? 'id',
+      source_url: `https://img.example/${overrides.image_identity ?? 'id'}.png`,
+      visual_kind: 'floorplan',
+      visual_signature: null,
+      ...overrides,
+    });
+    const rows = [
+      row({ image_identity: 'photo', visual_kind: 'photo', position: 0 }),
+      row({ image_identity: 'plan-b', position: 5 }),
+      row({ image_identity: 'plan-a', position: 4 }),
+      row({ image_identity: 'stock-plan', position: 6 }),
+      row({ image_identity: 'thumb-plan', position: 7, width: 600, height: 400 }),
+      row({ image_identity: 'unread', position: 8, visual_kind: null }),
+    ];
+    const reuse = new Map([['rec1:stock-plan', 3]]);
+    expect(floorPlansForReport(rows, reuse).map((p) => p.storagePath)).toEqual([
+      'listings/rec1/plan-a.png',
+      'listings/rec1/plan-b.png',
+    ]);
+    // A reuse reading that could not be taken takes nothing, as for photographs.
+    expect(floorPlansForReport(rows, null)).toEqual([]);
   });
 });
 
@@ -648,7 +774,7 @@ describe('listing-images files a brochure photograph for the report\'s author, o
     const first = fn.slice(fn.indexOf('} else {'));
     const checked = first.indexOf('if (!brochurePhotographsAreOfReportAddress(report.property_address, source)) {');
     const written = first.indexOf('.upload(`${folder}/${BROCHURE_RECORD_NAME}`');
-    const image = fn.indexOf('.upload(`${folder}/${name}`');
+    const image = fn.indexOf('.upload(`${target}/${name}`');
     expect(checked).toBeGreaterThan(-1);
     expect(first).toContain("return { status: 409, reason: 'address_mismatch' };");
     expect(written).toBeGreaterThan(checked);
@@ -666,11 +792,14 @@ describe('listing-images files a brochure photograph for the report\'s author, o
   it('keeps a photograph only on the server\'s own verdict, at print size, once, at its own place', () => {
     expect(fn).toMatch(/Math\.max\(size\.width, size\.height\) < MIN_PRINT_LONG_EDGE_PX/);
     expect(fn).toContain('await judgeForCapture(newAnalysisBudget(BROCHURE_BUDGET_MS), bytes)');
-    expect(fn).toContain("if (analysis.kind !== 'photo') return { status: 422, reason: analysis.kind, held: held.length };");
+    // The server's verdict must name the kind the picture is filed as: a
+    // photograph where one was sent, a plan where a plan was.
+    expect(fn).toContain('if (analysis.kind !== kind) return { status: 422, reason: analysis.kind, held: held.length };');
     expect(fn).toMatch(/signatureDistance\(photo\.signature, analysis\.signature\)[\s\S]*SIGNATURE_MATCH_BITS/);
     expect(fn).toContain("if (held.some((photo) => photo.checksum === checksum)) return { status: 409, reason: 'duplicate', held: held.length };");
     expect(fn).toContain("if (atPlace) return { status: 409, reason: 'place_taken', held: held.length };");
-    expect(fn).toContain("if (held.length >= REPORT_PHOTOGRAPH_LIMIT) return { status: 409, reason: 'limit', held: held.length };");
+    expect(fn).toContain("if (held.length >= limit) return { status: 409, reason: 'limit', held: held.length };");
+    expect(fn).toContain("const limit = kind === 'floorplan' ? REPORT_FLOOR_PLAN_LIMIT : REPORT_PHOTOGRAPH_LIMIT;");
     expect(fn).toMatch(/captureObjectName\(\{\s*place,/);
     // The stored type comes from the bytes, never from the request.
     expect(fn).toContain('const contentType = `image/${size.format}`;');
@@ -679,9 +808,21 @@ describe('listing-images files a brochure photograph for the report\'s author, o
 
   it('refuses a payload it cannot bound before it decodes anything', () => {
     expect(fn).toContain('if (!isDocumentDigest(args.documentSha256))');
-    expect(fn).toMatch(/place < 0 \|\| place >= REPORT_PHOTOGRAPH_LIMIT/);
+    expect(fn).toMatch(/place < 0 \|\| place >= limit/);
+    expect(fn).toContain("if (!kind) return { status: 400, reason: 'invalid_kind' };");
     expect(fn).toMatch(/bytes\.length > BROCHURE_PHOTOGRAPH_MAX_BYTES/);
     expect(source).toMatch(/value\.length > Math\.ceil\(BROCHURE_PHOTOGRAPH_MAX_BYTES \/ 3\) \* 4 \+ 4/);
+  });
+
+  it('files a floor plan in its own subfolder, placed and counted among the plans alone', () => {
+    expect(source).toMatch(/function brochureKindOf\(value: unknown\): BrochureKind \| null \{\s*if \(value === undefined \|\| value === null \|\| value === 'photo'\) return 'photo';\s*return value === 'floorplan' \? 'floorplan' : null;/);
+    expect(fn).toContain("const target = kind === 'floorplan' ? floorPlanFolder(args.reportId) : folder;");
+    expect(fn).toMatch(/if \(kind === 'floorplan'\) \{[\s\S]*?\.list\(target, \{ limit: 100 \}\)[\s\S]*?held = heldCapturedPhotographs\(plans\.data \?\? \[\]\);/);
+    expect(fn).toContain('.upload(`${target}/${name}`');
+    // The record, the address and the author checks run on the report's own
+    // folder whatever is being filed: a plan is vouched for as a photograph is.
+    expect(fn.indexOf('.list(folder, { limit: 100 })')).toBeLessThan(fn.indexOf("if (kind === 'floorplan') {"));
+    expect(branch).toContain('kind: body.kind,');
   });
 
   it('files under the report and never in the marketplace\'s library, and fetches nothing', () => {
@@ -716,6 +857,17 @@ describe('the broker reads a brochure\'s photographs where it reads a capture\'s
 
   it('tells a document there is nothing for it to finish', () => {
     expect(fn).toContain("state: record ? captureStateOf(record, Date.now()) : 'complete',");
+  });
+
+  it('serves the plans beside the photographs, vouched for by the same record and address', () => {
+    const plans = fn.indexOf("const planListing = await supabase.storage.from('listing-images').list(planFolder");
+    const check = fn.indexOf('if (!brochurePhotographsAreOfReportAddress(row?.property_address, brochure.source)) {');
+    expect(check).toBeGreaterThan(-1);
+    expect(plans).toBeGreaterThan(check);
+    expect(fn).toContain('capturedFloorPlansForReport(planListing.data ?? [])');
+    expect(fn).toContain('return { photographs: photographs ?? [], floorPlans: floorPlans ?? [], photographCapture };');
+    expect(broker).toContain('floorPlansForReport(rows, shared)');
+    expect(broker).toContain('...(reading ? { photographs: reading.photographs, floorPlans: reading.floorPlans ?? [] } : {}),');
   });
 });
 

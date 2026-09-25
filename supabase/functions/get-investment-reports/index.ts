@@ -12,8 +12,11 @@ import {
   brochurePhotographsAreOfReportAddress,
   CAPTURE_RECORD_NAME,
   captureFolder,
+  capturedFloorPlansForReport,
   capturedPhotographsForReport,
   captureStateOf,
+  floorPlanFolder,
+  floorPlansForReport,
   parseBrochureRecord,
   parseCaptureRecord,
   photographsAreOfReportAddress,
@@ -221,10 +224,39 @@ const PHOTOGRAPH_URL_TTL_SECONDS = 10 * 60;
 
 type SignedPhotograph = { url: string; width: number | null; height: number | null };
 
-/** A report's photographs, and — for a captured set — where its capture stands. */
+/**
+ * A report's photographs and floor plans, and — for a captured set — where its
+ * capture stands. The plans travel apart because they are drawn apart: whole,
+ * on a page of their own, never in a photo slot that crops.
+ */
 interface PhotographReading {
   photographs: SignedPhotograph[];
+  floorPlans?: SignedPhotograph[];
   photographCapture?: { state: CaptureState; reportId: string };
+}
+
+/**
+ * Signs a set of stored pictures in one request, in the order given; a picture
+ * that could not be signed is dropped and nothing else is. Null where the
+ * signing itself failed.
+ */
+async function signStoredPictures(
+  supabase: SupabaseClient,
+  pictures: ReadonlyArray<{ path: string; width: number | null; height: number | null }>,
+): Promise<SignedPhotograph[] | null> {
+  if (!pictures.length) return [];
+  const signed = await supabase.storage
+    .from('listing-images')
+    .createSignedUrls(pictures.map((p) => p.path), PHOTOGRAPH_URL_TTL_SECONDS);
+  if (signed.error) return null;
+  const urlByPath = new Map<string, string>();
+  for (const entry of signed.data ?? []) {
+    if (entry.signedUrl && entry.path) urlByPath.set(entry.path, entry.signedUrl);
+  }
+  return pictures.flatMap((p) => {
+    const url = urlByPath.get(p.path);
+    return url ? [{ url, width: p.width, height: p.height }] : [];
+  });
 }
 
 /**
@@ -256,7 +288,7 @@ async function readReportPhotographs(
 ): Promise<PhotographReading> {
   const listingId = typeof row?.property_listing_id === 'string' ? row.property_listing_id.trim() : '';
   if (!listingId) return await readCapturedPhotographs(supabase, row, correlationId);
-  return { photographs: await readListingPhotographs(supabase, listingId, row?.property_address, correlationId) };
+  return await readListingPhotographs(supabase, listingId, row?.property_address, correlationId);
 }
 
 /**
@@ -272,7 +304,8 @@ async function readListingPhotographs(
   listingId: string,
   reportAddress: unknown,
   correlationId: string,
-): Promise<SignedPhotograph[]> {
+): Promise<PhotographReading> {
+  const none: PhotographReading = { photographs: [], floorPlans: [] };
   try {
     const listing = await supabase
       .from('listings_cache')
@@ -281,12 +314,12 @@ async function readListingPhotographs(
       .maybeSingle();
     if (listing.error || !listing.data) {
       if (listing.error) console.warn('[get-investment-reports] listing address unavailable', { correlationId, code: listing.error.code });
-      return [];
+      return none;
     }
     const projected = projectAirtableRecord({ id: listingId, fields: (listing.data as { fields?: Record<string, unknown> }).fields ?? {} });
     if (!photographsAreOfReportAddress(reportAddress, { address: projected.address, suburb: projected.suburb })) {
       console.info('[get-investment-reports] listing photographs are of another address', { correlationId });
-      return [];
+      return none;
     }
     const images = await supabase
       .from('listing_images')
@@ -296,36 +329,26 @@ async function readListingPhotographs(
       .order('position', { ascending: true });
     if (images.error || !images.data?.length) {
       if (images.error) console.warn('[get-investment-reports] photographs unavailable', { correlationId, code: images.error.code });
-      return [];
+      return none;
     }
     const reuse = await supabase.rpc('listing_image_reuse', { p_listing_ids: [listingId] });
     if (reuse.error) {
       console.warn('[get-investment-reports] photograph reuse unavailable', { correlationId, code: reuse.error.code });
-      return [];
+      return none;
     }
-    const chosen = photographsForReport(
-      images.data as unknown as StoredListingPhotograph[],
-      sharedListingCounts((reuse.data ?? []) as ListingImageReuseRow[]),
-    );
-    if (!chosen.length) return [];
-    const signed = await supabase.storage
-      .from('listing-images')
-      .createSignedUrls(chosen.map((p) => p.storagePath), PHOTOGRAPH_URL_TTL_SECONDS);
-    if (signed.error) {
+    const rows = images.data as unknown as StoredListingPhotograph[];
+    const shared = sharedListingCounts((reuse.data ?? []) as ListingImageReuseRow[]);
+    const stored = (p: { storagePath: string; width: number | null; height: number | null }) =>
+      ({ path: p.storagePath, width: p.width, height: p.height });
+    const photographs = await signStoredPictures(supabase, photographsForReport(rows, shared).map(stored));
+    const floorPlans = await signStoredPictures(supabase, floorPlansForReport(rows, shared).map(stored));
+    if (!photographs || !floorPlans) {
       console.warn('[get-investment-reports] photographs could not be signed', { correlationId });
-      return [];
     }
-    const urlByPath = new Map<string, string>();
-    for (const entry of signed.data ?? []) {
-      if (entry.signedUrl && entry.path) urlByPath.set(entry.path, entry.signedUrl);
-    }
-    return chosen.flatMap((p) => {
-      const url = urlByPath.get(p.storagePath);
-      return url ? [{ url, width: p.width, height: p.height }] : [];
-    });
+    return { photographs: photographs ?? [], floorPlans: floorPlans ?? [] };
   } catch (error) {
     console.warn('[get-investment-reports] photographs failed', { correlationId, technicalError: error });
-    return [];
+    return none;
   }
 }
 
@@ -388,26 +411,24 @@ async function readCapturedPhotographs(
       state: record ? captureStateOf(record, Date.now()) : 'complete',
       reportId: ownerId.trim().toLowerCase(),
     };
+    // The plans are held by the same record as the photographs beside them, so
+    // the address check above vouches for both. A subfolder that cannot be
+    // listed costs the plans and nothing else.
+    const planFolder = floorPlanFolder(ownerId) as string;
+    const planListing = await supabase.storage.from('listing-images').list(planFolder, { limit: 100 });
+    if (planListing.error) console.warn('[get-investment-reports] captured floor plans unavailable', { correlationId });
     const chosen = capturedPhotographsForReport(listed.data ?? []);
-    if (!chosen.length) return { photographs: [], photographCapture };
-    const signed = await supabase.storage
-      .from('listing-images')
-      .createSignedUrls(chosen.map((p) => `${folder}/${p.name}`), PHOTOGRAPH_URL_TTL_SECONDS);
-    if (signed.error) {
+    const plans = planListing.error ? [] : capturedFloorPlansForReport(planListing.data ?? []);
+    const photographs = await signStoredPictures(supabase, chosen.map((p) => ({
+      path: `${folder}/${p.name}`, width: p.width, height: p.height,
+    })));
+    const floorPlans = await signStoredPictures(supabase, plans.map((p) => ({
+      path: `${planFolder}/${p.name}`, width: p.width, height: p.height,
+    })));
+    if (!photographs || !floorPlans) {
       console.warn('[get-investment-reports] captured photographs could not be signed', { correlationId });
-      return { photographs: [], photographCapture };
     }
-    const urlByPath = new Map<string, string>();
-    for (const entry of signed.data ?? []) {
-      if (entry.signedUrl && entry.path) urlByPath.set(entry.path, entry.signedUrl);
-    }
-    return {
-      photographs: chosen.flatMap((p) => {
-        const url = urlByPath.get(`${folder}/${p.name}`);
-        return url ? [{ url, width: p.width, height: p.height }] : [];
-      }),
-      photographCapture,
-    };
+    return { photographs: photographs ?? [], floorPlans: floorPlans ?? [], photographCapture };
   } catch (error) {
     console.warn('[get-investment-reports] captured photographs failed', { correlationId, technicalError: error });
     return { photographs: [] };
@@ -637,7 +658,7 @@ Deno.serve(async (req) => {
       return json({
         success: true,
         report: responseData[0],
-        ...(reading ? { photographs: reading.photographs } : {}),
+        ...(reading ? { photographs: reading.photographs, floorPlans: reading.floorPlans ?? [] } : {}),
         ...(reading?.photographCapture ? { photographCapture: reading.photographCapture } : {}),
         correlationId,
       }, 200, corsHeaders, correlationId);

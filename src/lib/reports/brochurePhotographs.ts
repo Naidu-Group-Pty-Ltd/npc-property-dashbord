@@ -35,6 +35,7 @@ import {
   type PhotographSource,
 } from '../../../supabase/functions/_shared/reportPhotographs.pure';
 import {
+  brochurePlanSelection,
   brochureSelection,
   fileBrochurePhotographs,
   gatherBrochureCandidates,
@@ -287,15 +288,21 @@ function analysisSquare(source: CanvasImageSource): Uint8ClampedArray | null {
   return context.getImageData(0, 0, ANALYSIS_SIZE, ANALYSIS_SIZE).data;
 }
 
-function canvasBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob | null> {
-  return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), 'image/jpeg', quality));
+function canvasBlob(canvas: HTMLCanvasElement, quality: number, type = 'image/jpeg'): Promise<Blob | null> {
+  return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), type, quality));
 }
 
-/** The photograph as a JPEG, its long edge at most `BROCHURE_PHOTOGRAPH_EDGE_PX`, within the size the server takes. */
+/**
+ * The picture, its long edge at most `BROCHURE_PHOTOGRAPH_EDGE_PX`, within the
+ * size the server takes: a photograph as a JPEG, a floor plan as a PNG where
+ * one fits, because JPEG smears the thin lines and small labels a plan is
+ * made of, and a plan is mostly flat white that PNG stores for almost nothing.
+ */
 async function encodePhotograph(
   source: CanvasImageSource,
   width: number,
   height: number,
+  kind: 'photo' | 'floorplan' = 'photo',
 ): Promise<{ blob: Blob; width: number; height: number } | null> {
   const scale = Math.min(1, BROCHURE_PHOTOGRAPH_EDGE_PX / Math.max(width, height));
   const outWidth = Math.max(1, Math.round(width * scale));
@@ -310,6 +317,10 @@ async function encodePhotograph(
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = 'high';
   context.drawImage(source, 0, 0, outWidth, outHeight);
+  if (kind === 'floorplan') {
+    const png = await canvasBlob(canvas, 1, 'image/png');
+    if (png && png.size <= BROCHURE_PHOTOGRAPH_MAX_BYTES) return { blob: png, width: outWidth, height: outHeight };
+  }
   for (const quality of [0.9, 0.8]) {
     const blob = await canvasBlob(canvas, quality);
     if (blob && blob.size <= BROCHURE_PHOTOGRAPH_MAX_BYTES) return { blob, width: outWidth, height: outHeight };
@@ -337,7 +348,7 @@ export interface BrochureReading {
   /** Each page's text, page 1 first. */
   pageTexts: string[];
   candidates: BrochureCandidate[];
-  /** The encoded photographs, by candidate key. Only photographs are encoded. */
+  /** The encoded photographs and floor plans, by candidate key. Nothing else is encoded. */
   files: Map<string, BrochurePhotographFile>;
 }
 
@@ -389,8 +400,9 @@ export async function readBrochurePhotographs(
           signature: analysis.signature,
         });
       }
-      if (analysis.kind === 'photo' && !files.has(key) && files.size < MAX_BROCHURE_ENCODED) {
-        const encoded = await encodePhotograph(source, decoded.width, decoded.height);
+      const keeps = analysis.kind === 'photo' || analysis.kind === 'floorplan';
+      if (keeps && !files.has(key) && files.size < MAX_BROCHURE_ENCODED) {
+        const encoded = await encodePhotograph(source, decoded.width, decoded.height, analysis.kind === 'floorplan' ? 'floorplan' : 'photo');
         if (encoded) files.set(key, encoded);
       }
     }
@@ -401,9 +413,10 @@ export async function readBrochurePhotographs(
     pageCount,
     pagesRead,
     pageTexts: Array.from({ length: pagesRead }, (_, index) => pageTexts[index] ?? ''),
-    // A photograph that could not be encoded cannot be shown or filed, so it
-    // is not a candidate; anything else is, so it is counted for what it is.
-    candidates: gatherBrochureCandidates(sightings).filter((c) => c.kind !== 'photo' || files.has(c.key)),
+    // A photograph or plan that could not be encoded cannot be shown or filed,
+    // so it is not a candidate; anything else is, so it is counted for what it is.
+    candidates: gatherBrochureCandidates(sightings)
+      .filter((c) => (c.kind !== 'photo' && c.kind !== 'floorplan') || files.has(c.key)),
     files,
   };
 }
@@ -423,7 +436,8 @@ function blobToBase64(blob: Blob): Promise<string> {
 
 /**
  * Files the photographs the adviser ticked under the report, in the order the
- * picker shows them, the first as the cover. Never throws.
+ * picker shows them, the first as the cover, and then the ticked floor plans.
+ * Never throws.
  */
 export async function fileChosenBrochurePhotographs(args: {
   invoke: (request: BrochurePhotographRequest) => Promise<BrochureTransportAnswer>;
@@ -432,10 +446,16 @@ export async function fileChosenBrochurePhotographs(args: {
   source: PhotographSource;
   offered: readonly BrochureCandidate[];
   ticked: ReadonlySet<string>;
+  plans?: readonly BrochureCandidate[];
+  tickedPlans?: ReadonlySet<string>;
   files: ReadonlyMap<string, BrochurePhotographFile>;
 }): Promise<BrochureFiling> {
   const requests: BrochurePhotographRequest[] = [];
-  for (const { key, place } of brochureSelection(args.offered, args.ticked)) {
+  const chosen = [
+    ...brochureSelection(args.offered, args.ticked).map((pick) => ({ ...pick, plan: false })),
+    ...brochurePlanSelection(args.plans ?? [], args.tickedPlans ?? new Set()).map((pick) => ({ ...pick, plan: true })),
+  ];
+  for (const { key, place, plan } of chosen) {
     const file = args.files.get(key);
     if (!file) continue;
     try {
@@ -446,9 +466,10 @@ export async function fileChosenBrochurePhotographs(args: {
         source: args.source,
         place,
         image: await blobToBase64(file.blob),
+        ...(plan ? { kind: 'floorplan' as const } : {}),
       });
     } catch {
-      /* a photograph that cannot be read back is simply not sent */
+      /* a picture that cannot be read back is simply not sent */
     }
   }
   if (!requests.length) return { filed: 0, refused: {}, failed: 0 };

@@ -2950,8 +2950,9 @@ touching `_shared/reportPhotographs.pure.ts`,
 `_shared/listingPagePhotographs.pure.ts`, the `photographs` option on
 `get-investment-reports`, the `capture_report` or `capture_brochure_photograph`
 ops on `listing-images`, `urlExtractPhotographs.ts`,
-`brochurePhotographs*.ts`, `adapters/reportPhotographs.ts` or a
-`property.images` binding.
+`brochurePhotographs*.ts`, `adapters/reportPhotographs.ts`,
+`floorPlanPage`, `investmentPdfPictures.ts` or a `property.images` /
+`property.floorPlans` binding.
 
 **Hero Image Studio's placements never reached the document a client
 receives.** Only the standard presentation reads them, it draws them on a
@@ -3032,6 +3033,42 @@ unreadable. And **a lot is an address only against the same lot**
 lot-only address, which is a new build's only address, so the brochure's
 form requires one lot on both sides and everything either side states to
 agree.
+
+**A floor plan is never a photograph** (the owner, 25 Sep 2026; §9 of the
+same doc). Every photo slot crops to fill its frame, and a cropped plan is a
+plan with a room missing. So a plan has its own binding
+(`property.floorPlans`), its own folder (`<report>/plans/`, kept only on the
+server's own `floorplan` verdict, at most two), and its own sheet in all fifty
+Investment masters (seed v22, `floorPlanPage`): drawn whole, never rotated,
+after the contents and before the verdict, each sheet conditional on its plan.
+The rule that makes it safe: **without a plan every master draws byte for
+byte what it drew before**, pinned by rendering all fifty with and without the
+sheets. The sheet takes no running head, because a head names a part and a new
+part would renumber every later page.
+
+**The standard presentation draws them too** (§10). A report left on no
+template used to carry no photograph and no plan whichever route found them.
+It reads them with the adapter's own reader, only once the template route has
+declined, and puts the lead photograph in the field below the brand cover's
+lockup and each plan on a sheet after the contents. **Measure the page you
+draw on, never assume it**: `npc_template.pdf`'s MediaBox is
+[0 7.83 595.5 850.08], and a band placed against a 0–842 page left the
+ornament's tip showing above the photograph.
+
+**That brand cover is NPC's artwork, and it opens NPC's document on NPC's
+deployment and nothing else** (`standardCover.pure.ts`, "Whose cover it is" in
+§10). Until 25 Sep 2026 every clone's standard document opened on NAIDU
+PROPERTY CONSULTING SERVICES, and the file named `NPC Services` as its author.
+Every other issuer now gets a cover drawn for it (`investmentPdfCover.ts`): its
+name, its knockout mark, the photograph where the artwork puts one. The issuer
+comes from the same `resolveReportIssuer` the closing page uses, so the first
+and last pages cannot name two businesses; an unbranded clone issues as Aurixa
+Systems. Two rules bite. **The prime is recognised by its backend, never by a
+name**: a clone seeded from the prime's settings holds NPC's name in its rows.
+And **covering the artwork is not removing it**: another issuer's document
+starts from an empty PDF and copies only the content page, because NPC's name
+drawn over is still in the file for a search or a screen reader. The prime's
+own document is pixel-identical to what it was.
 
 The resale section also draws the published price history
 (`priceHistoryChart`, §6 of `MARKET_FIGURES_IN_THE_REPORT.md`): the latest

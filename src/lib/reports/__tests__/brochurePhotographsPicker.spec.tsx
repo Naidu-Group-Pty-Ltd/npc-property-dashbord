@@ -15,7 +15,7 @@ import { BrochurePhotographsPicker } from '@/components/reports/BrochurePhotogra
 import { brochureFilingArgs, useBrochurePhotographs } from '@/hooks/useBrochurePhotographs';
 import type { BrochureCandidate, BrochureOffer } from '../brochurePhotographs.pure';
 import type { BrochureReading } from '../brochurePhotographs';
-import { REPORT_PHOTOGRAPH_LIMIT } from '../../../../supabase/functions/_shared/reportPhotographs.pure';
+import { REPORT_FLOOR_PLAN_LIMIT, REPORT_PHOTOGRAPH_LIMIT } from '../../../../supabase/functions/_shared/reportPhotographs.pure';
 
 const candidate = (key: string, pages: number[] = [1]): BrochureCandidate => ({
   key,
@@ -33,6 +33,7 @@ const offerOf = (keys: string[], overrides: Partial<BrochureOffer> = {}): Brochu
   lead: keys[0] ?? null,
   multiProperty: false,
   namesProperty: true,
+  plans: [],
   leftOut: { notPhotographs: 0, furniture: 0, otherProperties: 0, unnamedPages: 0, overLimit: 0 },
   ...overrides,
 });
@@ -84,7 +85,7 @@ describe('what the picker says', () => {
       />,
     );
     expect(screen.getByText(/Pictures on pages that don't name this address aren't shown, because nothing ties them to this property/)).toBeInTheDocument();
-    expect(screen.getByText(/Floor plans and graphics aren't used as photographs/)).toBeInTheDocument();
+    expect(screen.getByText(/Logos and other graphics aren't used/)).toBeInTheDocument();
     rerender(
       <BrochurePhotographsPicker
         status="ready"
@@ -114,11 +115,79 @@ describe('what the picker says', () => {
     expect(screen.queryByRole('checkbox')).toBeNull();
   });
 
-  it('says when the pages naming this address hold no photograph of it', () => {
+  it('says when the pages naming this address hold no photograph or plan of it', () => {
     render(
       <BrochurePhotographsPicker status="ready" offer={offerOf([], { lead: null })} previews={new Map()} selected={new Set()} onSelectedChange={() => {}} addressUsable />,
     );
+    expect(screen.getByText(/The pages naming this address carry no photograph or floor plan of it/)).toBeInTheDocument();
+  });
+});
+
+const planOf = (key: string, page: number): BrochureCandidate => ({ ...candidate(key, [page]), kind: 'floorplan', width: 1199, height: 751 });
+
+describe('the floor plan, beside the photographs', () => {
+  it('shows the plan whole, says it is printed on a page of its own, and ticks it from the plan or its box', () => {
+    const changes: Array<string[]> = [];
+    render(
+      <BrochurePhotographsPicker
+        status="ready"
+        offer={offerOf(['facade'], { plans: [planOf('plan', 1)] })}
+        previews={previewsOf(['facade', 'plan'])}
+        selected={new Set(['facade'])}
+        onSelectedChange={() => {}}
+        selectedPlans={new Set()}
+        onSelectedPlansChange={(next) => changes.push([...next])}
+        addressUsable
+      />,
+    );
+    expect(screen.getByText('Floor plan')).toBeInTheDocument();
+    expect(screen.getByText(/printed whole, on a page of its own/)).toBeInTheDocument();
+    const image = screen.getByRole('img', { name: 'Floor plan from the brochure, page 1' });
+    // Contained, never cropped, in the picker as on the page.
+    expect(image.className).toContain('object-contain');
+    expect(image.className).not.toContain('object-cover');
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Use the floor plan from page 1' }));
+    expect(changes).toEqual([['plan']]);
+    // A plan is never the cover.
+    expect(screen.getAllByText('Cover')[0].closest('label')).toHaveAttribute('for', 'brochure-photograph-facade');
+  });
+
+  it('offers the plan where the property\'s pages carry no photograph', () => {
+    render(
+      <BrochurePhotographsPicker
+        status="ready"
+        offer={offerOf([], { lead: null, plans: [planOf('plan', 1)] })}
+        previews={previewsOf(['plan'])}
+        selected={new Set()}
+        onSelectedChange={() => {}}
+        selectedPlans={new Set(['plan'])}
+        addressUsable
+      />,
+    );
     expect(screen.getByText(/The pages naming this address carry no photograph of it/)).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Use the floor plan from page 1' })).toBeChecked();
+  });
+
+  it('stops at the plans a report carries, and says so', () => {
+    const plans = [planOf('a', 1), planOf('b', 2), planOf('c', 3)];
+    const onSelectedPlansChange = vi.fn();
+    render(
+      <BrochurePhotographsPicker
+        status="ready"
+        offer={offerOf([], { lead: null, plans })}
+        previews={previewsOf(['a', 'b', 'c'])}
+        selected={new Set()}
+        onSelectedChange={() => {}}
+        selectedPlans={new Set(['a', 'b'])}
+        onSelectedPlansChange={onSelectedPlansChange}
+        addressUsable
+      />,
+    );
+    const third = screen.getByRole('checkbox', { name: 'Use the floor plan from page 3' });
+    expect(third).toBeDisabled();
+    fireEvent.click(third);
+    expect(onSelectedPlansChange).not.toHaveBeenCalled();
+    expect(screen.getByText(`A report carries up to ${REPORT_FLOOR_PLAN_LIMIT} floor plans.`)).toBeInTheDocument();
   });
 });
 
@@ -221,6 +290,29 @@ describe('what the hook behind the picker keeps', () => {
     act(() => result.current.begin(new File(['x'], 'brochure.pdf')));
     act(() => result.current.settle({ address: 'Lot 12 Smith Street', suburb: 'Box Hill' }));
     await waitFor(() => expect(result.current.state?.status).toBe('failed'));
+  });
+
+  it('ticks the property\'s floor plans as it ticks the lead, and hands them over to file', async () => {
+    const withPlan: BrochureReading = {
+      ...reading(['facade']),
+      candidates: [candidate('facade', [1]), { ...candidate('plan', [1]), kind: 'floorplan' }],
+      files: new Map([
+        ['facade', { blob: new Blob(['f'], { type: 'image/jpeg' }), width: 1600, height: 1000 }],
+        ['plan', { blob: new Blob(['p'], { type: 'image/png' }), width: 1199, height: 751 }],
+      ]),
+    };
+    const { result } = renderHook(() => useBrochurePhotographs(async () => withPlan));
+    act(() => result.current.begin(new File(['%PDF'], 'brochure.pdf')));
+    act(() => result.current.settle({ address: 'Lot 12 Smith Street', suburb: 'Box Hill' }));
+    await waitFor(() => expect(result.current.state?.status).toBe('ready'));
+    expect(result.current.state?.selectedPlans).toEqual(new Set(['plan']));
+    const args = result.current.filingArgs();
+    expect(args?.plans.map((plan) => plan.key)).toEqual(['plan']);
+    expect(args?.tickedPlans).toEqual(new Set(['plan']));
+    // A plan alone is still something to file.
+    act(() => result.current.setSelected(new Set()));
+    await waitFor(() => expect(result.current.filingArgs()?.ticked.size).toBe(0));
+    expect(result.current.filingArgs()?.tickedPlans).toEqual(new Set(['plan']));
   });
 
   it('hands over what to file only while something is ticked, and revokes every preview it made', async () => {

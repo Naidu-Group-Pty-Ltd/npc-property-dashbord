@@ -653,14 +653,20 @@ describe('the broker reads a URL-extract report\'s photographs, and where their 
     expect(cached).toBeLessThan(projected);
     expect(projected).toBeLessThan(checked);
     expect(checked).toBeLessThan(images);
-    // A listing the cache no longer holds cannot vouch for an address.
-    expect(listing).toMatch(/if \(listing\.error \|\| !listing\.data\) \{[\s\S]*?return \[\];/);
+    // A listing the cache no longer holds cannot vouch for an address: no
+    // photographs and no plans (`none` is both, empty).
+    expect(listing).toContain('const none: PhotographReading = { photographs: [], floorPlans: [] };');
+    expect(listing).toMatch(/if \(listing\.error \|\| !listing\.data\) \{[\s\S]*?return none;/);
     expect(broker).toContain('readListingPhotographs(supabase, listingId, row?.property_address, correlationId)');
   });
 
   it('signs from the private bucket for minutes, and every failure is an empty list', () => {
     expect(fn).toContain(".from('listing-images')");
-    expect(fn).toMatch(/createSignedUrls\([\s\S]*PHOTOGRAPH_URL_TTL_SECONDS\)/);
+    // One signer for every picture the broker serves, photographs and plans.
+    const signer = broker.slice(broker.indexOf('async function signStoredPictures('), broker.indexOf('async function readReportPhotographs('));
+    expect(signer).toMatch(/\.from\('listing-images'\)\s*\.createSignedUrls\([\s\S]*PHOTOGRAPH_URL_TTL_SECONDS\)/);
+    expect(signer).toContain('if (signed.error) return null;');
+    expect(fn).toContain('await signStoredPictures(supabase, chosen.map(');
     expect(fn).toMatch(/catch \(error\) \{[\s\S]*return \{ photographs: \[\] \};/);
   });
 
