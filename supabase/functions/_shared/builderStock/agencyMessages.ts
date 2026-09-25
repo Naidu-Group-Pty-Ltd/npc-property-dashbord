@@ -15,8 +15,18 @@ import {
 // deno-lint-ignore no-explicit-any
 type Client = any;
 
+/**
+ * Why a conversation is closed, so the page names the next step rather than
+ * guessing it: an activated property whose ROUTE is paused must not be told
+ * to activate. Null while it is open.
+ */
+export type ConversationClosedReason = 'not_connected' | 'connection_paused' | 'not_activated' | 'delisted';
+
 export type BuilderConversationRead =
-  | { ok: true; conversation_id: string | null; open: boolean; messages: ConversationMessageView[] }
+  | {
+    ok: true; conversation_id: string | null; open: boolean;
+    closed_reason: ConversationClosedReason | null; messages: ConversationMessageView[];
+  }
   | { ok: false };
 
 export async function readBuilderConversation(
@@ -32,7 +42,7 @@ export async function readBuilderConversation(
     .limit(1)
     .maybeSingle();
   if (connectionError) return { ok: false };
-  if (!connection) return { ok: true, conversation_id: null, open: false, messages: [] };
+  if (!connection) return { ok: true, conversation_id: null, open: false, closed_reason: 'not_connected', messages: [] };
 
   const [{ data: selection, error: selectionError }, { data: conversation, error: conversationError }] =
     await Promise.all([
@@ -46,8 +56,11 @@ export async function readBuilderConversation(
   // History is read whatever the connection's write grant; open is whether a
   // new message could be written now — the writer's own three conditions.
   const route = connection as { scopes?: string[] | null; identity_mismatch_since?: string | null };
-  const open = !!selection && (route.scopes ?? []).includes('stock:publish') && !route.identity_mismatch_since;
-  if (!conversation) return { ok: true, conversation_id: null, open, messages: [] };
+  const paused = !(route.scopes ?? []).includes('stock:publish') || !!route.identity_mismatch_since;
+  const open = !!selection && !paused;
+  const closed_reason: ConversationClosedReason | null = open ? null
+    : paused ? 'connection_paused' : 'not_activated';
+  if (!conversation) return { ok: true, conversation_id: null, open, closed_reason, messages: [] };
 
   const { data: messages, error: messagesError } = await supabase
     .from('builder_network_messages')
@@ -64,6 +77,7 @@ export async function readBuilderConversation(
     ok: true,
     conversation_id: String(conversation.id),
     open,
+    closed_reason,
     messages: projectConversationMessages((messages ?? []) as Record<string, unknown>[], args.viewerUserId),
   };
 }

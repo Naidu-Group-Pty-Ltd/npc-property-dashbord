@@ -166,6 +166,24 @@ describe('the builder conversation card', () => {
     expect(screen.queryByRole('textbox', { name: /message/i })).toBeNull();
   });
 
+  it('a paused connection says so, rather than asking to activate a property that is activated', () => {
+    state.conversation = {
+      conversation_id: 'c', open: false, closed_reason: 'connection_paused', can_send: false, messages: [MESSAGE({})],
+    };
+    renderCard();
+    expect(screen.getByText(/paused while the connection/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no longer activated|activate this property/i)).toBeNull();
+  });
+
+  it('a property the builder stopped listing says that, and keeps its history', () => {
+    state.conversation = {
+      conversation_id: 'c', open: false, closed_reason: 'delisted', can_send: false, messages: [MESSAGE({})],
+    };
+    renderCard();
+    expect(screen.getByText(/no longer lists this property/i)).toBeInTheDocument();
+    expect(screen.getByText('Hello')).toBeInTheDocument();
+  });
+
   it('no model and no email: a message is text between people', () => {
     const source = code('src/components/listings/BuilderStockConversation.tsx');
     expect(source).not.toMatch(/openrouter|anthropic|openai|claude|resend|sendEmail/i);

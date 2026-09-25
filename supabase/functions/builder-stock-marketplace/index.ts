@@ -647,6 +647,7 @@ Deno.serve(async (req) => {
         success: true,
         conversation_id: read.conversation_id,
         open: read.open,
+        closed_reason: item.lifecycle_status === 'active' ? read.closed_reason : 'delisted',
         can_send: canSend,
         messages: read.messages.map((message) => ({ ...message, can_retry: message.can_retry && canSend })),
       });

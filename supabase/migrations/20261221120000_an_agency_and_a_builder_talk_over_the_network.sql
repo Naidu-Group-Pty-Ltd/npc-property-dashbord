@@ -258,7 +258,10 @@ BEGIN
    WHERE c.builder_organisation_id = v_org AND c.state = 'active'
      AND 'stock:publish' = ANY (c.scopes)
    ORDER BY c.accepted_at DESC NULLS LAST
-   LIMIT 1;
+   LIMIT 1
+   -- Held until this transaction ends: a dispute or a withdrawn scope that
+   -- lands now waits for this message, and the route trigger then sees it.
+   FOR SHARE OF c;
   IF v_org IS NULL OR v_connection.id IS NULL THEN
     RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'AGENCY_CONVERSATION_NOT_FOUND';
   END IF;
@@ -282,6 +285,13 @@ BEGIN
     RETURN;
   END IF;
 
+  -- Every live activation is held until this message is written, so a
+  -- withdrawal cannot commit between this check and the write: it either
+  -- commits first (and this sees it) or waits for this message.
+  PERFORM 1 FROM public.builder_stock_selections s
+   WHERE s.stock_item_id = _stock_item_id AND s.organisation_id = v_org
+     AND s.status <> 'withdrawn'
+   FOR SHARE OF s;
   SELECT s.selected_by_user_id INTO v_owner
     FROM public.builder_stock_selections s
    WHERE s.stock_item_id = _stock_item_id AND s.organisation_id = v_org
@@ -367,7 +377,13 @@ BEGIN
   END IF;
   SELECT * INTO v_conversation FROM public.builder_network_conversations WHERE id = v_message.conversation_id;
   -- Sending again is writing: the conversation must still be open, exactly
-  -- as for a new message.
+  -- as for a new message, and what makes it open is held until it is sent.
+  PERFORM 1 FROM public.builder_network_connections c WHERE c.id = v_conversation.connection_id FOR SHARE;
+  PERFORM 1 FROM public.builder_stock_selections s
+   WHERE s.stock_item_id = v_conversation.stock_item_id
+     AND s.organisation_id = v_conversation.builder_organisation_id
+     AND s.status <> 'withdrawn'
+   FOR SHARE OF s;
   IF EXISTS (
     SELECT 1 FROM public.builder_network_connections c
      WHERE c.id = v_conversation.connection_id AND c.identity_mismatch_since IS NOT NULL) THEN
@@ -425,9 +441,13 @@ BEGIN
   SELECT * INTO v_event FROM public.builder_network_inbound_events WHERE id = _event_id;
   v_payload := COALESCE(v_event.payload, '{}'::jsonb);
 
+  -- Held until the event is applied: a dispute, a revocation or a withdrawn
+  -- scope that lands now waits, rather than committing beside a message this
+  -- is about to store under the old answer.
   SELECT c.id, c.state, c.builder_organisation_id, c.network_connection_id, c.identity_mismatch_since
     INTO v_connection
-    FROM public.builder_network_connections c WHERE c.id = v_event.connection_id;
+    FROM public.builder_network_connections c WHERE c.id = v_event.connection_id
+   FOR SHARE;
   IF v_connection.id IS NULL THEN
     RETURN 'refused:connection_not_active';
   END IF;
@@ -516,6 +536,10 @@ BEGIN
   ELSIF v_conversation_id <> public.builder_network_conversation_id(v_connection.network_connection_id, v_item) THEN
     v_reason := 'conversation_mismatch';
   ELSE
+    PERFORM 1 FROM public.builder_stock_selections s
+     WHERE s.stock_item_id = v_item AND s.organisation_id = v_connection.builder_organisation_id
+       AND s.status <> 'withdrawn'
+     FOR SHARE OF s;
     SELECT s.selected_by_user_id INTO v_owner
       FROM public.builder_stock_selections s
      WHERE s.stock_item_id = v_item AND s.organisation_id = v_connection.builder_organisation_id

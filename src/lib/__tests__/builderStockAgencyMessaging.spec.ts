@@ -561,6 +561,43 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
     });
   });
 
+  describe('a check and the change it guards against, at the same moment', () => {
+    const settled = (p: Promise<string>) => p.then((out) => out, (error) => `ERROR ${String((error as { stderr?: unknown }).stderr ?? error)}`);
+
+    it('a message written while the activation is being withdrawn waits for it, and is refused', async () => {
+      const withdrawal = db.sqlAsync(`BEGIN; UPDATE public.builder_stock_selections SET status = 'withdrawn'
+                                       WHERE stock_item_id = ${lit(ITEM_A1)}; SELECT pg_sleep(1.5); COMMIT;`);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const body = `Racing the withdrawal ${randomUUID()}`;
+      const write = settled(db.sqlAsync(`SELECT id FROM public.builder_network_post_message(${lit(ITEM_A1)}, ${lit(OWNER)}, ${lit(randomUUID())}, ${lit(body)})`));
+      try {
+        const [, result] = await Promise.all([withdrawal, write]);
+        expect(result).toMatch(/AGENCY_CONVERSATION_NOT_OPEN/);
+        expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE body = ${lit(body)}`)).toBe('0');
+      } finally {
+        db.sql(`UPDATE public.builder_stock_selections SET status = 'selected' WHERE stock_item_id = ${lit(ITEM_A1)}`);
+      }
+    }, 20_000);
+
+    it('a builder message applied while a dispute begins waits for it, and is held', async () => {
+      const m = builderMessage({ body: 'Applied while the dispute begins.' });
+      land(CONN_A, 'agency.message.posted', `agency.message:${m.message_id}:1`, m);
+      const eventId = db.sql(`SELECT id FROM public.builder_network_inbound_events WHERE dedupe_key = 'agency.message:${m.message_id}:1'`);
+      const dispute = db.sqlAsync(`BEGIN; UPDATE public.builder_network_connections SET identity_mismatch_since = now()
+                                    WHERE id = ${lit(CONN_A)}; SELECT pg_sleep(1.5); COMMIT;`);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const apply = settled(db.sqlAsync(`SELECT public.builder_network_apply_message_event('${eventId}')`));
+      try {
+        const [, result] = await Promise.all([dispute, apply]);
+        expect(result).toBe('held');
+        expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE id = ${lit(m.message_id)}`)).toBe('0');
+      } finally {
+        db.sql(`UPDATE public.builder_network_connections SET identity_mismatch_since = NULL WHERE id = ${lit(CONN_A)}`);
+        sweep();
+      }
+    }, 20_000);
+  });
+
   describe('a receipt that landed before the connection was revoked', () => {
     it('still settles our message; new content that landed with it is still refused', () => {
       const ours = post(ITEM_A1, OWNER, randomUUID(), 'Sent just before the revocation.');

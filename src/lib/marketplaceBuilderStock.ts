@@ -229,6 +229,8 @@ export interface BuilderConversation {
   conversation_id: string | null;
   /** False where this workspace holds no live activation of the property. */
   open: boolean;
+  /** Why it is closed, so the page names the right next step. Absent from an older function. */
+  closed_reason?: 'not_connected' | 'connection_paused' | 'not_activated' | 'delisted' | null;
   can_send: boolean;
   messages: ConversationMessageView[];
 }

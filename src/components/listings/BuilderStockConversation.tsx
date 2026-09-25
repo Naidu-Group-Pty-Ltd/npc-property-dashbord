@@ -113,11 +113,7 @@ export function BuilderStockConversation({
         ) : null}
 
         {conversation && !conversation.open ? (
-          <p className="text-sm text-muted-foreground">
-            {messages.length
-              ? 'This property is no longer activated here, so the conversation is closed. Its history stays.'
-              : `Activate this property to message ${who} about it.`}
-          </p>
+          <p className="text-sm text-muted-foreground">{closedCopy(conversation.closed_reason, who, messages.length > 0)}</p>
         ) : null}
 
         {conversation?.can_send ? (
@@ -187,4 +183,20 @@ function Message({
       ) : null}
     </article>
   );
+}
+
+/** Names why a conversation is closed and what happens next — never a step that would not open it. */
+function closedCopy(reason: string | null | undefined, who: string, hasHistory: boolean): string {
+  switch (reason) {
+    case 'connection_paused':
+      return `Messages with ${who} are paused while the connection is checked. Nothing already written is lost: queued messages go out once it is restored.`;
+    case 'not_connected':
+      return `${who} is not connected to this workspace, so messages cannot be sent.`;
+    case 'delisted':
+      return `${who} no longer lists this property, so the conversation is closed. Its history stays.`;
+    default:
+      return hasHistory
+        ? 'This property is no longer activated here, so the conversation is closed. Its history stays.'
+        : `Activate this property to message ${who} about it.`;
+  }
 }

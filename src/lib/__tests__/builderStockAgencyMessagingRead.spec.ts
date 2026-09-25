@@ -100,6 +100,7 @@ describe('reading a property\'s conversation', () => {
     if (!read.ok) throw new Error('read failed');
     expect(read.messages.map((m) => m.body)).toEqual(['Question', 'Reply', 'Follow-up']);
     expect(read.open).toBe(true);
+    expect(read.closed_reason).toBeNull();
     expect(JSON.stringify(read)).not.toContain('Not this one');
   });
 
@@ -124,10 +125,10 @@ describe('reading a property\'s conversation', () => {
     const { tables } = fixture();
     tables.builder_stock_selections[0].status = 'withdrawn';
     const closed = await readBuilderConversation(standIn(tables).client, { stockItemId: ITEM, organisationId: ORG, viewerUserId: ME });
-    expect(closed).toMatchObject({ ok: true, open: false });
+    expect(closed).toMatchObject({ ok: true, open: false, closed_reason: 'not_activated' });
     tables.builder_network_connections = [];
     const none = await readBuilderConversation(standIn(tables).client, { stockItemId: ITEM, organisationId: ORG, viewerUserId: ME });
-    expect(none).toEqual({ ok: true, open: false, conversation_id: null, messages: [] });
+    expect(none).toEqual({ ok: true, open: false, closed_reason: 'not_connected', conversation_id: null, messages: [] });
   });
 
   it('18. polling refresh gets new messages: the next read carries what was written since the last', async () => {
@@ -164,6 +165,9 @@ describe('reading a property\'s conversation', () => {
     if (!read.ok) throw new Error('read failed');
     expect(read.messages.map((m) => m.body)).toEqual(['Question', 'Reply', 'Follow-up']);
     expect(read.open).toBe(false);
+    // The activation stands: what is closed is the ROUTE, and the reader is
+    // told that rather than sent to activate a property that is activated.
+    expect(read.closed_reason).toBe('connection_paused');
   });
 
   it('a disputed connection keeps its history readable, and is closed to writing', async () => {
@@ -173,6 +177,7 @@ describe('reading a property\'s conversation', () => {
     if (!read.ok) throw new Error('read failed');
     expect(read.messages).toHaveLength(3);
     expect(read.open).toBe(false);
+    expect(read.closed_reason).toBe('connection_paused');
   });
 
   it('20. a cross-organisation read returns nothing', async () => {
@@ -295,6 +300,7 @@ describe('a reader who may not write', () => {
     const op = market.slice(start, market.indexOf('operation ===', start + 20));
     expect(op).toMatch(/const canSend = read\.open && item\.lifecycle_status === 'active' && listingsEdit\.ok && networkOn/);
     expect(op).toMatch(/can_send:\s*canSend/);
+    expect(op).toMatch(/closed_reason:\s*item\.lifecycle_status === 'active' \? read\.closed_reason : 'delisted'/);
     expect(op).toMatch(/can_retry:\s*message\.can_retry\s*&&\s*canSend/);
   });
 });
