@@ -239,6 +239,24 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
         .toBe('The original words.|Avery Builder');
     });
 
+    it('two concurrent envelopes for one message id: the loser with different content is refused, not acknowledged', async () => {
+      const racer = builderMessage({ body: 'Racer A.' });
+      land(CONN_A, 'agency.message.posted', `agency.message:${racer.message_id}:1`, racer);
+      land(CONN_A, 'agency.message.posted', `agency.message:${racer.message_id}:2`, { ...racer, body: 'Racer B.', generation: 2 });
+      const eventOf = (n: number) => db.sql(`SELECT id FROM public.builder_network_inbound_events
+                                             WHERE dedupe_key = 'agency.message:${racer.message_id}:${n}'`);
+      const [e1, e2] = [eventOf(1), eventOf(2)];
+      const first = db.sqlAsync(`BEGIN; SELECT public.builder_network_apply_message_event('${e1}'); SELECT pg_sleep(1.5); COMMIT;`);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const second = db.sqlAsync(`SELECT public.builder_network_apply_message_event('${e2}')`);
+      const [a, b] = await Promise.all([first, second]);
+      db.sql(`UPDATE public.builder_network_inbound_events SET message_applied_at = now() WHERE id IN ('${e1}', '${e2}')`);
+      expect(a.split('\n')[0]).toBe('applied');
+      expect(b).toBe('refused:message_conflict');
+      expect(db.sql(`SELECT body FROM public.builder_network_messages WHERE id = ${lit(racer.message_id)}`)).toBe('Racer A.');
+      expect(outbox(`dedupe_key = 'agency.receipt:${racer.message_id}:2' AND payload->>'outcome' = 'refused'`)).toBe('1');
+    }, 20_000);
+
     it.each([
       ['9. a conversation computed for another connection (wrong workspace)', () => builderMessage({ conversation_id: conversationId(NET_B, ITEM_A1) }), 'conversation_mismatch'],
       ['8. another builder\'s property', () => builderMessage({ stock_item_id: ITEM_B1, conversation_id: conversationId(NET_A, ITEM_B1) }), 'stock_item_not_ours'],
