@@ -189,7 +189,7 @@ describe('what counts as this address', () => {
     const { asked, localities } = ask('3 Second Avenue, Blacktown NSW 2148');
     const choice = chooseGnafRow(BLACKTOWN, asked, localities);
     expect(choice.ok).toBe(false);
-    if (choice.ok === false) expect(choice.reason).toContain('no number 3');
+    if (choice.ok === false) expect(choice.ok ? "no reason" : choice.reason).toContain('no number 3');
   });
 
   it('refuses the same number on a street of another type', () => {
@@ -241,7 +241,7 @@ describe('the address must stand where the ask says it is', () => {
   it('refuses a match in the next town, however exact — that is somebody else\'s house', () => {
     const choice = chooseGnafRow(TWO_TOWNS, askedAddressOf('5 Church Street'), ['Collector']);
     expect(choice.ok).toBe(false);
-    if (choice.ok === false) expect(choice.reason).toContain('GUNNING');
+    if (choice.ok === false) expect(choice.ok ? "no reason" : choice.reason).toContain('GUNNING');
   });
 
   it('chooses by the suburb named where the same address is in two towns', () => {
@@ -278,14 +278,14 @@ describe('the address must stand where the ask says it is', () => {
     );
     const choice = chooseGnafRow(rows, askedAddressOf('4 Twin Lane'), ['Blacktown']);
     expect(choice.ok).toBe(false);
-    if (choice.ok === false) expect(choice.reason).toContain('more than one place');
+    if (choice.ok === false) expect(choice.ok ? "no reason" : choice.reason).toContain('more than one place');
   });
 });
 
 describe('the answer', () => {
   it('names the register, its release, the geocode type and what it matched — under the EULA\'s own attribution', () => {
     const choice = chooseGnafRow(BLACKTOWN, ask('1408/5 SECOND AVE, Blacktown NSW 2148').asked, ['Blacktown']);
-    if (choice.ok === false) throw new Error(choice.reason);
+    if (choice.ok === false) throw new Error(choice.ok ? "no reason" : choice.reason);
     const r = fromGnaf(choice.match, 'AUG 2026');
     expect(r).toMatchObject({
       provider: 'gnaf',
