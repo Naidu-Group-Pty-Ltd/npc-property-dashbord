@@ -3953,6 +3953,11 @@ whose conditional is false left a third of a page white between a heading and
 the recommendation under it; `closeDroppedBlocks` moves the column under a
 dropped block up to where it began, refuses whenever anything drawn sits in
 that band or beside the column, and never moves furniture or an editor page.
+**A dropped layer is not a hole**: a block whose declared box reaches past the
+block below it was drawn under that block (a photograph beneath a cover's
+type), and closing it lifted the three photographic covers with no photograph
+to the page's top edge — measured over all 543 templates, that rule changes
+those three covers and nothing else.
 And **a chart label fits the drawing it belongs to** — `fitLines` wraps a
 label into the units it may use and the drawing grows for the lines, because
 a gauge caption, a donut legend, a timeline stop and a pictograph title were
