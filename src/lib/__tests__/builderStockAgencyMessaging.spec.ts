@@ -591,6 +591,27 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
     });
   });
 
+  describe('a held message on a connection that is then revoked', () => {
+    it.each([
+      ['a dispute', `identity_mismatch_since = now()`],
+      ['a withdrawn scope', `scopes = ARRAY[]::text[]`],
+    ])('held by %s, it fails visibly on revocation instead of waiting for ever', (_label, hold) => {
+      const m = post(ITEM_A1, OWNER, randomUUID(), 'Held, then the connection is revoked.');
+      db.sql(`UPDATE public.builder_network_connections SET ${hold} WHERE id = ${lit(CONN_A)}`);
+      try {
+        expect(db.sql(`SELECT (available_at = 'infinity') FROM public.builder_network_outbox WHERE dedupe_key = 'agency.message:${m}:1'`)).toBe('t');
+        db.sql(`UPDATE public.builder_network_connections SET state = 'revoked', revoked_at = now() WHERE id = ${lit(CONN_A)}`);
+        expect(db.sql(`SELECT status FROM public.builder_network_outbox WHERE dedupe_key = 'agency.message:${m}:1'`)).toBe('dead');
+        expect(db.sql(`SELECT delivery_state || '|' || failure_reason FROM public.builder_network_messages WHERE id = ${lit(m)}`))
+          .toBe('failed|not_delivered');
+      } finally {
+        db.sql(`UPDATE public.builder_network_connections
+                   SET state = 'active', revoked_at = NULL, identity_mismatch_since = NULL, scopes = ARRAY['stock:publish']
+                 WHERE id = ${lit(CONN_A)}`);
+      }
+    });
+  });
+
   describe('a message never overtakes the activation it depends on', () => {
     const claim = (dedupe: string, worker: string) => db.sql(`UPDATE public.builder_network_outbox
         SET locked_at = now(), locked_by = '${worker}', attempts = attempts + 1

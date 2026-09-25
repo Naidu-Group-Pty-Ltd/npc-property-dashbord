@@ -848,6 +848,16 @@ RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
 AS $fn$
 BEGIN
+  -- A revoked connection is the end of the relationship: nothing on it will
+  -- ever be claimed, including rows held at infinity, so they are dead-lettered
+  -- here, and the transport-dead trigger marks each message failed and visible
+  -- exactly as the worker's revoked-connection path does.
+  IF NEW.state = 'revoked' AND OLD.state IS DISTINCT FROM 'revoked' THEN
+    UPDATE public.builder_network_outbox o
+       SET status = 'dead', locked_at = NULL, locked_by = NULL, last_error = 'connection_revoked'
+     WHERE o.connection_id = NEW.id AND o.status = 'pending' AND o.event_type LIKE 'agency.message.%';
+    RETURN NEW;
+  END IF;
   -- Each pending message row is held or released by the same rule the
   -- enqueue applies: a dispute holds everything, a withdrawn scope holds
   -- posted content only. A released row goes out now; one that was never
@@ -867,7 +877,7 @@ $fn$;
 
 DROP TRIGGER IF EXISTS trg_builder_network_message_route_changed ON public.builder_network_connections;
 CREATE TRIGGER trg_builder_network_message_route_changed
-  AFTER UPDATE OF identity_mismatch_since, scopes ON public.builder_network_connections
+  AFTER UPDATE OF identity_mismatch_since, scopes, state ON public.builder_network_connections
   FOR EACH ROW EXECUTE FUNCTION public.builder_network_message_route_changed();
 
 DROP TRIGGER IF EXISTS trg_builder_network_message_transport_dead ON public.builder_network_outbox;
