@@ -113,7 +113,7 @@ import {
   governedCategoryDirective,
   governedFaultToFlag,
 } from '../_shared/reports/contract/governedNarrativeAuthority.pure.ts';
-import { forwardDemandBlocks, regionalTrendBlocks } from '../_shared/reports/regionalPromptBlocks.pure.ts';
+import { forwardDemandBlocks, populationTrendPin, regionalTrendBlocks } from '../_shared/reports/regionalPromptBlocks.pure.ts';
 import { trustedStateForForwardDemand } from '../_shared/reports/market/openData/forwardDemand.pure.ts';
 import type { ProjectionState } from '../_shared/reports/market/openData/stateProjectionPublishers.pure.ts';
 import { runQAValidation } from '../_shared/compassQAValidator.ts';
@@ -141,13 +141,16 @@ import {
   describeSubjectPrice, subjectPriceLine, subjectPriceRules,
 } from '../_shared/reports/investment/subjectPrice.pure.ts';
 import {
+  composeGradeMethodology,
   composeStrategySections,
   readStrategyRecord,
   strategySectionRules,
 } from '../_shared/reports/investment/strategyPositions.pure.ts';
 import {
   headingSequence,
+  mergeBlocksIntoSections,
   placeBlocksByDeclaredOrder,
+  type MergeableBlock,
   type PlaceableBlock,
 } from '../_shared/reports/investment/documentPlacement.pure.ts';
 import { ENRICHMENT_STAMP } from '../_shared/reports/location/locationEnrichmentReuse.pure.ts';
@@ -1887,7 +1890,7 @@ ${sectionDef.id === 'section10' ? '10. MUST include the Investment Score Analysi
 - If a property is negatively geared, describe it honestly as "growth-focused with negative cashflow" — never as "balanced growth + income".
 - All time-sensitive economic data must include "as at [Month Year]".
 
-${EDITORIAL_PRIMITIVES_BLOCK}
+The visual shortcodes referred to above are defined in the system message.
 
 Generate the ${sectionDef.name} sections now:`;
   // Pinned context is never trimmed: its bytes come off the budget before the
@@ -1944,12 +1947,23 @@ Generate the ${sectionDef.name} sections now:`;
     .join('\n\n---\n\n');
   const withSectionContract = (system: string): string =>
     sectionContractBlock ? `${system}\n\n---\n\n${sectionContractBlock}` : system;
+  /*
+   * The shortcode vocabulary travels in the SYSTEM message too, for the same
+   * reason the contract does. It is 13 KB of document rules that every section
+   * carried in its USER message, where every byte comes off the base prompt's
+   * budget — and on 25 Sep 2026 that budget was 16 KB of a 31.6 KB prompt on
+   * a WA run and 4 KB of 36 KB on a NSW one, so the evidence pack was cut to
+   * make room for a syntax reference. Moving it returns those bytes to the
+   * evidence; the model reads the same words either way. The compact prompt
+   * never carried it and still does not.
+   */
+  const editorialSystemBlock = `\n\n---\n\n${EDITORIAL_PRIMITIVES_BLOCK.trim()}`;
   const safeSystemMessage = withSectionContract(limitPromptContext(
     systemMessage,
-    Math.max(2_000, PERPLEXITY_SAFE_SYSTEM_MESSAGE_BYTES - byteLength(sectionContractBlock) - 200),
+    Math.max(2_000, PERPLEXITY_SAFE_SYSTEM_MESSAGE_BYTES - byteLength(sectionContractBlock) - byteLength(editorialSystemBlock) - 200),
     'System prompt',
     'head',
-  ));
+  ) + editorialSystemBlock);
   const emergencySectionPromptUnbounded = `Generate ONLY this investment report section for ${propertyAddress}: ${sectionDef.name}.
 
 Required headings:
@@ -6249,6 +6263,26 @@ Produce a comprehensive statewide investment analysis following the structure ab
         state: trustedStateForForwardDemand(subjectGeography, abbreviateState),
         forwardDemandProjection: enhancedData.forwardDemandProjection ?? null,
       }),
+      /*
+       * The measured population trend and the transport reading ride the pin
+       * for the same reason, measured on 60 Lawley Street, Spalding (25 Sep
+       * 2026): every section logged `trimmed true`, the WA run kept about half
+       * of its base prompt and a NSW run in the same minute about a ninth, and
+       * both blocks sit in the trimmed middle. The document then stated one
+       * population figure three different ways, said "no public transport"
+       * two pages from a bus stop, and filled the transport chapter from a
+       * council profile. Each is the AUTHORITY for its figures; each block is
+       * a few hundred bytes. The same composers the base prompt uses, so the
+       * two copies cannot disagree.
+       */
+      ...(() => {
+        const population = populationTrendPin(enhancedData);
+        return population
+          ? ['# Population — the measured trend for the surrounding statistical area', population]
+          : [];
+      })(),
+      '# Getting about — the transport reading this report holds',
+      transportFactBlocks(enhancedData.locationIntelligence),
       // Recorded from official publications rather than retrieved from a
       // register, and pinned for the same reason everything else here is:
       // it is the AUTHORITY for a set of figures and dates, and a rule that
@@ -8342,16 +8376,30 @@ YOUR DEDICATED PROPERTY PARTNER
      * of evidence. Only the PLACEMENT changed.
      */
     const placeableBlocks: PlaceableBlock[] = [];
+    /*
+     * Evidence that belongs INSIDE a chapter the model wrote.
+     *
+     * The registers were one section of their own at order 89 — after the
+     * Final Recommendation. On the 60 Lawley Street Compass (25 Sep 2026)
+     * the planning chapter on page 10 pointed the reader to page 21, past the
+     * recommendation that rests on it. Each half now closes the chapter it is
+     * the evidence for: the controls close Zoning, Planning and Development
+     * Considerations, the project and development registers close
+     * Infrastructure and Growth Context. `mergeBlocksIntoSections` falls back
+     * to the old placement wherever that chapter is absent, so nothing is
+     * ever lost — and the grade's method goes to the appendix, where the
+     * owner's structure puts methodology.
+     */
+    const mergeableBlocks: MergeableBlock[] = [];
 
     if (!isAreaReport) {
-      let registerBlock = `## Planning controls and development registers\n\n`
-        + `### Planning controls retrieved for this property\n\n${planningControlsTable}\n\n`
-        + `### Infrastructure and development retrieved for this property\n\n${infrastructureTable}\n`;
-      // Appended verbatim for the reason the two tables above are: asking a
+      // Appended verbatim for the reason the tables always were: asking a
       // model to reproduce a table is how a table comes back paraphrased, and
       // every date and figure here is one an authority published.
+      const planningPart = `### Planning controls retrieved for this property\n\n${planningControlsTable}\n`;
+      let infrastructurePart = `### Infrastructure and development retrieved for this property\n\n${infrastructureTable}\n`;
       if (publishedProjectBlock) {
-        registerBlock += `\n### Major public projects near this property\n\n`
+        infrastructurePart += `\n#### Major public projects near this property\n\n`
           + `${publishedProjectBlock}\n`
           + `**What this register covers.** ${PUBLISHED_PROJECT_COVERAGE.join(' ')}\n`;
       }
@@ -8359,19 +8407,42 @@ YOUR DEDICATED PROPERTY PARTNER
         `📋 Composed retrieved planning + infrastructure evidence `
         + `(${planningControlsTable.length + infrastructureTable.length + publishedProjectBlock.length} chars)`,
       );
-      placeableBlocks.push({
-        heading: 'Planning controls and development registers',
-        markdown: registerBlock,
-        /*
-         * The registry declares no order for this one - it is retrieved
-         * evidence under a heading of its own rather than a section the
-         * registry owns - so the order is stated here. 89 puts it last
-         * among the content, immediately before `provenance` at 90:
-         * after the recommendation that rests on it, before the
-         * disclaimer that closes the document.
-         */
-        order: 89,
+      /*
+       * The fallback order is the old one: 89 puts a register with no chapter
+       * to close last among the content, immediately before `provenance` at
+       * 90 — after the recommendation that rests on it, before the disclaimer
+       * that closes the document.
+       */
+      mergeableBlocks.push({
+        into: 'planning',
+        markdown: planningPart,
+        fallback: {
+          heading: 'Planning controls and development registers',
+          markdown: `## Planning controls and development registers\n\n${planningPart}`,
+          order: 89,
+        },
       });
+      mergeableBlocks.push({
+        into: 'infrastructure',
+        markdown: infrastructurePart,
+        fallback: {
+          heading: 'Infrastructure and development registers',
+          markdown: `## Infrastructure and development registers\n\n${infrastructurePart}`,
+          order: 89,
+        },
+      });
+      const methodology = composeGradeMethodology(compassStrategyRecord);
+      if (methodology) {
+        mergeableBlocks.push({
+          into: 'provenance',
+          markdown: methodology,
+          fallback: {
+            heading: 'How this grade was reached',
+            markdown: methodology.replace(/^###\s+/, '## '),
+            order: 89,
+          },
+        });
+      }
     }
 
     /*
@@ -8405,6 +8476,17 @@ YOUR DEDICATED PROPERTY PARTNER
       const after = headingSequence(reportContent);
       console.log(
         `Placed ${placeableBlocks.length} composed block(s) by declared order `
+        + `(${before} -> ${after.length} sections; closes on ${after[after.length - 1] ?? 'nothing'})`,
+      );
+    }
+    // After the sections exist, so the SWOT and the other composed sections
+    // are already in place and a register never lands in front of them.
+    if (mergeableBlocks.length) {
+      const before = headingSequence(reportContent).length;
+      reportContent = mergeBlocksIntoSections(reportContent, mergeableBlocks, 'compass');
+      const after = headingSequence(reportContent);
+      console.log(
+        `Merged ${mergeableBlocks.length} evidence block(s) into their chapters `
         + `(${before} -> ${after.length} sections; closes on ${after[after.length - 1] ?? 'nothing'})`,
       );
     }
