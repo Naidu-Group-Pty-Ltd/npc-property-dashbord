@@ -729,6 +729,16 @@ describe('the generator pins the evidence it used to trim away, and moves the sy
     expect(generator).toContain('transportFactBlocks(enhancedData.locationIntelligence),');
   });
 
+  it('pins the attributes on record, so a searched room count is never "the supplied property records" (pp.3-4)', () => {
+    // One composition, drawn in the base prompt and in the pin.
+    expect(generator).toContain('const recordedAttributesBlock = `| Property Characteristic | Value |');
+    expect(generator).toContain("'# The property — every physical attribute on record',\n      recordedAttributesBlock,");
+    expect(generator).toContain('${recordedAttributesBlock}');
+    // The prohibition keeps its permitted form beside it.
+    expect(generator).toContain('An attribute you find in a listing or any other search is not a record');
+    expect(generator).toContain('is not recorded for this assessment');
+  });
+
   it('carries the shortcode vocabulary in the system message, not in every section\'s user message', () => {
     expect(generator).not.toContain('${EDITORIAL_PRIMITIVES_BLOCK}\n');
     expect(generator).toContain('const editorialSystemBlock = `\\n\\n---\\n\\n${EDITORIAL_PRIMITIVES_BLOCK.trim()}`;');

@@ -6206,7 +6206,67 @@ Produce a comprehensive statewide investment analysis following the structure ab
       'in prose, it has no source, and it does not belong in the report.',
     ].join('\n');
 
+    /*
+     * The physical attributes on record, and the rule that binds them — ONE
+     * composition for the base prompt and the pin.
+     *
+     * The rule already forbade a bedroom or bathroom count, a year built or a
+     * condition that is not in the table. It sat in the base prompt, which on
+     * 25 Sep 2026 was trimmed on every section call, and the pin carried
+     * neither: the 60 Lawley Street Compass then described the house as
+     * "recorded as a three-bedroom, one-bathroom House" with "a reported build
+     * year of 1979", attributed to "the supplied property records", while the
+     * record held none of the three (the first invocation logged
+     * `Beds: undefined` and `Baths: undefined`, and no stored override carries
+     * them). They came from a live search. The permitted form is stated beside
+     * the prohibition, because a prohibition alone is one a model routes
+     * around; an operator who records the rooms makes the table carry them.
+     */
+    const recordedAttributesBlock = `| Property Characteristic | Value |
+|------------------------|-------|
+${propertyTypeLabel ? `| Property Type | ${propertyTypeLabel} |` : ''}
+${[
+  // Each of these rows used to carry a placeholder the model was asked to
+  // expand: `'Estimated XXX-XXX m² (typical for suburb)'`,
+  // `'X (typical for property type)'`, `'X-X spaces'`, `'Estimated XXXX-XXXX'`
+  // and, for condition, the flat assertion `'Good to excellent'` about a
+  // property nobody had inspected. Measured across the corpus: 169 documents
+  // print an "Estimated N–N m²" land size and 201 assert
+  // `| Condition | Good to excellent |`. On three sampled reports the stated
+  // range is roughly DOUBLE the land size the operator had recorded, and the
+  // council rates, land tax and rent comparables are then reasoned from it —
+  // `38 Larcom Crescent` says ~500 m² throughout against a recorded 255.
+  [landAreaReading?.label ?? 'Land size', landAreaReading?.value ?? null],
+  ['Bedrooms', effectiveBeds || null],
+  ['Bathrooms', effectiveBaths || null],
+  ['Parking', mergedOverrides.carSpaces ?? propertyDetails?.carSpaces ?? null],
+  ['Year Built', mergedOverrides.yearBuilt ?? propertyDetails?.yearBuilt ?? null],
+  ['Condition', propertyDetails?.condition ?? null],
+].filter(([, v]) => v !== null && v !== undefined && v !== '')
+ .map(([k, v]) => `| ${k} | ${v} |`).join('\n')}
+${isStrataProperty && propertyTypeLabel ? `| Strata Type | ${propertyTypeLabel} within strata scheme |` : ''}
+${landAreaReading?.note ? `\n_${landAreaReading.note}_\n` : ''}
+
+The table above contains every physical attribute on record for this property.
+Do not add a row to it, and do not state a land size, floor area, bedroom or
+bathroom count, parking count, year built or condition that is not in it — not
+as an estimate, not as a range, and not as what is "typical for the suburb".
+Where an attribute is absent you may say it is not recorded, and you may
+discuss the suburb's housing stock in general terms provided you do not
+attribute any of it to this property. Nobody has inspected this property, so
+no statement about its condition, its compliance or its maintenance history
+is available to you.
+
+An attribute you find in a listing or any other search is not a record: never
+describe it as recorded, supplied or on record. Where the discussion needs one
+that is absent above, write that it is not recorded for this assessment and is
+to be confirmed against the contract, the listing and the building inspection.
+`;
+
     const pinnedPlanningContext = [
+      // The attributes on record ride the pin: see `recordedAttributesBlock`.
+      '# The property — every physical attribute on record',
+      recordedAttributesBlock,
       '# Zoning & Planning Analysis — the controls retrieved for this property',
       planningControlsTable,
       planningSectionRules,
@@ -6386,40 +6446,7 @@ the property.
 
 **Address:** ${formattedInput}
 
-| Property Characteristic | Value |
-|------------------------|-------|
-${propertyTypeLabel ? `| Property Type | ${propertyTypeLabel} |` : ''}
-${[
-  // Each of these rows used to carry a placeholder the model was asked to
-  // expand: `'Estimated XXX-XXX m² (typical for suburb)'`,
-  // `'X (typical for property type)'`, `'X-X spaces'`, `'Estimated XXXX-XXXX'`
-  // and, for condition, the flat assertion `'Good to excellent'` about a
-  // property nobody had inspected. Measured across the corpus: 169 documents
-  // print an "Estimated N–N m²" land size and 201 assert
-  // `| Condition | Good to excellent |`. On three sampled reports the stated
-  // range is roughly DOUBLE the land size the operator had recorded, and the
-  // council rates, land tax and rent comparables are then reasoned from it —
-  // `38 Larcom Crescent` says ~500 m² throughout against a recorded 255.
-  [landAreaReading?.label ?? 'Land size', landAreaReading?.value ?? null],
-  ['Bedrooms', effectiveBeds || null],
-  ['Bathrooms', effectiveBaths || null],
-  ['Parking', mergedOverrides.carSpaces ?? propertyDetails?.carSpaces ?? null],
-  ['Year Built', mergedOverrides.yearBuilt ?? propertyDetails?.yearBuilt ?? null],
-  ['Condition', propertyDetails?.condition ?? null],
-].filter(([, v]) => v !== null && v !== undefined && v !== '')
- .map(([k, v]) => `| ${k} | ${v} |`).join('\n')}
-${isStrataProperty && propertyTypeLabel ? `| Strata Type | ${propertyTypeLabel} within strata scheme |` : ''}
-${landAreaReading?.note ? `\n_${landAreaReading.note}_\n` : ''}
-
-The table above contains every physical attribute on record for this property.
-Do not add a row to it, and do not state a land size, floor area, bedroom or
-bathroom count, parking count, year built or condition that is not in it — not
-as an estimate, not as a range, and not as what is "typical for the suburb".
-Where an attribute is absent you may say it is not recorded, and you may
-discuss the suburb's housing stock in general terms provided you do not
-attribute any of it to this property. Nobody has inspected this property, so
-no statement about its condition, its compliance or its maintenance history
-is available to you.
+${recordedAttributesBlock}
 
 ---
 

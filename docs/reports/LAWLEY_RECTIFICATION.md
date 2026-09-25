@@ -11,7 +11,7 @@ was repaired.
 
 Two statuses are kept apart, as `QA_291SM_REMEDIATION_TRACKER.md` does:
 **implemented · tested** means the code changed and a test that FAILS on
-`08296a305` now passes (`lawleyRectification.spec.ts`: 46 such tests fail on
+`08296a305` now passes (`lawleyRectification.spec.ts`: 47 such tests fail on
 the base revision, 17 preservation tests pass on both); **verified on the
 regenerated document** is reserved for a page read off a regeneration through
 the product after deploy. Nothing is marked verified because code changed.
@@ -73,6 +73,7 @@ type). Bedrooms reach the SQM rent-series lookup, whose default is already 3.
 | 21 | Monitoring "On request" | A certificate route printed as a change frequency | First checks separated from readings; events, not a schedule | Implemented · tested |
 | 22 | Commute called a commute and a drive interchangeably | Mode not read | Drive = free-flow, not peak; journey planner answer named as one | Implemented · tested |
 | 23 | QA reported an unbalanced strengths/watch-points pair that was balanced | A run-in "**Watch points:** …" was not read as the second list | Both validator copies read it | Implemented · tested |
+| 24 | "Recorded as a three-bedroom, one-bathroom House … reported build year of 1979", attributed to "the supplied property records" (pp.3–4) | The record holds none of the three (first invocation: `Beds: undefined`, `Baths: undefined`; no stored override carries them). The rule forbidding an unrecorded attribute sat in the base prompt, trimmed on every section, and the pin carried neither table nor rule; the figures came from a live search | `recordedAttributesBlock`: one composition of the attribute table and its rule, drawn in the base prompt and pinned, with the permitted form ("not recorded for this assessment; confirm against the contract, the listing and the inspection") | Implemented · tested; the rooms themselves are Blocker B7 |
 
 Everything above is **pending verification on the regenerated document**:
 merge, the edge deploy and a Lovable publish (the modal) come first, and they

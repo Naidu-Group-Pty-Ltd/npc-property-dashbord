@@ -2891,7 +2891,7 @@ the scoring service stores is a placeholder no surface draws.
 Read [`LAWLEY_RECTIFICATION.md`](./docs/reports/LAWLEY_RECTIFICATION.md)
 before touching `verdictWatchPoints`, `mergeBlocksIntoSections`,
 `composeGradeMethodology`, `scaffoldingLabels.pure.ts`, `serviceNote.pure.ts`,
-`numericControlSpecs` or the WA branch of `planning-data-service`. Twenty-three
+`numericControlSpecs` or the WA branch of `planning-data-service`. Twenty-four
 defects on one delivered Compass, each traced to a cause before it was
 repaired, and the score did not move: the same frozen input scores identically
 on both revisions, pinned by `lawleyRectification.spec.ts`. Four rules bite.
