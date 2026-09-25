@@ -118,7 +118,8 @@ export const NAVIGATION_ITEMS: readonly NavItemDef[] = [
   // Templates only. The keywords deliberately drop 'issue', 'sign' and
   // 'executed': searching for those should not surface a page that cannot do
   // them, now that agreements are not entered into through the platform.
-  { title: 'Agreement Templates', url: '/partner-agreements', icon: FileSignature, moduleKey: 'agreements', group: 'Operations', keywords: ['partner agreements', 'agreement templates', 'referral agreement', 'commission agreement', 'download template', 'word'], paletteOnly: true },
+  { title: 'Agreement Templates', url: '/partner-agreements', icon: FileSignature, moduleKey: 'agreements', group: 'Operations',
+  'Portals', keywords: ['partner agreements', 'agreement templates', 'referral agreement', 'commission agreement', 'download template', 'word'], paletteOnly: true },
   { title: 'Partner Referrals', url: '/partner-referrals', icon: ArrowLeftRight, moduleKey: 'agreements', group: 'Operations' },
   { title: 'Loan Writer Undertakings', url: '/loan-writer-undertakings', icon: FileSignature, moduleKey: 'agreements', group: 'Operations' },
   { title: 'Partner Compliance', url: '/partner-compliance', icon: ShieldCheck, moduleKey: 'agreements', group: 'Operations' },
@@ -176,6 +177,7 @@ export const NAVIGATION_GROUP_ORDER: readonly string[] = [
   'Reports & Analysis',
   'Client & CRM',
   'Operations',
+  'Portals',
   'Help & Usage',
 ];
 
