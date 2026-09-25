@@ -103,7 +103,7 @@ export function BuilderStockConversation({
         ) : messages.length ? (
           <div role="log" aria-label={`Messages with ${who}`} aria-live="polite" className="max-h-[28rem] space-y-3 overflow-y-auto pr-1">
             {messages.map((message) => (
-              <Message key={message.id} message={message} onRetry={sendAgain} retrying={retry.isPending} />
+              <Message key={message.id} message={message} canRetry={!!conversation?.can_send && message.can_retry} onRetry={sendAgain} retrying={retry.isPending} />
             ))}
           </div>
         ) : conversation?.open ? (
@@ -152,9 +152,11 @@ export function BuilderStockConversation({
 }
 
 function Message({
-  message, onRetry, retrying,
+  message, canRetry, onRetry, retrying,
 }: {
   message: ConversationMessageView;
+  /** The message's own retry flag AND whether this reader may write here now. */
+  canRetry: boolean;
   onRetry: (id: string) => void;
   retrying: boolean;
 }) {
@@ -175,7 +177,7 @@ function Message({
         <p className={cn('mt-1 flex items-center gap-2 text-xs',
           message.delivery_state === 'failed' ? 'text-destructive' : 'text-muted-foreground')}>
           <span>{deliveryLabel(message.delivery_state, message.failure_reason)}</span>
-          {message.can_retry ? (
+          {canRetry ? (
             <Button type="button" variant="outline" size="sm" className="h-6 px-2 text-xs"
               onClick={() => onRetry(message.id)} disabled={retrying}>
               Send again

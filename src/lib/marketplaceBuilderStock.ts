@@ -237,12 +237,19 @@ export interface BuilderConversation {
 export const BUILDER_CONVERSATION_POLL_MS = 10_000;
 
 /**
- * An open conversation is re-read every few seconds; a closed one is history
- * and is not. Activating the property from this page invalidates the query,
- * so a closed conversation that opens is read without being polled for.
+ * A closed conversation is checked only this often: rarely enough to cost
+ * nothing, often enough that an activation made elsewhere (another user,
+ * another tab) reopens it without a reload.
  */
-export function builderConversationPollInterval(data: { open?: boolean } | undefined): number | false {
-  return data?.open === false ? false : BUILDER_CONVERSATION_POLL_MS;
+export const BUILDER_CONVERSATION_CLOSED_POLL_MS = 60_000;
+
+/**
+ * An open conversation is re-read every few seconds; a closed one only once a
+ * minute. Activating from this page also invalidates the query, so it reopens
+ * at once there.
+ */
+export function builderConversationPollInterval(data: { open?: boolean } | undefined): number {
+  return data?.open === false ? BUILDER_CONVERSATION_CLOSED_POLL_MS : BUILDER_CONVERSATION_POLL_MS;
 }
 
 const conversationKey = (stockItemId: string) =>

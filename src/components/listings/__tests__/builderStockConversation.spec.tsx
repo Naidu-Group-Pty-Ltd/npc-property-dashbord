@@ -142,6 +142,16 @@ describe('the builder conversation card', () => {
     expect(retried).toEqual(['m-unconfirmed']);
   });
 
+  it('offers no "Send again" where the reader cannot write, even on their own failed message', () => {
+    state.conversation = {
+      conversation_id: 'c', open: false, can_send: false,
+      messages: [MESSAGE({ id: 'failed-1', body: 'Did this arrive?', delivery_state: 'failed', failure_reason: 'not_delivered', can_retry: true })],
+    };
+    renderCard();
+    expect(screen.getByText('Did this arrive?')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /send again/i })).toBeNull();
+  });
+
   it('someone without Listings edit reads the thread but has no composer', () => {
     state.conversation = { conversation_id: 'c', open: true, can_send: false, messages: [MESSAGE({})] };
     renderCard();
