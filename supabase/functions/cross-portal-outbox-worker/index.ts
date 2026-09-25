@@ -65,7 +65,10 @@ async function drainBuilderNetworkOutbox(db: any, workerIdValue: string): Promis
         // Claimed before the hold began: put it back to wait, spending no
         // delivery attempt. The database re-decides under the connection's
         // lock, so a recovery landing now is not overwritten by this park.
-        await db.rpc('builder_network_park_held_message', { _outbox_id: event.id, _worker_id: workerIdValue });
+        const { error: parkError } = await db.rpc('builder_network_park_held_message', { _outbox_id: event.id, _worker_id: workerIdValue });
+        // A park that did not happen still holds this worker's claim: release
+        // it, so a route that recovers is not left waiting on a stale lock.
+        if (parkError) { await release(event, 'route_hold_unrecorded'); retried++; continue; }
         retried++; continue;
       }
       if (!connection.network_inbound_url || !connection.outbound_hmac_secret) {

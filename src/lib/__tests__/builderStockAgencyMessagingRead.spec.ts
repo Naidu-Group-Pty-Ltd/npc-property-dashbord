@@ -357,6 +357,13 @@ describe('the worker holds a message whose route stopped being deliverable', () 
     expect(drain).toMatch(/if \(deferError\) \{ await release\(event, 'activation_order_unchecked'\)/);
     expect(drain).not.toMatch(/available_at:\s*'infinity'/);
   });
+
+  it('a park that fails releases the row, so a route that recovers is not left waiting on a stale lock', () => {
+    const worker = readCode('supabase/functions/cross-portal-outbox-worker/index.ts');
+    const drain = worker.slice(worker.indexOf('async function drainBuilderNetworkOutbox'));
+    expect(drain).toMatch(/error: parkError \} = await db\.rpc\('builder_network_park_held_message'/);
+    expect(drain).toMatch(/if \(parkError\) \{ await release\(event, 'route_hold_unrecorded'\)/);
+  });
 });
 
 describe('a reader who may not write', () => {
