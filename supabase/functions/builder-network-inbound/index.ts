@@ -24,7 +24,7 @@ import {
 } from '../_shared/builderNetworkPrivacy.pure.ts';
 import { buildStamp } from '../_shared/builderNetworkStamp.pure.ts';
 import { builderNetworkEnabled, connectionByNetworkId } from '../_shared/builderNetwork.ts';
-import { agencyPayloadContractViolation } from '../_shared/builderStock/agencyMessages.pure.ts';
+import { agencyDedupeKeyFor, agencyPayloadContractViolation } from '../_shared/builderStock/agencyMessages.pure.ts';
 
 const MESSAGE_EVENT_TYPES = new Set(['agency.message.posted', 'agency.message.receipt']);
 
@@ -103,6 +103,12 @@ Deno.serve(async (req) => {
         missing: contract.missing.slice(0, 20),
       });
       return json({ error: 'message_contract_failed' }, 422);
+    }
+    // And its dedupe key is the one its payload implies: a reused key would
+    // otherwise answer a NEW message as a duplicate and store nothing.
+    const expectedKey = agencyDedupeKeyFor(eventType, envelope.payload ?? {});
+    if (expectedKey !== null && dedupeKey !== expectedKey) {
+      return json({ error: 'message_dedupe_key_mismatch' }, 422);
     }
 
     const { error: insertError } = await supabase
