@@ -72,3 +72,18 @@ export function agencyMessageRefusal(message: string): { status: number; code: s
   }
   return null;
 }
+
+/**
+ * Whether the worker must HOLD an outbound agency message rather than send it:
+ * the connection's builder identity is disputed, or the builder withdrew
+ * stock:publish. The same rule the database applies to pending rows, asked
+ * again at the moment of sending, because a row claimed before the hold began
+ * is already in the worker's hands. Nothing else is this rule's to hold.
+ */
+export function agencyMessageRouteHeld(
+  connection: { identity_mismatch_since?: string | null; scopes?: readonly string[] | null },
+  eventType: string,
+): boolean {
+  if (!eventType.startsWith('agency.message.')) return false;
+  return !!connection.identity_mismatch_since || !(connection.scopes ?? []).includes('stock:publish');
+}

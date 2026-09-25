@@ -16,6 +16,7 @@ import {
   projectConversationMessages,
 } from '../../../supabase/functions/_shared/builderStock/agencyMessages.pure';
 import { readBuilderConversation } from '../../../supabase/functions/_shared/builderStock/agencyMessages';
+import { agencyMessageRouteHeld } from '../../../supabase/functions/_shared/builderStock/agencyMessages.pure';
 import { BUILDER_CONVERSATION_POLL_MS, builderConversationPollInterval } from '../marketplaceBuilderStock';
 
 const REPO_ROOT = join(__dirname, '..', '..', '..');
@@ -235,5 +236,26 @@ describe('the edge operations', () => {
     for (const name of ['send_builder_message', 'retry_builder_message', 'get_builder_conversation']) {
       expect(op(name)).not.toMatch(/openrouter|anthropic|openai|resend|sendEmail/i);
     }
+  });
+});
+
+describe('the worker holds a message whose route stopped being deliverable', () => {
+  it('holds agency messages on a disputed connection or one without stock:publish, and nothing else', () => {
+    const healthy = { identity_mismatch_since: null, scopes: ['stock:publish'] };
+    expect(agencyMessageRouteHeld(healthy, 'agency.message.posted')).toBe(false);
+    expect(agencyMessageRouteHeld({ ...healthy, identity_mismatch_since: '2026-09-25T00:00:00Z' }, 'agency.message.posted')).toBe(true);
+    expect(agencyMessageRouteHeld({ ...healthy, scopes: [] }, 'agency.message.receipt')).toBe(true);
+    expect(agencyMessageRouteHeld({ ...healthy, scopes: null }, 'agency.message.posted')).toBe(true);
+    // Stock events are not this module's to hold.
+    expect(agencyMessageRouteHeld({ ...healthy, identity_mismatch_since: '2026-09-25T00:00:00Z' }, 'stock.selection.announced')).toBe(false);
+  });
+
+  it('the worker asks before it sends, and a hold spends no delivery attempt', () => {
+    const worker = readCode('supabase/functions/cross-portal-outbox-worker/index.ts');
+    const drain = worker.slice(worker.indexOf('async function drainBuilderNetworkOutbox'));
+    expect(drain.indexOf('agencyMessageRouteHeld(')).toBeGreaterThan(-1);
+    expect(drain.indexOf('agencyMessageRouteHeld(')).toBeLessThan(drain.indexOf('fetch('));
+    expect(drain).toMatch(/available_at:\s*'infinity'/);
+    expect(drain).toMatch(/attempts:\s*Math\.max\(0,\s*event\.attempts\s*-\s*1\)/);
   });
 });

@@ -310,7 +310,16 @@ AS $fn$
 DECLARE
   v_message public.builder_network_messages%ROWTYPE;
   v_conversation public.builder_network_conversations%ROWTYPE;
+  v_flag boolean;
 BEGIN
+  -- Sending again is sending: the kill switch applies exactly as it does to
+  -- a new message.
+  SELECT (value = 'true'::jsonb) INTO v_flag
+    FROM public.feature_flags WHERE key = 'builder_network_enabled';
+  IF v_flag IS DISTINCT FROM true THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'AGENCY_NETWORK_DISABLED';
+  END IF;
+
   SELECT * INTO v_message FROM public.builder_network_messages
    WHERE id = _message_id AND side = 'command_centre' AND sender_user_id = _sender_user_id
    FOR UPDATE;
@@ -461,7 +470,18 @@ BEGIN
      ORDER BY s.selected_at, s.id
      LIMIT 1;
     IF NOT FOUND THEN
-      v_reason := 'conversation_not_open';
+      -- Closed to NEW messages. One already held here, unchanged, is this
+      -- side's own record: its retry (a receipt lost on the way back) is
+      -- acknowledged again, or the builder would record a refusal for words
+      -- this conversation keeps.
+      SELECT * INTO v_existing FROM public.builder_network_messages WHERE id = v_message_id;
+      IF v_existing.id IS NULL
+         OR v_existing.conversation_id <> v_conversation_id OR v_existing.side <> 'builder'
+         OR v_existing.body <> v_body OR v_existing.sender_display_name <> left(v_name, 200)
+         OR v_existing.sent_at <> v_sent THEN
+        v_reason := 'conversation_not_open';
+      END IF;
+      v_existing := NULL;
     END IF;
   END IF;
 

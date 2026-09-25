@@ -6,6 +6,7 @@ import { verifyInternal, logSecurityEvent } from '../_shared/auth_v2.ts';
 
 // ── Builders Network aggregate (extraction plan §7 Phase 3) ────────────────
 import { builderNetworkEnabled } from '../_shared/builderNetwork.ts';
+import { agencyMessageRouteHeld } from '../_shared/builderStock/agencyMessages.pure.ts';
 import {
   HMAC_CONNECTION_HEADER,
   HMAC_SIGNATURE_HEADER,
@@ -49,9 +50,18 @@ async function drainBuilderNetworkOutbox(db: any, workerIdValue: string): Promis
   for (const event of events || []) {
     try {
       const { data: connection } = await db.from('builder_network_connections')
-        .select('id, state, outbound_hmac_secret, network_inbound_url, network_connection_id')
+        .select('id, state, outbound_hmac_secret, network_inbound_url, network_connection_id, identity_mismatch_since, scopes')
         .eq('id', event.connection_id).maybeSingle();
       if (!connection || connection.state === 'revoked') { await release(event, 'connection_revoked', { dead: true }); dead++; continue; }
+      if (agencyMessageRouteHeld(connection, String(event.event_type ?? ''))) {
+        // Claimed before the hold began: put it back to wait, spending no
+        // delivery attempt; the connection's recovery releases it.
+        await db.from('builder_network_outbox').update({
+          available_at: 'infinity', locked_at: null, locked_by: null,
+          attempts: Math.max(0, event.attempts - 1), last_error: 'held:route_not_deliverable',
+        }).eq('id', event.id).eq('locked_by', workerIdValue);
+        retried++; continue;
+      }
       if (!connection.network_inbound_url || !connection.outbound_hmac_secret) {
         // Not yet deliverable is not failure: transport arrives with
         // configuration, and the queue simply waits.

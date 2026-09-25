@@ -406,6 +406,43 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
     });
   });
 
+  describe('after the activation is withdrawn', () => {
+    it('a stored message\'s retry is still acknowledged; a new message is still refused', () => {
+      const stored = builderMessage({ body: 'Stored before the withdrawal.' });
+      land(CONN_A, 'agency.message.posted', `agency.message:${stored.message_id}:1`, stored);
+      sweep();
+      db.sql(`UPDATE public.builder_stock_selections SET status = 'withdrawn' WHERE stock_item_id = ${lit(ITEM_A1)}`);
+      try {
+        land(CONN_A, 'agency.message.posted', `agency.message:${stored.message_id}:2`, { ...stored, generation: 2 });
+        const fresh = builderMessage({ body: 'Written after the withdrawal.' });
+        land(CONN_A, 'agency.message.posted', `agency.message:${fresh.message_id}:1`, fresh);
+        sweep();
+        expect(outbox(`dedupe_key = 'agency.receipt:${stored.message_id}:2' AND payload->>'outcome' = 'accepted'`)).toBe('1');
+        expect(db.sql(`SELECT count(*) FROM public.builder_network_messages WHERE id = ${lit(stored.message_id)}`)).toBe('1');
+        expect(db.sql(`SELECT message_apply_error FROM public.builder_network_inbound_events
+                       WHERE dedupe_key = 'agency.message:${fresh.message_id}:1'`)).toBe('refused:conversation_not_open');
+      } finally {
+        db.sql(`UPDATE public.builder_stock_selections SET status = 'selected' WHERE stock_item_id = ${lit(ITEM_A1)}`);
+      }
+    });
+  });
+
+  describe('the network switched off', () => {
+    it('a failed message cannot be sent again while the network is off', () => {
+      const m = post(ITEM_A1, OWNER, randomUUID(), 'Failed before the switch-off.');
+      receipt(m, 1, 'refused', 'x');
+      sweep();
+      db.sql(`UPDATE public.feature_flags SET value = 'false'::jsonb WHERE key = 'builder_network_enabled'`);
+      try {
+        expect(refusal(`SELECT public.builder_network_retry_message(${lit(m)}, ${lit(OWNER)})`)).toMatch(/AGENCY_NETWORK_DISABLED/);
+        expect(db.sql(`SELECT delivery_state || '|' || delivery_generation FROM public.builder_network_messages WHERE id = ${lit(m)}`))
+          .toBe('failed|1');
+      } finally {
+        db.sql(`UPDATE public.feature_flags SET value = 'true'::jsonb WHERE key = 'builder_network_enabled'`);
+      }
+    });
+  });
+
   describe('two sends of one message at once', () => {
     it('the one that loses the race returns the winner\'s message instead of failing', async () => {
       const key = randomUUID();
