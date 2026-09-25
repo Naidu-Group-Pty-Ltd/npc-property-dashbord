@@ -182,6 +182,40 @@ AS $fn$
   ON CONFLICT (dedupe_key) DO NOTHING
 $fn$;
 
+-- A worker that claimed a message and then found its route held puts it back
+-- to wait. That decision and the park are ONE locked statement: the
+-- connection row is taken FOR SHARE, so a recovery (whose trigger releases
+-- held rows) either commits first and is seen here, or waits and then releases
+-- what this parked. Read in the worker and parked afterwards, a recovery in
+-- between would be overwritten and the message held for ever. The delivery
+-- attempt the claim spent is returned either way.
+CREATE OR REPLACE FUNCTION public.builder_network_park_held_message(
+  _outbox_id uuid, _worker_id text)
+RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $fn$
+DECLARE
+  v_connection uuid;
+  v_type text;
+  v_held boolean;
+BEGIN
+  SELECT o.connection_id, o.event_type INTO v_connection, v_type
+    FROM public.builder_network_outbox o
+   WHERE o.id = _outbox_id AND o.locked_by = _worker_id AND o.status = 'pending'
+     AND o.event_type LIKE 'agency.message.%';
+  IF v_connection IS NULL THEN RETURN false; END IF;
+  PERFORM 1 FROM public.builder_network_connections c WHERE c.id = v_connection FOR SHARE;
+  v_held := public.builder_network_message_route_held(v_connection, v_type);
+  UPDATE public.builder_network_outbox o
+     SET available_at = CASE WHEN v_held THEN 'infinity'::timestamptz ELSE now() END,
+         locked_at = NULL, locked_by = NULL,
+         attempts = greatest(0, o.attempts - 1),
+         last_error = CASE WHEN v_held THEN 'held:route_not_deliverable' ELSE o.last_error END
+   WHERE o.id = _outbox_id AND o.locked_by = _worker_id;
+  RETURN v_held;
+END
+$fn$;
+
 -- ---------------------------------------------------------------------------
 -- 3. Writing a message (the Command Centre's side).
 -- ---------------------------------------------------------------------------
@@ -746,6 +780,7 @@ REVOKE ALL ON FUNCTION public.builder_network_message_payload(uuid) FROM PUBLIC,
 REVOKE ALL ON FUNCTION public.builder_network_kick_outbox() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_message_enqueue(uuid, text, text, jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_message_route_held(uuid, text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.builder_network_park_held_message(uuid, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_message_route_changed() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_post_message(uuid, uuid, uuid, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_retry_message(uuid, uuid) FROM PUBLIC, anon, authenticated;
@@ -759,6 +794,7 @@ GRANT EXECUTE ON FUNCTION public.builder_network_post_message(uuid, uuid, uuid, 
 GRANT EXECUTE ON FUNCTION public.builder_network_retry_message(uuid, uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION public.builder_network_apply_message_events(integer) TO service_role;
 GRANT EXECUTE ON FUNCTION public.builder_network_expire_unconfirmed(interval) TO service_role;
+GRANT EXECUTE ON FUNCTION public.builder_network_park_held_message(uuid, text) TO service_role;
 
 DO $$
 BEGIN

@@ -174,6 +174,15 @@ describe('what the page states', () => {
     expect(button === null || button.disabled).toBe(true);
   });
 
+  it('a property the builder stopped listing still opens, with its conversation, and offers no activation', async () => {
+    detail = { ...baseDetail(), record: { ...record, lifecycle_status: 'archived' } as typeof record };
+    await renderAt('/listings/builder-stock/stock-1');
+    expect(screen.getByText(/no longer listed by the builder/i)).toBeTruthy();
+    expect(screen.getByRole('heading', { name: /messages with/i })).toBeTruthy();
+    const button = screen.queryByRole('button', { name: /activate builder/i }) as HTMLButtonElement | null;
+    expect(button === null || button.disabled).toBe(true);
+  });
+
   it('says a property is gone rather than drawing an empty page', async () => {
     detail = null;
     await renderAt('/listings/builder-stock/missing');

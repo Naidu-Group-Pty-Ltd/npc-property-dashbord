@@ -55,11 +55,9 @@ async function drainBuilderNetworkOutbox(db: any, workerIdValue: string): Promis
       if (!connection || connection.state === 'revoked') { await release(event, 'connection_revoked', { dead: true }); dead++; continue; }
       if (agencyMessageRouteHeld(connection, String(event.event_type ?? ''))) {
         // Claimed before the hold began: put it back to wait, spending no
-        // delivery attempt; the connection's recovery releases it.
-        await db.from('builder_network_outbox').update({
-          available_at: 'infinity', locked_at: null, locked_by: null,
-          attempts: Math.max(0, event.attempts - 1), last_error: 'held:route_not_deliverable',
-        }).eq('id', event.id).eq('locked_by', workerIdValue);
+        // delivery attempt. The database re-decides under the connection's
+        // lock, so a recovery landing now is not overwritten by this park.
+        await db.rpc('builder_network_park_held_message', { _outbox_id: event.id, _worker_id: workerIdValue });
         retried++; continue;
       }
       if (!connection.network_inbound_url || !connection.outbound_hmac_secret) {

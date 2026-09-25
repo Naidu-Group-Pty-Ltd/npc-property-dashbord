@@ -83,6 +83,7 @@
     "function:public.builder_network_message_route_changed",
     "function:public.builder_network_message_route_held",
     "function:public.builder_network_message_transport_dead",
+    "function:public.builder_network_park_held_message",
     "function:public.builder_network_post_message",
     "function:public.builder_network_retry_message",
     "function:public.builder_network_transaction_connection_set_once",

@@ -151,6 +151,28 @@ Deno.serve(async (req) => {
       return data;
     };
 
+    /**
+     * A property this deployment ever activated stays READABLE after the
+     * builder stops listing it: its page and its conversation are durable
+     * history. Everything else is active stock only, and every write still
+     * goes through `loadItem`.
+     */
+    const loadReadableItem = async (itemId: string) => {
+      if (!itemId) return null;
+      const { data } = await supabase
+        .from('builder_network_stock_items')
+        .select('*')
+        .eq('id', itemId)
+        .maybeSingle();
+      if (!data) return null;
+      if (data.lifecycle_status === 'active') return data;
+      const { count, error } = await supabase
+        .from('builder_stock_selections')
+        .select('id', { count: 'exact', head: true })
+        .eq('stock_item_id', data.id);
+      return !error && count ? data : null;
+    };
+
     // =====================================================================
     // Reads
     // =====================================================================
@@ -351,7 +373,7 @@ Deno.serve(async (req) => {
      * applies — and nothing here is composed by a model.
      */
     if (operation === 'get_stock_item') {
-      const item = await loadItem(cleanText(body.stock_item_id, 64));
+      const item = await loadReadableItem(cleanText(body.stock_item_id, 64));
       if (!item) return json({ error: 'Property not found' }, 404);
       const [record] = await decorate(supabase, [item]);
       const clientsView = await requireModulePermission(supabase, actor, 'clients', 'can_view');
@@ -608,7 +630,7 @@ Deno.serve(async (req) => {
     };
 
     if (operation === 'get_builder_conversation') {
-      const item = await loadItem(cleanText(body.stock_item_id, 64));
+      const item = await loadReadableItem(cleanText(body.stock_item_id, 64));
       if (!item) return json({ error: 'Property not found' }, 404);
       const read = await readBuilderConversation(supabase, {
         stockItemId: item.id, organisationId: item.organisation_id, viewerUserId: userId,
@@ -618,7 +640,9 @@ Deno.serve(async (req) => {
       const networkOn = await builderNetworkEnabled(supabase);
       // Every gate the send and retry functions enforce, so no button is
       // offered that the server would refuse.
-      const canSend = read.open && listingsEdit.ok && networkOn;
+      // A property the builder no longer lists keeps its history and takes
+      // nothing new.
+      const canSend = read.open && item.lifecycle_status === 'active' && listingsEdit.ok && networkOn;
       return json({
         success: true,
         conversation_id: read.conversation_id,

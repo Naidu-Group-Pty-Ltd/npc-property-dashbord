@@ -22,7 +22,7 @@ md5('agency.conversation:' || <network connection id> || ':' || <stock item id>)
 - on the Command Centre: a live `builder_stock_selections` row;
 - on the network: a live announcement on that connection.
 
-When the activation is withdrawn, the history stays readable and nothing new can be written.
+When the activation is withdrawn, the history stays readable and nothing new can be written. The same holds when the builder stops listing the property: a property this deployment ever activated keeps its page and its conversation readable, while sending and activating still need active stock.
 
 **Owner.** The Command Centre user whose activation opened it owns it (`owner_user_id`). Anyone with Listings edit access writes into it as themselves. On the network side, anyone in the builder's organisation with `inventory` edit writes as themselves. Every message carries its writer's display name.
 
@@ -61,7 +61,7 @@ Both main inbound sweeps refuse an event type they do not handle, and the refusa
 - The message sweep (`builder_network_apply_message_events` here, `builder_agency_apply_message_events` on the network) keeps its own stamp (`message_applied_at`).
 - It runs each minute, and the network door also runs it once when an envelope lands.
 - The main, media and rank sweeps are unchanged.
-- Like the main sweep, it holds (never consumes) a connection's events while `identity_mismatch_since` is set, and replays them once the identity is repaired. Outbound it is the same rule: while the stamp is set, posting and retrying are refused (`AGENCY_CONNECTION_HALTED`), so nothing new crosses a disputed relationship. What was already queued is HELD rather than dropped: while a connection is disputed or has lost `stock:publish`, its pending message rows wait (`available_at = infinity`, which the outbox claim never reaches) and are released the moment it recovers. A connection without `stock:publish` also cannot retry a message, and a builder message arriving over it is refused (`scope_revoked`).
+- Like the main sweep, it holds (never consumes) a connection's events while `identity_mismatch_since` is set, and replays them once the identity is repaired. Outbound it is the same rule: while the stamp is set, posting and retrying are refused (`AGENCY_CONNECTION_HALTED`), so nothing new crosses a disputed relationship. What was already queued is HELD rather than dropped: while a connection is disputed or has lost `stock:publish`, its pending message rows wait (`available_at = infinity`, which the outbox claim never reaches) and are released the moment it recovers. A row the worker had already claimed when the hold began is parked by `builder_network_park_held_message`, which re-decides under the connection's row lock, so a recovery landing at that moment is never overwritten by the park. A connection without `stock:publish` also cannot retry a message, and a builder message arriving over it is refused (`scope_revoked`).
 
 **Failure handling.** One message that cannot be applied is retried on later sweeps. After five attempts it is dead-lettered with a critical operational event. It never blocks the messages after it: each claim takes its own row with `SKIP LOCKED`, and each row runs in its own exception block.
 

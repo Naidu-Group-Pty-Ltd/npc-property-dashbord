@@ -281,8 +281,10 @@ describe('the worker holds a message whose route stopped being deliverable', () 
     const drain = worker.slice(worker.indexOf('async function drainBuilderNetworkOutbox'));
     expect(drain.indexOf('agencyMessageRouteHeld(')).toBeGreaterThan(-1);
     expect(drain.indexOf('agencyMessageRouteHeld(')).toBeLessThan(drain.indexOf('fetch('));
-    expect(drain).toMatch(/available_at:\s*'infinity'/);
-    expect(drain).toMatch(/attempts:\s*Math\.max\(0,\s*event\.attempts\s*-\s*1\)/);
+    // The park is one locked statement in the database, so a recovery that
+    // lands between the check and the park cannot be overwritten by it.
+    expect(drain).toMatch(/rpc\('builder_network_park_held_message'/);
+    expect(drain).not.toMatch(/available_at:\s*'infinity'/);
   });
 });
 
@@ -291,8 +293,27 @@ describe('a reader who may not write', () => {
     const market = readCode('supabase/functions/builder-stock-marketplace/index.ts');
     const start = market.indexOf("operation === 'get_builder_conversation'");
     const op = market.slice(start, market.indexOf('operation ===', start + 20));
-    expect(op).toMatch(/const canSend = read\.open && listingsEdit\.ok && networkOn/);
+    expect(op).toMatch(/const canSend = read\.open && item\.lifecycle_status === 'active' && listingsEdit\.ok && networkOn/);
     expect(op).toMatch(/can_send:\s*canSend/);
     expect(op).toMatch(/can_retry:\s*message\.can_retry\s*&&\s*canSend/);
+  });
+});
+
+describe('a property the builder stopped listing', () => {
+  const market = readCode('supabase/functions/builder-stock-marketplace/index.ts');
+  const opOf = (name: string) => {
+    const start = market.indexOf(`operation === '${name}'`);
+    return market.slice(start, market.indexOf('operation ===', start + 20));
+  };
+  it('keeps its page and its conversation readable where this deployment activated it', () => {
+    const loader = market.slice(market.indexOf('const loadReadableItem'), market.indexOf('// Reads'));
+    expect(loader).toMatch(/lifecycle_status === 'active'/);
+    expect(loader).toMatch(/from\('builder_stock_selections'\)/);
+    expect(opOf('get_stock_item')).toMatch(/await loadReadableItem\(/);
+    expect(opOf('get_builder_conversation')).toMatch(/await loadReadableItem\(/);
+  });
+  it('writes nothing new to it: sending and activating still need active stock', () => {
+    expect(opOf('send_builder_message')).toMatch(/await loadItem\(/);
+    expect(opOf('select_for_client')).toMatch(/await loadItem\(/);
   });
 });

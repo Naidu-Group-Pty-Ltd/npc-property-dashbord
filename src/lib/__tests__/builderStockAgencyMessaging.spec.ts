@@ -407,6 +407,58 @@ describe.skipIf(!runs)('agency messaging (Command Centre)', () => {
       }
       expect(heldOf(queued)).toBe('f');
     });
+
+    const outboxIdOf = (m: string) => db.sql(`SELECT id FROM public.builder_network_outbox WHERE dedupe_key = 'agency.message:${m}:1'`);
+    const claimOnly = (m: string, worker: string) => db.sql(`UPDATE public.builder_network_outbox
+        SET locked_at = now(), locked_by = '${worker}', attempts = attempts + 1
+      WHERE dedupe_key = 'agency.message:${m}:1' RETURNING attempts`);
+
+    it('a worker that finds a claimed message held parks it without spending an attempt, and recovery releases it', () => {
+      const m = post(ITEM_A1, OWNER, randomUUID(), 'Claimed, then the dispute began.');
+      expect(claimOnly(m, 'park-w')).toBe('1');
+      db.sql(`UPDATE public.builder_network_connections SET identity_mismatch_since = now() WHERE id = ${lit(CONN_A)}`);
+      try {
+        expect(db.sql(`SELECT public.builder_network_park_held_message('${outboxIdOf(m)}', 'park-w')`)).toBe('t');
+        expect(db.sql(`SELECT (available_at = 'infinity') || '|' || (locked_by IS NULL) || '|' || attempts
+                       FROM public.builder_network_outbox WHERE dedupe_key = 'agency.message:${m}:1'`)).toBe('true|true|0');
+      } finally {
+        db.sql(`UPDATE public.builder_network_connections SET identity_mismatch_since = NULL WHERE id = ${lit(CONN_A)}`);
+      }
+      expect(heldOf(m)).toBe('f');
+    });
+
+    it('a route that recovers while the worker is parking is not parked behind it for ever', async () => {
+      const m = post(ITEM_A1, OWNER, randomUUID(), 'Claimed during a dispute that is ending.');
+      claimOnly(m, 'park-race');
+      db.sql(`UPDATE public.builder_network_connections SET identity_mismatch_since = now() WHERE id = ${lit(CONN_A)}`);
+      try {
+        // The recovery holds the connection row, uncommitted, while the worker
+        // (which read the route as held) tries to park the claimed row.
+        const recovery = db.sqlAsync(`BEGIN; UPDATE public.builder_network_connections SET identity_mismatch_since = NULL
+                                        WHERE id = ${lit(CONN_A)}; SELECT pg_sleep(1.5); COMMIT;`);
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const park = db.sqlAsync(`SELECT public.builder_network_park_held_message('${outboxIdOf(m)}', 'park-race')`);
+        const [, parked] = await Promise.all([recovery, park]);
+        expect(parked).toBe('f');
+        expect(db.sql(`SELECT (available_at <> 'infinity') || '|' || (locked_by IS NULL)
+                       FROM public.builder_network_outbox WHERE dedupe_key = 'agency.message:${m}:1'`)).toBe('true|true');
+      } finally {
+        db.sql(`UPDATE public.builder_network_connections SET identity_mismatch_since = NULL WHERE id = ${lit(CONN_A)}`);
+      }
+    }, 20_000);
+
+    it('a worker cannot park a row it does not hold', () => {
+      const m = post(ITEM_A1, OWNER, randomUUID(), 'Claimed by somebody else.');
+      claimOnly(m, 'other-w');
+      db.sql(`UPDATE public.builder_network_connections SET identity_mismatch_since = now() WHERE id = ${lit(CONN_A)}`);
+      try {
+        expect(db.sql(`SELECT public.builder_network_park_held_message('${outboxIdOf(m)}', 'park-w')`)).toBe('f');
+        expect(db.sql(`SELECT locked_by || '|' || attempts FROM public.builder_network_outbox
+                       WHERE dedupe_key = 'agency.message:${m}:1'`)).toBe('other-w|1');
+      } finally {
+        db.sql(`UPDATE public.builder_network_connections SET identity_mismatch_since = NULL WHERE id = ${lit(CONN_A)}`);
+      }
+    });
   });
 
   describe('after the activation is withdrawn', () => {
