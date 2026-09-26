@@ -50,6 +50,7 @@ import {
 } from './issuerIdentity.pure';
 import type { BrandFamily } from '@/lib/reportDesign/brandFamily.pure';
 import { toRgb255 } from '@/lib/reportDesign/brandFamily.pure';
+import { hexToHsl } from '@/lib/reportDesign/color.pure';
 import type { ResolvedReportPalette } from '@/lib/reportDesign/roles.pure';
 
 /** The prime: NPC's legacy artwork, drawn as it always was. */
@@ -95,6 +96,25 @@ export async function loadLegacyDocumentBrand(
   const issuer = resolveReportIssuer({ companyName, brandName }, deployment);
   const { mark, family } = await loadIssuerLook(issuer, deps);
   return { artwork: 'issuer', deployment, issuer, family, mark };
+}
+
+/**
+ * The colour a document's highlight ramp is grown from.
+ *
+ * Portfolio and the Formara form grow a gold ramp — the highlight, a lighter
+ * and a deeper shade, and a pale tint — from ONE colour
+ * (`getBrandPdfPalette`). On the prime that has always been the app's accent
+ * colour, and it still is: nothing on the prime changes. On a clone it is the
+ * colour the rest of the document is drawn in — the brand family's own source,
+ * which is the Branding page's colour (`whitelabelBrandColour`), or Aurixa's
+ * gold where none is set — so one document never carries two brand colours.
+ * Only the source changes; the ramp is grown exactly as before.
+ */
+export function highlightColourFor(
+  brand: LegacyDocumentBrand,
+  appAccentHsl: string | null | undefined,
+): string | null | undefined {
+  return brand.artwork === 'issuer' ? hexToHsl(brand.family.brand) : appAccentHsl;
 }
 
 interface ClosingSettings<C, D> {

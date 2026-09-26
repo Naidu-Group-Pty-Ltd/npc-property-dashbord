@@ -11,8 +11,13 @@ import { Progress } from '@/components/ui/progress';
 import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { namedPhotographCount, photographCaptureRequest, startPhotographCapture } from '@/lib/reports/urlExtractPhotographs';
-import { fileChosenBrochurePhotographs } from '@/lib/reports/brochurePhotographs';
-import { describeBrochureFiling } from '@/lib/reports/brochurePhotographs.pure';
+import { fileChosenBrochurePhotographs, fileWhilePageHeld } from '@/lib/reports/brochurePhotographs';
+import {
+  BROCHURE_FILING_BROKE,
+  BROCHURE_FILING_STILL_RUNNING,
+  describeBrochureFiling,
+  type BrochureFiling,
+} from '@/lib/reports/brochurePhotographs.pure';
 import { useBrochurePhotographs } from '@/hooks/useBrochurePhotographs';
 import type { Json } from '@/integrations/supabase/types';
 import { useToast } from '@/hooks/use-toast';
@@ -100,6 +105,8 @@ export function InvestmentReportGenerator() {
   // The brochure's own photographs, read beside the parse and confirmed by
   // the adviser before the report is made (`useBrochurePhotographs`).
   const brochurePhotographs = useBrochurePhotographs();
+  // True while the ticked pictures are on their way to the report.
+  const [isFilingBrochure, setIsFilingBrochure] = useState(false);
   
   const [queryType, setQueryType] = useState<'address' | 'zipcode' | 'suburb' | 'state'>('address');
   const [query, setQuery] = useState('');
@@ -1480,18 +1487,30 @@ export function InvestmentReportGenerator() {
       });
 
       // The photographs the adviser ticked from the brochure, filed under the
-      // report now it exists — beside the generation and never in its way.
+      // report now it exists. The generation has already started and never
+      // waits for them: a document reads its photographs when it is drawn.
+      // But they exist only in this page, so the page is held while they are
+      // in flight, and the report is announced and the form cleared only once
+      // they have landed or the patience has run out (`fileWhilePageHeld`).
       // The server checks each one again before it keeps it.
       const brochureFiling = brochurePhotographs.filingArgs();
       if (brochureFiling) {
-        void fileChosenBrochurePhotographs({
-          invoke: (request) => invokeSecureFunction('listing-images', { ...request }),
-          reportId: pendingReport.id,
-          ...brochureFiling,
-        }).then((outcome) => {
-          const message = describeBrochureFiling(outcome);
+        const reportBrochureFiling = (outcome: BrochureFiling | null) => {
+          const message = outcome ? describeBrochureFiling(outcome) : BROCHURE_FILING_BROKE;
           if (message) toast(message);
-        });
+        };
+        setIsFilingBrochure(true);
+        const held = await fileWhilePageHeld(
+          () => fileChosenBrochurePhotographs({
+            invoke: (request) => invokeSecureFunction('listing-images', { ...request }),
+            reportId: pendingReport.id,
+            ...brochureFiling,
+          }),
+          { onLateOutcome: reportBrochureFiling },
+        );
+        setIsFilingBrochure(false);
+        if (held.state === 'settled') reportBrochureFiling(held.outcome);
+        else toast(BROCHURE_FILING_STILL_RUNNING);
       }
 
       // Add "generation started" notification
@@ -1521,6 +1540,7 @@ export function InvestmentReportGenerator() {
         variant: "destructive",
       });
     } finally {
+      setIsFilingBrochure(false);
       setIsPdfGenerating(false);
     }
   };
@@ -2440,7 +2460,7 @@ export function InvestmentReportGenerator() {
                          {isPdfGenerating ? (
                            <>
                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                             Generating Report...
+                             {isFilingBrochure ? 'Adding Brochure Pictures...' : 'Generating Report...'}
                            </>
                          ) : (
                            <>

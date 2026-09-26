@@ -146,11 +146,16 @@ A tenant cannot make risk green.
 - **Where the colour comes from:** `whitelabelBrandColour`, which reads
   `theme_config.brandColour` and falls back to `primary_color`. This is the
   same reading the typeset routes use.
-- **One pre-existing nuance, left as it was:** the Portfolio and Formara gold
-  ramps still follow the app's "Brand accent" (`theme_config.brandColor`,
-  applied by `applyBrandRgb` / `applyBrandGold`). That was their behaviour
-  before this work, on the prime and clones alike. On a clone their navy now
-  follows the document family's `deep`.
+- **Portfolio and Formara grow their gold ramp from the same colour**
+  (`highlightColourFor`, 26 Sep 2026). Both documents grow a ramp — the
+  highlight, a lighter and a deeper shade, and a pale tint — from ONE colour
+  (`getBrandPdfPalette`). It used to be the app's accent everywhere, so on a
+  clone the highlights followed the app's accent while the deep shade, the
+  cover and the closing page followed the Branding page: one document, two
+  brand colours. On a clone the ramp now grows from the family's own source
+  (the Branding page's colour, or Aurixa's gold where none is set). Only the
+  source changes; the ramp is grown exactly as before. On the prime it is still
+  the app's accent, applied with the same value before anything is drawn.
 
 ## 5. What does not change
 
@@ -158,11 +163,9 @@ A tenant cannot make risk green.
   prime and on every clone. Rendered page counts are equal across the prime and
   all three clone modes for every document measured.
 - **Delivery.** Exits, storage objects and the portal are untouched.
-- **The model's persona is not changed.** The generators still tell the model it
-  writes "at `<company name>`", from `getBrandConfig`. On a clone whose Report
-  Settings still hold NPC's name, the model is told that name. The white-label
-  rules keep that name off every template surface; the prose is content, which
-  the owner excluded. Remedy: the clone sets its own company name.
+- **The model's persona follows the issuer (§9).** This bullet used to read
+  "not changed": the owner then asked for it as a commercial-readiness item.
+  On the prime every prompt is byte-identical to what it was.
 
 ## 6. Verified
 
@@ -205,7 +208,9 @@ A tenant cannot make risk green.
   challenge, which this work does not get past. PENDING a check after publish
   that the prime still prints NPC's artwork on each legacy document.
 - **No real clone has drawn any of these documents.** PENDING a clone deploy.
-- **The Edge Function changes are not deployed.** PENDING merge and deploy,
+- **The white-label Edge Function changes are deployed.** #2775 merged on
+  26 Sep 2026 and all eighteen functions it changed were redeployed between
+  03:24 and 03:35 UTC. The follow-up (§9–§11) is PENDING merge and deploy,
   which need the owner's approval.
 
 ## 8. The uploaded PDF's words (a separate fix, same change)
@@ -225,6 +230,124 @@ The browser now reads the text layer (`readUploadedDocumentText`) and bounds it
 
 The generator bounds an uploaded document from its front
 (`UPLOADED_DOCUMENT_MAX_BYTES`, `head`). A listing page is still cut as before.
-Like a listing link's scraped text, the words reach only the first invocation's
-sections, because a continuation carries no `propertyDetails`
-(`INVESTMENT_REPORT_RESUME.md` §13).
+Every section now reads the words, not only the first invocation's (§10).
+
+## 9. Who the writer works for
+
+Every report writer opens its prompt with a persona: "You are an expert
+Australian property investment analyst for `<company>`", "a trusted property
+investment advisor at `<company>`". Every one took `<company>` from Report
+Settings (`getBrandConfig`). On a clone whose row was seeded from the prime's,
+the model was told it worked for NPC. Market Intelligence then printed that
+name in the document itself: a heading "How `<company>` Would Approach This",
+"`<company>` is a strategic property advisory", and its call to action. A clone
+that had named nobody got the placeholder "Property Consulting".
+
+The writer now works for the business the document is issued under
+(`writerFirm.pure.ts`, read at the edge by `writerIdentity.ts`):
+
+- **On the prime nothing changes.** The writer is told exactly the name it was
+  always told, and nothing new is read. Proven by running main's and this
+  change's Market Intelligence prompt builders under Deno with the prime's name
+  (26,831 bytes each, byte-identical across four builders and three report
+  types), and by substituting the prime's name into the old and new sources of
+  the other writers, where only the lines that compute the name differ.
+- **On a clone the writer works for the clone's own business:** its report
+  contact name, then its Branding page name (`resolveReportIssuer`). Never the
+  house, however a row spells it.
+- **Where a clone has named nobody, the writer works for no business.** The
+  document is then issued under the platform, and the platform's disclaimer,
+  printed on that same document, says the analysis was not prepared by Aurixa
+  Systems and that Aurixa Systems is not a buyer's agent. A persona "advisor at
+  Aurixa Systems" would have the prose say the opposite. So every persona drops
+  its "for `<company>`" clause instead: "You are an expert Australian property
+  investment analyst." A prompt-library template has the firm taken out the way
+  each sentence can lose it (`withoutFirmToken`), and every built-in template
+  is held to reading cleanly by a test that reads the catalogue's own source.
+
+It covers the five report writers (`generate-investment-report`,
+`regenerate-report-qualitative`, `condense-investment-report`, `report-qa`,
+`generate-market-intelligence-report`), the masthead the Investment generators
+write, and the template AI author, whose cover designs were told they were "for
+NPC Property Services investment reports". Q&A's summary no longer asks the
+model to print "Prepared by: `<company>`" where the platform issues it.
+
+**The typeset Market Intelligence close had the same fault.** It printed "Why
+`<issuer>`? `<issuer>` is a strategic property advisory …" and "Contact
+`<issuer>` …" on every document, so an unbranded clone's read "Aurixa Systems
+is a strategic property advisory" above a disclaimer saying the opposite. The
+older browser generator already left that close out for the platform. The
+typeset route now does too (`brandCloseCallouts`), and its page budget counts
+the callouts it actually prints, so no empty "Your Next Steps" chapter is drawn.
+
+**Not changed, and the same class:** `email-copilot` drafts replies signed
+"`<company>` Team", and `ai-dashboard-agent` and `user-guide-assistant` name the
+company in their personas. All three read Report Settings. They are not report
+writers, and a drafted email belongs to the email identity
+(`CLONE_EMAIL_IDENTITY.md`), not the report issuer. `market-updates-qa` still
+calls itself "the NPC Australian property-market intelligence analyst" on every
+deployment.
+
+## 10. The document's words, for every section
+
+A report made from an uploaded brochure or a listing link carries the
+document's words into its prompt. Only the first invocation of a generation
+receives them: they arrive in `propertyDetails`, and a continuation — every
+invocation after the first — is sent `{ reportId, propertyAddress,
+continueFrom }`. A Compass is written across several invocations, so the first
+batch of sections was written from the brochure and every later one as though
+there had been no document.
+
+The first invocation now keeps the context it composed, and every later
+invocation handed no document of its own reads it back
+(`reportDocumentContext.pure.ts`). The stored copy holds the words (already
+bounded), the extracted specifications and where the words came from.
+
+- **It lives in the private `listing-images` bucket**, at
+  `report-sources/<reportId>/document.json`, beside the report's photographs
+  but under its own prefix. No migration, and nothing that lists a photograph
+  folder sees it.
+- **A kept copy stands in only for the same report at the same address.** A
+  document about another property is worse than none.
+- **Only a record this module wrote is read.** Anything malformed, of another
+  version or larger than anything written here is ignored.
+- **Keeping and reading never fail a report.** Both give up after five
+  seconds, and a copy that cannot be kept costs the later sections the
+  document, which is what they had before.
+- **A continuation composes exactly what the first invocation composed.** The
+  prompt section is built from the kept fields alone (a test holds the block
+  to reading nothing from the request). Main's inline code and the new block
+  were evaluated on the same inputs, and the section is byte-identical, for an
+  uploaded PDF and for listings with and without a URL, with the new side fed a
+  record that has been through JSON.
+
+A regeneration of the same report without a document reads the kept copy too,
+so it is written from the same evidence as the first generation.
+
+Two things it does not do:
+
+- **Deleting a report does not delete it.** `manage-investment-reports`
+  deletes the row and nothing in storage. The report's photographs have
+  always stayed behind, and the kept document now stays beside them.
+- **It cannot keep what has no bucket.** `listing-images` is created by a
+  migration, and rows a migration inserts do not always reach a clone
+  (`CLONE_PROVISIONING_GAPS.md`). Where the bucket is missing, the log says
+  `NOT kept` and the report is written exactly as it was before this change.
+
+## 11. Verified and not verified (the follow-up)
+
+- Unit tests: `writerFirm.spec.ts`, `reportDocumentContext.spec.ts`,
+  `legacyDocumentBrand.spec.ts` (the highlight ramp), and the Market
+  Intelligence `render` and `sections` specs. Three standing guards now pin
+  the change too. `compassDocumentContract.spec.ts` pins the contract's new
+  argument. The Investment single-source guard requires the new module's
+  bridge. The Market Intelligence guard keeps its import allow-list closed:
+  the close compares against `FALLBACK_COMPANY_NAME`, the name the masthead
+  itself falls back to, which lives in the design system it may import.
+- Each rule was broken on purpose, one at a time, and the spec that holds it
+  failed every time.
+- **PENDING:** a real clone generating a report with the new persona, and a
+  real brochure report written across several invocations. Both need the
+  functions deployed and spend model calls.
+- **PENDING:** a browser render of Portfolio and Formara on a clone. The change
+  is one argument, and the prime path passes the same value it always did.

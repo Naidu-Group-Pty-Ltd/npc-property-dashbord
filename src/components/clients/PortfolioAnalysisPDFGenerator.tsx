@@ -14,7 +14,7 @@ import fontkit from '@pdf-lib/fontkit';
 import { fetchGlobalReportSettings, type GlobalReportSettings } from '@/hooks/useGlobalReportSettings';
 import { drawPdfLibDisclaimerPage } from '@/utils/pdfDisclaimerPage';
 import { drawBorrowingCapacityPdfLib, transformEdgeFunctionBCData } from '@/utils/borrowingCapacityPdfLibSections';
-import { issuerClosingPage, loadLegacyDocumentBrand } from '@/lib/reports/legacyDocumentBrand';
+import { highlightColourFor, issuerClosingPage, loadLegacyDocumentBrand } from '@/lib/reports/legacyDocumentBrand';
 import { drawIssuerCover } from '@/lib/reports/investment/investmentPdfCover';
 import { hexToRgb01 } from '@/lib/reportDesign/color.pure';
 import type { BrandFamily } from '@/lib/reportDesign/brandFamily.pure';
@@ -522,9 +522,6 @@ export function PortfolioAnalysisPDFGenerator({
     try {
       console.log('📄 Starting Portfolio Analysis PDF generation with pdf-lib...');
 
-      // Re-resolve the brand gold ramp from the active White-Label brand colour.
-      applyBrandRgb(brand.brandColor);
-
       // Fetch global settings for branding
       const globalSettings = await fetchGlobalReportSettings();
       console.log('✓ Global settings fetched');
@@ -534,6 +531,11 @@ export function PortfolioAnalysisPDFGenerator({
       // (`legacyDocumentBrand.ts`). The content is the same either way.
       const legacyBrand = await loadLegacyDocumentBrand(globalSettings?.contactDetails?.company_name);
       applyDocumentDeep(legacyBrand.artwork === 'issuer' ? legacyBrand.family : null);
+
+      // Re-resolve the brand gold ramp: from the app's accent on the prime, as
+      // always, and on a clone from the colour the rest of this document is
+      // drawn in (`highlightColourFor`).
+      applyBrandRgb(highlightColourFor(legacyBrand, brand.brandColor));
       
       // Create PDF document
       const pdfDoc = await PDFDocument.create();

@@ -16,12 +16,15 @@ import { resolve } from 'node:path';
 import { jsPDF } from 'jspdf';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  highlightColourFor,
   issuerClosingPage,
   loadLegacyDocumentBrand,
   rgbObject,
   rgbTriple,
   type IssuerLegacyBrand,
 } from '@/lib/reports/legacyDocumentBrand';
+import { getBrandPdfPalette } from '@/branding/brandPalette';
+import { hexToHsl, parseHsl } from '@/lib/reportDesign/color.pure';
 import { drawLegacyIssuerCover } from '@/lib/reports/legacyIssuerCover';
 import {
   PLATFORM_COVER_MARK,
@@ -190,6 +193,49 @@ describe("an issuer document's closing page", () => {
       disclaimer: { text: 'anything', is_enabled: false },
     });
     expect(page.disclaimer).toEqual({ text: '', is_enabled: false });
+  });
+});
+
+/**
+ * Portfolio and the Formara form grow their gold ramp from ONE colour. It was
+ * the app's accent everywhere — so on a clone the highlights followed the app's
+ * accent while the deep shade, the cover and the closing page followed the
+ * Branding page, and one document carried two brand colours.
+ */
+describe("the colour a document's highlight ramp is grown from", () => {
+  const hueOf = (hex: string) => parseHsl(hexToHsl(hex)).h;
+
+  it('is the app accent on the prime, exactly as it always was', async () => {
+    const brand = await loadLegacyDocumentBrand('Naidu Property Consulting Services', deps({ prime: () => true }));
+    expect(highlightColourFor(brand, '43 74% 49%')).toBe('43 74% 49%');
+    expect(highlightColourFor(brand, null)).toBeNull();
+    expect(highlightColourFor(brand, undefined)).toBeUndefined();
+  });
+
+  it("is the Branding page's colour on a clone, whatever the app accent is", async () => {
+    const brand = await loadLegacyDocumentBrand('Coastline Realty', deps({ loadBrandColour: vi.fn(async () => '#1E3A8A') }));
+    const source = highlightColourFor(brand, '43 74% 49%');
+    expect(source).toBe(hexToHsl('#1E3A8A'));
+    // The ramp grown from it carries the brand's hue, and not the accent's gold.
+    const ramp = getBrandPdfPalette(source);
+    expect(Math.abs(hueOf(ramp.gold) - hueOf('#1E3A8A'))).toBeLessThanOrEqual(2);
+    expect(Math.abs(hueOf(ramp.gold) - 43)).toBeGreaterThan(90);
+  });
+
+  it("is Aurixa's gold on a clone that has named nobody or set no colour", async () => {
+    const unbranded = await loadLegacyDocumentBrand('', deps());
+    expect(highlightColourFor(unbranded, '200 80% 40%')).toBe(hexToHsl(resolveBrandFamily(null).brand));
+  });
+
+  it('is how both documents grow their ramp', () => {
+    const read = (path: string) => readFileSync(resolve(__dirname, '../../../..', path), 'utf8');
+    expect(read('src/components/clients/PortfolioAnalysisPDFGenerator.tsx'))
+      .toMatch(/applyBrandRgb\(highlightColourFor\(legacyBrand, brand\.brandColor\)\);/);
+    expect(read('src/components/clients/FormaraPDFGenerator.tsx'))
+      .toMatch(/applyBrandGold\(highlightColourFor\(legacyBrand, brand\.brandColor\)\);/);
+    for (const path of ['src/components/clients/PortfolioAnalysisPDFGenerator.tsx', 'src/components/clients/FormaraPDFGenerator.tsx']) {
+      expect(read(path)).not.toMatch(/apply(BrandRgb|BrandGold)\(brand\.brandColor\)/);
+    }
   });
 });
 
