@@ -3141,6 +3141,30 @@ read back by any invocation handed none, used only for the same report at the
 same address, and composed from the kept fields alone, so every section states
 the document the way the first did.
 
+**The tools and the labels speak for the workspace, not the house** (§12–§13
+of the same doc). The email copilot, dashboard assistant and user guide read
+Report Settings. Market Updates Q&A and the finance copilot named NPC as a
+literal. On every clone, the portals told a solicitor to "Contact NPC",
+signed staff messages "NPC Command Centre", and listed staff in authenticator
+apps under "NPC Property Dashboard".
+
+- **Server side:** call `loadWorkspaceIdentity({ readPrimeName })` (rules in
+  `workspaceIdentity.pure.ts`).
+  On the prime it returns the words each site always had. On a clone it returns
+  the clone's Report Settings name, then its Branding page name, then
+  `MISSION_CONTROL_AGENCY_NAME`, or nobody — never NPC, "Property Consulting" or
+  Aurixa.
+- **Frontend:** a label that names the house is `houseLabel(prime, clone)`, with
+  the prime's words verbatim first. `houseLabelsGuard.spec.ts` fails on any
+  literal naming the house that is neither a first argument nor recorded with a
+  reason, and on any clone wording that names a business.
+
+**Deleting a report removes what it kept** (§14). Its photographs, plans and
+kept document go with the row, and never its rendered PDF, which a client portal
+may hold. Only the ids the delete statement returned are touched, only inside
+those reports' own folders, and never at the cost of the delete. A status-wide
+`bulkDelete` is an administrator's act now.
+
 ## A premium document, and the eighteen per cent that was bold
 
 Read [`A_PREMIUM_DOCUMENT.md`](./docs/reports/A_PREMIUM_DOCUMENT.md) before

@@ -7304,7 +7304,7 @@ ${limitedTemplateContext}
 WRITING STYLE RULES:
 1. Lead every section with a clear, plain-English insight or takeaway BEFORE presenting any data
 2. Use a warm, professional, consultative tone — like a knowledgeable advisor speaking to a client
-3. State what a figure means in the sentence that introduces it. NEVER add a paragraph after a table or data point that explains it — no "What This Means", "Why this matters", "What to watch", "Key takeaway" or "NPC view", as a heading, a bold lead-in or a bare line
+3. State what a figure means in the sentence that introduces it. NEVER add a paragraph after a table or data point that explains it — no "What This Means", "Why this matters", "What to watch", "Key takeaway" or ${_writerSys.deployment.prime ? '"NPC view"' : '"Our view"'}, as a heading, a bold lead-in or a bare line
 4. Use tables ONLY for direct comparisons or financial breakdowns (max 5-6 rows). Never use a table when a well-written sentence would suffice
 5. Replace jargon with plain language or briefly define technical terms on first use (e.g., "gross rental yield — the annual rent as a percentage of the property price")
 6. Use contextual comparisons to make numbers meaningful (e.g., "This is 15% above the state average" rather than just stating the number)
