@@ -327,7 +327,7 @@ Deno.serve(async req=>{
       succeeded++;
     }catch(error){
       // A deferral (a lease still held elsewhere) is offered again when it ends and never dead-letters.
-      const message=error instanceof Error?error.message:String(error);const disposition=outboxFailureDisposition(error,event.attempts,Date.now());const terminal=disposition.terminal;
+      const message=error instanceof Error?error.message:String(error);const disposition=outboxFailureDisposition(error,event.attempts,Date.now());const terminal=event.attempts>=10&&!disposition.deferred;
       await db.from('integration_delivery_attempts').update({status:'failed',error:message.slice(0,2000),completed_at:new Date().toISOString()}).eq('outbox_id',event.id).eq('consumer_name',consumer).eq('attempt_number',event.attempts);
       await db.from('integration_outbox').update({available_at:disposition.deferred?disposition.availableAt:new Date(Date.now()+Math.min(3600,2**event.attempts)*1000).toISOString(),locked_at:null,locked_by:null,last_error:message.slice(0,2000),...(terminal?{processed_at:new Date().toISOString()}:{})}).eq('id',event.id).eq('locked_by',id);
       if(terminal)await db.from('integration_dead_letters').upsert({outbox_id:event.id,aggregate_type:event.aggregate_type,aggregate_id:event.aggregate_id,event_type:event.event_type,payload:event.payload,attempts:event.attempts,last_error:message.slice(0,2000)},{onConflict:'outbox_id'});failed++;
