@@ -30,7 +30,7 @@ import { sendActivationAcknowledgedEmail } from '../../../supabase/functions/_sh
 import { OutboxDeferral, outboxFailureDisposition } from '../../../supabase/functions/_shared/outboxDeferral.pure';
 import {
   countUnreadAcknowledgementNotices, listActivatedProperties, listMyConversations, listPropertyConversations,
-  markAcknowledgementNoticesRead, readParticipantConversation,
+  markAcknowledgementNoticesRead, newBuilderMessages, readParticipantConversation,
 } from '../../../supabase/functions/_shared/builderStock/privateConversations';
 
 const REPO_ROOT = join(__dirname, '..', '..', '..');
@@ -54,6 +54,7 @@ function standIn(tables: Record<string, Row[]>, options: { maxRows?: number } = 
       in(col: string, v: unknown[]) { entry.filters.push(['in', col, v]); return builder; },
       is(col: string, v: unknown) { entry.filters.push(['is', col, v]); return builder; },
       lt(col: string, v: unknown) { entry.filters.push(['lt', col, v]); return builder; },
+      gt(col: string, v: unknown) { entry.filters.push(['gt', col, v]); return builder; },
       order(col: string, o?: { ascending?: boolean }) { orders = [...orders, [col, o?.ascending !== false]]; return builder; },
       limit(n: number) { cap = n; return builder; },
       range(a: number, b: number) { offset = a; cap = Math.min(b - a + 1, options.maxRows ?? Infinity); return builder; },
@@ -63,6 +64,7 @@ function standIn(tables: Record<string, Row[]>, options: { maxRows?: number } = 
           op === 'eq' ? row[col] === v : op === 'neq' ? row[col] !== v
             : op === 'is' ? (row[col] ?? null) === v
             : op === 'lt' ? String(row[col]) < String(v)
+            : op === 'gt' ? String(row[col]) > String(v)
             : (v as unknown[]).includes(row[col])));
         for (const [col, asc] of [...orders].reverse()) {
           rows = [...rows].sort((a, b) => (String(a[col]) < String(b[col]) ? -1 : String(a[col]) > String(b[col]) ? 1 : 0) * (asc ? 1 : -1));
@@ -756,5 +758,57 @@ describe('the acknowledgement email job: once, on a lease, never finalised befor
     const sent: any[] = [];
     await sendActivationAcknowledgedEmail(db, event, ok(sent));
     expect(sent).toHaveLength(0);
+  });
+});
+
+
+describe('the "new message from <builder>" popup read', () => {
+  it('a first read takes the cursor and names nothing, so opening the Command Centre replays no message', async () => {
+    const read = await newBuilderMessages(standIn(world()).client, { viewerUserId: ME, since: null });
+    if (!read.ok) throw new Error('failed');
+    expect(read.messages).toEqual([]);
+    expect(read.cursor).toBe('2026-09-25T05:00:00Z');
+  });
+
+  it('names each builder message that arrived after the cursor, with the builder company and the property', async () => {
+    const read = await newBuilderMessages(standIn(world()).client, { viewerUserId: ME, since: '2026-09-25T04:30:00Z' });
+    if (!read.ok) throw new Error('failed');
+    expect(read.messages).toEqual([{
+      message_id: 'm2', conversation_id: 'conv-1', builder_name: 'Check Homes Pty Ltd', sender_display_name: 'Avery Builder',
+      lot_number: '101', address: '1 Private Street', received_at: '2026-09-25T05:00:00Z',
+    }]);
+    expect(read.cursor).toBe('2026-09-25T05:00:00Z');
+  });
+
+  it('never names the reader\'s own side, a message already seen, or a conversation the reader is not in', async () => {
+    const tables = world();
+    tables.builder_network_messages.push({ id: 'm9', conversation_id: 'conv-3', side: 'builder', sender_display_name: 'Avery Builder',
+      body: 'Where the reader has left.', sent_at: '2026-09-25T06:00:00Z', created_at: '2026-09-25T06:00:00Z',
+      delivery_state: null, delivered_at: null, failure_reason: null });
+    const mine = await newBuilderMessages(standIn(tables).client, { viewerUserId: ME, since: '2026-09-25T00:00:00Z' });
+    if (!mine.ok) throw new Error('failed');
+    expect(mine.messages.map((m) => m.message_id)).toEqual(['m2']);
+    const after = await newBuilderMessages(standIn(tables).client, { viewerUserId: ME, since: mine.cursor });
+    if (!after.ok) throw new Error('failed');
+    expect(after.messages).toEqual([]);
+    const outsider = await newBuilderMessages(standIn(tables).client, { viewerUserId: OUTSIDER, since: '2026-09-25T00:00:00Z' });
+    if (!outsider.ok) throw new Error('failed');
+    expect(outsider.messages).toEqual([]);
+  });
+
+  it('carries no message body and no user id to the browser', async () => {
+    const read = await newBuilderMessages(standIn(world()).client, { viewerUserId: ME, since: '2026-09-25T00:00:00Z' });
+    expect(JSON.stringify(read)).not.toMatch(/Yes\.|user-me|sender_user_id|private-client/);
+  });
+
+  it('is a read-only operation on the marketplace function, and the worker admits the conversations\' own kick', () => {
+    const fn = readCode('supabase/functions/builder-stock-marketplace/index.ts');
+    const at = fn.indexOf("operation === 'list_new_builder_messages'");
+    expect(at).toBeGreaterThan(-1);
+    const block = fn.slice(at, fn.indexOf('if (operation ===', at + 10));
+    expect(block).toContain('newBuilderMessages(supabase, { viewerUserId: userId, since })');
+    expect(block).not.toMatch(/\.rpc\(|insert|update|delete/i);
+    const worker = readCode('supabase/functions/cross-portal-outbox-worker/index.ts');
+    expect(worker).toContain("allowedCallers:['pg_cron','agency_message']");
   });
 });
