@@ -232,6 +232,14 @@ describe('Messaging', () => {
     expect(screen.getByRole('status')).toHaveTextContent(/could not be refreshed/i);
   });
 
+  it('a background refresh that fails over an empty list says it may be behind, not only that nothing is activated', () => {
+    state.activations = { activations: [] };
+    state.activationsError = Object.assign(new Error('unavailable'), { status: 503 });
+    state.keepData = true;
+    renderAt('/admin/builder-portal/activated');
+    expect(screen.getByRole('status')).toHaveTextContent(/could not be refreshed/i);
+  });
+
   it('a refusal after activations were read withdraws them', () => {
     state.activationsError = Object.assign(new Error('forbidden'), { status: 403 });
     state.keepData = true;

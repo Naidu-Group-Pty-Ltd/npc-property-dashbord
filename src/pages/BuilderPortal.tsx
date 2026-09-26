@@ -124,11 +124,16 @@ function ActivatedProperties() {
       </p>
     );
   }
-  const stale = !!query.error;
+  const staleNotice = query.error ? (
+    <p role="status" className="text-sm text-muted-foreground">
+      This list could not be refreshed just now, so it may be behind. It will try again shortly.
+    </p>
+  ) : null;
   const rows = query.data?.activations ?? [];
   if (!rows.length) {
     return (
       <div className="space-y-2 text-sm text-muted-foreground">
+        {staleNotice}
         <p>No property has been activated with a builder yet.</p>
         <p>
           A property appears here once you activate one of a builder&apos;s properties for a client, from{' '}
@@ -142,11 +147,7 @@ function ActivatedProperties() {
   }
   return (
     <div className="space-y-3">
-      {stale ? (
-        <p role="status" className="text-sm text-muted-foreground">
-          This list could not be refreshed just now, so it may be behind. It will try again shortly.
-        </p>
-      ) : null}
+      {staleNotice}
       {rows.map((row) => <ActivationRow key={row.activation_key} row={row} />)}
     </div>
   );
