@@ -34,7 +34,7 @@ vi.mock('@/lib/marketplaceBuilderStock', async () => {
       data: state.activationsError ? undefined : state.activations, error: state.activationsError ?? null,
       isLoading: false, isSuccess: !state.activationsError,
     }),
-    useMyBuilderConversations: () => ({ data: state.inbox, error: null, isLoading: false }),
+    useMyBuilderConversations: () => ({ data: state.inboxError ? undefined : state.inbox, error: state.inboxError ?? null, isLoading: false }),
     useParticipantConversation: () => ({ data: state.conversation, error: state.conversationError ?? null, isLoading: false, isFetching: false }),
     useSendConversationMessage: () => ({
       isPending: false,
@@ -218,6 +218,13 @@ describe('Messaging', () => {
     state.activations = { activations: [] };
     renderAt('/admin/builder-portal/activated');
     expect(screen.getByRole('link', { name: /builder stock/i })).toHaveAttribute('href', '/listings?section=builder-stock');
+  });
+
+  it('a conversation list that could not be read says so, and never that there are none', () => {
+    state.inboxError = Object.assign(new Error('unavailable'), { status: 503 });
+    renderAt('/admin/builder-portal/messaging');
+    expect(screen.getByText(/could not be loaded/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no conversations yet/i)).toBeNull();
   });
 
   it('an empty inbox says how a conversation starts', () => {

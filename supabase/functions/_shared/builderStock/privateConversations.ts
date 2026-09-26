@@ -113,25 +113,31 @@ async function readIn(
   return { data, error: null };
 }
 
-/** The conversations one person is in now — the inbox. */
-async function summaries(
-  supabase: Client, viewerUserId: string, filter: { stockItemId?: string },
-): Promise<{ ok: true; conversations: ConversationSummary[] } | { ok: false }> {
-  // Every conversation the viewer is in, a page at a time: a response cap
-  // would otherwise drop threads with nothing saying so.
-  const mine: Row[] = [];
+/**
+ * Every conversation the viewer is in now, a page at a time: a response cap
+ * would otherwise drop some with nothing saying so. `null` when a read failed.
+ */
+async function joinedConversationIds(supabase: Client, viewerUserId: string): Promise<string[] | null> {
+  const ids: string[] = [];
   for (let from = 0; ; from += ACTIVATION_PAGE) {
     const { data, error } = await supabase.from('builder_network_conversation_participants')
       .select('conversation_id')
       .eq('local_user_id', viewerUserId).eq('side', 'command_centre').eq('state', 'joined')
       .order('conversation_id', { ascending: true })
       .range(from, from + ACTIVATION_PAGE - 1);
-    if (error) return { ok: false };
+    if (error) return null;
     const page = (data ?? []) as Row[];
-    mine.push(...page);
-    if (page.length < ACTIVATION_PAGE) break;
+    ids.push(...page.map((row) => String(row.conversation_id)));
+    if (page.length < ACTIVATION_PAGE) return ids;
   }
-  const ids = mine.map((row) => row.conversation_id);
+}
+
+/** The conversations one person is in now — the inbox. */
+async function summaries(
+  supabase: Client, viewerUserId: string, filter: { stockItemId?: string },
+): Promise<{ ok: true; conversations: ConversationSummary[] } | { ok: false }> {
+  const ids = await joinedConversationIds(supabase, viewerUserId);
+  if (!ids) return { ok: false };
   if (!ids.length) return { ok: true, conversations: [] };
 
   const conversations = await readIn(supabase, 'builder_network_conversations',
@@ -209,15 +215,14 @@ export async function listActivatedProperties(
       'id', list.map((s) => s.selected_by_user_id).filter(Boolean)),
     readIn(supabase, 'builder_network_conversations', 'id, selection_ref',
       'selection_ref', list.map((s) => s.id)),
-    supabase.from('builder_network_conversation_participants').select('conversation_id')
-      .eq('local_user_id', args.viewerUserId).eq('side', 'command_centre').eq('state', 'joined'),
+    joinedConversationIds(supabase, args.viewerUserId),
   ]);
-  if (items.error || orgs.error || users.error || conversations.error || mine.error) return { ok: false };
+  if (items.error || orgs.error || users.error || conversations.error || !mine) return { ok: false };
   const itemById = new Map(((items.data ?? []) as Row[]).map((row) => [row.id, row]));
   const orgById = new Map(((orgs.data ?? []) as Row[]).map((row) => [row.id, row]));
   const userById = new Map(((users.data ?? []) as Row[]).map((row) => [row.id, row]));
   const conversationBySelection = new Map(((conversations.data ?? []) as Row[]).map((row) => [row.selection_ref, String(row.id)]));
-  const joined = new Set(((mine.data ?? []) as Row[]).map((row) => String(row.conversation_id)));
+  const joined = new Set(mine);
 
   return {
     ok: true,

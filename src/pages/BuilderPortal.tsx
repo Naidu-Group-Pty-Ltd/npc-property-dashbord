@@ -205,7 +205,14 @@ function Messaging({ conversationId }: { conversationId: string | null }) {
     <div className="grid gap-4 lg:grid-cols-[18rem_1fr]">
       <nav aria-label="Your conversations" className="space-y-2">
         {query.isLoading ? <Skeleton className="h-24 w-full" /> : null}
-        {!query.isLoading && !conversations.length ? (
+        {!query.isLoading && query.error && !query.data ? (
+          <p role="status" className="text-sm text-muted-foreground">
+            {conversationAccessLost(query.error)
+              ? 'Your conversations are not available to you.'
+              : 'Your conversations could not be loaded just now. They will try again shortly.'}
+          </p>
+        ) : null}
+        {!query.isLoading && !query.error && !conversations.length ? (
           <p className="text-sm text-muted-foreground">
             No conversations yet. When a builder acknowledges an activation, the person who activated it and the builder
             who acknowledged it can message each other here, and either can add a colleague.

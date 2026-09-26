@@ -240,6 +240,18 @@ describe('Activated Properties', () => {
     expect(Math.max(...inSizes)).toBeLessThanOrEqual(200);
   });
 
+  it('links every conversation the viewer is in, past the server\'s row ceiling', async () => {
+    const tables = world();
+    for (let i = 0; i < 1201; i += 1) {
+      // Ahead of the real row, so a single capped read cannot reach it.
+      tables.builder_network_conversation_participants.unshift({ conversation_id: `other-${i}`, participant_ref: `o-${i}`,
+        side: 'command_centre', local_user_id: ME, display_name: 'Olive Owner', state: 'joined', version: 1 });
+    }
+    const rows = await listActivatedProperties(standIn(tables, { maxRows: 1000 }).client, { viewerUserId: ME });
+    if (!rows.ok) throw new Error('failed');
+    expect(rows.activations.filter((r) => r.conversation_id).map((r) => r.conversation_id)).toEqual(['conv-1']);
+  });
+
   it('R37. links to a conversation only for a current participant', async () => {
     const colleague = await listActivatedProperties(standIn(world()).client, { viewerUserId: COLLEAGUE });
     if (!colleague.ok) throw new Error('failed');
