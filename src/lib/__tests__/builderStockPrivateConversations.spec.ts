@@ -540,6 +540,32 @@ describe.skipIf(!runs)('one activation, one private conversation (Command Centre
     });
   });
 
+  describe('an event that overtakes its acknowledgement', () => {
+    it('waits for the acknowledgement, then applies: the builder participant and message are not lost', () => {
+      const client = db.sql(`INSERT INTO public.clients(primary_first_name) VALUES ('R') RETURNING id`);
+      const sel = db.sql(`INSERT INTO public.builder_stock_selections(stock_item_id, organisation_id, client_id, selected_by_user_id, status)
+                          VALUES (${lit(QUIET_ITEM)}, ${lit(ORG_A)}, ${lit(client)}, ${lit(OWNER)}, 'selected') RETURNING id`);
+      const conversation = activationConversationId(NET_A, sel);
+      const ref = randomUUID();
+      const message = randomUUID();
+      participantEvent(CONN_A, { conversation_id: conversation, stock_item_id: QUIET_ITEM, participant_ref: ref, display_name: 'Early Acknowledger' });
+      land(CONN_A, 'agency.message.posted', `agency.message:${message}:1`, {
+        schema_version: 1, conversation_id: conversation, message_id: message, stock_item_id: QUIET_ITEM,
+        body: 'Arrived before the acknowledgement.', sender_display_name: 'Early Acknowledger',
+        sent_at: '2026-09-26T02:00:00.000000Z', generation: 1,
+      });
+      messageSweep();
+      // Held, not consumed and not refused.
+      expect(count(`public.builder_network_inbound_events WHERE event_type IN ('agency.message.participant', 'agency.message.posted')
+                    AND payload->>'conversation_id' = ${lit(conversation)} AND message_applied_at IS NULL`)).toBe('2');
+      acknowledge(CONN_A, sel, QUIET_ITEM, 'Early Acknowledger');
+      messageSweep();
+      expect(count(`public.builder_network_conversation_participants WHERE conversation_id = ${lit(conversation)}
+                    AND participant_ref = ${lit(ref)} AND side = 'builder' AND state = 'joined'`)).toBe('1');
+      expect(count(`public.builder_network_messages WHERE id = ${lit(message)} AND conversation_id = ${lit(conversation)}`)).toBe('1');
+    });
+  });
+
   describe('closed for any reason', () => {
     it('the last participant may leave a conversation closed for a reason other than withdrawal', () => {
       db.sql(`UPDATE public.builder_network_stock_items SET lifecycle_status = 'archived' WHERE id = ${lit(ITEM)}`);

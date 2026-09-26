@@ -857,6 +857,27 @@ END
 $fn$;
 
 -- A builder's participant: a display record, settled on its highest version.
+-- An event naming the conversation of one of this side's own live
+-- activations that is not acknowledged here YET: the builder emits it only
+-- after acknowledging, and the two events travel separately, so it can land
+-- first. It waits (held, unconsumed) for the acknowledgement rather than
+-- being refused and lost; once the activation is withdrawn it no longer
+-- waits and is refused as before.
+CREATE OR REPLACE FUNCTION public.builder_network_awaiting_acknowledgement(
+  _connection_id uuid, _conversation_id uuid, _stock_item_id uuid)
+RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
+AS $fn$
+  SELECT EXISTS (
+    SELECT 1 FROM public.builder_network_connections c
+      JOIN public.builder_stock_selections s
+        ON s.organisation_id = c.builder_organisation_id AND s.stock_item_id = _stock_item_id
+     WHERE c.id = _connection_id
+       AND s.status <> 'withdrawn' AND s.acknowledged_at IS NULL
+       AND public.builder_network_activation_conversation_id(c.network_connection_id, s.id) = _conversation_id
+       AND NOT EXISTS (SELECT 1 FROM public.builder_network_conversations v WHERE v.id = _conversation_id))
+$fn$;
+
 CREATE OR REPLACE FUNCTION public.builder_network_apply_participant_event(
   _event_id uuid, _connection record, _payload jsonb)
 RETURNS text
@@ -905,8 +926,10 @@ BEGIN
                   WHERE i.id = v_item AND i.organisation_id = _connection.builder_organisation_id) THEN
     RETURN 'refused:stock_item_not_ours';
   END IF;
-  v_conversation := public.builder_network_resolve_conversation(_connection.id, v_conversation, v_item);
-  IF v_conversation IS NULL THEN
+  IF public.builder_network_resolve_conversation(_connection.id, v_conversation, v_item) IS NULL THEN
+    IF public.builder_network_awaiting_acknowledgement(_connection.id, v_conversation, v_item) THEN
+      RETURN 'held';
+    END IF;
     RETURN 'refused:conversation_mismatch';
   END IF;
 
@@ -1076,6 +1099,9 @@ BEGIN
     END IF;
     v_existing := NULL;
   ELSIF public.builder_network_resolve_conversation(v_connection.id, v_conversation_id, v_item) IS NULL THEN
+    IF public.builder_network_awaiting_acknowledgement(v_connection.id, v_conversation_id, v_item) THEN
+      RETURN 'held';
+    END IF;
     v_reason := 'conversation_mismatch';
   ELSE
     SELECT * INTO v_c FROM public.builder_network_conversations WHERE id = v_conversation_id;
@@ -1281,6 +1307,7 @@ REVOKE ALL ON FUNCTION public.builder_network_acknowledgement_applied() FROM PUB
 REVOKE ALL ON FUNCTION public.builder_network_organisation_contact_applied() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_seed_activation_conversation(uuid, uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_resolve_conversation(uuid, uuid, uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.builder_network_awaiting_acknowledgement(uuid, uuid, uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_apply_participant_event(uuid, record, jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_apply_message_event(uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_apply_message_events(integer) FROM PUBLIC, anon, authenticated;
