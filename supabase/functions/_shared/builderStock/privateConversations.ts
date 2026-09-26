@@ -96,32 +96,57 @@ export async function readParticipantConversation(
   };
 }
 
+const ACTIVATION_PAGE = 500;
+const IN_CHUNK = 200;
+
+/** A `.in()` lookup over any number of ids, asked in bounded chunks. */
+async function readIn(
+  supabase: Client, table: string, columns: string, column: string, values: unknown[],
+): Promise<{ data: Row[]; error: unknown }> {
+  const ids = [...new Set(values.map(String))];
+  const data: Row[] = [];
+  for (let i = 0; i < ids.length; i += IN_CHUNK) {
+    const { data: rows, error } = await supabase.from(table).select(columns).in(column, ids.slice(i, i + IN_CHUNK));
+    if (error) return { data: [], error };
+    data.push(...((rows ?? []) as Row[]));
+  }
+  return { data, error: null };
+}
+
 /** The conversations one person is in now — the inbox. */
 async function summaries(
   supabase: Client, viewerUserId: string, filter: { stockItemId?: string },
 ): Promise<{ ok: true; conversations: ConversationSummary[] } | { ok: false }> {
-  const { data: mine, error } = await supabase.from('builder_network_conversation_participants')
-    .select('conversation_id')
-    .eq('local_user_id', viewerUserId).eq('side', 'command_centre').eq('state', 'joined');
-  if (error) return { ok: false };
-  const ids = [...new Set(((mine ?? []) as Row[]).map((row) => String(row.conversation_id)))];
+  // Every conversation the viewer is in, a page at a time: a response cap
+  // would otherwise drop threads with nothing saying so.
+  const mine: Row[] = [];
+  for (let from = 0; ; from += ACTIVATION_PAGE) {
+    const { data, error } = await supabase.from('builder_network_conversation_participants')
+      .select('conversation_id')
+      .eq('local_user_id', viewerUserId).eq('side', 'command_centre').eq('state', 'joined')
+      .order('conversation_id', { ascending: true })
+      .range(from, from + ACTIVATION_PAGE - 1);
+    if (error) return { ok: false };
+    const page = (data ?? []) as Row[];
+    mine.push(...page);
+    if (page.length < ACTIVATION_PAGE) break;
+  }
+  const ids = mine.map((row) => row.conversation_id);
   if (!ids.length) return { ok: true, conversations: [] };
 
-  let query = supabase.from('builder_network_conversations')
-    .select('id, stock_item_id, builder_organisation_id, selection_ref, last_message_at').in('id', ids);
-  if (filter.stockItemId) query = query.eq('stock_item_id', filter.stockItemId);
-  const { data: conversations, error: conversationError } = await query;
-  if (conversationError) return { ok: false };
-  const list = (conversations ?? []) as Row[];
+  const conversations = await readIn(supabase, 'builder_network_conversations',
+    'id, stock_item_id, builder_organisation_id, selection_ref, last_message_at', 'id', ids);
+  if (conversations.error) return { ok: false };
+  const list = conversations.data.filter((c) => !filter.stockItemId || c.stock_item_id === filter.stockItemId);
   if (!list.length) return { ok: true, conversations: [] };
 
   const [items, orgs, selections] = await Promise.all([
-    supabase.from('builder_network_stock_items').select('id, address_line, lot_number')
-      .in('id', [...new Set(list.map((c) => c.stock_item_id))]),
-    supabase.from('builder_network_stock_organisations').select('id, legal_name, trading_name')
-      .in('id', [...new Set(list.map((c) => c.builder_organisation_id))]),
-    supabase.from('builder_stock_selections').select('id, status, acknowledged_at')
-      .in('id', list.map((c) => c.selection_ref).filter(Boolean)),
+    readIn(supabase, 'builder_network_stock_items', 'id, address_line, lot_number',
+      'id', list.map((c) => c.stock_item_id)),
+    readIn(supabase, 'builder_network_stock_organisations', 'id, legal_name, trading_name',
+      'id', list.map((c) => c.builder_organisation_id)),
+    readIn(supabase, 'builder_stock_selections', 'id, status, acknowledged_at',
+      'id', list.map((c) => c.selection_ref).filter(Boolean)),
   ]);
   if (items.error || orgs.error || selections.error) return { ok: false };
   const itemById = new Map(((items.data ?? []) as Row[]).map((row) => [row.id, row]));
@@ -153,23 +178,6 @@ export function listMyConversations(supabase: Client, args: { viewerUserId: stri
 /** On a property's page: only the viewer's own conversations about it. */
 export function listPropertyConversations(supabase: Client, args: { stockItemId: string; viewerUserId: string }) {
   return summaries(supabase, args.viewerUserId, { stockItemId: args.stockItemId });
-}
-
-const ACTIVATION_PAGE = 500;
-const IN_CHUNK = 200;
-
-/** A `.in()` lookup over any number of ids, asked in bounded chunks. */
-async function readIn(
-  supabase: Client, table: string, columns: string, column: string, values: unknown[],
-): Promise<{ data: Row[]; error: unknown }> {
-  const ids = [...new Set(values.map(String))];
-  const data: Row[] = [];
-  for (let i = 0; i < ids.length; i += IN_CHUNK) {
-    const { data: rows, error } = await supabase.from(table).select(columns).in(column, ids.slice(i, i + IN_CHUNK));
-    if (error) return { data: [], error };
-    data.push(...((rows ?? []) as Row[]));
-  }
-  return { data, error: null };
 }
 
 /** One row per activation: the property, the builder company, and the people. */

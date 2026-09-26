@@ -35,13 +35,14 @@ const readCode = (p: string) => readFileSync(join(REPO_ROOT, p), 'utf8')
   .replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
 
 type Row = Record<string, any>;
-function standIn(tables: Record<string, Row[]>) {
+function standIn(tables: Record<string, Row[]>, options: { maxRows?: number } = {}) {
   const log: Array<{ table: string; filters: Array<[string, string, unknown]> }> = [];
   const from = (table: string) => {
     const entry = { table, filters: [] as Array<[string, string, unknown]> };
     log.push(entry);
     let orders: Array<[string, boolean]> = [];
-    let cap = Infinity;
+    // PostgREST's own ceiling on an unbounded read, where a test sets one.
+    let cap = options.maxRows ?? Infinity;
     let offset = 0;
     const builder: any = {
       select() { return builder; },
@@ -51,7 +52,7 @@ function standIn(tables: Record<string, Row[]>) {
       is(col: string, v: unknown) { entry.filters.push(['is', col, v]); return builder; },
       order(col: string, o?: { ascending?: boolean }) { orders = [...orders, [col, o?.ascending !== false]]; return builder; },
       limit(n: number) { cap = n; return builder; },
-      range(a: number, b: number) { offset = a; cap = b - a + 1; return builder; },
+      range(a: number, b: number) { offset = a; cap = Math.min(b - a + 1, options.maxRows ?? Infinity); return builder; },
       maybeSingle() { return builder.then((r: any) => ({ data: r.data[0] ?? null, error: null })); },
       then(resolve: (v: unknown) => unknown) {
         let rows = (tables[table] ?? []).filter((row) => entry.filters.every(([op, col, v]) =>
@@ -182,6 +183,22 @@ describe('the inbox', () => {
     });
     const theirs = await listMyConversations(standIn(world()).client, { viewerUserId: OUTSIDER });
     expect(theirs.ok && theirs.conversations).toEqual([]);
+  });
+
+  it('lists every conversation the viewer is in, past the server\'s row ceiling', async () => {
+    const tables = world();
+    for (let i = 0; i < 1201; i += 1) {
+      tables.builder_network_conversations.push({ id: `bulk-${i}`, selection_ref: null, stock_item_id: ITEM,
+        builder_organisation_id: ORG, connection_id: 'conn-a', last_message_at: null });
+      tables.builder_network_conversation_participants.push({ conversation_id: `bulk-${i}`, participant_ref: `r-${i}`,
+        side: 'command_centre', local_user_id: ME, display_name: 'Olive Owner', state: 'joined', version: 1 });
+    }
+    const stand = standIn(tables, { maxRows: 1000 });
+    const mine = await listMyConversations(stand.client, { viewerUserId: ME });
+    if (!mine.ok) throw new Error('failed');
+    expect(mine.conversations).toHaveLength(1202);
+    const inSizes = stand.log.flatMap((e) => e.filters.filter(([op]) => op === 'in').map(([, , v]) => (v as unknown[]).length));
+    expect(Math.max(...inSizes)).toBeLessThanOrEqual(200);
   });
 });
 
