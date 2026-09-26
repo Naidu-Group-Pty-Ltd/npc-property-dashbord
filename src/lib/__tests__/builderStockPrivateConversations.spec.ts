@@ -579,6 +579,65 @@ describe.skipIf(!runs)('one activation, one private conversation (Command Centre
     });
   });
 
+  describe('the acknowledgement email is leased, never finalised before it is sent', () => {
+    const SEL = randomUUID();
+    const claim = (lease: number) => JSON.parse(db.sql(
+      `SELECT public.builder_network_claim_acknowledgement_email(${lit(SEL)}, ${lease})::text`));
+    const settle = (token: string, sent: boolean) => db.sql(
+      `SELECT public.builder_network_settle_acknowledgement_email(${lit(SEL)}, ${lit(token)}, ${sent})`);
+    const sentAt = () => db.sql(`SELECT coalesce(email_sent_at::text, '') FROM public.builder_network_acknowledgement_notices
+                                 WHERE selection_id = ${lit(SEL)}`);
+
+    beforeAll(() => {
+      db.sql(`INSERT INTO public.builder_network_acknowledgement_notices(selection_id, outcome) VALUES (${lit(SEL)}, 'notified')`);
+    });
+
+    it('a claim is a lease: held while it is fresh, and nothing is recorded as sent', () => {
+      const first = claim(600);
+      expect(first.state).toBe('claimed');
+      expect(first.token).toMatch(/^[0-9a-f-]{36}$/);
+      expect(claim(600).state).toBe('held');
+      expect(sentAt()).toBe('');
+    });
+
+    it('a claim abandoned by a worker that died is recoverable once its lease runs out', () => {
+      const stale = claim(0);
+      expect(stale.state).toBe('claimed');
+      // The dead worker's token can no longer record a send.
+      const fresh = claim(0);
+      expect(fresh.state).toBe('claimed');
+      expect(fresh.token).not.toBe(stale.token);
+      expect(settle(stale.token, true)).toBe('f');
+      expect(sentAt()).toBe('');
+      expect(settle(fresh.token, true)).toBe('t');
+      expect(sentAt()).not.toBe('');
+      expect(claim(0).state).toBe('sent');
+    });
+
+    it('a released claim can be claimed again at once', () => {
+      const other = randomUUID();
+      db.sql(`INSERT INTO public.builder_network_acknowledgement_notices(selection_id, outcome) VALUES (${lit(other)}, 'notified')`);
+      const first = JSON.parse(db.sql(`SELECT public.builder_network_claim_acknowledgement_email(${lit(other)}, 600)::text`));
+      expect(db.sql(`SELECT public.builder_network_settle_acknowledgement_email(${lit(other)}, ${lit(first.token)}, false)`)).toBe('t');
+      expect(JSON.parse(db.sql(`SELECT public.builder_network_claim_acknowledgement_email(${lit(other)}, 600)::text`)).state).toBe('claimed');
+    });
+
+    it('a historical acknowledgement, or none at all, is owed no email', () => {
+      const historical = randomUUID();
+      db.sql(`INSERT INTO public.builder_network_acknowledgement_notices(selection_id, outcome) VALUES (${lit(historical)}, 'historical')`);
+      expect(JSON.parse(db.sql(`SELECT public.builder_network_claim_acknowledgement_email(${lit(historical)}, 600)::text`)).state).toBe('not_owed');
+      expect(JSON.parse(db.sql(`SELECT public.builder_network_claim_acknowledgement_email(${lit(randomUUID())}, 600)::text`)).state).toBe('not_owed');
+    });
+
+    it('neither can be called by a browser role', () => {
+      for (const role of ['anon', 'authenticated']) {
+        expect(db.sql(`SELECT has_function_privilege('${role}', 'public.builder_network_claim_acknowledgement_email(uuid,integer)', 'EXECUTE')
+                          OR has_function_privilege('${role}', 'public.builder_network_settle_acknowledgement_email(uuid,uuid,boolean)', 'EXECUTE')`))
+          .toBe('f');
+      }
+    });
+  });
+
   describe('withdrawal', () => {
     it('R30. a withdrawn activation closes the conversation to writing and inviting, and keeps it for its participants', () => {
       db.sql(`UPDATE public.builder_stock_selections SET status = 'withdrawn', withdrawn_at = now() WHERE id = ${lit(S1)}`);

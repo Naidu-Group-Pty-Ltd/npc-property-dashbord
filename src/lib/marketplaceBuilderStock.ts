@@ -308,13 +308,22 @@ export function conversationRefetchInterval(state: { data?: { open?: boolean }; 
   return conversationAccessLost(state.error) ? false : builderConversationPollInterval(state.data);
 }
 
+/**
+ * The same rule for a list read on a fixed interval: poll every `ms` until a
+ * read is refused, then stop.
+ */
+export function listRefetchInterval(ms: number) {
+  return (query: { state: { error?: unknown } }): number | false =>
+    (conversationAccessLost(query.state.error) ? false : ms);
+}
+
 /** Portals → Builder Portal → Activated Properties: one row per activation. */
 export function useBuilderPortalActivations(enabled = true) {
   return useQuery({
     queryKey: activationsKey(),
     enabled,
     queryFn: () => invoke<{ activations: ActivatedPropertyRow[] }>({ operation: 'list_builder_portal_activations' }),
-    refetchInterval: 60_000,
+    refetchInterval: listRefetchInterval(60_000),
     refetchIntervalInBackground: false,
     retry: retryUnlessAccessLost,
   });
@@ -328,7 +337,7 @@ export function useMyBuilderConversations(stockItemId?: string, enabled = true) 
     queryFn: () => invoke<{ conversations: ConversationSummary[] }>({
       operation: 'list_my_builder_conversations', ...(stockItemId ? { stock_item_id: stockItemId } : {}),
     }),
-    refetchInterval: 30_000,
+    refetchInterval: listRefetchInterval(30_000),
     refetchIntervalInBackground: false,
     retry: retryUnlessAccessLost,
   });

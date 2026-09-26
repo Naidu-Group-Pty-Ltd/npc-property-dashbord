@@ -164,6 +164,16 @@ activation, so a replayed or reordered acknowledgement adds nothing. An email
 that cannot be sent is retried, and after the outbox's limit dead-lettered.
 It never touches the acknowledgement.
 
+The email is sent on a lease, never recorded ahead of the send. The worker
+claims it (`builder_network_claim_acknowledgement_email`, a token that runs
+out after ten minutes), sends it, and records it as sent
+(`builder_network_settle_acknowledgement_email`) only while it still holds
+that token. A claim another worker holds is retried later rather than taken
+as done; a worker that dies mid-send leaves a lease that runs out, so a later
+retry sends it; and every attempt carries the same provider idempotency key
+(`builder-activation-acknowledged/<selection id>`), so a send whose record was
+lost is not delivered twice.
+
 The notification and the email name the builder company, the property and the
 acknowledging builder user. They carry no client data.
 

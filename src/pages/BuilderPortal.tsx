@@ -206,14 +206,19 @@ function ActivationRow({ row }: { row: ActivatedPropertyRow }) {
 }
 
 function ActivationPhoto({ imageId }: { imageId: string | null }) {
-  const [url, setUrl] = useState<string | null>(null);
+  // The URL is kept with the image it was signed for: when the server
+  // withdraws or replaces the image, the old photograph is no longer shown.
+  const [signed, setSigned] = useState<{ imageId: string; url: string | null } | null>(null);
   useEffect(() => {
     let live = true;
     if (imageId) {
-      marketplaceStockImageUrl(imageId).then((signed) => { if (live) setUrl(signed); }).catch(() => undefined);
+      marketplaceStockImageUrl(imageId)
+        .then((url) => { if (live) setSigned({ imageId, url }); })
+        .catch(() => undefined);
     }
     return () => { live = false; };
   }, [imageId]);
+  const url = imageId && signed?.imageId === imageId ? signed.url : null;
   return (
     <div className="h-28 w-full shrink-0 overflow-hidden rounded-md bg-muted md:w-40">
       {url ? <img src={url} alt="" className="h-full w-full object-cover" loading="lazy" /> : null}

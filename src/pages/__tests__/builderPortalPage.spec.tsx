@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -29,7 +29,11 @@ vi.mock('@/lib/marketplaceBuilderStock', async () => {
     ...actual,
     scrollLogToEnd: () => undefined,
     scrollMessageIntoView: () => undefined,
-    marketplaceStockImageUrl: async () => null,
+    marketplaceStockImageUrl: async (id: string) => {
+      const signed = state.imageUrls?.[id];
+      if (signed instanceof Error) throw signed;
+      return signed ?? null;
+    },
     useBuilderPortalActivations: () => ({
       data: state.activationsError ? undefined : state.activations, error: state.activationsError ?? null,
       isLoading: false, isSuccess: !state.activationsError,
@@ -250,5 +254,35 @@ describe('Messaging', () => {
     state.inbox = { conversations: [] };
     renderAt('/admin/builder-portal/messaging');
     expect(screen.getByText(/when a builder acknowledges an activation/i)).toBeInTheDocument();
+  });
+});
+
+describe('an activation\'s photograph follows the image the server selected', () => {
+  const tree = () => (
+    <MemoryRouter initialEntries={['/admin/builder-portal/activated']}>
+      <Routes>
+        <Route path="/admin/builder-portal/:tab" element={<BuilderPortal />} />
+      </Routes>
+    </MemoryRouter>
+  );
+  const photos = (container: HTMLElement) => Array.from(container.querySelectorAll('img')).map((i) => i.getAttribute('src'));
+
+  it('drops the old photograph when the image is withdrawn or replaced by one that cannot be signed', async () => {
+    state.imageUrls = { 'img-1': 'https://signed.example/img-1', 'img-2': new Error('refused') };
+    state.activations = { activations: [ACTIVATION({ primary_image_id: 'img-1' })] };
+    const { container, rerender } = render(tree());
+    await waitFor(() => expect(photos(container)).toEqual(['https://signed.example/img-1']));
+
+    state.activations = { activations: [ACTIVATION({ primary_image_id: null })] };
+    await act(async () => { rerender(tree()); });
+    expect(photos(container)).toEqual([]);
+
+    state.activations = { activations: [ACTIVATION({ primary_image_id: 'img-1' })] };
+    await act(async () => { rerender(tree()); });
+    await waitFor(() => expect(photos(container)).toEqual(['https://signed.example/img-1']));
+
+    state.activations = { activations: [ACTIVATION({ primary_image_id: 'img-2' })] };
+    await act(async () => { rerender(tree()); });
+    expect(photos(container)).toEqual([]);
   });
 });

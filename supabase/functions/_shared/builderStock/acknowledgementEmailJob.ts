@@ -4,12 +4,21 @@
  * acknowledgement step, carrying only which activation it is about; the rest
  * is read here, at send time, and nothing about the client is read at all.
  *
- * Exactly once is the ledger's job, and the ledger is written FIRST: the job
- * claims `email_sent_at` before sending, so a failed claim throws with
- * nothing sent (the outbox retries), a claim somebody else holds sends
- * nothing, and a send that fails releases the claim and throws so the retry
- * can send it. Stamping after the send instead would make a failed stamp
- * either silent (the ledger says unsent) or a second email on retry.
+ * Exactly once is the ledger's job, and the ledger is a LEASE, never a stamp
+ * written ahead of the send. The job claims the email (a token that expires),
+ * sends, and only then records it as sent — and only while it still holds the
+ * token. So:
+ *
+ * - a claim that cannot be made throws with nothing sent (the outbox retries);
+ * - a claim another worker holds throws `in_progress`, and the outbox asks
+ *   again later rather than marking the job done;
+ * - a send that fails or throws releases the claim and throws, so the retry
+ *   can send it;
+ * - a worker that dies between claiming and recording leaves a lease that
+ *   runs out, and the next retry takes it over and sends;
+ * - a send whose record cannot be written throws, and the retry that follows
+ *   sends under the SAME provider idempotency key, so the provider delivers
+ *   it once.
  *
  * `send` is the existing portal email helper, injected so the rule can be
  * tested without a mail service.
@@ -19,8 +28,11 @@ import { acknowledgementEmail, userDisplayName } from './privateConversations.pu
 type Db = any;
 type Send = (input: {
   to: string; clientFirstName: string; title: string; message: string;
-  type: 'success'; category: 'property'; actionUrl: string;
+  type: 'success'; category: 'property'; actionUrl: string; idempotencyKey: string;
 }) => Promise<{ success: boolean; error?: unknown }>;
+
+/** How long a claim stands before a retry may take it over (the outbox backs off past it). */
+export const ACKNOWLEDGEMENT_EMAIL_LEASE_SECONDS = 600;
 
 export async function sendActivationAcknowledgedEmail(db: Db, event: { payload?: { selection_id?: unknown } }, send: Send) {
   const selectionId = String(event.payload?.selection_id ?? '');
@@ -52,27 +64,42 @@ export async function sendActivationAcknowledgedEmail(db: Db, event: { payload?:
     link: null,
   });
 
-  // Claim the send before making it.
-  const { data: claimed, error: claimError } = await db.from('builder_network_acknowledgement_notices')
-    .update({ email_sent_at: new Date().toISOString() })
-    .eq('selection_id', selectionId).is('email_sent_at', null)
-    .select('selection_id');
-  if (claimError) throw new Error('acknowledgement_email_claim_failed');
-  if (!Array.isArray(claimed) || claimed.length === 0) return;
-
-  const sent = await send({
-    to: String(user.email),
-    clientFirstName: (typeof user.first_name === 'string' && user.first_name.trim()) || userDisplayName(user) || 'there',
-    title: email.title,
-    message: email.html,
-    type: 'success',
-    category: 'property',
-    actionUrl: '/admin/builder-portal/activated',
+  // Lease the send before making it.
+  const { data: claim, error: claimError } = await db.rpc('builder_network_claim_acknowledgement_email', {
+    _selection_id: selectionId, _lease_seconds: ACKNOWLEDGEMENT_EMAIL_LEASE_SECONDS,
   });
-  if (!sent.success) {
-    const { error: releaseError } = await db.from('builder_network_acknowledgement_notices')
-      .update({ email_sent_at: null }).eq('selection_id', selectionId);
+  if (claimError || !claim || typeof claim.state !== 'string') throw new Error('acknowledgement_email_claim_failed');
+  if (claim.state === 'held') throw new Error('acknowledgement_email_in_progress');
+  if (claim.state !== 'claimed' || typeof claim.token !== 'string') return;
+  const token = claim.token;
+
+  const release = async (reason: string) => {
+    const { error: releaseError } = await db.rpc('builder_network_settle_acknowledgement_email', {
+      _selection_id: selectionId, _token: token, _sent: false,
+    });
     if (releaseError) throw new Error('acknowledgement_email_not_sent_and_claim_not_released');
-    throw new Error(`acknowledgement_email_not_sent:${String(sent.error ?? 'unknown').slice(0, 80)}`);
+    throw new Error(`acknowledgement_email_not_sent:${reason.slice(0, 80)}`);
+  };
+
+  let sent: { success: boolean; error?: unknown };
+  try {
+    sent = await send({
+      to: String(user.email),
+      clientFirstName: (typeof user.first_name === 'string' && user.first_name.trim()) || userDisplayName(user) || 'there',
+      title: email.title,
+      message: email.html,
+      type: 'success',
+      category: 'property',
+      actionUrl: '/admin/builder-portal/activated',
+      idempotencyKey: `builder-activation-acknowledged/${selectionId}`,
+    });
+  } catch (err) {
+    return release(err instanceof Error ? err.message : String(err));
   }
+  if (!sent.success) return release(String(sent.error ?? 'unknown'));
+
+  const { data: recorded, error: settleError } = await db.rpc('builder_network_settle_acknowledgement_email', {
+    _selection_id: selectionId, _token: token, _sent: true,
+  });
+  if (settleError || recorded !== true) throw new Error('acknowledgement_email_sent_not_recorded');
 }

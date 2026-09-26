@@ -372,6 +372,12 @@ describe('the acknowledgement email', () => {
     expect(email.title).not.toMatch(/Evil|Avery/);
   });
 
+  it('the existing portal email helper forwards a caller\'s idempotency key to the provider, and sends none otherwise', () => {
+    const helper = readCode('supabase/functions/_shared/portal-notification-email.ts');
+    expect(helper).toMatch(/idempotencyKey\?: string/);
+    expect(helper).toMatch(/\.\.\.\(idempotencyKey \? \{ 'Idempotency-Key': idempotencyKey \} : \{\}\)/);
+  });
+
   it('the worker hands the job the existing portal email helper', () => {
     const worker = readCode('supabase/functions/cross-portal-outbox-worker/index.ts');
     expect(worker).toMatch(/sendActivationAcknowledgedEmail\(db,\s*event,\s*sendPortalNotificationEmail\)/);
@@ -426,11 +432,21 @@ describe('the Command Centre navigation', () => {
   });
 });
 
-describe('the acknowledgement email job: once, claimed before it is sent', () => {
+describe('the acknowledgement email job: once, on a lease, never finalised before it is sent', () => {
   const SEL = '11111111-1111-4111-8111-111111111111';
-  function jobDb(options: { claimError?: boolean; releaseError?: boolean; readError?: 'custom_users' | null; stamped?: boolean } = {}) {
-    const notice = { selection_id: SEL, outcome: 'notified', email_sent_at: options.stamped ? '2026-09-26T00:00:00Z' : null as string | null };
-    const writes: Array<unknown> = [];
+  const LEASE = 600;
+  /**
+   * The ledger, as the two SQL functions keep it: a claim is a lease that
+   * expires, and only the holder of the current lease can record a send.
+   * `clock` stands in for the database's now().
+   */
+  function jobDb(options: { claimError?: boolean; settleError?: boolean; readError?: 'custom_users' | null; stamped?: boolean } = {}) {
+    const notice = {
+      selection_id: SEL, outcome: 'notified',
+      email_sent_at: options.stamped ? '2026-09-26T00:00:00Z' : null as string | null,
+      token: null as string | null, claimed_at: null as number | null,
+    };
+    const state = { clock: 0, seq: 0 };
     const rows: Record<string, Row> = {
       builder_stock_selections: { id: SEL, selected_by_user_id: 'u1', stock_item_id: 'i1', organisation_id: 'o1', acknowledged_by_display_name: 'Avery <b>Builder</b>' },
       custom_users: { id: 'u1', email: 'olive@example.test', first_name: 'Olive', is_active: true, deleted_at: null },
@@ -440,51 +456,82 @@ describe('the acknowledgement email job: once, claimed before it is sent', () =>
     const from = (table: string) => {
       const q: any = {
         select() { return q; }, eq() { return q; },
-        is() { return q; },
         maybeSingle: async () => table === 'builder_network_acknowledgement_notices'
-          ? { data: { ...notice }, error: null }
+          ? { data: { outcome: notice.outcome, email_sent_at: notice.email_sent_at }, error: null }
           : options.readError === table ? { data: null, error: { message: 'x' } } : { data: rows[table], error: null },
-        update(values: { email_sent_at: string | null }) {
-          const u: any = {
-            eq() { return u; },
-            is() { return u; },
-            select: async () => {
-              if (options.claimError) return { data: null, error: { message: 'x' } };
-              if (notice.email_sent_at) return { data: [], error: null };
-              notice.email_sent_at = values.email_sent_at; writes.push(values); return { data: [{ selection_id: SEL }], error: null };
-            },
-            then(resolve: (v: unknown) => unknown) {
-              if (options.releaseError) return Promise.resolve({ error: { message: 'x' } }).then(resolve);
-              notice.email_sent_at = values.email_sent_at; writes.push(values); return Promise.resolve({ error: null }).then(resolve);
-            },
-          };
-          return u;
-        },
+        update() { throw new Error('the ledger is written only through its functions'); },
       };
       return q;
     };
-    return { db: { from }, notice, writes };
+    const rpc = async (name: string, args: any) => {
+      if (name === 'builder_network_claim_acknowledgement_email') {
+        if (options.claimError) return { data: null, error: { message: 'x' } };
+        expect(args._selection_id).toBe(SEL);
+        if (notice.outcome !== 'notified') return { data: { state: 'not_owed' }, error: null };
+        if (notice.email_sent_at) return { data: { state: 'sent' }, error: null };
+        if (notice.token && notice.claimed_at !== null && state.clock - notice.claimed_at < args._lease_seconds) {
+          return { data: { state: 'held' }, error: null };
+        }
+        notice.token = `token-${++state.seq}`; notice.claimed_at = state.clock;
+        return { data: { state: 'claimed', token: notice.token }, error: null };
+      }
+      if (name === 'builder_network_settle_acknowledgement_email') {
+        if (options.settleError) return { data: null, error: { message: 'x' } };
+        if (notice.token !== args._token) return { data: false, error: null };
+        if (args._sent) notice.email_sent_at = new Date().toISOString();
+        notice.token = null; notice.claimed_at = null;
+        return { data: true, error: null };
+      }
+      throw new Error(`unexpected rpc ${name}`);
+    };
+    return { db: { from, rpc }, notice, state };
   }
   const event = { payload: { selection_id: SEL } };
+  const ok = (sent: any[]) => async (input: any) => { sent.push(input); return { success: true }; };
 
   it('sends once, escaped, under the fixed title, and the ledger records it', async () => {
     const { db, notice } = jobDb();
     const sent: any[] = [];
-    await sendActivationAcknowledgedEmail(db, event, async (input) => { sent.push(input); return { success: true }; });
+    await sendActivationAcknowledgedEmail(db, event, ok(sent));
     expect(sent).toHaveLength(1);
     expect(sent[0].title).toBe('Activation acknowledged');
     expect(sent[0].message).not.toMatch(/<b>/);
     expect(notice.email_sent_at).not.toBeNull();
-    await sendActivationAcknowledgedEmail(db, event, async (input) => { sent.push(input); return { success: true }; });
+    await sendActivationAcknowledgedEmail(db, event, ok(sent));
     expect(sent).toHaveLength(1);
+  });
+
+  it('every send carries the same provider idempotency key, so a re-send after a lost stamp is not a second email', async () => {
+    const { db } = jobDb();
+    const sent: any[] = [];
+    await sendActivationAcknowledgedEmail(db, event, ok(sent));
+    expect(sent[0].idempotencyKey).toBe(`builder-activation-acknowledged/${SEL}`);
   });
 
   it('a claim that cannot be recorded sends nothing and throws, so the outbox retries', async () => {
     const { db } = jobDb({ claimError: true });
     const sent: any[] = [];
-    await expect(sendActivationAcknowledgedEmail(db, event, async (i) => { sent.push(i); return { success: true }; }))
-      .rejects.toThrow(/claim_failed/);
+    await expect(sendActivationAcknowledgedEmail(db, event, ok(sent))).rejects.toThrow(/claim_failed/);
     expect(sent).toHaveLength(0);
+  });
+
+  it('a claim another worker holds is not taken as done: it throws, and the outbox asks again later', async () => {
+    const { db, notice } = jobDb();
+    notice.token = 'someone-else'; notice.claimed_at = 0;
+    const sent: any[] = [];
+    await expect(sendActivationAcknowledgedEmail(db, event, ok(sent))).rejects.toThrow(/in_progress/);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('a worker that died after claiming leaves an email a later retry still sends', async () => {
+    const { db, notice, state } = jobDb();
+    notice.token = 'dead-worker'; notice.claimed_at = 0;   // claimed, never sent, never released
+    const sent: any[] = [];
+    await expect(sendActivationAcknowledgedEmail(db, event, ok(sent))).rejects.toThrow(/in_progress/);
+    state.clock = LEASE + 1;                               // the lease runs out
+    await sendActivationAcknowledgedEmail(db, event, ok(sent));
+    expect(sent).toHaveLength(1);
+    expect(notice.email_sent_at).not.toBeNull();
   });
 
   it('a send that fails releases the claim and throws, so the retry can send it', async () => {
@@ -492,21 +539,39 @@ describe('the acknowledgement email job: once, claimed before it is sent', () =>
     await expect(sendActivationAcknowledgedEmail(db, event, async () => ({ success: false, error: 'down' })))
       .rejects.toThrow(/not_sent/);
     expect(notice.email_sent_at).toBeNull();
+    expect(notice.token).toBeNull();
+  });
+
+  it('a send that throws releases the claim too, and the error reaches the outbox', async () => {
+    const { db, notice } = jobDb();
+    await expect(sendActivationAcknowledgedEmail(db, event, async () => { throw new Error('socket hang up'); }))
+      .rejects.toThrow(/not_sent/);
+    expect(notice.email_sent_at).toBeNull();
+    expect(notice.token).toBeNull();
+    const sent: any[] = [];
+    await sendActivationAcknowledgedEmail(db, event, ok(sent));
+    expect(sent).toHaveLength(1);
+  });
+
+  it('a send whose stamp cannot be recorded throws, and the retry re-sends under the same key', async () => {
+    const { db } = jobDb({ settleError: true });
+    const sent: any[] = [];
+    await expect(sendActivationAcknowledgedEmail(db, event, ok(sent))).rejects.toThrow(/sent_not_recorded/);
+    expect(sent).toHaveLength(1);
   });
 
   it('a failed read of what the email needs throws before anything is claimed or sent', async () => {
     const { db, notice } = jobDb({ readError: 'custom_users' });
     const sent: any[] = [];
-    await expect(sendActivationAcknowledgedEmail(db, event, async (i) => { sent.push(i); return { success: true }; }))
-      .rejects.toThrow(/facts_unreadable/);
+    await expect(sendActivationAcknowledgedEmail(db, event, ok(sent))).rejects.toThrow(/facts_unreadable/);
     expect(sent).toHaveLength(0);
-    expect(notice.email_sent_at).toBeNull();
+    expect(notice.token).toBeNull();
   });
 
   it('an email already recorded is not sent again', async () => {
     const { db } = jobDb({ stamped: true });
     const sent: any[] = [];
-    await sendActivationAcknowledgedEmail(db, event, async (i) => { sent.push(i); return { success: true }; });
+    await sendActivationAcknowledgedEmail(db, event, ok(sent));
     expect(sent).toHaveLength(0);
   });
 });

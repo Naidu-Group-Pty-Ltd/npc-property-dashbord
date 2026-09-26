@@ -98,6 +98,11 @@ CREATE TABLE IF NOT EXISTS public.builder_network_acknowledgement_notices (
   conversation_id uuid,
   inbound_event_id uuid,
   email_sent_at timestamptz,
+  -- The email's lease. A worker claims it before sending and records the send
+  -- only while it still holds it; a worker that dies mid-send leaves a lease
+  -- that runs out, so the email is retried rather than silently lost.
+  email_claim_token uuid,
+  email_claimed_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -1287,6 +1292,61 @@ CREATE TRIGGER trg_builder_network_message_lane
   EXECUTE FUNCTION public.builder_network_message_lane();
 
 -- ---------------------------------------------------------------------------
+-- 7b. The acknowledgement email's lease.
+--
+-- `email_sent_at` is written only AFTER the email has gone, by the holder of
+-- the current lease. A claim that is still fresh answers `held` (the caller
+-- retries later); a claim whose lease has run out was abandoned by a worker
+-- that died, and is taken over with a new token, so the dead worker can no
+-- longer record anything.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.builder_network_claim_acknowledgement_email(
+  _selection_id uuid, _lease_seconds integer
+) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_n public.builder_network_acknowledgement_notices%ROWTYPE;
+  v_token uuid;
+BEGIN
+  SELECT * INTO v_n FROM public.builder_network_acknowledgement_notices
+   WHERE selection_id = _selection_id FOR UPDATE;
+  IF NOT FOUND OR v_n.outcome <> 'notified' THEN
+    RETURN jsonb_build_object('state', 'not_owed');
+  END IF;
+  IF v_n.email_sent_at IS NOT NULL THEN
+    RETURN jsonb_build_object('state', 'sent');
+  END IF;
+  IF v_n.email_claim_token IS NOT NULL
+     AND v_n.email_claimed_at > now() - make_interval(secs => greatest(coalesce(_lease_seconds, 0), 0)) THEN
+    RETURN jsonb_build_object('state', 'held');
+  END IF;
+  v_token := gen_random_uuid();
+  UPDATE public.builder_network_acknowledgement_notices
+     SET email_claim_token = v_token, email_claimed_at = clock_timestamp()
+   WHERE selection_id = _selection_id;
+  RETURN jsonb_build_object('state', 'claimed', 'token', v_token);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.builder_network_settle_acknowledgement_email(
+  _selection_id uuid, _token uuid, _sent boolean
+) RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+BEGIN
+  UPDATE public.builder_network_acknowledgement_notices
+     SET email_sent_at = CASE WHEN _sent THEN now() ELSE email_sent_at END,
+         email_claim_token = NULL,
+         email_claimed_at = NULL
+   WHERE selection_id = _selection_id
+     AND email_claim_token = _token
+     AND email_sent_at IS NULL;
+  RETURN FOUND;
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- 8. Grants.
 -- ---------------------------------------------------------------------------
 REVOKE ALL ON FUNCTION public.builder_network_activation_conversation_id(uuid, uuid) FROM PUBLIC, anon, authenticated;
@@ -1311,6 +1371,8 @@ REVOKE ALL ON FUNCTION public.builder_network_awaiting_acknowledgement(uuid, uui
 REVOKE ALL ON FUNCTION public.builder_network_apply_participant_event(uuid, record, jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_apply_message_event(uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_network_apply_message_events(integer) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.builder_network_claim_acknowledgement_email(uuid, integer) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.builder_network_settle_acknowledgement_email(uuid, uuid, boolean) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.builder_network_is_participant(uuid, uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION public.builder_network_conversation_closed_reason(uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION public.builder_network_post_message(uuid, uuid, uuid, text) TO service_role;
@@ -1318,6 +1380,8 @@ GRANT EXECUTE ON FUNCTION public.builder_network_retry_message(uuid, uuid) TO se
 GRANT EXECUTE ON FUNCTION public.builder_network_invite_participant(uuid, uuid, uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION public.builder_network_invite_candidates(uuid, uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION public.builder_network_leave_conversation(uuid, uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION public.builder_network_claim_acknowledgement_email(uuid, integer) TO service_role;
+GRANT EXECUTE ON FUNCTION public.builder_network_settle_acknowledgement_email(uuid, uuid, boolean) TO service_role;
 GRANT EXECUTE ON FUNCTION public.builder_network_process_acknowledgements(integer) TO service_role;
 GRANT EXECUTE ON FUNCTION public.builder_network_seed_activation_conversation(uuid, uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION public.builder_network_apply_message_events(integer) TO service_role;
