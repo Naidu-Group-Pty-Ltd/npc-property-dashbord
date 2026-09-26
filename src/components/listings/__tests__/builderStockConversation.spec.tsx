@@ -335,6 +335,31 @@ describe('the whole history can be read', () => {
     expect(screen.queryByRole('button', { name: /show earlier messages/i })).toBeNull();
   });
 
+  it('a message that slides out of the polled window after an earlier page was read stays in the history', async () => {
+    state.conversation = conversation();
+    earlierPages.newest = { messages: [MESSAGE({ id: 'older', body: 'Older message', sent_at: '2026-09-20T12:00:00Z' })],
+      has_earlier: false, earlier_cursor: null };
+    const view = render(<MemoryRouter><BuilderConversationThread conversationId="conv-1" /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: /show earlier messages/i }));
+    expect(await screen.findByText('Older message')).toBeInTheDocument();
+    // A new message arrives and the newest window moves on: the message the
+    // page was read from is no longer in it.
+    state.conversation = conversation({
+      messages: [MESSAGE({ id: 'arrived', body: 'Arrived message', sent_at: '2026-09-26T12:00:00Z' })],
+      earlier_cursor: 'arrived',
+    });
+    view.rerender(<MemoryRouter><BuilderConversationThread conversationId="conv-1" /></MemoryRouter>);
+    // A later poll moves it again: nothing seen since the page was read is lost.
+    state.conversation = conversation({
+      messages: [MESSAGE({ id: 'latest', body: 'Latest message', sent_at: '2026-09-27T12:00:00Z' })],
+      earlier_cursor: 'latest',
+    });
+    view.rerender(<MemoryRouter><BuilderConversationThread conversationId="conv-1" /></MemoryRouter>);
+    const log = screen.getByRole('log');
+    expect(within(log).getAllByText(/message$/).map((n) => n.textContent))
+      .toEqual(['Older message', 'Newest message', 'Arrived message', 'Latest message']);
+  });
+
   it('says nothing about earlier messages when there are none', () => {
     state.conversation = conversation({ has_earlier: false, earlier_cursor: null });
     render(<MemoryRouter><BuilderConversationThread conversationId="conv-1" /></MemoryRouter>);

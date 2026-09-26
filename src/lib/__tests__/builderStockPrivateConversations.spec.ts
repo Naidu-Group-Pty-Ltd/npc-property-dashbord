@@ -326,6 +326,22 @@ describe.skipIf(!runs)('one activation, one private conversation (Command Centre
         .toMatch(/AGENCY_MESSAGE_ID_REUSED/);
     });
 
+    it('posting takes the conversation before the participant, as leaving does, so the two cannot deadlock', async () => {
+      // A leave holds the conversation and then needs the poster's participant
+      // row. A post that locked the participant first and the conversation
+      // second would be holding exactly what the leave needs next.
+      const leaveSide = db.sqlAsync(`
+        SELECT 1 FROM public.builder_network_conversations WHERE id = ${lit(C1)} FOR UPDATE;
+        SELECT pg_sleep(1.5);
+        SELECT 'participant row free' FROM public.builder_network_conversation_participants
+         WHERE conversation_id = ${lit(C1)} AND local_user_id = ${lit(OWNER)} FOR UPDATE NOWAIT;`);
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      const postSide = db.sqlAsync(`SELECT count(*) FROM public.builder_network_post_message(
+        ${lit(C1)}, ${lit(OWNER)}, gen_random_uuid(), 'Posted while a leave was deciding')`);
+      await expect(leaveSide).resolves.toContain('participant row free');
+      await expect(postSide).resolves.toBe('1');
+    });
+
     it('R15. a participant retries their own failed message', () => {
       db.sql(`UPDATE public.builder_network_messages SET delivery_state = 'failed', failure_reason = 'not_delivered' WHERE id = ${lit(first)}`);
       expect(db.sql(`SELECT delivery_generation FROM public.builder_network_retry_message(${lit(first)}, ${lit(OWNER)})`)).toBe('2');

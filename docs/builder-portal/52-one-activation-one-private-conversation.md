@@ -76,6 +76,10 @@ nobody, exactly as they send nothing. An invited colleague sees the whole histor
 A thread opens on its newest 500 messages (Step 5's window) and every earlier
 page is reached with "Show earlier messages" (a cursor on the read, never a
 larger window), so the whole history is readable however long it grows.
+Once an earlier page has been read, every newest window a poll brings is kept
+too, so a message that slides out of the window as others arrive stays in the
+history. Posting takes the conversation row before the poster's participant
+row, the order leaving takes them in, so a post and a leave cannot deadlock.
 Inviting is stopped by the network kill switch exactly as sending is.
 Inviting someone already in the conversation changes nothing. A conversation
 that is closed takes no invitation.

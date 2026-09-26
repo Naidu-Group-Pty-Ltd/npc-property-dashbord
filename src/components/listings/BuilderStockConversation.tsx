@@ -143,7 +143,16 @@ function ConversationThread({
   // The poll keeps the newest window current; earlier pages are added above
   // it when asked for, so the whole history can be read however long it is.
   const earlierPage = useEarlierConversationMessages(conversationId);
-  const [earlier, setEarlier] = useState<{ messages: ConversationMessageView[]; cursor: string | null; more: boolean } | null>(null);
+  // Once paging has begun, every newest window the poll brings is kept too:
+  // the window moves on as messages arrive, and a message that slides out of
+  // it lies after the earliest page's cursor, so no page would ever return it.
+  const [earlier, setEarlier] = useState<{
+    messages: ConversationMessageView[]; cursor: string | null; more: boolean; window: readonly ConversationMessageView[];
+  } | null>(null);
+  const pollWindow = conversation?.messages;
+  if (earlier && pollWindow && earlier.window !== pollWindow) {
+    setEarlier({ ...earlier, messages: mergeConversationPages(earlier.messages, pollWindow), window: pollWindow });
+  }
   const messages = conversation ? mergeConversationPages(earlier?.messages ?? [], conversation.messages ?? []) : [];
   const earlierCursor = earlier ? earlier.cursor : conversation?.earlier_cursor ?? null;
   const moreEarlier = earlier ? earlier.more : !!conversation?.has_earlier;
@@ -152,9 +161,10 @@ function ConversationThread({
     try {
       const page = await earlierPage.mutateAsync(earlierCursor);
       setEarlier((previous) => ({
-        messages: [...(page.messages ?? []), ...(previous?.messages ?? [])],
+        messages: mergeConversationPages([...(page.messages ?? []), ...(previous?.messages ?? [])], pollWindow ?? []),
         cursor: page.earlier_cursor ?? null,
         more: !!page.has_earlier && !!page.earlier_cursor,
+        window: pollWindow ?? [],
       }));
     } catch (error) {
       toast({

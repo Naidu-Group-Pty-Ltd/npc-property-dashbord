@@ -330,7 +330,11 @@ BEGIN
     RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'AGENCY_NETWORK_DISABLED';
   END IF;
 
-  SELECT * INTO v_c FROM public.builder_network_conversations WHERE id = _conversation_id;
+  -- The conversation is taken before the participant, the order leaving takes
+  -- them in, so a post and a leave by the same person cannot deadlock. The
+  -- post updates this row below, so it takes the lock that update needs.
+  SELECT * INTO v_c FROM public.builder_network_conversations WHERE id = _conversation_id
+   FOR NO KEY UPDATE;
   IF v_c.id IS NULL THEN
     RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'AGENCY_CONVERSATION_NOT_FOUND';
   END IF;
