@@ -87,7 +87,10 @@ function ActivatedProperties() {
   // Seeing the list is seeing the acknowledgements: the badge clears, but
   // only once the list has actually been read and drawn. A failed or pending
   // read shows the reader nothing, so it clears nothing.
-  const listShown = query.isSuccess;
+  // `isSuccess` alone describes a cached list from an earlier visit; the badge
+  // clears only once a read made for THIS visit has succeeded and nothing is
+  // still being fetched, so a newer acknowledgement is never cleared unseen.
+  const listShown = query.isSuccess && query.isFetchedAfterMount && !query.isFetching;
   useEffect(() => {
     if (!notifications || !listShown) return;
     for (const n of notifications.notifications) {

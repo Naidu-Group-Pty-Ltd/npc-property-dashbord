@@ -33,6 +33,7 @@ vi.mock('@/lib/marketplaceBuilderStock', async () => {
     useBuilderPortalActivations: () => ({
       data: state.activationsError ? undefined : state.activations, error: state.activationsError ?? null,
       isLoading: false, isSuccess: !state.activationsError,
+      isFetchedAfterMount: !state.cachedOnly, isFetching: !!state.cachedOnly,
     }),
     useMyBuilderConversations: () => ({ data: state.inboxError ? undefined : state.inbox, error: state.inboxError ?? null, isLoading: false }),
     useParticipantConversation: () => ({ data: state.conversation, error: state.conversationError ?? null, isLoading: false, isFetching: false }),
@@ -216,6 +217,12 @@ describe('Messaging', () => {
     delete state.activationsError;
     renderAt('/admin/builder-portal/activated');
     expect(markedRead).toEqual(['n1']);
+  });
+
+  it('a list shown from an earlier visit\'s cache, still being refetched, does not clear the badge', () => {
+    state.cachedOnly = true;
+    renderAt('/admin/builder-portal/activated');
+    expect(markedRead).toEqual([]);
   });
 
   it('with nothing activated, says where a property is activated', () => {
