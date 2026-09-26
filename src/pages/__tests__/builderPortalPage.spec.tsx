@@ -1,0 +1,200 @@
+import { fireEvent, render, screen, within } from '@testing-library/react';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+/**
+ * PORTALS → BUILDER PORTAL (docs/builder-portal/52).
+ *
+ * Data is mocked at the hook; the server decides every fact on the page.
+ * What is asserted is what the page does with it:
+ *
+ * - two routable tabs, Activated Properties and Messaging;
+ * - one row per activation, with the builder company's contacts, who
+ *   activated it and who acknowledged it, its status, a link to the property
+ *   page, and a link to the conversation only where the server gave one;
+ * - the inbox lists what the server listed (only the viewer's own), and a
+ *   selected conversation shows its thread, both sides' participants, a reply
+ *   box only where it can be written to, Add user and Leave chat;
+ * - a refused read shows nothing of the conversation.
+ */
+
+const state: Record<string, any> = {};
+const invited: string[] = [];
+const left: string[] = [];
+const sent: Array<{ clientMessageId: string; body: string }> = [];
+
+vi.mock('@/lib/marketplaceBuilderStock', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/marketplaceBuilderStock')>('@/lib/marketplaceBuilderStock');
+  return {
+    ...actual,
+    scrollLogToEnd: () => undefined,
+    scrollMessageIntoView: () => undefined,
+    marketplaceStockImageUrl: async () => null,
+    useBuilderPortalActivations: () => ({ data: state.activations, error: null, isLoading: false }),
+    useMyBuilderConversations: () => ({ data: state.inbox, error: null, isLoading: false }),
+    useParticipantConversation: () => ({ data: state.conversation, error: state.conversationError ?? null, isLoading: false, isFetching: false }),
+    useSendConversationMessage: () => ({
+      isPending: false,
+      mutateAsync: vi.fn(async (input: { clientMessageId: string; body: string }) => { sent.push(input); return {}; }),
+    }),
+    useRetryConversationMessage: () => ({ isPending: false, mutateAsync: vi.fn(async () => ({})) }),
+    useConversationInvitees: () => ({ data: state.invitees ?? [], error: null, isLoading: false }),
+    useInviteConversationParticipant: () => ({
+      isPending: false, mutateAsync: vi.fn(async (userId: string) => { invited.push(userId); return { result: 'joined' }; }),
+    }),
+    useLeaveConversation: () => ({
+      isPending: false, mutateAsync: vi.fn(async () => { left.push('left'); return { result: 'left' }; }),
+    }),
+  };
+});
+
+import BuilderPortal from '../BuilderPortal';
+
+const ACTIVATION = (overrides: Record<string, unknown> = {}) => ({
+  activation_key: 'k1', stock_item_id: 'item-1', address: '1 Private Street', suburb: 'Kellyville', lot_number: '101',
+  house_design: 'Aspen 28', primary_image_id: null, builder_name: 'Check Homes Pty Ltd',
+  builder_email: 'sales@checkhomes.example', builder_phone: '02 9000 0000', builder_website: 'https://checkhomes.example',
+  activated_by: 'Olive Owner', activated_at: '2026-09-25T01:00:00Z', acknowledged_by: 'Avery Builder',
+  acknowledged_at: '2026-09-25T02:00:00Z', status: 'acknowledged', conversation_id: 'conv-1', ...overrides,
+});
+const MESSAGE = (overrides: Record<string, unknown>) => ({
+  id: 'm', side: 'command_centre', sender_display_name: 'Olive Owner', body: 'Hello', sent_at: '2026-09-25T10:00:00Z',
+  delivery_state: 'delivered', delivered_at: '2026-09-25T10:00:05Z', failure_reason: null, mine: true, can_retry: false, ...overrides,
+});
+const CONVERSATION = (overrides: Record<string, unknown> = {}) => ({
+  conversation_id: 'conv-1', stock_item_id: 'item-1', address: '1 Private Street', builder_name: 'Check Homes Pty Ltd',
+  open: true, closed_reason: null, can_send: true, can_invite: true, can_leave: true,
+  participants: [
+    { participant_ref: 'r1', side: 'command_centre', display_name: 'Olive Owner', is_me: true },
+    { participant_ref: 'r2', side: 'builder', display_name: 'Avery Builder', is_me: false },
+  ],
+  messages: [MESSAGE({ id: 'a', body: 'Is it available?' }),
+    MESSAGE({ id: 'b', side: 'builder', sender_display_name: 'Avery Builder', body: 'Yes.', delivery_state: null, mine: false })],
+  ...overrides,
+});
+
+beforeEach(() => {
+  for (const key of Object.keys(state)) delete state[key];
+  state.activations = { activations: [ACTIVATION(), ACTIVATION({
+    activation_key: 'k2', activated_by: 'Otto Other', acknowledged_by: null, acknowledged_at: null,
+    status: 'awaiting_acknowledgement', conversation_id: null,
+  })] };
+  state.inbox = { conversations: [{ conversation_id: 'conv-1', stock_item_id: 'item-1', address: '1 Private Street',
+    lot_number: '101', builder_name: 'Check Homes Pty Ltd', status: 'acknowledged', last_message_at: '2026-09-25T10:00:00Z' }] };
+  state.conversation = CONVERSATION();
+  invited.length = 0; left.length = 0; sent.length = 0;
+});
+
+const renderAt = (path: string) => render(
+  <MemoryRouter initialEntries={[path]}>
+    <Routes>
+      <Route path="/admin/builder-portal" element={<BuilderPortal />} />
+      <Route path="/admin/builder-portal/:tab" element={<BuilderPortal />} />
+      <Route path="/admin/builder-portal/:tab/:conversationId" element={<BuilderPortal />} />
+      <Route path="*" element={<div>elsewhere</div>} />
+    </Routes>
+  </MemoryRouter>,
+);
+
+describe('the Builder Portal area', () => {
+  it('has two tabs, Activated Properties and Messaging, and opens on the one its route names', () => {
+    renderAt('/admin/builder-portal/messaging');
+    expect(screen.getByRole('tab', { name: /activated properties/i })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /messaging/i })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('Activated Properties: one row per activation, with the company, both people and a status', () => {
+    renderAt('/admin/builder-portal/activated');
+    const rows = screen.getAllByRole('article');
+    expect(rows).toHaveLength(2);
+    const first = within(rows[0]);
+    expect(first.getByText('1 Private Street', { exact: false })).toBeInTheDocument();
+    expect(first.getByText(/lot 101/i)).toBeInTheDocument();
+    expect(first.getByText(/aspen 28/i)).toBeInTheDocument();
+    expect(first.getByText('Check Homes Pty Ltd')).toBeInTheDocument();
+    expect(first.getByRole('link', { name: /sales@checkhomes\.example/ })).toHaveAttribute('href', 'mailto:sales@checkhomes.example');
+    expect(first.getByRole('link', { name: /02 9000 0000/ })).toHaveAttribute('href', 'tel:0290000000');
+    expect(first.getByRole('link', { name: /checkhomes\.example/i, exact: false } as any)).toBeInTheDocument();
+    expect(first.getByText(/olive owner/i)).toBeInTheDocument();
+    expect(first.getByText(/avery builder/i)).toBeInTheDocument();
+    expect(first.getByText('Acknowledged')).toBeInTheDocument();
+    expect(within(rows[1]).getByText('Awaiting acknowledgement')).toBeInTheDocument();
+  });
+
+  it('each row links to the property page, and to the conversation only where the viewer is in it', () => {
+    renderAt('/admin/builder-portal/activated');
+    const [first, second] = screen.getAllByRole('article');
+    expect(within(first).getByRole('link', { name: /view property/i })).toHaveAttribute('href', '/listings/builder-stock/item-1');
+    expect(within(first).getByRole('link', { name: /open conversation/i }))
+      .toHaveAttribute('href', '/admin/builder-portal/messaging/conv-1');
+    expect(within(second).queryByRole('link', { name: /open conversation/i })).toBeNull();
+  });
+
+  it('an acknowledgement recorded before names were sent reads "Acknowledged", naming nobody', () => {
+    state.activations = { activations: [ACTIVATION({ acknowledged_by: null })] };
+    renderAt('/admin/builder-portal/activated');
+    const row = screen.getByRole('article');
+    expect(within(row).getByText('Acknowledged')).toBeInTheDocument();
+    expect(within(row).queryByText(/acknowledged by/i)).toBeNull();
+  });
+});
+
+describe('Messaging', () => {
+  it('lists the viewer\'s conversations, and shows the selected one with both sides\' participants', () => {
+    renderAt('/admin/builder-portal/messaging/conv-1');
+    expect(screen.getByRole('link', { name: /1 private street/i })).toBeInTheDocument();
+    const people = screen.getByRole('list', { name: /participants/i });
+    expect(within(people).getByText('Olive Owner')).toBeInTheDocument();
+    expect(within(people).getByText('Avery Builder')).toBeInTheDocument();
+    const log = screen.getByRole('log');
+    expect(within(log).getByText('Is it available?')).toBeInTheDocument();
+    expect(within(log).getByText('Yes.')).toBeInTheDocument();
+  });
+
+  it('a participant writes, adds a colleague and leaves', async () => {
+    state.invitees = [{ user_id: 'u-casey', display_name: 'Casey Colleague' }];
+    renderAt('/admin/builder-portal/messaging/conv-1');
+    fireEvent.change(screen.getByRole('textbox', { name: /message/i }), { target: { value: ' Settlement in June. ' } });
+    fireEvent.click(screen.getByRole('button', { name: /^send$/i }));
+    await vi.waitFor(() => expect(sent).toEqual([{ clientMessageId: expect.any(String), body: 'Settlement in June.' }]));
+
+    fireEvent.click(screen.getByRole('button', { name: /add user/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /add casey colleague/i }));
+    await vi.waitFor(() => expect(invited).toEqual(['u-casey']));
+
+    fireEvent.click(screen.getByRole('button', { name: /leave chat/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^leave$/i }));
+    await vi.waitFor(() => expect(left).toEqual(['left']));
+  });
+
+  it('the last participant on this side is told to add a colleague before leaving', () => {
+    state.conversation = CONVERSATION({ can_leave: false });
+    renderAt('/admin/builder-portal/messaging/conv-1');
+    expect(screen.getByRole('button', { name: /leave chat/i })).toBeDisabled();
+    expect(screen.getByText(/add a colleague before you leave/i)).toBeInTheDocument();
+  });
+
+  it('a withdrawn activation\'s conversation keeps its history and takes no reply and no new user', () => {
+    state.conversation = CONVERSATION({ open: false, closed_reason: 'withdrawn', can_send: false, can_invite: false });
+    renderAt('/admin/builder-portal/messaging/conv-1');
+    expect(screen.getByText('Is it available?')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: /message/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /add user/i })).toBeNull();
+    expect(screen.getByText(/activation was withdrawn/i)).toBeInTheDocument();
+  });
+
+  it('a conversation the viewer is not in shows nothing of it', () => {
+    state.conversation = undefined;
+    state.conversationError = Object.assign(new Error('You are not in this conversation.'), { status: 403, code: 'not_a_participant' });
+    renderAt('/admin/builder-portal/messaging/conv-other');
+    expect(screen.queryByRole('log')).toBeNull();
+    expect(screen.queryByRole('list', { name: /participants/i })).toBeNull();
+    expect(screen.getByText(/not in this conversation/i)).toBeInTheDocument();
+  });
+
+  it('an empty inbox says how a conversation starts', () => {
+    state.inbox = { conversations: [] };
+    renderAt('/admin/builder-portal/messaging');
+    expect(screen.getByText(/when a builder acknowledges an activation/i)).toBeInTheDocument();
+  });
+});
