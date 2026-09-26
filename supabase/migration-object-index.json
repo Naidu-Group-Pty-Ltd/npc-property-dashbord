@@ -74,6 +74,7 @@
     "function:public.builder_network_apply_participant_event",
     "function:public.builder_network_apply_stock_media",
     "function:public.builder_network_apply_stock_ranks",
+    "function:public.builder_network_awaiting_acknowledgement",
     "function:public.builder_network_claim_outbox",
     "function:public.builder_network_clear_settled_mismatches",
     "function:public.builder_network_conversation_closed_reason",
