@@ -5,6 +5,8 @@ import { PDFDocument, rgb, StandardFonts, PDFPage, PDFFont } from "https://esm.s
 import { verifyAuth, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { getBrandConfig } from '../_shared/brand-config.ts';
+import { deploymentKind } from '../_shared/emailIdentity.pure.ts';
+import { documentLetterhead } from '../_shared/reports/issuerIdentity.pure.ts';
 import { escapeHtml, getEmailIdentity, resendAddressing } from '../_shared/emailIdentity.ts';
 import { logApiUsage, extractOpenAIUsage } from '../_shared/logApiUsage.ts';
 import { createUsageTrackingStream } from '../_shared/streamUsageLogger.ts';
@@ -3944,8 +3946,12 @@ ${cleanContent.length + 500}
           color: lightGray,
         });
         
+        // On a clone the letterhead is the issuer's own, never the house's name
+        // or mailbox the brand configuration falls back to; on the prime it
+        // reads exactly as it always did (`issuerIdentity.pure.ts`).
         const _brandPdf1 = await getBrandConfig();
-        coverPage.drawText(_brandPdf1.companyName, {
+        const _letterhead1 = documentLetterhead(_brandPdf1, { prime: deploymentKind(Deno.env.get('SUPABASE_URL')) === 'prime' });
+        coverPage.drawText(_letterhead1.name, {
           x: 50,
           y: 35,
           size: 10,
@@ -3953,7 +3959,7 @@ ${cleanContent.length + 500}
           color: primaryColor,
         });
         
-        coverPage.drawText(`${_brandPdf1.contactEmail}${_brandPdf1.contactPhone ? ' | ' + _brandPdf1.contactPhone : ''}`, {
+        coverPage.drawText([_letterhead1.email, _letterhead1.phone].filter(Boolean).join(' | '), {
           x: 50,
           y: 20,
           size: 9,
@@ -4004,7 +4010,10 @@ ${cleanContent.length + 500}
       };
 
       // Pre-fetch brand for footer (used inside createContentPage closure)
-      const _brandPdfFooter = await getBrandConfig();
+      const _brandPdfFooter = documentLetterhead(
+        await getBrandConfig(),
+        { prime: deploymentKind(Deno.env.get('SUPABASE_URL')) === 'prime' },
+      );
 
       // Helper function to create a content page with header/footer
       const createContentPage = (pageNum: number): PDFPage => {
@@ -4055,7 +4064,7 @@ ${cleanContent.length + 500}
         });
         
         // Footer text
-        page.drawText(`${_brandPdfFooter.companyName}${_brandPdfFooter.contactEmail ? ' | ' + _brandPdfFooter.contactEmail : ''}`, {
+        page.drawText(`${_brandPdfFooter.name}${_brandPdfFooter.email ? ' | ' + _brandPdfFooter.email : ''}`, {
           x: marginLeft,
           y: 30,
           size: 8,

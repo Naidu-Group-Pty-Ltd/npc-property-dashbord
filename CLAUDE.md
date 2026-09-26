@@ -2948,9 +2948,11 @@ database can override.
 Read [`PROPERTY_PHOTOGRAPHS.md`](./docs/reports/PROPERTY_PHOTOGRAPHS.md) before
 touching `_shared/reportPhotographs.pure.ts`,
 `_shared/listingPagePhotographs.pure.ts`, the `photographs` option on
-`get-investment-reports`, the `capture_report` op on `listing-images`,
-`urlExtractPhotographs.ts`, `adapters/reportPhotographs.ts` or a
-`property.images` binding.
+`get-investment-reports`, the `capture_report` or `capture_brochure_photograph`
+ops on `listing-images`, `urlExtractPhotographs.ts`,
+`brochurePhotographs*.ts`, `adapters/reportPhotographs.ts`,
+`floorPlanPage`, `investmentPdfPictures.ts` or a `property.images` /
+`property.floorPlans` binding.
 
 **Hero Image Studio's placements never reached the document a client
 receives.** Only the standard presentation reads them, it draws them on a
@@ -3013,9 +3015,107 @@ its place in the listing's gallery**, and a capture is not final while a place
 ahead of the sixth kept one is undecided, so a lead photograph whose host
 failed the first time still becomes the cover.
 
+**A report made from a PDF brochure carries the brochure's own pictures**
+(the owner, 25 Sep 2026; §8 of the same doc). Read §8 before touching
+`src/lib/reports/brochurePhotographs*.ts`, `BrochurePhotographsPicker`,
+`useBrochurePhotographs` or `op: 'capture_brochure_photograph'`. The browser
+reads the brochure with pdf.js beside the parse, the server's own vision
+module judges each picture on the same 64-pixel square, the adviser ticks
+what goes in, and the ticks are filed once the report row exists. Three
+rules bite. **Only a page that names this property can offer a picture**:
+the owner's example names its lot on page 1 beside the facade render, and
+its pages 5 and 6 are another estate and four homes built elsewhere, which
+nothing in the pixels tells apart. **A page's words are its runs joined by
+position, never by a space** (`joinPageText`): the same brochure prints
+`L` · `ot` · `1` · `629` as separate runs, and a space-join made its lot
+unreadable. And **a lot is an address only against the same lot**
+(`brochurePhotographsAreOfReportAddress`): `isSameProperty` refuses a
+lot-only address, which is a new build's only address, so the brochure's
+form requires one lot on both sides and everything either side states to
+agree. **Its words reach the report too** (§8 of
+[`WHITE_LABEL_DOCUMENTS.md`](./docs/reports/WHITE_LABEL_DOCUMENTS.md)): the
+form sent `data.pdfContent`, a field `parse-property-pdf` has never returned,
+so every report made from an uploaded PDF was written as though the document
+had no words in it. The browser reads the text layer now — the FRONT of the
+document (a brochure ends on the builder's other estates), 8,000 characters
+cut at a paragraph, nothing from a scan — and the generator bounds it from the
+front as well (`uploadedDocumentText.pure.ts`).
+
+**A floor plan is never a photograph** (the owner, 25 Sep 2026; §9 of the
+same doc). Every photo slot crops to fill its frame, and a cropped plan is a
+plan with a room missing. So a plan has its own binding
+(`property.floorPlans`), its own folder (`<report>/plans/`, kept only on the
+server's own `floorplan` verdict, at most two), and its own sheet in all fifty
+Investment masters (seed v22, `floorPlanPage`): drawn whole, never rotated,
+after the contents and before the verdict, each sheet conditional on its plan.
+The rule that makes it safe: **without a plan every master draws byte for
+byte what it drew before**, pinned by rendering all fifty with and without the
+sheets. The sheet takes no running head, because a head names a part and a new
+part would renumber every later page. A URL-extract report takes the listing's
+own plans the same way: realestate.com.au's `media.floorplans`, attributed by
+the listing id, kept by the same capture as its photographs in a list the
+record settles apart, and an asset the page lists as a plan is never offered
+as a photograph.
+
+**The standard presentation draws them too** (§10). A report left on no
+template used to carry no photograph and no plan whichever route found them.
+It reads them with the adapter's own reader, only once the template route has
+declined, and puts the lead photograph in the field below the brand cover's
+lockup and each plan on a sheet after the contents. **Measure the page you
+draw on, never assume it**: `npc_template.pdf`'s MediaBox is
+[0 7.83 595.5 850.08], and a band placed against a 0–842 page left the
+ornament's tip showing above the photograph.
+
+**That brand cover is NPC's artwork, and it opens NPC's document on NPC's
+deployment and nothing else** (`standardCover.pure.ts`, "Whose cover it is" in
+§10). Until 25 Sep 2026 every clone's standard document opened on NAIDU
+PROPERTY CONSULTING SERVICES, and the file named `NPC Services` as its author.
+Every other issuer now gets a cover drawn for it (`investmentPdfCover.ts`): its
+name, its knockout mark, the photograph where the artwork puts one. The issuer
+comes from the same `resolveReportIssuer` the closing page uses, so the first
+and last pages cannot name two businesses; an unbranded clone issues as Aurixa
+Systems. Two rules bite. **The prime is recognised by its backend, never by a
+name**: a clone seeded from the prime's settings holds NPC's name in its rows.
+And **covering the artwork is not removing it**: another issuer's document
+starts from an empty PDF and copies only the content page, because NPC's name
+drawn over is still in the file for a search or a screen reader. The prime's
+own document is pixel-identical to what it was.
+
 The resale section also draws the published price history
 (`priceHistoryChart`, §6 of `MARKET_FIGURES_IN_THE_REPORT.md`): the latest
 quarter of each of ten years, from the record, or nothing.
+
+## A clone's documents are its own
+Read [`WHITE_LABEL_DOCUMENTS.md`](./docs/reports/WHITE_LABEL_DOCUMENTS.md)
+before touching `issuerIdentity.pure.ts`, `legacyDocumentBrand.ts`,
+`legacyIssuerCover.ts`, `brandFamily.pure.ts`, `buildReportBrandSnapshot`,
+`issuerDisclaimerSetting`, `organisationProjection.pure.ts` or any PDF
+generator that draws a cover, a closing page or a contact block. The older
+documents — Borrowing Capacity, Strategy Rationale, the Cash Flow export,
+Portfolio, Formara, Market Intelligence, the Overview snapshot and the Q&A
+editors — drew NPC's cover artwork, name, tagline, contact details and
+disclaimer on every deployment. The owner's rule (26 Sep 2026): **the house's
+identity is a legacy the prime keeps and a clone never sees; content and
+delivery are the same everywhere, and only the template changes.**
+
+Three rules bite. **The deployment decides, never a name**:
+`isPrimeDeployment()` / `deploymentKind(SUPABASE_URL)`, both failing closed,
+because a clone seeded from the prime holds NPC's name in its rows. On the
+prime nothing is read that was not read before, which is why every loader
+takes the settings read as a thunk; the prime's four jsPDF documents were
+compared object by object with the code before this and are identical.
+**A row that is the house's is withheld whole** (`isHouseContactRow`): a phone
+number, an office address and an ABN name nobody, so no reading of the value
+can recognise them, and the first seeded render printed NPC's landline, office
+and ABN under "Aurixa Systems". A document that says less is recoverable; one
+that prints another business's ABN is not. And **one brand colour is a family,
+never a substitute**: `resolveBrandFamily` grows it into the roles a drawn
+document needs (an accent, its 7:1 ink, a deep shade of its own hue for
+headings, washes, a hairline), because poured into the navy's place a light
+brand makes every heading unreadable. No colour means Aurixa's gold on
+obsidian, and the semantic reds and greens stay the palette's, so a tenant
+cannot make risk green. The model's persona (`getBrandConfig`) is deliberately
+unchanged: the prose is content, which the owner excluded.
 
 ## A premium document, and the eighteen per cent that was bold
 

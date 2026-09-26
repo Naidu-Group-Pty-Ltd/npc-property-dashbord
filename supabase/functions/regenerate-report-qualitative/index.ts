@@ -34,6 +34,8 @@ import {
   GOVERNED_AUTHORITY_FLAG_TYPE,
 } from '../_shared/reports/contract/governedNarrativeAuthority.pure.ts';
 import { resolveOneReportGeography } from '../_shared/geography/resolveOneReportGeography.ts';
+import { investmentReportMasthead } from '../_shared/reports/issuerIdentity.pure.ts';
+import { deploymentKind } from '../_shared/emailIdentity.pure.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -1823,17 +1825,15 @@ const __regenerateQualHandler = async (req: Request): Promise<Response> => {
     console.log('📋 Override summary built:', overrideSummary.split('\n').length, 'lines');
     console.log('📊 Enhanced data sources loaded:', Object.keys(enhancedData).filter(k => enhancedData[k as keyof EnhancedData]).length);
 
-    // Generate report header (only if starting fresh)
+    // Generate report header (only if starting fresh). On the prime this is the
+    // block it has always written; on a clone it names the issuer and leaves
+    // out NPC's tagline (`investmentReportMasthead`).
     const _brandHdr = await getBrandConfig();
-    const reportHeader = `# ${_brandHdr.companyNameUpper}
-
-YOUR DEDICATED PROPERTY PARTNER
-
-# Investment Report: ${propertyAddress}
-
----
-
-`;
+    const reportHeader = investmentReportMasthead(
+      _brandHdr.companyName,
+      propertyAddress,
+      { prime: deploymentKind(Deno.env.get('SUPABASE_URL')) === 'prime' },
+    );
 
     // Use existing content if resuming, otherwise start with header
     let combinedContent = (continueFrom && existingContent.length > 0) ? existingContent : reportHeader;
