@@ -87,7 +87,7 @@ function world() {
         client_id: 'third-client', internal_notes: null },
     ],
     builder_network_stock_items: [
-      { id: ITEM, organisation_id: ORG, address_line: '1 Private Street', suburb: 'Kellyville', lot_number: '101',
+      { id: ITEM, organisation_id: ORG, address_line: '1 Private Street', suburb: 'Kellyville', lot_number: '101', lifecycle_status: 'active',
         primary_image_id: 'img-1', source_row: { house_design: 'Aspen 28' }, house_design: 'Aspen 28' },
     ],
     builder_network_stock_organisations: [
@@ -125,7 +125,7 @@ function world() {
 describe('reading a conversation is for its participants', () => {
   it('R38/R18. a participant reads the whole thread and both sides\' current participants', async () => {
     const read = await readParticipantConversation(standIn(world()).client, { conversationId: 'conv-1', viewerUserId: ME });
-    if (!read.ok) throw new Error(`refused: ${read.reason}`);
+    if (!read.ok) throw new Error(`refused: ${(read as { reason?: string }).reason}`);
     expect(read.messages.map((m) => m.body)).toEqual(['Is it available?', 'Yes.']);
     expect(read.participants.map((p) => `${p.side}:${p.display_name}`).sort())
       .toEqual(['builder:Avery Builder', 'command_centre:Olive Owner']);
@@ -307,7 +307,7 @@ describe('the acknowledgement email', () => {
     const worker = readCode('supabase/functions/cross-portal-outbox-worker/index.ts');
     expect(worker).toMatch(/builder_activation_acknowledged/);
     expect(worker).toMatch(/sendPortalNotificationEmail/);
-    const migration = readCode('supabase/migrations/20261222090000_one_activation_one_private_conversation.sql');
+    const migration = readCode('supabase/migrations/20261224090000_one_activation_one_private_conversation.sql');
     expect(migration).toMatch(/enqueue_integration_event/);
     expect(migration).toMatch(/'builder_activation_acknowledged:' \|\|/);
   });
@@ -331,11 +331,11 @@ describe('the edge operations', () => {
 
   it('the sender and the actor are the session\'s user; the request names only a conversation and an invitee', () => {
     const code = source();
-    expect(code).toMatch(/builder_network_post_message[\s\S]{0,300}_sender:\s*actor\.id/);
-    expect(code).toMatch(/builder_network_invite_participant[\s\S]{0,300}_actor:\s*actor\.id/);
-    expect(code).toMatch(/builder_network_leave_conversation[\s\S]{0,300}_actor:\s*actor\.id/);
-    expect(code).not.toMatch(/_sender:\s*body\./);
-    expect(code).not.toMatch(/_actor:\s*body\./);
+    expect(code).toMatch(/builder_network_post_message[\s\S]{0,300}_sender_user_id:\s*userId/);
+    expect(code).toMatch(/builder_network_invite_participant[\s\S]{0,300}_actor_user_id:\s*userId/);
+    expect(code).toMatch(/builder_network_leave_conversation[\s\S]{0,300}_actor_user_id:\s*userId/);
+    expect(code).not.toMatch(/_sender_user_id:\s*body\./);
+    expect(code).not.toMatch(/_actor_user_id:\s*body\./);
   });
 
   it('no model and no email is called from the operations', () => {
@@ -348,6 +348,6 @@ describe('the Command Centre navigation', () => {
     const registry = readCode('src/lib/navigation/registry.ts');
     expect(registry).toMatch(/Builder Portal[\s\S]{0,400}\/admin\/builder-portal/);
     const app = readCode('src/App.tsx');
-    expect(app).toMatch(/\/admin\/builder-portal\/:tab/);
+    expect(app).toMatch(/admin\/builder-portal\/:tab/);
   });
 });

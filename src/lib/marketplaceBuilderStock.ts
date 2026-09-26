@@ -226,13 +226,30 @@ export function useMarketplaceStockItem(stockItemId: string, enabled = true) {
 
 export type { ConversationMessageView, DeliveryState } from '../../supabase/functions/_shared/builderStock/agencyMessages.pure';
 
+export type {
+  ActivatedPropertyRow, ActivationStatus, ConversationClosedReason, ConversationSummary, ParticipantView,
+} from '../../supabase/functions/_shared/builderStock/privateConversations.pure';
+import type {
+  ActivatedPropertyRow, ConversationClosedReason, ConversationSummary, ParticipantView,
+} from '../../supabase/functions/_shared/builderStock/privateConversations.pure';
+
+/**
+ * One activation's private conversation, as its participant reads it
+ * (docs/builder-portal/52). Only a current participant is ever given one; for
+ * anyone else the server answers 403 `not_a_participant` and nothing of it.
+ */
 export interface BuilderConversation {
-  conversation_id: string | null;
-  /** False where this workspace holds no live activation of the property. */
+  conversation_id: string;
+  stock_item_id?: string;
+  address?: string | null;
+  lot_number?: string | null;
+  builder_name?: string | null;
   open: boolean;
-  /** Why it is closed, so the page names the right next step. Absent from an older function. */
-  closed_reason?: 'not_connected' | 'connection_paused' | 'not_activated' | 'delisted' | null;
+  closed_reason?: ConversationClosedReason | null;
   can_send: boolean;
+  can_invite?: boolean;
+  can_leave?: boolean;
+  participants?: ParticipantView[];
   messages: ConversationMessageView[];
 }
 
@@ -255,8 +272,11 @@ export function builderConversationPollInterval(data: { open?: boolean } | undef
   return data?.open === false ? BUILDER_CONVERSATION_CLOSED_POLL_MS : BUILDER_CONVERSATION_POLL_MS;
 }
 
-const conversationKey = (stockItemId: string) =>
-  [...marketplaceStockKeys.root(), 'conversation', stockItemId] as const;
+const conversationKey = (conversationId: string) =>
+  [...marketplaceStockKeys.root(), 'conversation', conversationId] as const;
+const conversationListKey = (stockItemId?: string) =>
+  [...marketplaceStockKeys.root(), 'my-conversations', stockItemId ?? 'all'] as const;
+const activationsKey = () => [...marketplaceStockKeys.root(), 'portal-activations'] as const;
 
 /**
  * A refusal says the reader may no longer see this conversation: signed out,
@@ -288,12 +308,38 @@ export function conversationRefetchInterval(state: { data?: { open?: boolean }; 
   return conversationAccessLost(state.error) ? false : builderConversationPollInterval(state.data);
 }
 
-export function useBuilderConversation(stockItemId: string, enabled = true) {
+/** Portals → Builder Portal → Activated Properties: one row per activation. */
+export function useBuilderPortalActivations(enabled = true) {
   return useQuery({
-    queryKey: conversationKey(stockItemId),
-    enabled: enabled && !!stockItemId,
+    queryKey: activationsKey(),
+    enabled,
+    queryFn: () => invoke<{ activations: ActivatedPropertyRow[] }>({ operation: 'list_builder_portal_activations' }),
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+    retry: retryUnlessAccessLost,
+  });
+}
+
+/** The conversations the reader is in now — all of them, or one property's. */
+export function useMyBuilderConversations(stockItemId?: string, enabled = true) {
+  return useQuery({
+    queryKey: conversationListKey(stockItemId),
+    enabled,
+    queryFn: () => invoke<{ conversations: ConversationSummary[] }>({
+      operation: 'list_my_builder_conversations', ...(stockItemId ? { stock_item_id: stockItemId } : {}),
+    }),
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
+    retry: retryUnlessAccessLost,
+  });
+}
+
+export function useParticipantConversation(conversationId: string, enabled = true) {
+  return useQuery({
+    queryKey: conversationKey(conversationId),
+    enabled: enabled && !!conversationId,
     queryFn: () => invoke<BuilderConversation>({
-      operation: 'get_builder_conversation', stock_item_id: stockItemId,
+      operation: 'get_builder_conversation', conversation_id: conversationId,
     }),
     refetchInterval: (query) => conversationRefetchInterval(query.state),
     refetchIntervalInBackground: false,
@@ -305,24 +351,61 @@ export function useBuilderConversation(stockItemId: string, enabled = true) {
  * Send one message. The caller mints `clientMessageId` once per message and
  * reuses it for any repeat of the same send, so a timeout is safe to retry.
  */
-export function useSendBuilderMessage(stockItemId: string) {
+export function useSendConversationMessage(conversationId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: { clientMessageId: string; body: string }) => invoke<{ message: ConversationMessageView | null }>({
-      operation: 'send_builder_message', stock_item_id: stockItemId,
+      operation: 'send_builder_message', conversation_id: conversationId,
       client_message_id: input.clientMessageId, body: input.body,
     }),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: conversationKey(stockItemId) }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: conversationKey(conversationId) }),
   });
 }
 
-export function useRetryBuilderMessage(stockItemId: string) {
+export function useRetryConversationMessage(conversationId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (messageId: string) => invoke<{ message: ConversationMessageView | null }>({
       operation: 'retry_builder_message', message_id: messageId,
     }),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: conversationKey(stockItemId) }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: conversationKey(conversationId) }),
+  });
+}
+
+/** Colleagues who may be added: the server decides who, from its own rows. */
+export function useConversationInvitees(conversationId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: [...conversationKey(conversationId), 'invitees'] as const,
+    enabled: enabled && !!conversationId,
+    queryFn: async () => (await invoke<{ invitees: Array<{ user_id: string; display_name: string }> }>({
+      operation: 'list_builder_conversation_invitees', conversation_id: conversationId,
+    })).invitees,
+    retry: retryUnlessAccessLost,
+  });
+}
+
+export function useInviteConversationParticipant(conversationId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (inviteeUserId: string) => invoke<{ result: string }>({
+      operation: 'invite_builder_conversation_participant', conversation_id: conversationId, invitee_user_id: inviteeUserId,
+    }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: conversationKey(conversationId) }),
+  });
+}
+
+/** Leave a conversation. It names only the person leaving. */
+export function useLeaveConversation(conversationId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => invoke<{ result: string }>({
+      operation: 'leave_builder_conversation', conversation_id: conversationId,
+    }),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: [...marketplaceStockKeys.root(), 'my-conversations'] });
+      queryClient.invalidateQueries({ queryKey: activationsKey() });
+      queryClient.removeQueries({ queryKey: conversationKey(conversationId) });
+    },
   });
 }
 

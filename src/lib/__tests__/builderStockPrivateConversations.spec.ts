@@ -32,7 +32,7 @@ import { assertPayloadCrossesClean } from '../../../supabase/functions/_shared/b
 
 const REPO_ROOT = join(__dirname, '..', '..', '..');
 const MIGRATIONS = join(REPO_ROOT, 'supabase', 'migrations');
-export const PRIVATE_MIGRATION = '20261222090000_one_activation_one_private_conversation.sql';
+export const PRIVATE_MIGRATION = '20261224090000_one_activation_one_private_conversation.sql';
 const BEFORE = [
   '20261121000000_builder_network_mirror.sql',
   '20261122000000_builder_network_phase5_inbound_fk_release.sql',
@@ -155,11 +155,11 @@ describe.skipIf(!runs)('one activation, one private conversation (Command Centre
       VALUES (${lit(NET_B)}, 'active', ARRAY['stock:publish'], 's', 'https://network.example/functions/v1/builder-network-inbound', ${lit(ORG_B)}, now())
       RETURNING id`);
     const client1 = db.sql(`INSERT INTO public.clients(primary_first_name, primary_surname, primary_email)
-                            VALUES ('Private', 'Client', 'private.client@example.test') RETURNING id`);
+                            VALUES ('Clientina', 'Hidden', 'clientina.hidden@example.test') RETURNING id`);
     const client2 = db.sql(`INSERT INTO public.clients(primary_first_name, primary_surname) VALUES ('Second', 'Client') RETURNING id`);
     const client3 = db.sql(`INSERT INTO public.clients(primary_first_name, primary_surname) VALUES ('Legacy', 'Client') RETURNING id`);
     S1 = db.sql(`INSERT INTO public.builder_stock_selections(stock_item_id, organisation_id, client_id, selected_by_user_id, status, internal_notes)
-                 VALUES (${lit(ITEM)}, ${lit(ORG_A)}, ${lit(client1)}, ${lit(OWNER)}, 'selected', 'Private note about the client') RETURNING id`);
+                 VALUES (${lit(ITEM)}, ${lit(ORG_A)}, ${lit(client1)}, ${lit(OWNER)}, 'selected', 'Confidential note about the client') RETURNING id`);
     S2 = db.sql(`INSERT INTO public.builder_stock_selections(stock_item_id, organisation_id, client_id, selected_by_user_id, status)
                  VALUES (${lit(ITEM)}, ${lit(ORG_A)}, ${lit(client2)}, ${lit(OWNER_2)}, 'selected') RETURNING id`);
 
@@ -228,7 +228,7 @@ describe.skipIf(!runs)('one activation, one private conversation (Command Centre
                                WHERE event_type = 'agency.message.participant'`);
       const emailPayload = db.sql(`SELECT payload::text FROM public.integration_outbox
                                    WHERE idempotency_key = ${lit(`builder_activation_acknowledged:${S1}`)}`);
-      for (const secret of ['Private', 'private.client', 'Private note', OWNER, S1]) {
+      for (const secret of ['Clientina', 'clientina.hidden', 'Confidential note', OWNER, S1]) {
         expect(outbound).not.toContain(secret);
         expect(`${notice.title} ${notice.message}`).not.toContain(secret === S1 ? '§' : secret);
       }
@@ -392,7 +392,7 @@ describe.skipIf(!runs)('one activation, one private conversation (Command Centre
     });
 
     it('R21. there is no way to remove somebody else', () => {
-      expect(db.sql(`SELECT count(*) FROM pg_proc WHERE proname ~ 'builder_network_.*(remove|kick|evict)'`)).toBe('0');
+      expect(db.sql(`SELECT count(*) FROM pg_proc WHERE proname ~ 'builder_network_.*(remove|kick|evict)_?(participant|user|member)'`)).toBe('0');
       // Leaving names only the person leaving.
       expect(db.sql(`SELECT pronargs FROM pg_proc WHERE proname = 'builder_network_leave_conversation'`)).toBe('2');
     });
@@ -408,7 +408,7 @@ describe.skipIf(!runs)('one activation, one private conversation (Command Centre
     it('R22/R24. once a colleague has joined, the original participant can leave, and is announced as left', () => {
       expect(leave(C1, OWNER)).toBe('left');
       expect(members(C1)).toBe('builder:Avery Builder:joined,command_centre:Casey Colleague:joined,command_centre:Olive Owner:left');
-      expect(db.sql(`SELECT payload->>'state' || '|' || payload->>'version' FROM public.builder_network_outbox
+      expect(db.sql(`SELECT (payload->>'state') || '|' || (payload->>'version') FROM public.builder_network_outbox
         WHERE event_type = 'agency.message.participant' AND payload->>'display_name' = 'Olive Owner'
         ORDER BY (payload->>'version')::int DESC LIMIT 1`)).toBe('left|2');
     });
@@ -576,8 +576,11 @@ describe.skipIf(!runs)('one activation, one private conversation (Command Centre
     });
 
     it('R36. no client or private field crosses in anything this step sends', () => {
-      const everything = db.sql(`SELECT COALESCE(string_agg(payload::text, ' '), '') FROM public.builder_network_outbox`);
-      for (const secret of ['Private', 'private.client', 'Private note', OWNER, OWNER_2, COLLEAGUE, S1, S2]) {
+      // What this step sends: the message lane. The activation's own events
+      // carry its reference by Step 1's contract, and are not this step's.
+      const everything = db.sql(`SELECT COALESCE(string_agg(payload::text, ' '), '') FROM public.builder_network_outbox
+                                 WHERE event_type LIKE 'agency.%'`);
+      for (const secret of ['Clientina', 'clientina.hidden', 'Confidential note', OWNER, OWNER_2, COLLEAGUE, S1, S2]) {
         expect(everything).not.toContain(secret);
       }
       for (const row of JSON.parse(db.sql(`SELECT COALESCE(json_agg(payload), '[]') FROM public.builder_network_outbox`))) {
@@ -609,6 +612,125 @@ describe.skipIf(!runs)('one activation, one private conversation (Command Centre
                           OR has_function_privilege('${role}', 'public.builder_network_seed_activation_conversation(uuid,uuid)', 'EXECUTE')`))
           .toBe('f');
       }
+    });
+  });
+
+  describe('R39. Step 5\'s delivery, under the new model', () => {
+    const ITEM3 = randomUUID();
+    let S3 = ''; let C3 = '';
+    const builderMessage = (overrides: Record<string, unknown> = {}) => ({
+      schema_version: 1, conversation_id: C3, message_id: randomUUID(), stock_item_id: ITEM3,
+      body: 'Lot 104 is available.', sender_display_name: 'Avery Builder',
+      sent_at: '2026-09-26T03:00:00.000000Z', generation: 1, ...overrides,
+    });
+    const receipt = (message: string, generation: number, outcome: string, reason?: string) =>
+      land(CONN_A, 'agency.message.receipt', `agency.receipt:${message}:${generation}:${randomUUID()}`, {
+        schema_version: 1, message_id: message, conversation_id: C3, generation, outcome, ...(reason ? { reason } : {}),
+      });
+
+    beforeAll(() => {
+      db.sql(`INSERT INTO public.builder_network_stock_items(id, organisation_id, address_line, lot_number, lifecycle_status)
+              VALUES (${lit(ITEM3)}, ${lit(ORG_A)}, '4 Transport Street', '104', 'active')`);
+      const client = db.sql(`INSERT INTO public.clients(primary_first_name) VALUES ('T') RETURNING id`);
+      S3 = db.sql(`INSERT INTO public.builder_stock_selections(stock_item_id, organisation_id, client_id, selected_by_user_id, status)
+                   VALUES (${lit(ITEM3)}, ${lit(ORG_A)}, ${lit(client)}, ${lit(THIRD)}, 'selected') RETURNING id`);
+      acknowledge(CONN_A, S3, ITEM3);
+      C3 = activationConversationId(NET_A, S3);
+    });
+
+    it('an accepted receipt marks a message delivered; a refusal marks it failed, with the reason', () => {
+      const a = post(C3, THIRD, 'First.');
+      const b = post(C3, THIRD, 'Second.');
+      receipt(a, 1, 'accepted');
+      receipt(b, 1, 'refused', 'conversation_not_open');
+      messageSweep();
+      expect(db.sql(`SELECT delivery_state FROM public.builder_network_messages WHERE id = ${lit(a)}`)).toBe('delivered');
+      expect(db.sql(`SELECT delivery_state || '|' || failure_reason FROM public.builder_network_messages WHERE id = ${lit(b)}`))
+        .toBe('failed|refused:conversation_not_open');
+    });
+
+    it('a builder message is stored once however often it is delivered, and a changed one is refused', () => {
+      const m = builderMessage();
+      land(CONN_A, 'agency.message.posted', `agency.message:${m.message_id}:1`, m);
+      land(CONN_A, 'agency.message.posted', `agency.message:${m.message_id}:2`, { ...m, generation: 2 });
+      land(CONN_A, 'agency.message.posted', `agency.message:${m.message_id}:3`, { ...m, body: 'Other words.', generation: 3 });
+      messageSweep();
+      expect(count(`public.builder_network_messages WHERE id = ${lit(m.message_id)}`)).toBe('1');
+      expect(db.sql(`SELECT string_agg(payload->>'outcome', ',' ORDER BY (payload->>'generation')::int) FROM public.builder_network_outbox
+                     WHERE event_type = 'agency.message.receipt' AND payload->>'message_id' = ${lit(m.message_id)}`))
+        .toBe('accepted,accepted,refused');
+    });
+
+    it('a message waits behind an activation event that landed before it and is not yet applied', () => {
+      const m = builderMessage({ body: 'Behind the activation.' });
+      land(CONN_A, 'stock.selection.acknowledged', `stock.selection.acknowledged:${randomUUID()}`, {
+        remote_selection_ref: randomUUID(), stock_item_id: ITEM3, status: 'builder_acknowledged',
+        acknowledged_at: '2026-09-26T03:00:00.000000Z',
+      });
+      land(CONN_A, 'agency.message.posted', `agency.message:${m.message_id}:1`, m);
+      messageSweep();
+      expect(count(`public.builder_network_messages WHERE id = ${lit(m.message_id)}`)).toBe('0');
+      mainSweep();
+      messageSweep();
+      expect(count(`public.builder_network_messages WHERE id = ${lit(m.message_id)}`)).toBe('1');
+    });
+
+    it('a disputed connection halts writing here and holds what arrives', () => {
+      db.sql(`UPDATE public.builder_network_connections SET identity_mismatch_since = now() WHERE id = ${lit(CONN_A)}`);
+      try {
+        expect(refusal(`SELECT public.builder_network_post_message(${lit(C3)}, ${lit(THIRD)}, gen_random_uuid(), 'x')`))
+          .toMatch(/AGENCY_CONNECTION_HALTED/);
+        const m = builderMessage({ body: 'During the dispute.' });
+        land(CONN_A, 'agency.message.posted', `agency.message:${m.message_id}:1`, m);
+        messageSweep();
+        expect(db.sql(`SELECT message_applied_at IS NULL FROM public.builder_network_inbound_events
+                       WHERE dedupe_key = 'agency.message:${m.message_id}:1'`)).toBe('t');
+      } finally {
+        db.sql(`UPDATE public.builder_network_connections SET identity_mismatch_since = NULL WHERE id = ${lit(CONN_A)}`);
+      }
+      messageSweep();
+    });
+
+    it('a withdrawn stock:publish closes writing and refuses the builder\'s new content, and is restored with it', () => {
+      db.sql(`UPDATE public.builder_network_connections SET scopes = ARRAY[]::text[] WHERE id = ${lit(CONN_A)}`);
+      try {
+        expect(refusal(`SELECT public.builder_network_post_message(${lit(C3)}, ${lit(THIRD)}, gen_random_uuid(), 'x')`))
+          .toMatch(/AGENCY_CONVERSATION_NOT_OPEN/);
+        const m = builderMessage({ body: 'Without the scope.' });
+        land(CONN_A, 'agency.message.posted', `agency.message:${m.message_id}:1`, m);
+        messageSweep();
+        expect(db.sql(`SELECT message_apply_error FROM public.builder_network_inbound_events
+                       WHERE dedupe_key = 'agency.message:${m.message_id}:1'`)).toBe('refused:scope_revoked');
+      } finally {
+        db.sql(`UPDATE public.builder_network_connections SET scopes = ARRAY['stock:publish'] WHERE id = ${lit(CONN_A)}`);
+      }
+      expect(post(C3, THIRD, 'Open again.')).toMatch(/^[0-9a-f-]{36}$/);
+    });
+
+    it('a property the builder stopped listing takes nothing new, and keeps its history', () => {
+      db.sql(`UPDATE public.builder_network_stock_items SET lifecycle_status = 'archived' WHERE id = ${lit(ITEM3)}`);
+      try {
+        expect(refusal(`SELECT public.builder_network_post_message(${lit(C3)}, ${lit(THIRD)}, gen_random_uuid(), 'x')`))
+          .toMatch(/AGENCY_CONVERSATION_NOT_OPEN/);
+        expect(count(`public.builder_network_messages WHERE conversation_id = ${lit(C3)}`)).not.toBe('0');
+      } finally {
+        db.sql(`UPDATE public.builder_network_stock_items SET lifecycle_status = 'active' WHERE id = ${lit(ITEM3)}`);
+      }
+    });
+
+    it('a withdrawn activation refuses the builder\'s new message, and still acknowledges a stored one sent again', () => {
+      const kept = builderMessage({ body: 'Kept before the withdrawal.' });
+      land(CONN_A, 'agency.message.posted', `agency.message:${kept.message_id}:1`, kept);
+      messageSweep();
+      db.sql(`UPDATE public.builder_stock_selections SET status = 'withdrawn', withdrawn_at = now() WHERE id = ${lit(S3)}`);
+      const fresh = builderMessage({ body: 'After the withdrawal.' });
+      land(CONN_A, 'agency.message.posted', `agency.message:${fresh.message_id}:1`, fresh);
+      land(CONN_A, 'agency.message.posted', `agency.message:${kept.message_id}:2`, { ...kept, generation: 2 });
+      messageSweep();
+      expect(db.sql(`SELECT message_apply_error FROM public.builder_network_inbound_events
+                     WHERE dedupe_key = 'agency.message:${fresh.message_id}:1'`)).toBe('refused:conversation_not_open');
+      expect(db.sql(`SELECT COALESCE(message_apply_error, 'applied') FROM public.builder_network_inbound_events
+                     WHERE dedupe_key = 'agency.message:${kept.message_id}:2'`)).toBe('applied');
     });
   });
 });

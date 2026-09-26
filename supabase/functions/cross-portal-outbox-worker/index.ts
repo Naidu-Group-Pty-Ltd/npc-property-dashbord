@@ -7,6 +7,8 @@ import { verifyInternal, logSecurityEvent } from '../_shared/auth_v2.ts';
 // ── Builders Network aggregate (extraction plan §7 Phase 3) ────────────────
 import { builderNetworkEnabled } from '../_shared/builderNetwork.ts';
 import { agencyMessageRouteHeld } from '../_shared/builderStock/agencyMessages.pure.ts';
+import { acknowledgementEmail, userDisplayName } from '../_shared/builderStock/privateConversations.pure.ts';
+import { sendPortalNotificationEmail } from '../_shared/portal-notification-email.ts';
 import {
   HMAC_CONNECTION_HEADER,
   HMAC_SIGNATURE_HEADER,
@@ -116,6 +118,56 @@ const workerId=()=>`cross-portal-${crypto.randomUUID()}`;
  * duplicate, replayed or out-of-order event structurally cannot reopen
  * revoked access or restore superseded content. Its only write is the
  * idempotent partner-safe notification row (UNIQUE outbox_event_id). */
+/**
+ * The email that tells the activating Command Centre user their builder
+ * acknowledged the activation (docs/builder-portal/52). Queued ONCE, by the
+ * acknowledgement step, carrying only which activation it is about; the rest
+ * is read here, at send time, and nothing about the client is read at all.
+ * Sent through the existing portal email helper, so it goes out under the
+ * workspace's own email identity. A failed send throws and is retried with
+ * the outbox's backoff; a sent one is stamped, so a retry after a lost
+ * acknowledgement from the outbox does not send it twice.
+ */
+async function sendActivationAcknowledgedEmail(db: any, event: any) {
+  const selectionId = String(event.payload?.selection_id ?? '');
+  if (!/^[0-9a-f-]{36}$/i.test(selectionId)) return;
+  const { data: notice, error: noticeError } = await db.from('builder_network_acknowledgement_notices')
+    .select('email_sent_at, outcome').eq('selection_id', selectionId).maybeSingle();
+  if (noticeError) throw new Error('acknowledgement_notice_unreadable');
+  if (!notice || notice.outcome !== 'notified' || notice.email_sent_at) return;
+  const { data: selection, error: selectionError } = await db.from('builder_stock_selections')
+    .select('selected_by_user_id, stock_item_id, organisation_id, acknowledged_by_display_name')
+    .eq('id', selectionId).maybeSingle();
+  if (selectionError) throw new Error('activation_unreadable');
+  if (!selection) return;
+  const [{ data: user }, { data: item }, { data: org }] = await Promise.all([
+    db.from('custom_users').select('email, first_name, last_name, username, is_active, deleted_at')
+      .eq('id', selection.selected_by_user_id).maybeSingle(),
+    db.from('builder_network_stock_items').select('address_line, lot_number').eq('id', selection.stock_item_id).maybeSingle(),
+    db.from('builder_network_stock_organisations').select('legal_name, trading_name').eq('id', selection.organisation_id).maybeSingle(),
+  ]);
+  if (!user || !user.is_active || user.deleted_at || !user.email) return;
+  const email = acknowledgementEmail({
+    builderName: (typeof org?.trading_name === 'string' && org.trading_name.trim()) || org?.legal_name || 'The builder',
+    address: item?.address_line ?? '',
+    lotNumber: item?.lot_number ?? null,
+    acknowledgedBy: selection.acknowledged_by_display_name ?? null,
+    link: null,
+  });
+  const sent = await sendPortalNotificationEmail({
+    to: String(user.email),
+    clientFirstName: (typeof user.first_name === 'string' && user.first_name.trim()) || userDisplayName(user) || 'there',
+    title: email.subject,
+    message: email.text,
+    type: 'success',
+    category: 'property',
+    actionUrl: '/admin/builder-portal/activated',
+  });
+  if (!sent.success) throw new Error(`acknowledgement_email_not_sent:${String(sent.error ?? 'unknown').slice(0, 80)}`);
+  await db.from('builder_network_acknowledgement_notices').update({ email_sent_at: new Date().toISOString() })
+    .eq('selection_id', selectionId).is('email_sent_at', null);
+}
+
 async function amlPartnerEventsEnabled(db:any):Promise<boolean>{
   const {data}=await db.from('feature_flags').select('value').eq('key','aml_partner_event_outbox').maybeSingle();
   const v=data?.value; return v===true||v==='true'||(v&&typeof v==='object'&&(v as any).enabled===true);
@@ -313,10 +365,10 @@ Deno.serve(async req=>{
   const id=workerId(); const {data:events,error}=await db.rpc('claim_integration_outbox',{_worker_id:id,_limit:25}); if(error)return json({error:'claim_failed'},500);
   let succeeded=0,failed=0;
   for(const event of events||[]){
-    const consumer=event.event_type==='aml.screening.requested'?'aml_screening':event.event_type==='aml.verification.requested'||event.event_type==='aml.client_request.created'?'aml_verification':String(event.event_type).startsWith('aml.')?'aml_partner_events':event.event_type==='legal.message.created'?'cross_portal_delivery':event.event_type==='conversation.message.created'?'canonical_conversations':'case_projections';
+    const consumer=event.event_type==='aml.screening.requested'?'aml_screening':event.event_type==='aml.verification.requested'||event.event_type==='aml.client_request.created'?'aml_verification':String(event.event_type).startsWith('aml.')?'aml_partner_events':event.event_type==='legal.message.created'?'cross_portal_delivery':event.event_type==='conversation.message.created'?'canonical_conversations':event.event_type==='builder_activation_acknowledged'?'builder_activation_email':'case_projections';
     await db.from('integration_delivery_attempts').insert({outbox_id:event.id,consumer_name:consumer,attempt_number:event.attempts,status:'started'});
     try{
-      if(event.event_type==='aml.screening.requested')await processScreeningEvent(db,event);else if(event.event_type==='aml.verification.requested')await processVerificationEvent(db,event);else if(event.event_type==='aml.client_request.created'){/* notification written transactionally by the trigger; the event is checkpoint evidence */}else if(String(event.event_type).startsWith('aml.'))await deliverAmlPartnerEvent(db,event);else if(event.event_type==='legal.message.created')await deliverLegalMessage(db,event);else if(event.event_type==='conversation.message.created'){/* participant reads are immediate; channel delivery is claimed below */}else if(event.aggregate_type==='transaction_case')await projectCase(db,event);else if(event.event_type==='legal.audit_chain.failed')throw new Error('audit_chain_failure_requires_operator');
+      if(event.event_type==='aml.screening.requested')await processScreeningEvent(db,event);else if(event.event_type==='aml.verification.requested')await processVerificationEvent(db,event);else if(event.event_type==='aml.client_request.created'){/* notification written transactionally by the trigger; the event is checkpoint evidence */}else if(String(event.event_type).startsWith('aml.'))await deliverAmlPartnerEvent(db,event);else if(event.event_type==='legal.message.created')await deliverLegalMessage(db,event);else if(event.event_type==='conversation.message.created'){/* participant reads are immediate; channel delivery is claimed below */}else if(event.event_type==='builder_activation_acknowledged')await sendActivationAcknowledgedEmail(db,event);else if(event.aggregate_type==='transaction_case')await projectCase(db,event);else if(event.event_type==='legal.audit_chain.failed')throw new Error('audit_chain_failure_requires_operator');
       await db.from('integration_delivery_attempts').update({status:'succeeded',completed_at:new Date().toISOString()}).eq('outbox_id',event.id).eq('consumer_name',consumer).eq('attempt_number',event.attempts);
       await db.from('integration_outbox').update({processed_at:new Date().toISOString(),locked_at:null,locked_by:null,last_error:null}).eq('id',event.id).eq('locked_by',id);
       await db.from('projection_checkpoints').upsert({consumer_name:consumer,last_event_id:event.id,last_occurred_at:event.occurred_at,updated_at:new Date().toISOString()},{onConflict:'consumer_name'});

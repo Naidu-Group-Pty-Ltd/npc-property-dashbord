@@ -1,0 +1,218 @@
+/**
+ * The reads behind Portals → Builder Portal and the property page's
+ * conversations (docs/builder-portal/52).
+ *
+ * Membership is the authority. A conversation's messages and participants are
+ * read only after the viewer is found among its CURRENT participants; for
+ * anyone else the answer is `not_a_participant` and the messages are never
+ * queried. Listings access, the property, the organisation and the id in the
+ * request decide nothing.
+ */
+import { projectConversationMessages, type ConversationMessageView } from './agencyMessages.pure.ts';
+import {
+  activationKey, activationStatus, conversationClosedReason, projectParticipants, userDisplayName,
+  type ActivatedPropertyRow, type ConversationClosedReason, type ConversationSummary, type ParticipantView,
+} from './privateConversations.pure.ts';
+
+export type { ActivatedPropertyRow, ConversationSummary } from './privateConversations.pure.ts';
+
+// deno-lint-ignore no-explicit-any
+type Client = any;
+type Row = Record<string, any>;
+
+const builderName = (org: Row | undefined) =>
+  (typeof org?.trading_name === 'string' && org.trading_name.trim()) || org?.legal_name || null;
+const designOf = (item: Row | undefined) =>
+  item?.house_design ?? (item?.source_row && typeof item.source_row === 'object' ? item.source_row.house_design : null) ?? null;
+
+export type ParticipantConversationRead =
+  | {
+    ok: true; conversation_id: string; stock_item_id: string; address: string | null; lot_number: string | null;
+    builder_name: string | null; open: boolean; closed_reason: ConversationClosedReason | null;
+    participants: ParticipantView[]; messages: ConversationMessageView[];
+  }
+  | { ok: false; reason: 'not_found' | 'not_a_participant' | 'unavailable' };
+
+export async function readParticipantConversation(
+  supabase: Client, args: { conversationId: string; viewerUserId: string },
+): Promise<ParticipantConversationRead> {
+  const { data: conversation, error } = await supabase.from('builder_network_conversations')
+    .select('id, connection_id, stock_item_id, builder_organisation_id, selection_ref')
+    .eq('id', args.conversationId).maybeSingle();
+  if (error) return { ok: false, reason: 'unavailable' };
+  if (!conversation) return { ok: false, reason: 'not_found' };
+
+  const { data: people, error: peopleError } = await supabase.from('builder_network_conversation_participants')
+    .select('participant_ref, side, local_user_id, display_name, state')
+    .eq('conversation_id', conversation.id);
+  if (peopleError) return { ok: false, reason: 'unavailable' };
+  const rows = (people ?? []) as Row[];
+  if (!rows.some((row) => row.local_user_id === args.viewerUserId && row.state === 'joined' && row.side === 'command_centre')) {
+    return { ok: false, reason: 'not_a_participant' };
+  }
+
+  const [connection, selection, item, org] = await Promise.all([
+    supabase.from('builder_network_connections').select('state, scopes, identity_mismatch_since')
+      .eq('id', conversation.connection_id).maybeSingle(),
+    conversation.selection_ref
+      ? supabase.from('builder_stock_selections').select('status, acknowledged_at')
+        .eq('id', conversation.selection_ref).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+    supabase.from('builder_network_stock_items').select('lifecycle_status, address_line, lot_number, organisation_id')
+      .eq('id', conversation.stock_item_id).maybeSingle(),
+    supabase.from('builder_network_stock_organisations').select('legal_name, trading_name')
+      .eq('id', conversation.builder_organisation_id).maybeSingle(),
+  ]);
+  if (connection.error || selection.error || item.error || org.error) return { ok: false, reason: 'unavailable' };
+
+  const closed_reason = conversationClosedReason({
+    connection: connection.data, selectionRef: conversation.selection_ref ?? null,
+    selection: selection.data, item: item.data && item.data.organisation_id === conversation.builder_organisation_id ? item.data : null,
+  });
+
+  // The window is the newest 500 by ARRIVAL here, drawn in the order written
+  // (Step 5's rule).
+  const { data: messages, error: messagesError } = await supabase.from('builder_network_messages')
+    .select('id, side, sender_user_id, sender_display_name, body, sent_at, delivery_state, delivered_at, failure_reason')
+    .eq('conversation_id', conversation.id)
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
+    .limit(500);
+  if (messagesError) return { ok: false, reason: 'unavailable' };
+
+  const open = closed_reason === null;
+  return {
+    ok: true,
+    conversation_id: String(conversation.id),
+    stock_item_id: String(conversation.stock_item_id),
+    address: item.data?.address_line ?? null,
+    lot_number: item.data?.lot_number ?? null,
+    builder_name: builderName(org.data ?? undefined),
+    open,
+    closed_reason,
+    participants: projectParticipants(rows, args.viewerUserId),
+    messages: projectConversationMessages((messages ?? []) as Row[], args.viewerUserId)
+      .map((message) => ({ ...message, can_retry: message.can_retry && open })),
+  };
+}
+
+/** The conversations one person is in now — the inbox. */
+async function summaries(
+  supabase: Client, viewerUserId: string, filter: { stockItemId?: string },
+): Promise<{ ok: true; conversations: ConversationSummary[] } | { ok: false }> {
+  const { data: mine, error } = await supabase.from('builder_network_conversation_participants')
+    .select('conversation_id')
+    .eq('local_user_id', viewerUserId).eq('side', 'command_centre').eq('state', 'joined');
+  if (error) return { ok: false };
+  const ids = [...new Set(((mine ?? []) as Row[]).map((row) => String(row.conversation_id)))];
+  if (!ids.length) return { ok: true, conversations: [] };
+
+  let query = supabase.from('builder_network_conversations')
+    .select('id, stock_item_id, builder_organisation_id, selection_ref, last_message_at').in('id', ids);
+  if (filter.stockItemId) query = query.eq('stock_item_id', filter.stockItemId);
+  const { data: conversations, error: conversationError } = await query;
+  if (conversationError) return { ok: false };
+  const list = (conversations ?? []) as Row[];
+  if (!list.length) return { ok: true, conversations: [] };
+
+  const [items, orgs, selections] = await Promise.all([
+    supabase.from('builder_network_stock_items').select('id, address_line, lot_number')
+      .in('id', [...new Set(list.map((c) => c.stock_item_id))]),
+    supabase.from('builder_network_stock_organisations').select('id, legal_name, trading_name')
+      .in('id', [...new Set(list.map((c) => c.builder_organisation_id))]),
+    supabase.from('builder_stock_selections').select('id, status, acknowledged_at')
+      .in('id', list.map((c) => c.selection_ref).filter(Boolean)),
+  ]);
+  if (items.error || orgs.error || selections.error) return { ok: false };
+  const itemById = new Map(((items.data ?? []) as Row[]).map((row) => [row.id, row]));
+  const orgById = new Map(((orgs.data ?? []) as Row[]).map((row) => [row.id, row]));
+  const selectionById = new Map(((selections.data ?? []) as Row[]).map((row) => [row.id, row]));
+
+  return {
+    ok: true,
+    conversations: list.map((c) => {
+      const selection = c.selection_ref ? selectionById.get(c.selection_ref) : undefined;
+      return {
+        conversation_id: String(c.id),
+        stock_item_id: String(c.stock_item_id),
+        address: itemById.get(c.stock_item_id)?.address_line ?? null,
+        lot_number: itemById.get(c.stock_item_id)?.lot_number ?? null,
+        builder_name: builderName(orgById.get(c.builder_organisation_id)),
+        status: selection ? activationStatus(selection) : null,
+        last_message_at: c.last_message_at ?? null,
+      };
+    }).sort((a, b) => String(b.last_message_at ?? '').localeCompare(String(a.last_message_at ?? ''))
+      || a.conversation_id.localeCompare(b.conversation_id)),
+  };
+}
+
+export function listMyConversations(supabase: Client, args: { viewerUserId: string }) {
+  return summaries(supabase, args.viewerUserId, {});
+}
+
+/** On a property's page: only the viewer's own conversations about it. */
+export function listPropertyConversations(supabase: Client, args: { stockItemId: string; viewerUserId: string }) {
+  return summaries(supabase, args.viewerUserId, { stockItemId: args.stockItemId });
+}
+
+/** One row per activation: the property, the builder company, and the people. */
+export async function listActivatedProperties(
+  supabase: Client, args: { viewerUserId: string },
+): Promise<{ ok: true; activations: ActivatedPropertyRow[] } | { ok: false }> {
+  const { data: selections, error } = await supabase.from('builder_stock_selections')
+    .select('id, stock_item_id, organisation_id, selected_by_user_id, selected_at, status, acknowledged_at, acknowledged_by_display_name')
+    .order('selected_at', { ascending: false })
+    .limit(500);
+  if (error) return { ok: false };
+  const list = (selections ?? []) as Row[];
+  if (!list.length) return { ok: true, activations: [] };
+
+  const [items, orgs, users, conversations, mine] = await Promise.all([
+    supabase.from('builder_network_stock_items')
+      .select('id, address_line, suburb, lot_number, primary_image_id, source_row')
+      .in('id', [...new Set(list.map((s) => s.stock_item_id))]),
+    supabase.from('builder_network_stock_organisations')
+      .select('id, legal_name, trading_name, contact_email, contact_phone, website')
+      .in('id', [...new Set(list.map((s) => s.organisation_id))]),
+    supabase.from('custom_users').select('id, username, first_name, last_name')
+      .in('id', [...new Set(list.map((s) => s.selected_by_user_id).filter(Boolean))]),
+    supabase.from('builder_network_conversations').select('id, selection_ref')
+      .in('selection_ref', list.map((s) => s.id)),
+    supabase.from('builder_network_conversation_participants').select('conversation_id')
+      .eq('local_user_id', args.viewerUserId).eq('side', 'command_centre').eq('state', 'joined'),
+  ]);
+  if (items.error || orgs.error || users.error || conversations.error || mine.error) return { ok: false };
+  const itemById = new Map(((items.data ?? []) as Row[]).map((row) => [row.id, row]));
+  const orgById = new Map(((orgs.data ?? []) as Row[]).map((row) => [row.id, row]));
+  const userById = new Map(((users.data ?? []) as Row[]).map((row) => [row.id, row]));
+  const conversationBySelection = new Map(((conversations.data ?? []) as Row[]).map((row) => [row.selection_ref, String(row.id)]));
+  const joined = new Set(((mine.data ?? []) as Row[]).map((row) => String(row.conversation_id)));
+
+  return {
+    ok: true,
+    activations: list.map((s) => {
+      const item = itemById.get(s.stock_item_id);
+      const org = orgById.get(s.organisation_id);
+      const conversation = conversationBySelection.get(s.id) ?? null;
+      return {
+        activation_key: activationKey(String(s.id)),
+        stock_item_id: String(s.stock_item_id),
+        address: item?.address_line ?? null,
+        suburb: item?.suburb ?? null,
+        lot_number: item?.lot_number ?? null,
+        house_design: designOf(item),
+        primary_image_id: item?.primary_image_id ?? null,
+        builder_name: builderName(org),
+        builder_email: org?.contact_email ?? null,
+        builder_phone: org?.contact_phone ?? null,
+        builder_website: org?.website ?? null,
+        activated_by: userDisplayName(userById.get(s.selected_by_user_id)),
+        activated_at: s.selected_at ?? null,
+        acknowledged_by: s.acknowledged_by_display_name ?? null,
+        acknowledged_at: s.acknowledged_at ?? null,
+        status: activationStatus(s),
+        conversation_id: conversation && joined.has(conversation) ? conversation : null,
+      };
+    }),
+  };
+}

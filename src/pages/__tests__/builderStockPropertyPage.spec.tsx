@@ -37,11 +37,22 @@ vi.mock('@/lib/marketplaceBuilderStock', async (original) => ({
   },
   useMarketplaceClientSearch: () => ({ data: { records: [] }, isLoading: false }),
   useSelectBuilderStockForClient: () => ({ mutate: vi.fn(), isPending: false }),
-  useBuilderConversation: () => ({
-    data: { conversation_id: null, open: true, can_send: true, messages: [] }, isLoading: false, error: null,
+  // Since Step 6 the card lists the reader's own conversations about the
+  // property (docs/builder-portal/52).
+  useMyBuilderConversations: () => ({
+    data: { conversations: [{ conversation_id: 'conv-1', stock_item_id: 'stock-1', address: '12 Proof Street',
+      lot_number: '324', builder_name: 'Proof Homes', status: 'acknowledged', last_message_at: null }] },
+    isLoading: false, error: null,
   }),
-  useSendBuilderMessage: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useRetryBuilderMessage: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useParticipantConversation: () => ({
+    data: { conversation_id: 'conv-1', open: true, can_send: true, can_invite: true, can_leave: false, participants: [], messages: [] },
+    isLoading: false, error: null,
+  }),
+  useSendConversationMessage: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useRetryConversationMessage: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useConversationInvitees: () => ({ data: [], isLoading: false, error: null }),
+  useInviteConversationParticipant: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useLeaveConversation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
 const record = {

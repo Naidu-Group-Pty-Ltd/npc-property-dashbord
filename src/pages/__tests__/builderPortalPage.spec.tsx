@@ -114,7 +114,7 @@ describe('the Builder Portal area', () => {
     expect(first.getByText('Check Homes Pty Ltd')).toBeInTheDocument();
     expect(first.getByRole('link', { name: /sales@checkhomes\.example/ })).toHaveAttribute('href', 'mailto:sales@checkhomes.example');
     expect(first.getByRole('link', { name: /02 9000 0000/ })).toHaveAttribute('href', 'tel:0290000000');
-    expect(first.getByRole('link', { name: /checkhomes\.example/i, exact: false } as any)).toBeInTheDocument();
+    expect(first.getByRole('link', { name: /website/i })).toHaveAttribute('href', 'https://checkhomes.example');
     expect(first.getByText(/olive owner/i)).toBeInTheDocument();
     expect(first.getByText(/avery builder/i)).toBeInTheDocument();
     expect(first.getByText('Acknowledged')).toBeInTheDocument();

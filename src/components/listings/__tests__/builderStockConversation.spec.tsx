@@ -29,10 +29,10 @@ vi.mock('@/lib/marketplaceBuilderStock', async () => ({
   conversationAccessLost: (await vi.importActual<typeof import('@/lib/marketplaceBuilderStock')>('@/lib/marketplaceBuilderStock')).conversationAccessLost,
   scrollLogToEnd: (log: unknown) => { scrolled.push(log); },
   scrollMessageIntoView: (_log: unknown, id: string) => { scrolled.push(`message:${id}`); },
-  useBuilderConversation: () => ({
+  useParticipantConversation: () => ({
     data: state.conversation ?? undefined, error: state.error, isLoading: false, isFetching: false,
   }),
-  useSendBuilderMessage: () => ({
+  useSendConversationMessage: () => ({
     isPending: false,
     mutateAsync: vi.fn(async (input: { clientMessageId: string; body: string }) => {
       sent.push(input);
@@ -40,13 +40,17 @@ vi.mock('@/lib/marketplaceBuilderStock', async () => ({
       return {};
     }),
   }),
-  useRetryBuilderMessage: () => ({
+  useRetryConversationMessage: () => ({
     isPending: false,
     mutateAsync: vi.fn(async (id: string) => { retried.push(id); return {}; }),
   }),
+  useConversationInvitees: () => ({ data: [], isLoading: false, error: null }),
+  useInviteConversationParticipant: () => ({ isPending: false, mutateAsync: vi.fn() }),
+  useLeaveConversation: () => ({ isPending: false, mutateAsync: vi.fn() }),
+  useMyBuilderConversations: () => ({ data: { conversations: [] }, isLoading: false, error: null }),
 }));
 
-import { BuilderStockConversation } from '../BuilderStockConversation';
+import { BuilderConversationThread } from '../BuilderStockConversation';
 
 const MESSAGE = (overrides: Record<string, unknown>) => ({
   id: 'm', side: 'command_centre', sender_display_name: 'Olive Owner', body: 'Hello',
@@ -62,7 +66,7 @@ beforeEach(() => {
   retried.length = 0;
 });
 
-const renderCard = () => render(<BuilderStockConversation stockItemId="item-1" builderName="Proof Homes" />);
+const renderCard = () => render(<BuilderConversationThread conversationId="conv-1" builderName="Proof Homes" />);
 
 describe('the builder conversation card', () => {
   it('names the builder it is with', () => {
@@ -244,7 +248,7 @@ describe('the conversation log follows its newest message', () => {
   it('opens at the end, and moves to the end again when a poll brings in a message', () => {
     scrolled.length = 0;
     state.conversation = { conversation_id: 'c', open: true, can_send: true, messages: [MESSAGE({ id: 'm1', body: 'First.' })] };
-    const card = () => <BuilderStockConversation stockItemId="item-1" builderName="Proof Homes" />;
+    const card = () => <BuilderConversationThread conversationId="conv-1" builderName="Proof Homes" />;
     const view = render(card());
     expect(scrolled).toContain(screen.getByRole('log'));
     const before = scrolled.length;
@@ -257,7 +261,7 @@ describe('the conversation log follows its newest message', () => {
     scrolled.length = 0;
     state.conversation = { conversation_id: 'c', open: true, can_send: true,
       messages: [MESSAGE({ id: 'm1', body: 'First.' }), MESSAGE({ id: 'm3', body: 'Newest.' })] };
-    const card = () => <BuilderStockConversation stockItemId="item-1" builderName="Proof Homes" />;
+    const card = () => <BuilderConversationThread conversationId="conv-1" builderName="Proof Homes" />;
     const view = render(card());
     state.conversation = { ...state.conversation, messages: [state.conversation.messages[0],
       MESSAGE({ id: 'm2', body: 'Arrived late.' }), state.conversation.messages[1]] };
@@ -266,12 +270,12 @@ describe('the conversation log follows its newest message', () => {
   });
 });
 
-describe('a draft belongs to the property it was written on', () => {
-  it('moving to another property clears the composer rather than carrying the text to another builder', () => {
+describe('a draft belongs to the conversation it was written in', () => {
+  it('moving to another conversation clears the composer rather than carrying the text to another builder', () => {
     state.conversation = { conversation_id: 'c', open: true, can_send: true, messages: [] };
-    const view = render(<BuilderStockConversation stockItemId="item-1" builderName="Proof Homes" />);
+    const view = render(<BuilderConversationThread conversationId="conv-1" builderName="Proof Homes" />);
     fireEvent.change(screen.getByRole('textbox', { name: /message/i }), { target: { value: 'For the first property only.' } });
-    view.rerender(<BuilderStockConversation stockItemId="item-2" builderName="Other Homes" />);
+    view.rerender(<BuilderConversationThread conversationId="conv-2" builderName="Other Homes" />);
     expect((screen.getByRole('textbox', { name: /message/i }) as HTMLTextAreaElement).value).toBe('');
   });
 });

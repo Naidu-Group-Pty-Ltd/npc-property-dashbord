@@ -8,7 +8,7 @@ and nothing about how a message travels.
 
 The same contract is implemented twice:
 
-- **Command Centre:** `20261222090000_one_activation_one_private_conversation.sql`.
+- **Command Centre:** `20261224090000_one_activation_one_private_conversation.sql`.
 - **aurixa-builders:** `20260926120000_one_activation_one_private_conversation.sql`,
   documented there as `docs/builder-portal/62-…`.
 
