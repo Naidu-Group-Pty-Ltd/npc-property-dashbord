@@ -33,11 +33,13 @@ export type ParticipantConversationRead =
     ok: true; conversation_id: string; stock_item_id: string; address: string | null; lot_number: string | null;
     builder_name: string | null; open: boolean; closed_reason: ConversationClosedReason | null;
     participants: ParticipantView[]; messages: ConversationMessageView[];
+    /** Older messages exist before this page; ask again with `earlier_cursor`. */
+    has_earlier: boolean; earlier_cursor: string | null;
   }
   | { ok: false; reason: 'not_found' | 'not_a_participant' | 'unavailable' };
 
 export async function readParticipantConversation(
-  supabase: Client, args: { conversationId: string; viewerUserId: string },
+  supabase: Client, args: { conversationId: string; viewerUserId: string; beforeMessageId?: string | null },
 ): Promise<ParticipantConversationRead> {
   const { data: conversation, error } = await supabase.from('builder_network_conversations')
     .select('id, connection_id, stock_item_id, builder_organisation_id, selection_ref')
@@ -82,15 +84,13 @@ export async function readParticipantConversation(
     selection: selection.data, item: item.data && item.data.organisation_id === conversation.builder_organisation_id ? item.data : null,
   });
 
-  // The window is the newest 500 by ARRIVAL here, drawn in the order written
-  // (Step 5's rule).
-  const { data: messages, error: messagesError } = await supabase.from('builder_network_messages')
-    .select('id, side, sender_user_id, sender_display_name, body, sent_at, delivery_state, delivered_at, failure_reason')
-    .eq('conversation_id', conversation.id)
-    .order('created_at', { ascending: false })
-    .order('id', { ascending: false })
-    .limit(500);
-  if (messagesError) return { ok: false, reason: 'unavailable' };
+  // A page is 500 messages by ARRIVAL here (Step 5's window), drawn in the
+  // order written. The first read is the newest page; every earlier page is
+  // reached by its cursor, so the whole history can be read however long it
+  // grows — an invited colleague sees all of it.
+  const history = await readMessagePage(supabase, String(conversation.id), args.beforeMessageId ?? null);
+  if (!history.ok) return { ok: false, reason: 'unavailable' };
+  const messages = history.rows;
 
   const open = closed_reason === null;
   return {
@@ -103,9 +103,59 @@ export async function readParticipantConversation(
     open,
     closed_reason,
     participants: projectParticipants(rows, args.viewerUserId),
-    messages: projectConversationMessages((messages ?? []) as Row[], args.viewerUserId)
+    messages: projectConversationMessages(messages, args.viewerUserId)
       .map((message) => ({ ...message, can_retry: message.can_retry && open })),
+    has_earlier: history.hasEarlier,
+    earlier_cursor: history.hasEarlier ? history.cursor : null,
   };
+}
+
+/** One page of a conversation's messages, by arrival. */
+const MESSAGE_PAGE = 500;
+const MESSAGE_COLUMNS = 'id, side, sender_user_id, sender_display_name, body, sent_at, delivery_state, delivered_at, failure_reason, created_at';
+const byArrivalDesc = (a: Row, b: Row) =>
+  (a.created_at === b.created_at ? (String(a.id) < String(b.id) ? 1 : -1) : (String(a.created_at) < String(b.created_at) ? 1 : -1));
+
+/**
+ * The page of messages that arrived before `beforeMessageId` (or the newest
+ * page without one), newest first, and whether any arrived earlier still.
+ * The cursor is a message of THIS conversation; one from anywhere else reaches
+ * nothing. Arrival order is (created_at, id), so ties at a page boundary are
+ * split by id: earlier timestamps in one read, the same timestamp with a
+ * smaller id in another. No filter is composed as a string.
+ */
+async function readMessagePage(
+  supabase: Client, conversationId: string, beforeMessageId: string | null,
+): Promise<{ ok: true; rows: Row[]; hasEarlier: boolean; cursor: string | null } | { ok: false }> {
+  let rows: Row[];
+  if (!beforeMessageId) {
+    const { data, error } = await supabase.from('builder_network_messages').select(MESSAGE_COLUMNS)
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: false }).order('id', { ascending: false })
+      .limit(MESSAGE_PAGE + 1);
+    if (error) return { ok: false };
+    rows = (data ?? []) as Row[];
+  } else {
+    const { data: cursor, error: cursorError } = await supabase.from('builder_network_messages')
+      .select('id, created_at').eq('id', beforeMessageId).eq('conversation_id', conversationId).maybeSingle();
+    if (cursorError) return { ok: false };
+    if (!cursor) return { ok: true, rows: [], hasEarlier: false, cursor: null };
+    const [earlier, tied] = await Promise.all([
+      supabase.from('builder_network_messages').select(MESSAGE_COLUMNS)
+        .eq('conversation_id', conversationId).lt('created_at', cursor.created_at)
+        .order('created_at', { ascending: false }).order('id', { ascending: false })
+        .limit(MESSAGE_PAGE + 1),
+      supabase.from('builder_network_messages').select(MESSAGE_COLUMNS)
+        .eq('conversation_id', conversationId).eq('created_at', cursor.created_at).lt('id', cursor.id)
+        .order('id', { ascending: false })
+        .limit(MESSAGE_PAGE + 1),
+    ]);
+    if (earlier.error || tied.error) return { ok: false };
+    rows = [...((tied.data ?? []) as Row[]), ...((earlier.data ?? []) as Row[])].sort(byArrivalDesc);
+  }
+  const hasEarlier = rows.length > MESSAGE_PAGE;
+  const page = rows.slice(0, MESSAGE_PAGE);
+  return { ok: true, rows: page, hasEarlier, cursor: page.length ? String(page[page.length - 1].id) : null };
 }
 
 const ACTIVATION_PAGE = 500;

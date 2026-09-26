@@ -42,6 +42,7 @@ vi.mock('@/lib/marketplaceBuilderStock', async () => {
       isFetchedAfterMount: !state.cachedOnly, isFetching: !!state.cachedOnly,
     }),
     useMarkActivationAcknowledgementsRead: () => ({ mutate: markOnServer }),
+    useEarlierConversationMessages: () => ({ isPending: false, mutateAsync: vi.fn(async () => ({ messages: [] })) }),
     useMyBuilderConversations: () => ({ data: state.inboxError ? undefined : state.inbox, error: state.inboxError ?? null, isLoading: false }),
     useParticipantConversation: () => ({ data: state.conversation, error: state.conversationError ?? null, isLoading: false, isFetching: false }),
     useSendConversationMessage: () => ({

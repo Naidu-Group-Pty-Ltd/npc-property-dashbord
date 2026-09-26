@@ -11,7 +11,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import {
-  arrivalScrollTarget, conversationAccessLost, scrollLogToEnd, scrollMessageIntoView,
+  arrivalScrollTarget, conversationAccessLost, mergeConversationPages, scrollLogToEnd, scrollMessageIntoView,
+  useEarlierConversationMessages,
   useConversationInvitees, useInviteConversationParticipant, useLeaveConversation, useMyBuilderConversations,
   useParticipantConversation, useRetryConversationMessage, useSendConversationMessage,
   type ConversationMessageView, type DeliveryState, type ParticipantView,
@@ -139,7 +140,30 @@ function ConversationThread({
   // through failures that say nothing about who may read it.
   const accessLost = conversationAccessLost(query.error);
   const conversation = accessLost ? undefined : query.data;
-  const messages = conversation?.messages ?? [];
+  // The poll keeps the newest window current; earlier pages are added above
+  // it when asked for, so the whole history can be read however long it is.
+  const earlierPage = useEarlierConversationMessages(conversationId);
+  const [earlier, setEarlier] = useState<{ messages: ConversationMessageView[]; cursor: string | null; more: boolean } | null>(null);
+  const messages = conversation ? mergeConversationPages(earlier?.messages ?? [], conversation.messages ?? []) : [];
+  const earlierCursor = earlier ? earlier.cursor : conversation?.earlier_cursor ?? null;
+  const moreEarlier = earlier ? earlier.more : !!conversation?.has_earlier;
+  const showEarlier = async () => {
+    if (!earlierCursor || earlierPage.isPending) return;
+    try {
+      const page = await earlierPage.mutateAsync(earlierCursor);
+      setEarlier((previous) => ({
+        messages: [...(page.messages ?? []), ...(previous?.messages ?? [])],
+        cursor: page.earlier_cursor ?? null,
+        more: !!page.has_earlier && !!page.earlier_cursor,
+      }));
+    } catch (error) {
+      toast({
+        title: 'Earlier messages could not be loaded',
+        description: error instanceof Error ? error.message : 'Try again shortly.',
+        variant: 'destructive',
+      });
+    }
+  };
   const who = builderName ?? conversation?.builder_name ?? 'the builder';
   const refusedAsOutsider = accessLost && (query.error as { code?: string } | null)?.code === 'not_a_participant';
   // Open at the newest message, and follow it as polls bring more in.
@@ -223,11 +247,19 @@ function ConversationThread({
             The conversation could not be loaded just now. It will try again shortly.
           </p>
         ) : messages.length ? (
+          <>
+          {moreEarlier && earlierCursor ? (
+            <Button type="button" variant="outline" size="sm" onClick={showEarlier} disabled={earlierPage.isPending}>
+              {earlierPage.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden /> : null}
+              Show earlier messages
+            </Button>
+          ) : null}
           <div ref={logRef} role="log" aria-label={`Messages with ${who}`} aria-live="polite" className="max-h-[28rem] space-y-3 overflow-y-auto pr-1">
             {messages.map((message) => (
               <Message key={message.id} message={message} canRetry={!!conversation?.can_send && message.can_retry} onRetry={sendAgain} retrying={retry.isPending} />
             ))}
           </div>
+          </>
         ) : conversation?.open ? (
           <p className="rounded-md border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
             {conversation.can_send

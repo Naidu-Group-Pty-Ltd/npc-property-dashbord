@@ -73,6 +73,10 @@ valid candidate is refused. Inviting is a write, so the inviter also needs the
 permission sending needs (Listings edit here, `inventory` edit on the
 network); a participant who holds view alone reads the conversation and adds
 nobody, exactly as they send nothing. An invited colleague sees the whole history.
+A thread opens on its newest 500 messages (Step 5's window) and every earlier
+page is reached with "Show earlier messages" (a cursor on the read, never a
+larger window), so the whole history is readable however long it grows.
+Inviting is stopped by the network kill switch exactly as sending is.
 Inviting someone already in the conversation changes nothing. A conversation
 that is closed takes no invitation.
 

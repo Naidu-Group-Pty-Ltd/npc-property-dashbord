@@ -566,6 +566,52 @@ describe.skipIf(!runs)('one activation, one private conversation (Command Centre
     });
   });
 
+  describe('the network kill switch stops invitations too', () => {
+    it('with builder_network_enabled off, nobody can be added, as nobody can send', () => {
+      db.sql(`UPDATE public.feature_flags SET value = 'false'::jsonb WHERE key = 'builder_network_enabled'`);
+      try {
+        const before = count(`public.builder_network_conversation_participants WHERE conversation_id = ${lit(C2)}`);
+        expect(refusal(`SELECT public.builder_network_invite_participant(${lit(C2)}, ${lit(OWNER_2)}, ${lit(THIRD)})`))
+          .toMatch(/AGENCY_NETWORK_DISABLED/);
+        expect(count(`public.builder_network_conversation_participants WHERE conversation_id = ${lit(C2)}`)).toBe(before);
+      } finally {
+        db.sql(`UPDATE public.feature_flags SET value = 'true'::jsonb WHERE key = 'builder_network_enabled'`);
+      }
+    });
+  });
+
+  describe('held events never block the queue', () => {
+    it('more held events than one sweep takes do not keep a later valid event from applying', () => {
+      const client = db.sql(`INSERT INTO public.clients(primary_first_name) VALUES ('H') RETURNING id`);
+      const sel = db.sql(`INSERT INTO public.builder_stock_selections(stock_item_id, organisation_id, client_id, selected_by_user_id, status)
+                          VALUES (${lit(QUIET_ITEM)}, ${lit(ORG_A)}, ${lit(client)}, ${lit(OWNER_2)}, 'selected') RETURNING id`);
+      const waiting = activationConversationId(NET_A, sel);
+      for (let i = 0; i < 12; i += 1) {
+        const ref = randomUUID();
+        land(CONN_A, 'agency.message.participant', `agency.participant:${waiting}:${ref}:1:${randomUUID()}`, {
+          schema_version: 1, conversation_id: waiting, stock_item_id: QUIET_ITEM, participant_ref: ref,
+          display_name: `Held ${i}`, side: 'builder', state: 'joined', version: 1,
+        });
+      }
+      // A valid event about an acknowledged conversation, behind all twelve.
+      const ref = randomUUID();
+      land(CONN_A, 'agency.message.participant', `agency.participant:${C1}:${ref}:1:${randomUUID()}`, {
+        schema_version: 1, conversation_id: C1, stock_item_id: ITEM, participant_ref: ref,
+        display_name: 'Later Builder', side: 'builder', state: 'joined', version: 1,
+      });
+      // Each sweep takes ten: the held ones are passed over, not re-taken for ever.
+      for (let i = 0; i < 3; i += 1) db.sql('SELECT * FROM public.builder_network_apply_message_events(10)');
+      expect(count(`public.builder_network_conversation_participants WHERE participant_ref = ${lit(ref)}`)).toBe('1');
+      // The held ones are still held, unconsumed, and apply once acknowledged.
+      expect(count(`public.builder_network_inbound_events WHERE payload->>'conversation_id' = ${lit(waiting)}
+                    AND message_applied_at IS NULL`)).toBe('12');
+      acknowledge(CONN_A, sel, QUIET_ITEM, 'Held Acknowledger');
+      messageSweep();
+      expect(count(`public.builder_network_conversation_participants WHERE conversation_id = ${lit(waiting)} AND side = 'builder'`))
+        .toBe('12');
+    });
+  });
+
   describe('closed for any reason', () => {
     it('the last participant may leave a conversation closed for a reason other than withdrawal', () => {
       db.sql(`UPDATE public.builder_network_stock_items SET lifecycle_status = 'archived' WHERE id = ${lit(ITEM)}`);

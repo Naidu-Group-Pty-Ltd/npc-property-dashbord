@@ -681,7 +681,10 @@ Deno.serve(async (req) => {
     if (operation === 'get_builder_conversation') {
       const conversationId = uuidOf(body.conversation_id);
       if (!conversationId) return json({ error: 'Conversation not found' }, 404);
-      const read = await readParticipantConversation(supabase, { conversationId, viewerUserId: userId });
+      // A history cursor, where one is asked for: the page before that message.
+      const read = await readParticipantConversation(supabase, {
+        conversationId, viewerUserId: userId, beforeMessageId: uuidOf(body.before_message_id),
+      });
       if (!read.ok) {
         if (read.reason === 'not_found') return json({ error: 'Conversation not found' }, 404);
         if (read.reason === 'not_a_participant') return notAParticipant();
@@ -706,12 +709,14 @@ Deno.serve(async (req) => {
         open: read.open,
         closed_reason: read.closed_reason,
         can_send: canSend,
-        can_invite: read.open && listingsEdit.ok,
+        can_invite: read.open && listingsEdit.ok && networkOn,
         // A live conversation keeps someone on this side; a closed one can be
         // left freely. The server decides again when asked.
         can_leave: !live || mine.length > 1,
         participants: read.participants,
         messages: read.messages.map((message) => ({ ...message, can_retry: message.can_retry && canSend })),
+        has_earlier: read.has_earlier,
+        earlier_cursor: read.earlier_cursor,
       });
     }
 

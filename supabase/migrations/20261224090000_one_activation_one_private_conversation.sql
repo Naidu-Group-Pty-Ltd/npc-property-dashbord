@@ -58,6 +58,13 @@ ALTER TABLE public.builder_stock_selections
   ADD COLUMN IF NOT EXISTS acknowledged_by_display_name text
     CHECK (acknowledged_by_display_name IS NULL OR length(btrim(acknowledged_by_display_name)) BETWEEN 1 AND 200);
 
+-- A conversation event that arrived ahead of its acknowledgement is HELD:
+-- left unconsumed, and passed over by the sweep until this time, so a run of
+-- held events at the head of the queue can never keep later ones from
+-- applying. The acknowledgement clears it, so held events apply at once.
+ALTER TABLE public.builder_network_inbound_events
+  ADD COLUMN IF NOT EXISTS message_held_until timestamptz;
+
 -- The builder COMPANY's own public contact details, as its network sends them.
 ALTER TABLE public.builder_network_stock_organisations
   ADD COLUMN IF NOT EXISTS contact_email text,
@@ -456,7 +463,15 @@ AS $fn$
 DECLARE
   v_c public.builder_network_conversations%ROWTYPE;
   v_closed text;
+  v_flag boolean;
 BEGIN
+  -- The network kill switch stops invitations as it stops sending: an
+  -- invitation is a participant event that would cross when it is restored.
+  SELECT (value = 'true'::jsonb) INTO v_flag
+    FROM public.feature_flags WHERE key = 'builder_network_enabled';
+  IF v_flag IS DISTINCT FROM true THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'AGENCY_NETWORK_DISABLED';
+  END IF;
   SELECT * INTO v_c FROM public.builder_network_conversations WHERE id = _conversation_id FOR UPDATE;
   IF v_c.id IS NULL THEN
     RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'AGENCY_CONVERSATION_NOT_FOUND';
@@ -612,6 +627,10 @@ BEGIN
     VALUES (v_conversation, v_conn.id, v_s.stock_item_id, v_s.organisation_id, v_s.selected_by_user_id, v_s.id)
     ON CONFLICT (id) DO UPDATE SET selection_ref = COALESCE(public.builder_network_conversations.selection_ref, EXCLUDED.selection_ref);
   END IF;
+  -- Events held for this acknowledgement may apply at once now.
+  UPDATE public.builder_network_inbound_events
+     SET message_held_until = NULL
+   WHERE connection_id = v_conn.id AND message_applied_at IS NULL AND message_held_until IS NOT NULL;
 
   -- The activator is the Command Centre's one initial participant, and
   -- nobody is ever added in their place. An activator who is inactive or
@@ -1241,6 +1260,7 @@ BEGIN
       FROM public.builder_network_inbound_events e
      WHERE e.message_applied_at IS NULL
        AND e.event_type IN ('agency.message.posted', 'agency.message.receipt', 'agency.message.participant')
+       AND (e.message_held_until IS NULL OR e.message_held_until <= now())
        AND NOT EXISTS (
          SELECT 1 FROM public.builder_network_connections c
           WHERE c.id = e.connection_id AND c.identity_mismatch_since IS NOT NULL)
@@ -1259,6 +1279,10 @@ BEGIN
     BEGIN
       v_result := public.builder_network_apply_message_event(v_event.id);
       IF v_result = 'held' THEN
+        -- Passed over for a while rather than re-taken at the head of every sweep.
+        UPDATE public.builder_network_inbound_events
+           SET message_held_until = now() + interval '5 minutes'
+         WHERE id = v_event.id;
         CONTINUE;
       END IF;
       UPDATE public.builder_network_inbound_events

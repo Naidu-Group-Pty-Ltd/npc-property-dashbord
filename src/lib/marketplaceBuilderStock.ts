@@ -252,6 +252,23 @@ export interface BuilderConversation {
   can_leave?: boolean;
   participants?: ParticipantView[];
   messages: ConversationMessageView[];
+  /** Older messages exist before this page; ask again with `earlier_cursor`. */
+  has_earlier?: boolean;
+  earlier_cursor?: string | null;
+}
+
+/**
+ * The thread as shown: earlier pages the reader asked for, and the newest
+ * window the poll keeps current, one message once, in the order written.
+ */
+export function mergeConversationPages(
+  earlier: readonly ConversationMessageView[], window: readonly ConversationMessageView[],
+): ConversationMessageView[] {
+  const byId = new Map<string, ConversationMessageView>();
+  for (const message of earlier) byId.set(message.id, message);
+  for (const message of window) byId.set(message.id, message);
+  return [...byId.values()].sort((a, b) =>
+    (a.sent_at === b.sent_at ? (a.id < b.id ? -1 : 1) : (a.sent_at < b.sent_at ? -1 : 1)));
 }
 
 /** How often an open conversation re-reads itself. Polling is the transport's floor. */
@@ -398,6 +415,15 @@ export function useParticipantConversation(conversationId: string, enabled = tru
     refetchInterval: (query) => conversationRefetchInterval(query.state),
     refetchIntervalInBackground: false,
     retry: retryUnlessAccessLost,
+  });
+}
+
+/** One earlier page of a conversation's history, before the message `cursor` names. */
+export function useEarlierConversationMessages(conversationId: string) {
+  return useMutation({
+    mutationFn: (cursor: string) => invoke<BuilderConversation>({
+      operation: 'get_builder_conversation', conversation_id: conversationId, before_message_id: cursor,
+    }),
   });
 }
 

@@ -24,9 +24,16 @@ const sendFailures = { remaining: 0 };
 const retried: string[] = [];
 
 const scrolled: unknown[] = [];
+const earlierAsked: string[] = [];
+const earlierPages: Record<string, any> = {};
 vi.mock('@/lib/marketplaceBuilderStock', async () => ({
   arrivalScrollTarget: (await vi.importActual<typeof import('@/lib/marketplaceBuilderStock')>('@/lib/marketplaceBuilderStock')).arrivalScrollTarget,
   conversationAccessLost: (await vi.importActual<typeof import('@/lib/marketplaceBuilderStock')>('@/lib/marketplaceBuilderStock')).conversationAccessLost,
+  mergeConversationPages: (await vi.importActual<typeof import('@/lib/marketplaceBuilderStock')>('@/lib/marketplaceBuilderStock')).mergeConversationPages,
+  useEarlierConversationMessages: () => ({
+    isPending: false,
+    mutateAsync: vi.fn(async (cursor: string) => { earlierAsked.push(cursor); return earlierPages[cursor]; }),
+  }),
   scrollLogToEnd: (log: unknown) => { scrolled.push(log); },
   scrollMessageIntoView: (_log: unknown, id: string) => { scrolled.push(`message:${id}`); },
   useParticipantConversation: () => ({
@@ -67,6 +74,8 @@ beforeEach(() => {
   sent.length = 0;
   sendFailures.remaining = 0;
   retried.length = 0;
+  earlierAsked.length = 0;
+  for (const key of Object.keys(earlierPages)) delete earlierPages[key];
 });
 
 const renderCard = () => render(<BuilderConversationThread conversationId="conv-1" builderName="Proof Homes" />);
@@ -299,5 +308,36 @@ describe('a draft belongs to the conversation it was written in', () => {
     fireEvent.change(screen.getByRole('textbox', { name: /message/i }), { target: { value: 'For the first property only.' } });
     view.rerender(<BuilderConversationThread conversationId="conv-2" builderName="Other Homes" />);
     expect((screen.getByRole('textbox', { name: /message/i }) as HTMLTextAreaElement).value).toBe('');
+  });
+});
+
+describe('the whole history can be read', () => {
+  const conversation = (overrides: Record<string, unknown> = {}) => ({
+    conversation_id: 'conv-1', open: true, can_send: true, participants: [],
+    messages: [MESSAGE({ id: 'newest', body: 'Newest message', sent_at: '2026-09-25T12:00:00Z' })],
+    has_earlier: true, earlier_cursor: 'newest', ...overrides,
+  });
+
+  it('offers earlier messages while there are any, and adds each page above the window it already shows', async () => {
+    state.conversation = conversation();
+    earlierPages.newest = { messages: [MESSAGE({ id: 'older', body: 'Older message', sent_at: '2026-09-20T12:00:00Z' })],
+      has_earlier: true, earlier_cursor: 'older' };
+    earlierPages.older = { messages: [MESSAGE({ id: 'oldest', body: 'Oldest message', sent_at: '2026-09-10T12:00:00Z' })],
+      has_earlier: false, earlier_cursor: null };
+    render(<MemoryRouter><BuilderConversationThread conversationId="conv-1" /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: /show earlier messages/i }));
+    expect(await screen.findByText('Older message')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /show earlier messages/i }));
+    expect(await screen.findByText('Oldest message')).toBeInTheDocument();
+    expect(earlierAsked).toEqual(['newest', 'older']);
+    const log = screen.getByRole('log');
+    expect(within(log).getAllByText(/message$/).map((n) => n.textContent)).toEqual(['Oldest message', 'Older message', 'Newest message']);
+    expect(screen.queryByRole('button', { name: /show earlier messages/i })).toBeNull();
+  });
+
+  it('says nothing about earlier messages when there are none', () => {
+    state.conversation = conversation({ has_earlier: false, earlier_cursor: null });
+    render(<MemoryRouter><BuilderConversationThread conversationId="conv-1" /></MemoryRouter>);
+    expect(screen.queryByRole('button', { name: /show earlier messages/i })).toBeNull();
   });
 });

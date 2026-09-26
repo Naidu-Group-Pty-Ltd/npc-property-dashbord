@@ -53,6 +53,7 @@ function standIn(tables: Record<string, Row[]>, options: { maxRows?: number } = 
       neq(col: string, v: unknown) { entry.filters.push(['neq', col, v]); return builder; },
       in(col: string, v: unknown[]) { entry.filters.push(['in', col, v]); return builder; },
       is(col: string, v: unknown) { entry.filters.push(['is', col, v]); return builder; },
+      lt(col: string, v: unknown) { entry.filters.push(['lt', col, v]); return builder; },
       order(col: string, o?: { ascending?: boolean }) { orders = [...orders, [col, o?.ascending !== false]]; return builder; },
       limit(n: number) { cap = n; return builder; },
       range(a: number, b: number) { offset = a; cap = Math.min(b - a + 1, options.maxRows ?? Infinity); return builder; },
@@ -61,6 +62,7 @@ function standIn(tables: Record<string, Row[]>, options: { maxRows?: number } = 
         let rows = (tables[table] ?? []).filter((row) => entry.filters.every(([op, col, v]) =>
           op === 'eq' ? row[col] === v : op === 'neq' ? row[col] !== v
             : op === 'is' ? (row[col] ?? null) === v
+            : op === 'lt' ? String(row[col]) < String(v)
             : (v as unknown[]).includes(row[col])));
         for (const [col, asc] of [...orders].reverse()) {
           rows = [...rows].sort((a, b) => (String(a[col]) < String(b[col]) ? -1 : String(a[col]) > String(b[col]) ? 1 : 0) * (asc ? 1 : -1));
@@ -138,6 +140,52 @@ describe('reading a conversation is for its participants', () => {
     const read = await readParticipantConversation(standIn(tables, { maxRows: 1000 }).client, { conversationId: 'conv-1', viewerUserId: ME });
     if (!read.ok) throw new Error(`refused: ${(read as { reason?: string }).reason}`);
     expect(read.participants.length).toBe(1203);
+  });
+
+  it('the whole history is reachable: the newest 500 first, then earlier pages by cursor, each message exactly once', async () => {
+    const tables = world();
+    // 1,203 more, two to a timestamp, so page boundaries fall inside ties.
+    for (let i = 0; i < 1203; i += 1) {
+      const at = new Date(Date.UTC(2026, 8, 1) + Math.floor(i / 2) * 60_000).toISOString();
+      tables.builder_network_messages.push({ id: `h-${String(i).padStart(4, '0')}`, conversation_id: 'conv-1', side: 'builder',
+        sender_user_id: null, sender_display_name: 'Avery Builder', body: `History ${i}`, sent_at: at, created_at: at,
+        delivery_state: null, delivered_at: null, failure_reason: null });
+    }
+    const client = standIn(tables, { maxRows: 1000 }).client;
+    const first = await readParticipantConversation(client, { conversationId: 'conv-1', viewerUserId: ME });
+    if (!first.ok) throw new Error('refused');
+    expect(first.messages).toHaveLength(500);
+    expect(first.has_earlier).toBe(true);
+    const seen = new Set(first.messages.map((m) => m.id));
+    let cursor = first.earlier_cursor;
+    let pages = 0;
+    while (cursor) {
+      const page = await readParticipantConversation(client, { conversationId: 'conv-1', viewerUserId: ME, beforeMessageId: cursor });
+      if (!page.ok) throw new Error('refused');
+      for (const m of page.messages) {
+        expect(seen.has(m.id)).toBe(false);
+        seen.add(m.id);
+      }
+      cursor = page.has_earlier ? page.earlier_cursor : null;
+      pages += 1;
+      expect(pages).toBeLessThan(5);
+    }
+    expect(seen.size).toBe(1205);
+  });
+
+  it('a history cursor from another conversation reaches nothing, and a non-participant is refused with one', async () => {
+    const tables = world();
+    tables.builder_network_messages.push({ id: 'other-conv-message', conversation_id: 'conv-3', side: 'builder', sender_user_id: null,
+      sender_display_name: 'X', body: 'Not yours', sent_at: '2026-09-26T00:00:00Z', created_at: '2026-09-26T00:00:00Z',
+      delivery_state: null, delivered_at: null, failure_reason: null });
+    const page = await readParticipantConversation(standIn(tables).client,
+      { conversationId: 'conv-1', viewerUserId: ME, beforeMessageId: 'other-conv-message' });
+    if (!page.ok) throw new Error('refused');
+    expect(page.messages).toEqual([]);
+    expect(page.has_earlier).toBe(false);
+    const outsider = await readParticipantConversation(standIn(tables).client,
+      { conversationId: 'conv-1', viewerUserId: COLLEAGUE, beforeMessageId: 'm2' });
+    expect(outsider).toEqual({ ok: false, reason: 'not_a_participant' });
   });
 
   it('R38/R18. a participant reads the whole thread and both sides\' current participants', async () => {
@@ -505,6 +553,17 @@ describe('the edge operations', () => {
       expect(source()).toContain(`'${op}'`);
     }
     expect(source()).toMatch(/readParticipantConversation/);
+  });
+
+  it('a conversation read takes a history cursor, and says whether there is more', () => {
+    const code = source();
+    expect(code).toMatch(/'get_builder_conversation'[\s\S]{0,400}beforeMessageId:\s*uuidOf\(body\.before_message_id\)/);
+    expect(code).toMatch(/has_earlier:\s*read\.has_earlier/);
+    expect(code).toMatch(/earlier_cursor:\s*read\.earlier_cursor/);
+  });
+
+  it('adding somebody is offered only while the network is on, as sending is', () => {
+    expect(source()).toMatch(/can_invite:\s*read\.open && listingsEdit\.ok && networkOn/);
   });
 
   it('R21. there is no operation that removes somebody else', () => {
