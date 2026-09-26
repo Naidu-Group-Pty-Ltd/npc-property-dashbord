@@ -200,18 +200,20 @@ A tenant cannot make risk green.
 
 ## 7. Not verified — PENDING
 
-- **Cash Flow, Portfolio, Formara and the two Q&A editors were not rendered
-  whole.** Their generators live inside React components; the Cash Flow modal
-  alone is 6,000 lines that no unit harness mounts. Their prime path was
-  audited instead (§6). PENDING a browser render of each, prime and clone.
+- **Cash Flow and the two Q&A editors were not rendered whole.** Their
+  generators live inside React components; the Cash Flow modal alone is 6,000
+  lines that no unit harness mounts. Their prime path was audited instead (§6).
+  PENDING a browser render of each, prime and clone. Portfolio and Formara have
+  since been rendered in a browser, on the prime and on a simulated clone (§15).
 - **The prime's live bundle was not read.** Its domain answers a Cloudflare
   challenge, which this work does not get past. PENDING a check after publish
   that the prime still prints NPC's artwork on each legacy document.
 - **No real clone has drawn any of these documents.** PENDING a clone deploy.
 - **The white-label Edge Function changes are deployed.** #2775 merged on
   26 Sep 2026 and all eighteen functions it changed were redeployed between
-  03:24 and 03:35 UTC. The follow-up (§9–§11) is PENDING merge and deploy,
-  which need the owner's approval.
+  03:24 and 03:35 UTC. The follow-up (§9–§11, #2778) merged and was deployed
+  the same day. §12–§15 are PENDING merge and deploy, which need the owner's
+  approval.
 
 ## 8. The uploaded PDF's words (a separate fix, same change)
 
@@ -280,13 +282,11 @@ older browser generator already left that close out for the platform. The
 typeset route now does too (`brandCloseCallouts`), and its page budget counts
 the callouts it actually prints, so no empty "Your Next Steps" chapter is drawn.
 
-**Not changed, and the same class:** `email-copilot` drafts replies signed
-"`<company>` Team", and `ai-dashboard-agent` and `user-guide-assistant` name the
-company in their personas. All three read Report Settings. They are not report
-writers, and a drafted email belongs to the email identity
-(`CLONE_EMAIL_IDENTITY.md`), not the report issuer. `market-updates-qa` still
-calls itself "the NPC Australian property-market intelligence analyst" on every
-deployment.
+**The same class outside the report writers is closed in §12.** The email
+copilot, the dashboard assistant and the user guide read Report Settings, and
+Market Updates Q&A called itself "the NPC Australian property-market
+intelligence analyst" on every deployment. They are not report writers, so they
+follow the workspace rather than the report issuer.
 
 ## 10. The document's words, for every section
 
@@ -324,11 +324,9 @@ bounded), the extracted specifications and where the words came from.
 A regeneration of the same report without a document reads the kept copy too,
 so it is written from the same evidence as the first generation.
 
-Two things it does not do:
+Deleting the report removes the kept document with its photographs and plans
+(§14). One thing it does not do:
 
-- **Deleting a report does not delete it.** `manage-investment-reports`
-  deletes the row and nothing in storage. The report's photographs have
-  always stayed behind, and the kept document now stays beside them.
 - **It cannot keep what has no bucket.** `listing-images` is created by a
   migration, and rows a migration inserts do not always reach a clone
   (`CLONE_PROVISIONING_GAPS.md`). Where the bucket is missing, the log says
@@ -349,5 +347,186 @@ Two things it does not do:
 - **PENDING:** a real clone generating a report with the new persona, and a
   real brochure report written across several invocations. Both need the
   functions deployed and spend model calls.
-- **PENDING:** a browser render of Portfolio and Formara on a clone. The change
-  is one argument, and the prime path passes the same value it always did.
+- **Done since (§15):** a browser render of Portfolio and Formara, on the prime
+  and on a simulated clone.
+
+## 12. Who the tools speak for
+
+The report writers were moved onto the issuer in §9. Nothing else that speaks
+was:
+
+- The email copilot's seven prompts, the dashboard assistant and the user guide
+  took the company name from Report Settings. A clone whose row still held
+  NPC's name drafted replies signed "Naidu Property Consulting Services Team".
+- Market Updates Q&A and the finance portal's copilot named NPC in their
+  personas, as a literal, on every deployment.
+- On every clone the solicitor portal told a solicitor to "Contact NPC to
+  reopen it". A Command Centre message with no sender was signed "NPC Command
+  Centre", and its threads were labelled the same. A finance partner's ping was
+  headed "[NPC ping — …]". The conversation export named "NPC Services" as its
+  author, and authenticator apps listed a clone's staff under "NPC Property
+  Dashboard".
+
+They now speak for the workspace (`workspaceIdentity.pure.ts`, read at the edge
+by `workspaceIdentity.ts`):
+
+- **On the prime nothing changes.** Each site keeps the words it always had:
+  Report Settings' name where it read one, its literal where it had one. A site
+  that printed a literal reads nothing new.
+- **On a clone the business is the clone's own.** That is its Report Settings
+  name, then its Branding page name, then the name Mission Control provisioned
+  it under (`MISSION_CONTROL_AGENCY_NAME`) — the order a clone's email already
+  follows. A placeholder is not a name, and the house's name is never the
+  clone's, whichever row holds it.
+- **Where a clone names nobody, nobody is named.** Not NPC, not "Property
+  Consulting", and not Aurixa, which is not the business these tools work for.
+  Every sentence is written to read whole without a name.
+
+The provisioned name counts here and not on a document. A document with nothing
+named is issued under the platform, and its writer follows its issuer so the
+prose and the cover agree (§9). A drafted email, an assistant and a portal label
+are not documents: they belong to the workspace, and the workspace's provisioned
+name is the one its mail is already sent under.
+
+It covers `email-copilot`, `ai-dashboard-agent`, `user-guide-assistant`,
+`market-updates-qa`, `finance-portal-ai-copilot`, the partner ping in
+`finance-portal-batch9-10`, the Command Centre's signature and thread label in
+`legal-matters-admin`, the closed-matter refusal in
+`solicitor-portal-intelligence`, the export's author in
+`build-conversations-export-worker`, and the authenticator issuer in
+`security-step-up`. Two prompts gave the model a worked example naming NPC: an
+ad set in `analyze-meta-ads-phase2`, and the "NPC view" label the Investment
+generator forbids. A clone's model now sees neither name, because a model
+repeats the example it is shown. `writerIdentity.ts` reads the Branding page
+through the same shared reader.
+
+## 13. The labels a partner and a member of staff read
+
+The partner portals and several staff screens were written for the prime. On
+every clone a solicitor was offered a "Direct line to the NPC team", a finance
+partner pinged an "NPC owner", matters arrived "Flagged by NPC", and staff chose
+a report tier described as carrying the "NPC view".
+
+Each of those literals now reaches the page through `houseLabel(prime, clone)`
+(`src/lib/houseLabel.ts`). The first argument is the prime's words, verbatim,
+and the second is what a clone reads. The deployment is the backend the build
+talks to (`isPrimeDeployment`), fixed when the app is built, so a label never
+changes while a page is open.
+
+- **The prime reads exactly what it read.** All 39 sites in 23 files were
+  compared with the tree before the change: every literal that named the house
+  is now a first argument, byte for byte, with JSX text compared as React
+  renders it.
+- **A clone reads the staff side as "the Command Centre".** It is the product's
+  own name for it: the sign-in page carries it on every deployment, and several
+  of these screens already used it beside "NPC". Where the house was only the
+  source of something, a clone's sentence leaves the source out rather than
+  naming a stand-in ("New referrals will appear here.").
+- **The closed door names nobody.** `InternalToolingGuard` renders its notice
+  only on a clone, and it said the page was "part of NPC Services' own
+  operations". It now says the page is internal tooling for another deployment.
+
+`houseLabelsGuard.spec.ts` holds this from both sides. A literal naming the
+house is the first argument of `houseLabel`, or it is recorded with the reason
+it stays. A reason that no longer matches anything fails, so the list cannot go
+stale. A clone's words never name the house, "Property Consulting" or Aurixa,
+and they differ from the prime's. Both words are literals, and no call site
+passes the deployment in, because `true` there would put the house back on
+every clone. A file-local stand-in for the helper also fails.
+
+Six places keep the name, each recorded in the spec with its reason:
+
+- GHL incident tooling, which renders nothing on a clone.
+- The intake pack's machine marker. Renaming it would make every issued pack
+  unreadable.
+- Two AML/KYC surfaces, which the owner keeps out of this work.
+- Developer tooling that no page renders.
+- The report registry, whose content the owner asked to be left alone.
+
+## 14. Deleting a report removes what it kept
+
+A report owns three folders in the private `listing-images` bucket: its
+photographs with the record that vouches for them, its floor plans, and the
+document context its first invocation kept (§10). Deleting a report used to
+delete the row and nothing else. Every file stayed, and nothing could read it
+any more: a derived report reaches its parent's folder only through
+`parent_report_id` or `derived_from_report_id`, and both are `ON DELETE SET
+NULL`.
+
+Both routes that delete `investment_reports` rows now remove those folders:
+`manage-investment-reports` (`delete` and `bulkDelete`) and
+`manage-automation-settings` (`clearStuckReports`). The rules are in
+`reportStorage.pure.ts` and the calls in `reportStorageRemoval.ts`:
+
+- **Only what a delete actually removed.** The folders are those of the ids the
+  delete statement returned, never of an id a caller only asked about.
+- **Only a report's own folders.** A folder is built from a row id or from
+  nothing. Every path is checked against the report's folders before removal,
+  so none can name another report, a listing's images or the top of the bucket.
+- **Only objects.** A listed sub-folder is a prefix and is never passed to a
+  removal; the floor plans are listed in their own right.
+- **It never fails the delete.** It never throws, and it is bounded in time as
+  a whole: 5 seconds for one report, 20 for a bulk delete. Whatever the budget
+  did not reach is logged as unfinished, and a file left behind costs what
+  every delete cost before.
+- **The rendered PDF stays.** A client portal can hold a copy of a report
+  someone later deletes, and removing it would take the document out of that
+  client's portal.
+
+One thing the same work found and closed: `bulkDelete` with a status filter
+deleted matching reports across the whole deployment, not the caller's own,
+for any signed-in user who sent it. It now requires an administrator, checked
+before the query runs. Its only screen in the product is dead code, so nothing
+that works today changes.
+
+Three things it does not do:
+
+- **Files from reports deleted before this change stay.** Removing them is a
+  sweep across the bucket, which is destructive and needs the owner's approval.
+- **A capture that is already running when the report is deleted** can still
+  write its files afterwards.
+- **A delete by id checks only that the caller is signed in.** A single delete,
+  or a bulk delete given a list of ids, removes any report on the deployment,
+  whoever made it, exactly as before this change: the function runs as the
+  service role and checks neither ownership nor a permission. Whether it should
+  require the Generated Reports permission is the owner's decision, because
+  adding one could stop staff who delete reports today.
+
+## 15. Verified and not verified (this change)
+
+- Unit tests: `workspaceIdentity.spec.ts` (both halves of every rule, and each
+  prime site against its old words), `houseLabelsGuard.spec.ts` and
+  `reportStorage.spec.ts`. `reportStorage.spec.ts` runs the removal against an
+  in-memory store, including a failing list, a failing removal, a throwing
+  client and a store that never answers. It also holds the source to the rule
+  that each delete statement is followed by one removal of what it returned.
+- Each rule was broken on purpose, one at a time, and a spec failed every time.
+  For the labels that is ten mutations: a bare literal, a clone naming NPC or
+  Aurixa, a pinned deployment, a local stand-in, a recorded literal moved, a
+  clone equal to the prime, the closed door naming NPC, a wrapper around words
+  that do not name the house, and a clone argument that is not a literal.
+- **Portfolio and Formara in a browser.** The real app in Chromium, every
+  backend request answered by `scripts/verify/report-journey/supabaseDouble.mjs`,
+  synthetic data, and the clone simulated by building against a made-up project
+  ref. The same branding row had a purple app accent, a teal Branding page
+  colour and a clone business name. The share of saturated ink on every page
+  measured:
+
+  | Document | Teal (Branding page) | Purple (app accent) | Gold (house) |
+  |---|---|---|---|
+  | Portfolio, prime | 0% | 22.1% | 32.7% (house cover and closing page) |
+  | Portfolio, clone | 86.9% (every page) | 0% | 0.3% |
+  | Formara, prime | 0% | 28.2% | 16.6% (house cover) |
+  | Formara, clone | 96.7% (every page) | 0% | 1.0% |
+
+  The prime keeps NPC's cover and the app accent exactly as before. The clone
+  opens on its own cover, in its Branding page colour.
+- **Closing the tab while brochure pictures are filed** (§8 of
+  `PROPERTY_PHOTOGRAPHS.md`), in the same harness: 14 of 14 checks pass. The
+  browser asks before closing or reloading, "stay" keeps the page, and once the
+  pictures are filed the form clears and nothing is asked. With the hold taken
+  out of the source, the tab closed with no prompt, so the check can see the
+  defect.
+- None of this is an acceptance of the live application. **PENDING:** a real
+  clone using the tools, reading the portals and deleting a report, after the
+  functions and the frontend are deployed.
