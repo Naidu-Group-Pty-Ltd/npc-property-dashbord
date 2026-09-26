@@ -24,7 +24,33 @@ const h = vi.hoisted(() => ({
   selections: [] as Array<{ id: string; report_type: string; template_id: string }>,
   selectionsThrow: false,
   selectionCalls: 0,
+  /**
+   * Whether the real release register decides. Off for the mechanism tests,
+   * which are about how a RELEASED report type reaches its template and use
+   * several report types to show the alias map and the variant at work; on for
+   * the hold tests, which are about which report types are released at all.
+   */
+  realRegister: false,
+  toasts: [] as Array<[string, string]>,
 }));
+
+vi.mock('../../../../supabase/functions/_shared/reports/templateParity.pure.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../../supabase/functions/_shared/reports/templateParity.pure')>();
+  return {
+    ...actual,
+    isTemplateDeliveryHeld: (reportType?: string | null) =>
+      (h.realRegister ? actual.isTemplateDeliveryHeld(reportType) : false),
+  };
+});
+
+vi.mock('sonner', () => {
+  const record = (kind: string) => (title: string) => { h.toasts.push([kind, title]); };
+  return {
+    toast: Object.assign(record('default'), {
+      info: record('info'), warning: record('warning'), error: record('error'), success: record('success'),
+    }),
+  };
+});
 
 vi.mock('@/lib/reportTemplate/templateSelection', async (importOriginal) => {
   // The pure half stays real, so the alias map decides which format a
@@ -61,6 +87,8 @@ beforeEach(() => {
   h.selections = [];
   h.selectionsThrow = false;
   h.selectionCalls = 0;
+  h.realRegister = false;
+  h.toasts = [];
 });
 
 describe("the person's chosen template", () => {
@@ -236,5 +264,61 @@ describe('asking for the templated document', () => {
   it('falls back — never throws — when the router fails', async () => {
     h.routeThrows = true;
     await expect(tryTemplateDocument('portfolio', 'p-1')).resolves.toBeNull();
+  });
+});
+
+describe('a report type held on its standard document', () => {
+  /**
+   * The owner's rule (26 Sep 2026): a template changes the layout and nothing
+   * else. None of the nine non-Investment report types carried the same
+   * information through a template as through its standard document, so each
+   * is produced as its standard document, whatever was chosen, until its
+   * parity check passes (`templateParity.pure.ts`). These run on the REAL
+   * register.
+   */
+  beforeEach(() => { h.realRegister = true; });
+
+  const HELD = [
+    'borrowing_capacity', 'cashflow', 'client_details', 'commercial_capacity',
+    'comparison', 'market_intelligence', 'portfolio', 'qa', 'cash_flow_comparison',
+  ];
+
+  it('never reaches a template for any of the nine, chosen or not', async () => {
+    h.selections = HELD.map((type, i) => ({ id: `s${i}`, report_type: type, template_id: `tpl-${type}` }));
+    for (const type of HELD) {
+      expect(await tryTemplateDocument(type, 'record-1', { renderer: 'weasyprint' }), type).toBeNull();
+    }
+    expect(h.routeCalls).toEqual([]);
+  });
+
+  it('is recognised under every spelling of the report type', async () => {
+    for (const alias of ['cash_flow', 'formara', 'commercial_industrial', 'borrowing']) {
+      expect(await tryTemplateDocument(alias, 'record-1'), alias).toBeNull();
+    }
+    expect(h.routeCalls).toEqual([]);
+  });
+
+  it('tells the person when their choice is held back, and says nothing when there is none', async () => {
+    h.selections = [{ id: 's1', report_type: 'portfolio', template_id: 'tpl-chosen' }];
+    await tryTemplateDocument('portfolio', 'p-1');
+    expect(h.toasts).toEqual([['info', 'This report uses its standard layout for now']]);
+
+    h.toasts = [];
+    h.selections = [];
+    await tryTemplateDocument('portfolio', 'p-1');
+    expect(h.toasts).toEqual([]);
+  });
+
+  it('never warns that a choice "was not used" — nothing failed', async () => {
+    h.selections = [{ id: 's1', report_type: 'qa', template_id: 'tpl-chosen' }];
+    await tryTemplateDocument('qa', 'conv-1');
+    expect(h.toasts.filter(([kind]) => kind === 'warning')).toEqual([]);
+  });
+
+  it('leaves the Investment tiers on their templates', async () => {
+    h.selections = [{ id: 's1', report_type: 'investment', template_id: 'tpl-compass' }];
+    const doc = await tryTemplateDocument('investment_compass', 'r-1', { renderer: 'weasyprint' });
+    expect(doc?.templateId).toBe('tpl-1');
+    expect(h.routeCalls[0][2]).toMatchObject({ templateId: 'tpl-compass', renderer: 'weasyprint' });
   });
 });

@@ -56,7 +56,7 @@ import { Badge } from '@/components/ui/badge';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { CheckCircle2, ChevronDown, Layers, Loader2, TriangleAlert, Wand2 } from 'lucide-react';
+import { CheckCircle2, ChevronDown, Info, Layers, Loader2, TriangleAlert, Wand2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { useReportTemplateSelection } from '@/hooks/useReportTemplateSelection';
@@ -73,6 +73,11 @@ import {
 } from '@/lib/templateLibrary/entryDesign';
 import { ColourwaySwatch } from '@/components/templateLibrary/TemplateColourwayPicker';
 import { ReportTemplateSheet } from '@/components/reports/ReportTemplateSheet';
+import {
+  isTemplateDeliveryHeld,
+  TEMPLATE_HOLD_NOTICE,
+  templateHoldExplanation,
+} from '../../../supabase/functions/_shared/reports/templateParity.pure.ts';
 
 /** The sentinel for "no fixed template" — the resolver's ranking decides. */
 const AUTOMATIC = '__automatic__';
@@ -207,6 +212,8 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
   const [consentedChoice, setConsentedChoice] = useState<string | null>(null);
 
   const format = normaliseReportType(reportType);
+  /** Whether this format is produced as its standard document whatever is chosen. */
+  const held = isTemplateDeliveryHeld(format);
 
   /** The library's production designs for this format, grouped by family. */
   const { families, loose } = useMemo(() => {
@@ -464,6 +471,19 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
           </Alert>
         ) : (
           <div className="space-y-3 py-1">
+            {held && (
+              // A held report type is produced as its standard document
+              // whatever is chosen here (`templateParity.pure.ts`). Choosing
+              // still works and is kept, so this says what a choice does TODAY
+              // before the person spends time on one — never a disabled
+              // gallery, which would read as a broken page.
+              <Alert variant="default" data-testid="template-hold-notice">
+                <Info className="h-4 w-4" />
+                <AlertTitle>{TEMPLATE_HOLD_NOTICE.title}</AlertTitle>
+                <AlertDescription>{templateHoldExplanation(formatLabel)}</AlertDescription>
+              </Alert>
+            )}
+
             {state?.status === 'unavailable' && (
               // A choice that stopped applying is news, and saying nothing would
               // mean documents quietly changing template under someone.

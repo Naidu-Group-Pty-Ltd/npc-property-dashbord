@@ -4385,6 +4385,37 @@ moves nothing: pixel identity at 300 DPI is asserted before and after, and the
 `margin:0` reset and the `<span>` inside a heading are both there for measured
 reasons the doc records.
 
+## A template changes the layout and nothing else
+Read [`TEMPLATE_PARITY.md`](./docs/reports/TEMPLATE_PARITY.md) before touching
+`_shared/reports/templateParity.pure.ts`, the first gate in
+`tryTemplateDocument`, `org.tagline`, or any non-Investment adapter, projection
+or master. The owner's rule (26 Sep 2026): for every report type other than the
+five Investment tiers, a templated document carries exactly the information
+its standard document carries. Measured the same day, **none of the nine
+did**. Q&A printed the first answer whichever was chosen, and the Cash Flow
+printed after-tax figures under "No tax position is modelled". Every test that
+existed checked wiring (published paths, no unresolved binding), and no test
+had ever rendered one record through both paths and compared them.
+
+Three rules bite.
+
+- **Released means proven.** `TEMPLATE_RELEASED_REPORT_TYPES` is `investment`
+  alone. Every other report type is produced as its standard document for
+  everyone, whatever was chosen, and the register fails closed on an unknown
+  spelling. A report type is released only when its parity check passes on
+  every master and the owner has read a sample, and never by a surface deciding
+  for itself.
+- **A choice that is kept but not applied says so.** The chooser, the format
+  card and the download each tell the person the standard layout is in use
+  and that their choice is kept. The Cash Flow finalisation key records the
+  template in effect, not the one chosen.
+- **The house's words are the prime's.** All 500 masters set the house's
+  tagline as a literal under every clone's name. They bind `org.tagline` since
+  seed v23, which only the prime publishes.
+
+Phase 2 reaches parity by construction: the template supplies the design and
+the standard composer supplies every body page.
+
 ## The template converter
 An existing template can be brought *onto* the design system rather than into the
 visual editor: `/admin/template-builder/converter` extracts a template's section

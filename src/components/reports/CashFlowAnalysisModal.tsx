@@ -63,6 +63,7 @@ import {
   tryTemplateDocument,
 } from '@/lib/reportTemplate/templateDocument';
 import { cashFlowFinalKey } from '@/lib/reports/cashFlow/finalDocumentKey';
+import { isTemplateDeliveryHeld } from '../../../supabase/functions/_shared/reports/templateParity.pure.ts';
 import { SendToClientModal } from '@/components/reports/SendToClientModal';
 import { ArrowLeft, Calculator, Download, TrendingUp, DollarSign, Percent, Home, Save, RotateCcw, BarChart3, Image, GitCompare, X, FileText, Target, Zap, Building, Award, Printer, ChevronDown, ChevronRight, Send, Search, Check } from 'lucide-react';
 import { ComposedChart, LineChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
@@ -3600,7 +3601,13 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     const storedScenario = matchStoredScenario(wire, report);
     // Read ONCE, here, so the key this document is filed under and the template
     // the route renders are the same reading (`selectedTemplateId` below).
-    const selectedTemplateId = await selectedTemplateFor('cashflow');
+    // The key records the template IN EFFECT: while the report type is held on
+    // its standard document (`templateParity.pure.ts`) a choice changes nothing
+    // on the page, so it must not change the key either, and a document made
+    // while held must not be served as the templated one once it is released.
+    const selectedTemplateId = isTemplateDeliveryHeld('cashflow')
+      ? null
+      : await selectedTemplateFor('cashflow');
     return {
       wire,
       storedScenario,

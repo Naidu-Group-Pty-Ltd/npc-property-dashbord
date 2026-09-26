@@ -25,6 +25,7 @@ import {
 } from '@/hooks/useReportTemplateSelection';
 import { buildFormatTemplateState } from '@/lib/reportTemplate/templateSelection';
 import { listReportFormats, type ReportFormatDescriptor } from '@/lib/reportTemplate/reportFormats';
+import { isTemplateDeliveryHeld } from '../../../supabase/functions/_shared/reports/templateParity.pure.ts';
 
 interface RowState {
   format: ReportFormatDescriptor;
@@ -32,6 +33,10 @@ interface RowState {
 }
 
 function BindingRow({ format, state, onChange }: RowState & { onChange: () => void }) {
+  // A production format held on its standard document (`templateParity.pure.ts`).
+  // A preview-only format already says why a choice changes nothing, so it is
+  // not told twice.
+  const held = format.supportsProduction && isTemplateDeliveryHeld(format.reportType);
   const summary = (() => {
     if (state.status === 'selected') {
       return (
@@ -71,10 +76,19 @@ function BindingRow({ format, state, onChange }: RowState & { onChange: () => vo
           {!format.supportsProduction && (
             <Badge variant="outline" className="text-[10px]">Preview only</Badge>
           )}
+          {held && (
+            <Badge variant="outline" className="text-[10px]" data-testid="template-hold-badge">On hold</Badge>
+          )}
         </div>
         <div className="mt-1 min-w-0">{summary}</div>
         {!format.supportsProduction && format.previewOnlyReason && (
           <p className="mt-1 text-xs text-muted-foreground">{format.previewOnlyReason}</p>
+        )}
+        {held && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Produced with its standard layout for now. Your choice is kept and applies once this
+            format's templates carry everything the standard document prints.
+          </p>
         )}
       </div>
       <Button variant="outline" size="sm" className="shrink-0" onClick={onChange}>
