@@ -35,6 +35,7 @@ import { Button } from "@/components/ui/button";
 const Overview = lazyWithRetry(() => import("./pages/Overview"));
 const Listings = lazyWithRetry(() => import("./pages/Listings"));
 const BuilderStockProperty = lazyWithRetry(() => import("./pages/BuilderStockProperty"));
+const BuilderPortal = lazyWithRetry(() => import("./pages/BuilderPortal"));
 const ListingDetail = lazyWithRetry(() => import("./pages/ListingDetail"));
 const Calendar = lazyWithRetry(() => import("./pages/Calendar"));
 const MarketUpdates = lazyWithRetry(() => import("./pages/MarketUpdates"));
@@ -630,6 +631,10 @@ const App = () => (
                 <Route path="error-logs" element={<ModuleGuard moduleKey="error_logs"><ErrorLogs /></ModuleGuard>} />
                 <Route path="settings" element={<ModuleGuard moduleKey="settings"><Settings /></ModuleGuard>} />
                 <Route path="admin/users" element={<ModuleGuard moduleKey="user_management"><UserManagement /></ModuleGuard>} />
+                {/* Portals → Builder Portal: activated properties and their private conversations (docs/builder-portal/52). */}
+                <Route path="admin/builder-portal" element={<Navigate to="/admin/builder-portal/activated" replace />} />
+                <Route path="admin/builder-portal/:tab" element={<ModuleGuard moduleKey="listings"><BuilderPortal /></ModuleGuard>} />
+                <Route path="admin/builder-portal/:tab/:conversationId" element={<ModuleGuard moduleKey="listings"><BuilderPortal /></ModuleGuard>} />
                 <Route path="admin/finance-portal" element={<ModuleGuard moduleKey="finance_portal_admin"><FinancePortalAdmin /></ModuleGuard>} />
                 <Route path="admin/solicitor-portal" element={<ModuleGuard moduleKey="solicitor_portal_admin"><SolicitorPortalAdmin /></ModuleGuard>} />
                 <Route path="admin/finance-portal/analytics" element={<ModuleGuard moduleKey="finance_portal_admin"><FinancePortalAnalytics /></ModuleGuard>} />
