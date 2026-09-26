@@ -37,7 +37,7 @@ vi.mock('@/lib/marketplaceBuilderStock', async () => {
       return signed ?? null;
     },
     useBuilderPortalActivations: () => ({
-      data: state.activationsError ? undefined : state.activations, error: state.activationsError ?? null,
+      data: state.activationsError && !state.keepData ? undefined : state.activations, error: state.activationsError ?? null,
       isLoading: false, isSuccess: !state.activationsError,
       isFetchedAfterMount: !state.cachedOnly, isFetching: !!state.cachedOnly,
     }),
@@ -104,6 +104,8 @@ beforeEach(() => {
   for (const key of Object.keys(state)) delete state[key];
   markedRead.length = 0;
   serverMarked.length = 0;
+  delete state.keepData;
+  delete state.activationsError;
   flag.loading = false; flag.enabled = true;
   state.activations = { as_of: '2026-09-26T05:00:00.000Z', activations: [ACTIVATION(), ACTIVATION({
     activation_key: 'k2', activated_by: 'Otto Other', acknowledged_by: null, acknowledged_at: null,
@@ -220,6 +222,22 @@ describe('Messaging', () => {
     expect(screen.queryByRole('log')).toBeNull();
     expect(screen.queryByRole('list', { name: /participants/i })).toBeNull();
     expect(screen.getByText(/not in this conversation/i)).toBeInTheDocument();
+  });
+
+  it('a background refresh that fails keeps the activations already read, and says they may be behind', () => {
+    state.activationsError = Object.assign(new Error('unavailable'), { status: 503 });
+    state.keepData = true;
+    renderAt('/admin/builder-portal/activated');
+    expect(screen.getByText(/otto other/i)).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent(/could not be refreshed/i);
+  });
+
+  it('a refusal after activations were read withdraws them', () => {
+    state.activationsError = Object.assign(new Error('forbidden'), { status: 403 });
+    state.keepData = true;
+    renderAt('/admin/builder-portal/activated');
+    expect(screen.queryByText(/otto other/i)).toBeNull();
+    expect(screen.getByText(/not available to you/i)).toBeInTheDocument();
   });
 
   it('the acknowledgement badge clears once the list has been read, and not when the read failed', () => {

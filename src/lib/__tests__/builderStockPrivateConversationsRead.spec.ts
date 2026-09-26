@@ -547,6 +547,14 @@ describe('a deferred outbox job does not spend its retry budget', () => {
     expect(worker).toMatch(/update\(\{attempts:disposition\.attempts,available_at:/);
   });
 
+  it('a deferred claim leaves no attempt in the ledger, so the number it gives back is free for the next claim', () => {
+    // integration_delivery_attempts is unique on (outbox, consumer, attempt
+    // number). A deferral gives its number back, so its "started" row is
+    // removed rather than left "failed" for the next claim to collide with.
+    const worker = readCode('supabase/functions/cross-portal-outbox-worker/index.ts');
+    expect(worker).toMatch(/if\(disposition\.deferred\)await db\.from\('integration_delivery_attempts'\)\.delete\(\)\.eq\('outbox_id',event\.id\)\.eq\('consumer_name',consumer\)\.eq\('attempt_number',event\.attempts\);\s*else await db\.from\('integration_delivery_attempts'\)\.update\(\{status:'failed'/);
+  });
+
   it('the cross-portal worker decides every failure through it', () => {
     const worker = readCode('supabase/functions/cross-portal-outbox-worker/index.ts');
     expect(worker).toMatch(/outboxFailureDisposition\(error,\s*event\.attempts,\s*Date\.now\(\)\)/);

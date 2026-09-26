@@ -112,15 +112,19 @@ function ActivatedProperties() {
   }, [notifications, asOf]);
 
   if (query.isLoading) return <Skeleton className="h-32 w-full" />;
-  if (query.error) {
+  // A refusal withdraws what was read; a transient failure of a background
+  // refresh keeps it, because it is still true and may only be behind.
+  const refused = !!query.error && conversationAccessLost(query.error);
+  if (query.error && (refused || !query.data)) {
     return (
       <p className="text-sm text-muted-foreground">
-        {conversationAccessLost(query.error)
+        {refused
           ? 'Activated properties are not available to you.'
           : 'Activated properties could not be loaded just now. They will try again shortly.'}
       </p>
     );
   }
+  const stale = !!query.error;
   const rows = query.data?.activations ?? [];
   if (!rows.length) {
     return (
@@ -138,6 +142,11 @@ function ActivatedProperties() {
   }
   return (
     <div className="space-y-3">
+      {stale ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          This list could not be refreshed just now, so it may be behind. It will try again shortly.
+        </p>
+      ) : null}
       {rows.map((row) => <ActivationRow key={row.activation_key} row={row} />)}
     </div>
   );
