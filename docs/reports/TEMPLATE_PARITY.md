@@ -122,6 +122,19 @@ have given it. On the prime nothing is touched. `coverTaglineIsTheIssuers.spec.t
 renders all 500 covers with the literal put back, through the guard, and
 requires each to match the v23 cover byte for byte.
 
+**v23 is applied** (26 Sep 2026, "Apply a migration" run #114). It ran after
+the functions deploy and the frontend publish that carry `org.tagline`:
+
+- the seed wrote a release baseline for each of its 543 entries (4,344 → 4,887
+  rows);
+- the refresh recorded a decision for each of the 18 active adopted masters
+  (134 → 152 rows).
+
+Which of the 18 were refreshed and which were deferred as customised was not
+read, because this work holds no database read. It changes nothing the prime
+prints: a refreshed cover binds `org.tagline`, which the prime publishes with
+the same words, and a deferred one keeps its literal.
+
 ## What was found, report type by report type
 
 These differences were measured on 26 Sep 2026. Each is closed in Phase 2 by
@@ -633,6 +646,18 @@ Found and recorded for the owner rather than changed:
     so when it answers (`DesignEcho`), and the document shows it. But no row
     records it: not the report, not the render ledger. Recording it would
     answer "which design did this client receive?" after the fact.
+
+**It went live on 26 Sep 2026**, merged as `cdff4f264`:
+
+- The functions deploy (run 704) succeeded. All eleven routes this release
+  touches answered a preflight, and the production source of four of them was
+  read back carrying this release's code.
+- The frontend was published from the merge commit.
+- v23 was applied after it (above).
+
+The published app itself could not be read, because its domain challenges
+automated requests. The chooser's new wording is confirmed by the owner's
+live test instead.
 
 ## Releasing a report type's pages
 
