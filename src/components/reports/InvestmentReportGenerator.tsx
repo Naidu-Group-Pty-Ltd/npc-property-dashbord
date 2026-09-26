@@ -11,6 +11,9 @@ import { Progress } from '@/components/ui/progress';
 import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { namedPhotographCount, photographCaptureRequest, startPhotographCapture } from '@/lib/reports/urlExtractPhotographs';
+import { fileChosenBrochurePhotographs } from '@/lib/reports/brochurePhotographs';
+import { describeBrochureFiling } from '@/lib/reports/brochurePhotographs.pure';
+import { useBrochurePhotographs } from '@/hooks/useBrochurePhotographs';
 import type { Json } from '@/integrations/supabase/types';
 import { useToast } from '@/hooks/use-toast';
 import { useNotifications } from '@/contexts/NotificationsContext';
@@ -19,7 +22,9 @@ import { useActivityLogger } from '@/hooks/useActivityLogger';
 import { addBackgroundJob } from '@/components/BackgroundJobTracker';
 import { Loader2, MapPin, Hash, Globe, TrendingUp, FileText, Link, Upload, X, Image, AlertCircle, Sparkles, ClipboardPaste } from 'lucide-react';
 import { convertPdfToImages, isPdfFile, isImageFile, imageFileToBase64 } from '@/utils/pdfToImages';
+import { readUploadedDocumentText } from '@/lib/reports/uploadedDocumentText';
 import { PreGenerationOverrides, PreGenerationData } from './PreGenerationOverrides';
+import { BrochurePhotographsPicker } from './BrochurePhotographsPicker';
 import { removeCommas } from '@/hooks/useFormattedNumber';
 import { BuildTypeSelector } from './shared/BuildTypeSelector';
 import { BuildType } from '@/types/overrideFields';
@@ -90,8 +95,11 @@ export function InvestmentReportGenerator() {
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [conversionProgress, setConversionProgress] = useState<{ current: number; total: number } | null>(null);
-  const [pdfParsedData, setPdfParsedData] = useState<{ propertyAddress: string; pdfContent: string } | null>(null);
+  const [pdfParsedData, setPdfParsedData] = useState<{ propertyAddress: string; pdfContent: string | null } | null>(null);
   const [isPdfGenerating, setIsPdfGenerating] = useState(false);
+  // The brochure's own photographs, read beside the parse and confirmed by
+  // the adviser before the report is made (`useBrochurePhotographs`).
+  const brochurePhotographs = useBrochurePhotographs();
   
   const [queryType, setQueryType] = useState<'address' | 'zipcode' | 'suburb' | 'state'>('address');
   const [query, setQuery] = useState('');
@@ -1107,6 +1115,7 @@ export function InvestmentReportGenerator() {
 
 
   // Handle PDF/image file drop
+  const resetBrochurePhotographs = brochurePhotographs.reset;
   const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragging(false);
@@ -1117,11 +1126,12 @@ export function InvestmentReportGenerator() {
       if (isPdfFile(file) || isImageFile(file)) {
         setPdfFile(file);
         setPdfError(null);
+        resetBrochurePhotographs();
       } else {
         setPdfError('Please upload a PDF or image file (PNG, JPG, WEBP)');
       }
     }
-  }, []);
+  }, [resetBrochurePhotographs]);
 
   const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -1140,6 +1150,7 @@ export function InvestmentReportGenerator() {
       if (isPdfFile(file) || isImageFile(file)) {
         setPdfFile(file);
         setPdfError(null);
+        brochurePhotographs.reset();
       } else {
         setPdfError('Please upload a PDF or image file (PNG, JPG, WEBP)');
       }
@@ -1170,11 +1181,17 @@ export function InvestmentReportGenerator() {
     setPdfError(null);
     setConversionProgress(null);
     setPdfParsedData(null);
+    brochurePhotographs.reset();
 
     try {
       console.log('Processing file:', pdfFile.name, 'Type:', pdfFile.type);
       
       let requestBody: any = { fileName: pdfFile.name };
+      // The document's own words. `parse-property-pdf` reads the pages as
+      // images and answers fields, never text, so the report used to be handed
+      // a `pdfContent` nothing had ever filled. Read from the text layer while
+      // the parser reads the pages; nothing about it can fail the parse.
+      let documentText: Promise<string | null> = Promise.resolve(null);
       
       if (isPdfFile(pdfFile)) {
         console.log('🔄 Converting PDF to images...');
@@ -1194,6 +1211,11 @@ export function InvestmentReportGenerator() {
         }
         
         console.log(`✅ PDF converted: ${conversionResult.images.length} pages rendered`);
+
+        // The brochure's own photographs, read while the parser reads the
+        // pages. Nothing about it can fail the parse.
+        brochurePhotographs.begin(pdfFile);
+        documentText = readUploadedDocumentText(pdfFile);
         
         requestBody.pageImages = conversionResult.images.map(img => ({
           pageNumber: img.pageNumber,
@@ -1257,8 +1279,10 @@ export function InvestmentReportGenerator() {
       // Store parsed data for later generation
       setPdfParsedData({
         propertyAddress,
-        pdfContent: data.pdfContent,
+        pdfContent: await documentText.catch(() => null),
       });
+      // Now the brochure has named its property, its pages can be read for it.
+      brochurePhotographs.settle({ address: extracted.extractedAddress, suburb: extracted.extractedSuburb });
 
       // Populate form fields with extracted data (without triggering sync
       // loops). One applier, shared with the URL path, so a document and a
@@ -1286,6 +1310,7 @@ export function InvestmentReportGenerator() {
 
     } catch (error) {
       console.error('Error processing document:', error);
+      brochurePhotographs.reset();
       const errorMessage = error instanceof Error ? error.message : 'Failed to process document';
       setPdfError(errorMessage);
       toast({
@@ -1454,6 +1479,21 @@ export function InvestmentReportGenerator() {
         console.error('Background generation error:', error);
       });
 
+      // The photographs the adviser ticked from the brochure, filed under the
+      // report now it exists — beside the generation and never in its way.
+      // The server checks each one again before it keeps it.
+      const brochureFiling = brochurePhotographs.filingArgs();
+      if (brochureFiling) {
+        void fileChosenBrochurePhotographs({
+          invoke: (request) => invokeSecureFunction('listing-images', { ...request }),
+          reportId: pendingReport.id,
+          ...brochureFiling,
+        }).then((outcome) => {
+          const message = describeBrochureFiling(outcome);
+          if (message) toast(message);
+        });
+      }
+
       // Add "generation started" notification
       addNotification({
         type: 'report_generation_started',
@@ -1471,6 +1511,7 @@ export function InvestmentReportGenerator() {
       // Clear form
       setPdfFile(null);
       setPdfParsedData(null);
+      brochurePhotographs.reset();
 
     } catch (error) {
       console.error('Error generating report from PDF:', error);
@@ -2229,6 +2270,7 @@ export function InvestmentReportGenerator() {
                             onClick={(e) => {
                               e.stopPropagation();
                               setPdfFile(null);
+                              brochurePhotographs.reset();
                             }}
                           >
                             <X className="h-4 w-4 mr-1" />
@@ -2336,6 +2378,21 @@ export function InvestmentReportGenerator() {
                       </div>
                     );
                   })()}
+
+                  {/* The brochure's own photographs, for the adviser to confirm */}
+                  {pdfParsedData && brochurePhotographs.state && (
+                    <BrochurePhotographsPicker
+                      status={brochurePhotographs.state.status}
+                      offer={brochurePhotographs.state.offer}
+                      previews={brochurePhotographs.state.previews}
+                      selected={brochurePhotographs.state.selected}
+                      onSelectedChange={brochurePhotographs.setSelected}
+                      selectedPlans={brochurePhotographs.state.selectedPlans}
+                      onSelectedPlansChange={brochurePhotographs.setSelectedPlans}
+                      addressUsable={brochurePhotographs.state.source !== null}
+                      disabled={isPdfGenerating}
+                    />
+                  )}
 
                   <Separator />
 

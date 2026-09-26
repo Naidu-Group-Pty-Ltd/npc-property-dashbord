@@ -181,6 +181,9 @@ import {
   resolveRentalEvidence,
   statedYield,
 } from '../_shared/reports/investment/rentalEvidence.pure.ts';
+import { investmentReportMasthead } from '../_shared/reports/issuerIdentity.pure.ts';
+import { UPLOADED_DOCUMENT_MAX_BYTES } from '../_shared/reports/investment/uploadedDocumentText.pure.ts';
+import { deploymentKind } from '../_shared/emailIdentity.pure.ts';
 const INTERNAL_EDGE_SECRET = (Deno.env.get('INTERNAL_EDGE_SECRET') || '').trim();
 
 // ============================================================================
@@ -2426,7 +2429,11 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     // UNIFIED DOCUMENT CONTENT: Accept both scrapedContent (URL scrape) AND pdfContent (PDF upload)
     // This ensures consistent content injection regardless of the input source
     const scrapedContent = propertyDetails?.scrapedContent || null;
-    const pdfContent = propertyDetails?.pdfContent || null;
+    // Text only: the form sends the document's words or nothing
+    // (`uploadedDocumentText.pure.ts`), and anything else is not a document.
+    const pdfContent = typeof propertyDetails?.pdfContent === 'string' && propertyDetails.pdfContent.trim()
+      ? propertyDetails.pdfContent
+      : null;
     const documentContent = scrapedContent || pdfContent || null; // Unified content variable
     
     const sourceUrl = propertyDetails?.sourceUrl || null;
@@ -6757,12 +6764,18 @@ the asset.`;
 8. Verify the suburb/postcode from the ${sourceNoun} for accurate location analysis${fromPdfUpload ? `
 9. For new builds: Use the land + build package price for total property value` : ''}`;
       
-      const limitedDocumentContent = limitPromptContext(
-        String(documentContent),
-        DOCUMENT_CONTEXT_MAX_BYTES,
-        `${fromPdfUpload ? 'PDF' : 'Scraped'} listing content`,
-        'head-tail'
-      );
+      // An uploaded document is bounded from its FRONT and to less than a
+      // listing page: a brochure ends on the builder's other estates and other
+      // homes, which a head-and-tail cut would keep (`uploadedDocumentText.pure.ts`).
+      // A listing page is cut as it always was.
+      const limitedDocumentContent = fromPdfUpload && !scrapedContent
+        ? limitPromptContext(String(documentContent), UPLOADED_DOCUMENT_MAX_BYTES, 'PDF listing content', 'head')
+        : limitPromptContext(
+          String(documentContent),
+          DOCUMENT_CONTEXT_MAX_BYTES,
+          `${fromPdfUpload ? 'PDF' : 'Scraped'} listing content`,
+          'head-tail'
+        );
       const documentContextSection = `
 ---
 **PROPERTY LISTING DATA (SOURCE: ${contentSourceLabel})**
@@ -7330,16 +7343,14 @@ This report should feel like a polished advisory document that inspires confiden
         combinedContent = combinedContent.trim() + '\n\n---\n\n';
       }
     } else {
-      // Fresh generation: Add report header
-      const reportHeader = `# ${_brandName.toUpperCase()}
-
-YOUR DEDICATED PROPERTY PARTNER
-
-# Investment Report: ${formattedInput}
-
----
-
-`;
+      // Fresh generation: Add report header. On the prime this is the block it
+      // has always written; on a clone it names the issuer and leaves out
+      // NPC's tagline (`investmentReportMasthead`).
+      const reportHeader = investmentReportMasthead(
+        _brandName,
+        formattedInput,
+        { prime: deploymentKind(Deno.env.get('SUPABASE_URL')) === 'prime' },
+      );
       combinedContent = reportHeader;
     }
 

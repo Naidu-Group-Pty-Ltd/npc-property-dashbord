@@ -1296,6 +1296,14 @@ jobs:
         if: ${{ !cancelled() }}
         run: npx vitest run src/lib/templateLibrary/__tests__/investmentCompassCoverPhotograph.spec.ts
 
+      # Seed v22 put a new build's floor plan on a sheet of its own in all 50
+      # Investment masters. Its promise: without a plan every master draws
+      # exactly what it drew before, and with one the plan is printed whole.
+      # This spec renders all 50 both ways through the production renderer.
+      - name: The floor plan is printed whole, and without one nothing changes
+        if: ${{ !cancelled() }}
+        run: npx vitest run src/lib/templateLibrary/__tests__/investmentCompassFloorPlan.spec.ts
+
       # The renders themselves, when it fails: a reviewer should be able to
       # look at the page rather than read a coordinate.
       - name: Upload the renders
