@@ -300,6 +300,11 @@ BEGIN
     IF v_existing.body <> v_body OR v_existing.conversation_id <> _conversation_id THEN
       RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'AGENCY_MESSAGE_ID_REUSED';
     END IF;
+    -- Answered only to someone still in the conversation: repeating an
+    -- earlier send is never a way back in after leaving.
+    IF NOT public.builder_network_is_participant(v_existing.conversation_id, _sender_user_id) THEN
+      RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'AGENCY_NOT_A_PARTICIPANT';
+    END IF;
     RETURN NEXT v_existing;
     RETURN;
   END IF;
@@ -485,8 +490,9 @@ BEGIN
        AND public.has_module_access(u.id, 'listings')
        AND public.builder_network_user_display_name(u.id) IS NOT NULL
        AND NOT public.builder_network_is_participant(_conversation_id, u.id)
-     ORDER BY 2, 1
-     LIMIT 500;
+     -- Every eligible colleague, in a stable order: the caller reads them a
+     -- page at a time, so nobody past a fixed count is left uninvitable.
+     ORDER BY 2, 1;
 END
 $fn$;
 

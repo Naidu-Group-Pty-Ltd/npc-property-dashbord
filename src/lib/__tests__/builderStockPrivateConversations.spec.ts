@@ -391,6 +391,20 @@ describe.skipIf(!runs)('one activation, one private conversation (Command Centre
       }
     });
 
+    it('every eligible colleague is offered, however many there are', () => {
+      expect(db.sql(`BEGIN;
+        INSERT INTO public.custom_users(id, username, email, first_name, last_name, is_active)
+        SELECT ('00000000-0000-4000-9000-' || lpad(g::text, 12, '0'))::uuid, 'bulk' || g, 'bulk' || g || '@example.test',
+               'Bulk', 'Member ' || lpad(g::text, 4, '0'), true FROM generate_series(1, 501) g;
+        INSERT INTO public.user_permissions(user_id, module_id, can_view, can_edit)
+        SELECT ('00000000-0000-4000-9000-' || lpad(g::text, 12, '0'))::uuid,
+               (SELECT id FROM public.dashboard_modules WHERE module_key = 'listings'), true, false
+          FROM generate_series(1, 501) g;
+        SELECT count(*) FROM public.builder_network_invite_candidates(${lit(C1)}, ${lit(OWNER)})
+         WHERE display_name LIKE 'Bulk Member %';
+        ROLLBACK;`)).toBe('501');
+    });
+
     it('R21. there is no way to remove somebody else', () => {
       expect(db.sql(`SELECT count(*) FROM pg_proc WHERE proname ~ 'builder_network_.*(remove|kick|evict)_?(participant|user|member)'`)).toBe('0');
       // Leaving names only the person leaving.
@@ -419,6 +433,11 @@ describe.skipIf(!runs)('one activation, one private conversation (Command Centre
         .toMatch(/AGENCY_NOT_A_PARTICIPANT/);
       const failed = db.sql(`SELECT id FROM public.builder_network_messages WHERE conversation_id = ${lit(C1)}
                               AND sender_user_id = ${lit(OWNER)} ORDER BY sent_at LIMIT 1`);
+      // Repeating an earlier send is not a way back in: the stored message is
+      // answered to a current participant only.
+      expect(refusal(`SELECT m2.id FROM public.builder_network_messages m,
+        LATERAL public.builder_network_post_message(${lit(C1)}, ${lit(OWNER)}, m.client_message_id, m.body) m2
+        WHERE m.id = ${lit(failed)}`)).toMatch(/AGENCY_NOT_A_PARTICIPANT/);
       db.sql(`UPDATE public.builder_network_messages SET delivery_state = 'failed', failure_reason = 'not_delivered' WHERE id = ${lit(failed)}`);
       expect(refusal(`SELECT public.builder_network_retry_message(${lit(failed)}, ${lit(OWNER)})`))
         .toMatch(/AGENCY_NOT_A_PARTICIPANT/);

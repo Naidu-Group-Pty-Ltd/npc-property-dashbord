@@ -85,6 +85,9 @@ async function builderStockEnabled(db: any): Promise<boolean> {
     || (typeof value === 'object' && value !== null && (value as any).enabled === true);
 }
 
+/** How many invitation candidates one read asks for. */
+const INVITEE_PAGE = 500;
+
 Deno.serve(async (req) => {
   const corsHeaders = createCorsHeaders(req.headers.get('origin'));
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -734,16 +737,20 @@ Deno.serve(async (req) => {
     if (operation === 'list_builder_conversation_invitees') {
       const conversationId = uuidOf(body.conversation_id);
       if (!conversationId) return json({ error: 'Conversation not found' }, 404);
-      const { data, error } = await supabase.rpc('builder_network_invite_candidates', {
-        _conversation_id: conversationId,
-        _actor_user_id: userId,
-      });
-      if (error) return conversationRefusal(error);
-      return json({
-        success: true,
-        invitees: ((data ?? []) as Array<{ user_id: string; display_name: string }>)
-          .map((row) => ({ user_id: String(row.user_id), display_name: String(row.display_name) })),
-      });
+      // Every eligible colleague, read a page at a time: a response ceiling
+      // must never make somebody uninvitable.
+      const invitees: Array<{ user_id: string; display_name: string }> = [];
+      for (let from = 0; ; from += INVITEE_PAGE) {
+        const { data, error } = await supabase.rpc('builder_network_invite_candidates', {
+          _conversation_id: conversationId,
+          _actor_user_id: userId,
+        }).range(from, from + INVITEE_PAGE - 1);
+        if (error) return conversationRefusal(error);
+        const page = (data ?? []) as Array<{ user_id: string; display_name: string }>;
+        invitees.push(...page.map((row) => ({ user_id: String(row.user_id), display_name: String(row.display_name) })));
+        if (page.length < INVITEE_PAGE) break;
+      }
+      return json({ success: true, invitees });
     }
 
     if (operation === 'invite_builder_conversation_participant') {
