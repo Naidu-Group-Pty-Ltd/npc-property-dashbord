@@ -500,6 +500,27 @@ describe.skipIf(!runs)('one activation, one private conversation (Command Centre
     });
   });
 
+  describe('nothing arrives ahead of the acknowledgement', () => {
+    it('a signed participant or message for an activation not yet acknowledged opens no conversation and stores nothing', () => {
+      const client = db.sql(`INSERT INTO public.clients(primary_first_name) VALUES ('E') RETURNING id`);
+      const early = db.sql(`INSERT INTO public.builder_stock_selections(stock_item_id, organisation_id, client_id, selected_by_user_id, status)
+                            VALUES (${lit(QUIET_ITEM)}, ${lit(ORG_A)}, ${lit(client)}, ${lit(OWNER)}, 'selected') RETURNING id`);
+      const conversation = activationConversationId(NET_A, early);
+      const ref = randomUUID();
+      participantEvent(CONN_A, { conversation_id: conversation, stock_item_id: QUIET_ITEM, participant_ref: ref, display_name: 'Early Builder' });
+      const message = randomUUID();
+      land(CONN_A, 'agency.message.posted', `agency.message:${message}:1`, {
+        schema_version: 1, conversation_id: conversation, message_id: message, stock_item_id: QUIET_ITEM,
+        body: 'Before anyone acknowledged.', sender_display_name: 'Early Builder',
+        sent_at: '2026-09-26T02:00:00.000000Z', generation: 1,
+      });
+      messageSweep();
+      expect(count(`public.builder_network_conversations WHERE id = ${lit(conversation)}`)).toBe('0');
+      expect(count(`public.builder_network_conversation_participants WHERE participant_ref = ${lit(ref)}`)).toBe('0');
+      expect(count(`public.builder_network_messages WHERE id = ${lit(message)}`)).toBe('0');
+    });
+  });
+
   describe('withdrawal', () => {
     it('R30. a withdrawn activation closes the conversation to writing and inviting, and keeps it for its participants', () => {
       db.sql(`UPDATE public.builder_stock_selections SET status = 'withdrawn', withdrawn_at = now() WHERE id = ${lit(S1)}`);

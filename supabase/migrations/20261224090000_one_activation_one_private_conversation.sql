@@ -813,8 +813,10 @@ $fn$;
 -- 7. Receiving: the builder's messages, receipts and participants.
 -- ---------------------------------------------------------------------------
 -- Which conversation an event names, as this side knows it: its row, on this
--- connection and property; or, new, the derivation of a live activation of
--- this property on this connection (created then). NULL for anything else.
+-- connection and property; or, new, the derivation of a live, ACKNOWLEDGED
+-- activation of this property on this connection (created then). NULL for
+-- anything else: the acknowledgement is what opens a conversation, so nothing
+-- signed can open one, or put anybody or anything in it, ahead of it.
 CREATE OR REPLACE FUNCTION public.builder_network_resolve_conversation(
   _connection_id uuid, _conversation_id uuid, _stock_item_id uuid)
 RETURNS uuid
@@ -836,7 +838,7 @@ BEGIN
     FROM public.builder_network_connections c WHERE c.id = _connection_id;
   SELECT * INTO v_s FROM public.builder_stock_selections s
    WHERE s.stock_item_id = _stock_item_id AND s.organisation_id = v_conn.builder_organisation_id
-     AND s.status <> 'withdrawn'
+     AND s.status <> 'withdrawn' AND s.acknowledged_at IS NOT NULL
      AND public.builder_network_activation_conversation_id(v_conn.network_connection_id, s.id) = _conversation_id
      AND NOT EXISTS (SELECT 1 FROM public.builder_network_conversations o
                       WHERE o.connection_id = _connection_id AND o.selection_ref = s.id)
@@ -1085,7 +1087,8 @@ BEGIN
     -- keeps Step 5's rule until it is), and the property still listed.
     IF NOT (CASE WHEN v_c.selection_ref IS NOT NULL
                  THEN EXISTS (SELECT 1 FROM public.builder_stock_selections s
-                               WHERE s.id = v_c.selection_ref AND s.status <> 'withdrawn')
+                               WHERE s.id = v_c.selection_ref AND s.status <> 'withdrawn'
+                                 AND s.acknowledged_at IS NOT NULL)
                  ELSE EXISTS (SELECT 1 FROM public.builder_stock_selections s
                                WHERE s.stock_item_id = v_item
                                  AND s.organisation_id = v_connection.builder_organisation_id
