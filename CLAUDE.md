@@ -517,6 +517,22 @@ Management API instead. And **a config-only edit used to deploy nothing**,
 because the changed-function list was built from `supabase/functions/**` paths
 alone — which is how a declaration and production came to disagree at all.
 
+## The Template Builder's broker and the tables no module covers
+Read [`docs/security/TEMPLATE_BROKER_TABLES.md`](./docs/security/TEMPLATE_BROKER_TABLES.md)
+before adding a table to `manage-templates` or touching
+`_shared/templateBrokerTablePolicy.pure.ts`. The broker runs on the service
+role, and a table its permission map did not name was checked for nothing but a
+signed-in caller. So until 26 Sep 2026 any staff login could read every user's
+password hash and second-factor secret, set its own role to superadmin, and
+read or overwrite plain-text integration credentials. Three rules now hold it.
+
+- **Staff accounts are read-only here**, through the directory's own columns.
+  A field list, filter or ordering naming anything else is refused, not
+  trimmed.
+- **A credential table belongs to the module whose screens use it.**
+- **The list of ungated tables is frozen in the spec**, so a new table cannot
+  join it silently.
+
 ## Step-up authentication blocks what nobody can unblock
 Read [`docs/security/STEP_UP_ENFORCEMENT.md`](./docs/security/STEP_UP_ENFORCEMENT.md)
 before touching `_shared/stepUp.ts`, `_shared/aml/step-up.ts`, `STEP_UP_ENFORCED`
@@ -3570,7 +3586,10 @@ Three rules bite.
   holds every held report type's `<body>` byte for byte under 141 designs. The
   design sheet may restyle a word and never add, hide, reorder or re-case one,
   so it may not use `display: none`, `content`, `text-transform` or
-  `visibility`.
+  `visibility`. And **identical markup is not an identical page**: under a
+  byte-identical body, 31 of the 50 designs clipped the C&I Capacity report's
+  widest table. So the design sheet also clips nothing (`fitRules`), pinned for
+  every design.
 - **A design never costs the document.** A row the Template Builder would not
   list, or the chooser would not offer, is refused. So is an unusable colour,
   or a face the container lacks. The route draws the standard document and says
@@ -4431,7 +4450,7 @@ moves nothing: pixel identity at 300 DPI is asserted before and after, and the
 `margin:0` reset and the `<span>` inside a heading are both there for measured
 reasons the doc records.
 
-## A template changes the layout and nothing else
+## A template changes how a document looks and nothing else
 Read [`TEMPLATE_PARITY.md`](./docs/reports/TEMPLATE_PARITY.md) before touching
 `_shared/reports/templateParity.pure.ts`, the first gate in
 `tryTemplateDocument`, `org.tagline`, or any non-Investment adapter, projection
@@ -4441,26 +4460,32 @@ its standard document carries. Measured the same day, **none of the nine
 did**. Q&A printed the first answer whichever was chosen, and the Cash Flow
 printed after-tax figures under "No tax position is modelled". Every test that
 existed checked wiring (published paths, no unresolved binding), and no test
-had ever rendered one record through both paths and compared them.
+had ever rendered one record through both paths and compared them. The
+section above, *A template dresses nine report types, and never pages them*,
+is how the nine are drawn now.
 
 Three rules bite.
 
 - **Released means proven.** `TEMPLATE_RELEASED_REPORT_TYPES` is `investment`
-  alone. Every other report type is produced as its standard document for
-  everyone, whatever was chosen, and the register fails closed on an unknown
-  spelling. A report type is released only when its parity check passes on
-  every master and the owner has read a sample, and never by a surface deciding
-  for itself.
-- **A choice that is kept but not applied says so.** The chooser, the format
-  card and the download each tell the person the standard layout is in use
-  and that their choice is kept. The Cash Flow finalisation key records the
-  template in effect, not the one chosen.
+  alone. Every other report type is drawn by its own route and never through
+  a template's pages, whatever was chosen, and the register fails closed on an
+  unknown spelling. A report type is released only when its parity check
+  passes on every master and the owner has read a sample, and never by a
+  surface deciding for itself.
+- **Held means held from the pages, never from the choice.** The choice is
+  honoured on every document as its design, and the chooser says so before
+  anything is chosen (`TEMPLATE_DESIGN_NOTICE`). The Cash Flow finalisation
+  key names which of the two a document is, a template's pages or a design
+  over the standard pages, so neither can be served for the other.
 - **The house's words are the prime's.** All 500 masters set the house's
   tagline as a literal under every clone's name. They bind `org.tagline` since
-  seed v23, which only the prime publishes.
-
-Phase 2 reaches parity by construction: the template supplies the design and
-the standard composer supplies every body page.
+  seed v23, which only the prime publishes. The browser publishes it, so the
+  frontend that does must be live before seed v23 is applied, or the prime's
+  covers lose the line in between. The seed cannot reach a customised master
+  or a clone the cascade never carries it to, so `routeReportThroughTemplate`
+  re-applies it where every templated document is drawn
+  (`houseTaglineGuard.pure.ts`). On a clone, a value that IS the tagline is
+  bound as v23 binds it, and the prime's template is never touched.
 
 ## The template converter
 An existing template can be brought *onto* the design system rather than into the

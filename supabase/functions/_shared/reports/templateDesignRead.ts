@@ -7,14 +7,19 @@
  * its library lineage, never its pages, which run to megabytes on some rows —
  * and is honoured only where the Template Builder would list it for this
  * person and the chooser would offer it for this report type
- * (`templateDesignRoute.pure.ts`).
+ * (`templateDesignRoute.pure.ts`). That starts with the Builder's own
+ * permission: a person who may not view templates has no row the Builder
+ * would list, which is also what the drawn documents are told, because they
+ * read through the Builder's broker. The permission is asked before the row
+ * is read, so a refusal says nothing about whether the row exists.
  *
  * It never throws and never fails the document: whatever goes wrong, the
- * answer is the standard design plus an echo that says why, and a read that
- * failed is logged with the database's own words rather than reported as a
- * template that does not exist.
+ * answer is the standard design plus an echo that says why. A read that failed
+ * is logged with the database's own words and told to the person as a read
+ * that failed (`template_unreadable`: try again), never as a template that is
+ * gone (`template_unavailable`: choose another).
  */
-import { requireSuperadmin } from '../authz.ts';
+import { requireModulePermission, requireSuperadmin } from '../authz.ts';
 import {
   appliedEcho,
   designFromTemplateRow,
@@ -61,17 +66,22 @@ export async function resolveRequestedDesign(
   if (!reference) return NONE;
 
   const result = await (async () => {
-    if (reference.kind === 'catalogue') return resolveCatalogueDesign(reference);
     try {
+      if (reference.kind === 'catalogue') return resolveCatalogueDesign(reference);
+      const mayView = await requireModulePermission(supabase, actor, 'templates', 'can_view');
+      if (!mayView.ok) {
+        return { ok: false as const, reason: 'template_unavailable' as const, detail: 'no permission to view templates' };
+      }
       const { data, error } = await supabase
         .from('report_templates')
         .select(TEMPLATE_DESIGN_COLUMNS)
         .eq('id', reference.templateId)
         .maybeSingle();
-      // A failed read is not a missing row: log what the database said.
+      // A failed read is not a missing row: log what the database said, and
+      // tell the person to try again rather than to choose another.
       if (error) {
         console.warn(`[${route}] design template ${reference.templateId} unreadable: ${error.message}`);
-        return { ok: false as const, reason: 'template_unavailable' as const, detail: 'unreadable' };
+        return { ok: false as const, reason: 'template_unreadable' as const, detail: 'unreadable' };
       }
       const row = data as (DesignTemplateRow & { tokens?: unknown; lineage?: unknown }) | null;
       if (!row) return { ok: false as const, reason: 'template_unavailable' as const, detail: 'no such template' };
@@ -86,8 +96,12 @@ export async function resolveRequestedDesign(
       // A design is never worth the document: whatever threw, the answer is the
       // standard design and a sentence saying the choice was not honoured.
       const message = e instanceof Error ? e.message : String(e);
+      if (reference.kind !== 'template') {
+        console.warn(`[${route}] catalogue design ${reference.code} unresolvable: ${message}`);
+        return { ok: false as const, reason: 'unknown_design' as const, detail: 'unresolvable' };
+      }
       console.warn(`[${route}] design template ${reference.templateId} unreadable: ${message}`);
-      return { ok: false as const, reason: 'template_unavailable' as const, detail: 'unreadable' };
+      return { ok: false as const, reason: 'template_unreadable' as const, detail: 'unreadable' };
     }
   })();
 

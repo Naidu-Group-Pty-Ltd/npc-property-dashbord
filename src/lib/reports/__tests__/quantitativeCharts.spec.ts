@@ -14,6 +14,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   chartPointsFromConfig,
   drawableCharts,
+  pointsCanBeDrawn,
   PIPELINE_VERSION_WITH_UNSUPPORTED_TITLES,
   TITLE_NOT_CARRIED_BY_DATA,
   titleNotCarriedByData,
@@ -63,6 +64,25 @@ describe('the charts the PDF draws', () => {
     expect(out[0].points).toEqual([{ label: 'Tarneit', value: 12 }]);
   });
 
+  it('leaves out, and does not count, a chart whose data cannot be drawn as the chart it is', async () => {
+    const rasterise = vi.fn(async () => 'data:image/png;base64,UE5H');
+    const one = { data: [{ label: '2026-09-01', value: 4 }] };
+    const zeros = { data: [{ label: 'House', value: 0 }, { label: 'Unit', value: 0 }] };
+    const negative = { data: [{ label: 'House', value: 5 }, { label: 'Unit', value: -2 }] };
+    const out = await drawableCharts([
+      chart({ id: 'one-point-line', chart_type: 'line', chart_config: one }),
+      chart({ id: 'zero-pie', chart_type: 'pie', chart_config: zeros }),
+      chart({ id: 'negative-pie', chart_type: 'pie', chart_config: negative }),
+      chart({ id: 'zero-bar', chart_type: 'bar', chart_config: zeros }),
+      chart({ id: 'pictured-line', chart_type: 'line', chart_config: one, image_data: 'data:image/png;base64,iVBOR' }),
+    ], rasterise);
+    // A bar of zeros is still a true chart, and a picture is drawn as it is.
+    expect(out.map((c) => c.chart.id)).toEqual(['zero-bar', 'pictured-line']);
+    expect(pointsCanBeDrawn('line', [{ label: 'a', value: 1 }, { label: 'b', value: 2 }])).toBe(true);
+    expect(pointsCanBeDrawn('pie', [{ label: 'a', value: 0 }, { label: 'b', value: 3 }])).toBe(true);
+    expect(pointsCanBeDrawn('bar', [])).toBe(false);
+  });
+
   it('draws a series once, however many titles the pipeline stored it under', async () => {
     const suburbs = { data: [{ label: 'Tarneit', value: 12 }, { label: 'Truganina', value: 9 }] };
     const out = await drawableCharts([
@@ -92,7 +112,7 @@ describe('the charts the PDF draws', () => {
     const counts = { data: [{ label: '2026-09-24', value: 3 }, { label: '2026-09-25', value: 4 }] };
     const stored = [
       chart({ id: 'daily', chart_key: 'daily_listing_activity', title: 'Daily Listing Activity', chart_type: 'line', chart_config: counts, sort_order: 5 }),
-      chart({ id: 'pricing', chart_key: 'pricing_trends', title: 'Pricing Trends', chart_type: 'line', chart_config: { data: [{ label: '2026-09-24', value: 5 }] }, sort_order: 6 }),
+      chart({ id: 'pricing', chart_key: 'pricing_trends', title: 'Pricing Trends', chart_type: 'line', chart_config: { data: [{ label: '2026-09-24', value: 5 }, { label: '2026-09-25', value: 6 }] }, sort_order: 6 }),
       chart({ id: 'confidence', chart_key: 'data_confidence', title: 'Data Confidence Trends', chart_type: 'line', chart_config: { data: [{ label: '2026-09-24', value: 1 }, { label: '2026-09-25', value: 1 }] }, sort_order: 7 }),
       chart({ id: 'matrix', chart_key: 'suburb_performance_matrix', title: 'Suburb Performance Matrix', chart_config: { data: [{ label: 'Tarneit', value: 12, averagePrice: 790000 }] }, sort_order: 8 }),
       chart({ id: 'scatter', chart_key: 'price_vs_volume', title: 'Price vs Volume Analysis', chart_type: 'scatter', chart_config: { data: [{ label: 'Truganina', value: 9, price: 790000 }] }, sort_order: 10 }),

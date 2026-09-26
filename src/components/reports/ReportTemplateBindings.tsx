@@ -27,6 +27,7 @@ import { buildFormatTemplateState } from '@/lib/reportTemplate/templateSelection
 import { listReportFormats, type ReportFormatDescriptor } from '@/lib/reportTemplate/reportFormats';
 import { isTemplateDeliveryHeld } from '../../../supabase/functions/_shared/reports/templateParity.pure.ts';
 import {
+  borrowedDesignNote,
   designLenderFor,
   drawnDocumentsNote,
 } from '../../../supabase/functions/_shared/reports/templateDesignRoute.pure.ts';
@@ -49,12 +50,15 @@ function BindingRow({ format, state, designLender, onChange }: RowState & { onCh
   const held = format.supportsProduction && isTemplateDeliveryHeld(format.reportType);
   const designed = held || designLender !== null;
   const drawnNote = drawnDocumentsNote(format.reportType);
+  const borrowedNote = borrowedDesignNote(format.reportType);
   const summary = (() => {
     if (state.status === 'selected') {
       return (
         <span className="flex flex-wrap items-center gap-2">
           <span className="truncate text-sm font-medium">{state.template?.name}</span>
-          {!state.rendersThroughDesignSystem && (
+          {/* A design is read from a template's tokens alone, so the engine
+              that would have drawn its pages says nothing about a held type. */}
+          {!state.rendersThroughDesignSystem && !designed && (
             <Badge variant="outline" className="gap-1 text-[10px]">
               <TriangleAlert className="h-3 w-3 text-warning" aria-hidden="true" />
               Standard generator
@@ -67,7 +71,9 @@ function BindingRow({ format, state, designLender, onChange }: RowState & { onCh
       return (
         <span className="flex items-start gap-1.5 text-xs text-muted-foreground">
           <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0 text-warning" aria-hidden="true" />
-          The chosen template is no longer available — using the default until another is picked.
+          {designed
+            ? 'The chosen template is no longer available — using the standard design until another is picked.'
+            : 'The chosen template is no longer available — using the default until another is picked.'}
         </span>
       );
     }
@@ -75,7 +81,9 @@ function BindingRow({ format, state, designLender, onChange }: RowState & { onCh
       <span className="text-xs text-muted-foreground">
         {state.candidates.length === 0
           ? 'No active templates published for this format yet.'
-          : `Choosing automatically from ${state.candidates.length} active template${state.candidates.length === 1 ? '' : 's'}.`}
+          : designed
+            ? 'Standard design until a template is chosen.'
+            : `Choosing automatically from ${state.candidates.length} active template${state.candidates.length === 1 ? '' : 's'}.`}
       </span>
     );
   })();
@@ -112,6 +120,13 @@ function BindingRow({ format, state, designLender, onChange }: RowState & { onCh
           // choice (`DRAWN_DOCUMENTS`), named where the choice is made.
           <p className="mt-1 text-xs text-muted-foreground" data-testid="template-drawn-documents">
             {drawnNote}
+          </p>
+        )}
+        {borrowedNote && (
+          // The report types that wear this choice as their own design
+          // (`DESIGN_BORROWED_FROM`), named on the row that lends it.
+          <p className="mt-1 text-xs text-muted-foreground" data-testid="template-borrowed-design">
+            {borrowedNote}
           </p>
         )}
       </div>
@@ -158,8 +173,9 @@ export function ReportTemplateBindings() {
         </CardTitle>
         <CardDescription>
           Pick the template each format is generated with. A choice is kept for every report of
-          that format until it is changed here; formats with nothing chosen use the
-          highest-ranked active template, as they always have.
+          that format until it is changed here. With nothing chosen, Investment reports use the
+          highest-ranked active template, as they always have, and every other report uses its
+          own standard design.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-2">
@@ -174,8 +190,8 @@ export function ReportTemplateBindings() {
             <TriangleAlert className="h-4 w-4" />
             <AlertTitle>We couldn’t load the template choices</AlertTitle>
             <AlertDescription>
-              {error.message} Report generation is unaffected — it resolves a template the way it
-              did before.
+              {error.message} Reports can still be generated: each one reads its template choice
+              when it is made.
             </AlertDescription>
           </Alert>
         ) : (

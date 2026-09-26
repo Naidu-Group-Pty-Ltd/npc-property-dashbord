@@ -76,6 +76,9 @@ describe('what a person is told', () => {
     expect(TEMPLATE_DESIGN_NOTICE.description).toMatch(/typefaces.*colours.*cover/);
     expect(templateDesignExplanation('Portfolio Performance Review'))
       .toMatch(/^Portfolio Performance Review reports keep their own pages/);
+    // And where it does not reach: the legacy layouts are drawn as they were.
+    expect(templateDesignExplanation('Portfolio Performance Review'))
+      .toMatch(/"legacy layout" is drawn as it always was, without the design\.$/);
   });
 
   it('never says a choice is waiting, held back or not applied — it is applied', () => {

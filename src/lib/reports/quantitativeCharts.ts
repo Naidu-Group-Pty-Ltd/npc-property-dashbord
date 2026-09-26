@@ -126,15 +126,31 @@ export function chartPointsFromConfig(chart: StoredQuantitativeChart): Quantitat
   return points.length > 0 ? points : null;
 }
 
+/**
+ * Whether the PDF can draw a chart of this type from its data alone.
+ *
+ * A line needs two points to be a line, and a pie is a share of a positive
+ * whole: one point draws an empty frame, and a pie of zeros or with a
+ * negative slice draws nothing true. Such a chart is left out and not counted,
+ * like a chart with no data at all. A bar of zeros is still a true chart.
+ */
+export function pointsCanBeDrawn(chartType: string, points: readonly QuantitativeChartPoint[]): boolean {
+  if (points.length === 0) return false;
+  if (chartType === 'line') return points.length >= 2;
+  if (chartType === 'pie') return points.every((p) => p.value >= 0) && points.some((p) => p.value > 0);
+  return true;
+}
+
 const SVG = /^data:image\/svg\+xml;base64,/;
 const PICTURE = /^data:image\//;
 
 /**
  * The charts the PDF draws, in the pipeline's order, each with what it is
- * drawn from. Left out: a chart with neither a picture nor data, a chart whose
- * series an earlier chart already draws, and a chart whose data cannot carry
- * its title. So every count the report prints — on its cover, its contents and
- * its method — counts only what is drawn.
+ * drawn from. Left out: a chart with neither a picture nor data it can be
+ * drawn from (`pointsCanBeDrawn`), a chart whose series an earlier chart
+ * already draws, and a chart whose data cannot carry its title. So every count
+ * the report prints — on its cover, its contents and its method — counts only
+ * what is drawn.
  */
 export async function drawableCharts<C extends StoredQuantitativeChart>(
   charts: readonly C[],
@@ -159,9 +175,12 @@ export async function drawableCharts<C extends StoredQuantitativeChart>(
     } else if (PICTURE.test(stored)) {
       image = stored;
     }
-    if (!image && !points) continue;
+    // Without a picture the chart is drawn from its data, so the data has to
+    // be drawable as the chart it is.
+    const drawnFrom = points && (image || pointsCanBeDrawn(chart.chart_type, points)) ? points : null;
+    if (!image && !drawnFrom) continue;
     if (series !== null) drawnSeries.add(series);
-    out.push({ chart, image, points });
+    out.push({ chart, image, points: drawnFrom });
   }
   return out;
 }

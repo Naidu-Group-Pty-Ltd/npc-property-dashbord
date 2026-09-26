@@ -15,6 +15,10 @@
  * whose cells all fit on one line is exactly the row it always was — the same
  * height and the same position — so a document with nothing too wide is drawn
  * exactly as before.
+ *
+ * "Fits" means fits with a gutter (`GRID_GUTTER`) before the next column. A
+ * value that ran into those last 4 mm used to be set on one line touching the
+ * next column's value; it is now set on two, and its row grows by a line.
  */
 
 /** Room kept between a value and the next column, in mm. */

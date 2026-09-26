@@ -190,6 +190,27 @@ describe("a design's own rules", () => {
     }
   });
 
+  it('never cost a figure: a numeric head may wrap, and no table shell clips', () => {
+    // Measured before this rule, with WeasyPrint 69.0 over 459 renders: 31 of
+    // the 50 designs cut the C&I Capacity report's Evidence column at the edge
+    // of the sheet, and the raised designs clipped Adjusted EBITDA inside the
+    // table's rounded shell. After it: no clipped text in any render, and no
+    // page count changed. Figures themselves still never wrap.
+    for (const design of DESIGNS) {
+      const css = templateDesignCss(
+        design.layer, design.palette, normalizeReportDesignOptions(design.options), type,
+      );
+      const fit = css.slice(css.indexOf('A design never costs a figure'));
+      expect(fit, design.label).toContain('table.data th.num { white-space: normal; }');
+      expect(fit, design.label).toContain('.table-block, table.data { overflow: visible; }');
+      expect(fit, design.label).not.toMatch(/td\.num[^{]*\{[^}]*white-space/);
+      // After every rule it must win over, so it wins by order.
+      expect(css.lastIndexOf('overflow: visible'), design.label).toBeGreaterThan(css.lastIndexOf('overflow: hidden'));
+    }
+    // And a standard document gets none of it.
+    expect(templateDesignCss(null, DESIGNS[0].palette, normalizeReportDesignOptions(null), type)).toBe('');
+  });
+
   it('name only faces the print container has', () => {
     const installed = new Set(CONTAINER_INSTALLED_FAMILIES);
     for (const design of DESIGNS) {

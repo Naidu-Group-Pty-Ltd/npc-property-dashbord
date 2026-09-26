@@ -19,6 +19,7 @@ import { Maximize2 } from 'lucide-react';
 import { fetchPdfBlob, triggerPdfDownload } from '@/lib/pdf/downloadPdf';
 import { drawnDesignFor, type DrawnDocumentDesign } from '@/lib/reports/drawnDocumentDesign';
 import { loadLegacyDocumentBrand, rgbObject } from '@/lib/reports/legacyDocumentBrand';
+import { PLATFORM_DISCLAIMER } from '@/lib/reports/issuerIdentity.pure';
 import { mixHex } from '@/lib/reportDesign/color.pure';
 import { drawableCharts } from '@/lib/reports/quantitativeCharts';
 import { marketSnapshotSentences, readQuantitativeReportFacts } from '@/lib/reports/quantitativeReportFacts';
@@ -288,7 +289,12 @@ export default function ReportViewer() {
       const blob = await fetchPdfBlob(signedResult.data.signedUrl);
       if (options?.returnBlob) return blob;
       triggerPdfDownload(blob, fileName);
-      toast({ title: "PDF Downloaded", description: `Report saved as ${fileName}` });
+      // Said, because it is a different document: the pipeline's own copy
+      // carries no chosen design and draws every chart the pipeline built.
+      toast({
+        title: 'Downloaded the saved copy',
+        description: `The full report could not be drawn, so the simpler copy saved when this report was built was downloaded instead (${fileName}). It does not use a chosen template design.`,
+      });
       return blob;
     };
 
@@ -308,6 +314,12 @@ export default function ReportViewer() {
         ? legacyBrand.issuer.name
         : (__brandSettings?.contactDetails?.company_name || 'Property Report').trim();
       const brandUpper = brandName.toUpperCase();
+      // An unbranded clone's report is issued by the platform, which supplies
+      // the software and prepared none of it (`PLATFORM_DISCLAIMER`). So it is
+      // named as the issuer and never as the report's author, owner or
+      // adviser: no "prepared by", no copyright line, no "advisory" tagline,
+      // and the platform's own disclaimer in place of the author's.
+      const platformIssued = legacyBrand.artwork === 'issuer' && legacyBrand.issuer.kind === 'platform';
       // Only a chart with a picture or the data it is drawn from is drawn, and
       // only a drawn chart is counted (`quantitativeCharts.ts`) — the stand-in
       // this replaced invented its figures.
@@ -617,8 +629,10 @@ export default function ReportViewer() {
       // Brand name
       pdf.setFontSize(7); setColor(Q.quiet);
       pdf.text(brandUpper, pageWidth / 2, 100, { align: 'center' });
-      pdf.setFontSize(6); setColor(Q.fainter);
-      pdf.text('PROPERTY INTELLIGENCE  •  MARKET RESEARCH  •  ADVISORY', pageWidth / 2, 108, { align: 'center' });
+      if (!platformIssued) {
+        pdf.setFontSize(6); setColor(Q.fainter);
+        pdf.text('PROPERTY INTELLIGENCE  •  MARKET RESEARCH  •  ADVISORY', pageWidth / 2, 108, { align: 'center' });
+      }
 
       // Metadata card below header
       yPos = 130;
@@ -630,15 +644,17 @@ export default function ReportViewer() {
       pdf.text('GENERATED', margin + 10, metaY - 2);
       if (facts.totalListings !== null) pdf.text('LISTINGS', margin + contentWidth * 0.3, metaY - 2);
       pdf.text('CHARTS', margin + contentWidth * 0.55, metaY - 2);
-      pdf.text('PREPARED BY', pageWidth - margin - 10, metaY - 2, { align: 'right' });
+      if (!platformIssued) pdf.text('PREPARED BY', pageWidth - margin - 10, metaY - 2, { align: 'right' });
 
       pdf.setFontSize(9); pdf.setFont('helvetica', 'bold');
       setColor(white);
       pdf.text(format(new Date(report.created_at), 'dd MMM yyyy'), margin + 10, metaY + 5);
       if (facts.totalListings !== null) pdf.text(wholeNumber(facts.totalListings), margin + contentWidth * 0.3, metaY + 5);
       pdf.text(pdfCharts.length.toString(), margin + contentWidth * 0.55, metaY + 5);
-      setColor(gold);
-      pdf.text(brandName, pageWidth - margin - 10, metaY + 5, { align: 'right' });
+      if (!platformIssued) {
+        setColor(gold);
+        pdf.text(brandName, pageWidth - margin - 10, metaY + 5, { align: 'right' });
+      }
 
       // Confidentiality notice
       yPos += 36;
@@ -981,7 +997,10 @@ export default function ReportViewer() {
         // are the report's findings, so they are not headed as actions.
         if (highPriority.length > 0 || warnings.length > 0) {
           drawSectionHeader('Priority Findings', undefined, false);
-          const actionItems = [...highPriority, ...warnings].slice(0, 5);
+          // A high-priority warning is one finding, and is listed once.
+          const actionItems = [...highPriority, ...warnings]
+            .filter((item, at, all) => all.indexOf(item) === at)
+            .slice(0, 5);
           actionItems.forEach((item: any, idx) => {
             const text = typeof item === 'string' ? item : (item.text || '');
             // Every line of the finding, and a row as tall as they are: only
@@ -1176,16 +1195,23 @@ export default function ReportViewer() {
       const disclaimerScope = facts.totalListings !== null
         ? ` analyzing ${counted(facts.totalListings, 'property listing', 'property listings')}${facts.uniqueSuburbs !== null ? ` across ${counted(facts.uniqueSuburbs, 'suburb', 'suburbs')}` : ''}`
         : '';
-      const disclaimerText = [
+      const dataSourceLine = 'Data source: property listings as advertised by selling agents. Listing details are not independently verified, are subject to change and may not reflect current market conditions.';
+      const generatedLine = `Report generated on ${format(new Date(report.created_at), 'PPP')}${disclaimerScope}.`;
+      const disclaimerText = platformIssued ? [
+        ...PLATFORM_DISCLAIMER.split('\n\n').flatMap((paragraph) => [paragraph, '']),
+        dataSourceLine,
+        '',
+        generatedLine,
+      ] : [
         `This report has been prepared by ${brandName} for informational purposes only. The figures in it are drawn from property listings as advertised by selling agents.`,
         '',
         `While every effort has been made to ensure accuracy, ${brandName} makes no warranties or representations regarding the completeness, reliability, or suitability of the information for any particular purpose.`,
         '',
         'This report does not constitute financial, legal, or investment advice. Recipients should seek independent professional counsel before making any investment decisions based on the contents of this report.',
         '',
-        'Data source: property listings as advertised by selling agents. Listing details are not independently verified, are subject to change and may not reflect current market conditions.',
+        dataSourceLine,
         '',
-        `Report generated on ${format(new Date(report.created_at), 'PPP')}${disclaimerScope}.`,
+        generatedLine,
         '',
         `© ${brandName}. All rights reserved. Unauthorized distribution prohibited.`
       ];
@@ -1215,8 +1241,10 @@ export default function ReportViewer() {
       dY += 6;
       pdf.setFontSize(7); pdf.setFont('helvetica', 'bold'); setColor(gold);
       pdf.text(brandUpper, pageWidth / 2, dY, { align: 'center' });
-      pdf.setFontSize(5.5); pdf.setFont('helvetica', 'normal'); setColor(mutedText);
-      pdf.text('Property Intelligence  •  Market Research  •  Strategic Advisory', pageWidth / 2, dY + 5, { align: 'center' });
+      if (!platformIssued) {
+        pdf.setFontSize(5.5); pdf.setFont('helvetica', 'normal'); setColor(mutedText);
+        pdf.text('Property Intelligence  •  Market Research  •  Strategic Advisory', pageWidth / 2, dY + 5, { align: 'center' });
+      }
 
       // The contents' page numbers: the page each section was drawn on.
       pdf.setPage(tocPageRef);

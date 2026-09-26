@@ -233,26 +233,14 @@ Provide a comprehensive property investment analysis. Return valid JSON:
         if (jsonMatch) jsonString = jsonMatch[1];
         analysis = JSON.parse(jsonString);
       } catch (parseError) {
+        // A reply that cannot be read is not an analysis. This used to invent
+        // one — a score and a grade from the yield alone, stock strengths and
+        // risks, "Performance aligned with market averages." and a ten-year
+        // projection at 5% — and print it as the model's assessment of this
+        // property. Now it says the analysis failed, and the adviser can ask
+        // again.
         console.error('Parse error:', parseError);
-        // Fallback analysis if AI parsing fails
-        analysis = {
-          investmentScore: Math.round(50 + (grossYield * 5) + (netCashflow > 0 ? 10 : -10)),
-          investmentGrade: grossYield > 5 ? 'B+' : grossYield > 4 ? 'B' : 'C',
-          cashflowStatus: netCashflow > 500 ? 'Strong Positive' : netCashflow > 0 ? 'Positive' : netCashflow > -200 ? 'Neutral' : 'Negative',
-          yieldAnalysis: `This property has a gross yield of ${grossYield.toFixed(2)}% and net yield of ${netYield.toFixed(2)}%.`,
-          equityPosition: lvr < 50 ? 'Strong' : lvr < 70 ? 'Moderate' : lvr < 80 ? 'Weak' : 'Critical',
-          strengths: ['Established property', 'Regular rental income'],
-          concerns: ['Market volatility', 'Interest rate sensitivity'],
-          opportunities: ['Rent review potential', 'Value-add renovations'],
-          risks: ['Vacancy risk', 'Maintenance costs'],
-          recommendations: ['Review rental income annually', 'Consider refinancing options'],
-          marketComparison: 'Performance aligned with market averages.',
-          tenYearProjection: {
-            projectedValue: Math.round(value * Math.pow(1.05, 10)),
-            projectedEquity: Math.round(value * Math.pow(1.05, 10) - loan * 0.7),
-            totalCashflow: Math.round(annualCashflow * 10 * 1.2)
-          }
-        };
+        throw new Error('the analysis could not be read. Try again.');
       }
 
       setReportData({

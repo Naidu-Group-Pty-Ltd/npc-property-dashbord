@@ -1,4 +1,4 @@
-# Template parity: a template changes the layout and nothing else
+# Template parity: a template changes how a document looks and nothing else
 
 The owner set the rule on 26 Sep 2026. For every report type other than the
 five Investment tiers, a document drawn through a design-system template must
@@ -102,6 +102,25 @@ v22:
   `preview_schema` alike;
 - `required_bindings` gains `org.tagline`;
 - the 43 voice templates are byte-identical.
+
+The order they go live in matters. `org.tagline` is published by the browser
+(`adapters/organisation.ts` and the Market Intelligence adapter), so the
+frontend that publishes it has to be live before the seed is applied. Applied
+first, the prime's templated covers would lose the line until the frontend
+caught up. The seed goes before its refresh, because the refresh reads the
+release's baselines, which the seed writes.
+
+**The seed is not the only guard, because it cannot reach everywhere.** Two
+kinds of master never receive it: one somebody customised (the refresh copies
+only masters still on their release baseline), and every master on a clone the
+seed does not reach, since Mission Control's cascade never carries a seed this
+size. So `routeReportThroughTemplate`, the one route every templated document
+is drawn through, applies the same rule before either renderer reads the
+template (`houseTaglineGuard.pure.ts`). On a clone, a block value that is
+exactly the house's tagline is given the `{{org.tagline}}` binding v23 would
+have given it. On the prime nothing is touched. `coverTaglineIsTheIssuers.spec.ts`
+renders all 500 covers with the literal put back, through the guard, and
+requires each to match the v23 cover byte for byte.
 
 ## What was found, report type by report type
 
@@ -435,7 +454,9 @@ untouched.
   numbers.
 - **The Industrial Investment Report's address overlapped the next field** when
   it wrapped. Values now wrap inside their own column and the row grows
-  (`drawnGrid.ts`). A row whose values fit is unchanged.
+  (`drawnGrid.ts`). A row whose values fit is unchanged. "Fit" means fit with
+  a 4 mm gutter before the next column, so a value that used to run into those
+  last 4 mm, touching its neighbour, is now set on two lines.
 
 ### Decisions for the owner
 
@@ -463,13 +484,155 @@ These were found and deliberately not changed here:
 
    It also:
    - stores the suburb chart twice;
-   - counts "no suburb" as a suburb in `unique_suburbs`;
+   - counts "no suburb" as a suburb in `unique_suburbs`. The PDF takes it
+     off only where the suburb chart (the ten busiest) shows that bucket, so a
+     report whose no-suburb listings fall below the ten can still print one
+     suburb too many;
    - writes findings that call the no-suburb bucket a suburb ("Unknown Suburb
      has the highest listing concentration") and name the smallest price band
      as the key finding.
 
    Fixing them at the source changes what new reports store, so it is a
-   pipeline change with its own version bump.
+   pipeline change with its own version bump. Until then the report page, a
+   staff screen, still draws every chart the pipeline stored, those four
+   included, while the PDF a client receives leaves them out. The page was
+   left as it was because it is where staff can see what the pipeline built.
+
+### The release audit (26 Sep 2026)
+
+Before this release went live, every document-producing surface was
+inventoried and the whole diff reviewed. These were fixed:
+
+- **An unbranded clone's market report named the platform as its author.** It
+  said Aurixa "prepared" the report, owned its copyright and offered
+  "advisory". Aurixa only supplies the software, so that report now prints the
+  platform's own disclaimer (`PLATFORM_DISCLAIMER`), with no "prepared by", no
+  copyright line and no advisory tagline.
+- **The market report's PDF counted charts it could not draw**: a line with one
+  point, a pie with nothing in it. It now leaves them out and does not count
+  them. It also listed a finding twice when it was both high-priority and a
+  warning.
+- **The market report's fallback said nothing.** When the full report could not
+  be drawn, the pipeline's simpler stored copy was downloaded under the same
+  "PDF Downloaded" message. It now says a different copy was downloaded.
+- **The Cash Flow Comparison handed the AI invented figures.** A property with
+  no recorded interest rate or LVR was described as 5.5% and 80%, and a missing
+  price or rent as $0. The AI is now given nothing for a figure the record does
+  not hold, and is told to say it is not recorded.
+- **The Client Property Analysis invented an analysis** when the AI's reply
+  could not be read: a score and grade from the yield alone, stock strengths
+  and risks, and a ten-year projection at 5%. It now says the analysis failed.
+- **The Property Comparison's "legacy layout" download never downloaded.**
+  Storage refused the upload for every user, after the AI formatting had been
+  paid for. The file is now handed straight to the browser (`COMPARISON.md`
+  §8).
+- **A clone's templated cover could still print the house's tagline** from a
+  customised master, or from any master the v23 seed never reached. That is
+  now guarded where the document is drawn (the v23 section above).
+- **The chooser described held types as ranked.** It said "Choosing
+  automatically" and "Standard generator" for report types that, with nothing
+  chosen, use their own standard design. It now says standard design. It also
+  says two further things where the choice is made:
+  - that the Cash Flow choice also dresses the Cash Flow Comparison;
+  - that a "legacy layout" download is drawn without the design.
+- **Under 31 of the 50 designs, the Commercial & Industrial Capacity report
+  cut text off its "Financial periods" table.** That table is wider than the
+  text area, and the standard document keeps all of it only because it spills
+  into the right margin. A design clipped it: raised surfaces set
+  `overflow: hidden` on tables, and a narrower body or a wider header face
+  made the overrun worse. The Evidence column was cut or lost, and on some
+  designs so were the Adjusted EBITDA figures. The parity spec could not see
+  it, because the markup was byte-identical: **identical markup is not an
+  identical page.** The design sheet now clips nothing, and a numeric
+  column's head may wrap between words (`fitRules` in
+  `templateDesignCss.pure.ts`, pinned for every design by
+  `templateDesignParity.spec.ts`). Measured over all 459 renders (nine report
+  types, each standard and under all fifty designs): 31 designs lost text
+  before, none after, no page count changed, and the standard documents are
+  byte-identical.
+- **A design's secondary text could fall below the 7:1 print floor** on its
+  pale panels: 225 of the 500 design and colourway combinations measured
+  6.33–6.99:1 there. The muted ink is now held to 7:1 on the washes as well as
+  on the page (`familyFromDesignPalette`).
+- **A template that could not be read was reported as one that was gone.** A
+  database fault, a missing row and a permission refusal all said "no longer
+  available to you … choose another". A fault now says to try again, and that
+  the choice is still set (`template_unreadable`, on the server and in the
+  browser alike).
+- **A catalogue design that has left the catalogue** now draws the standard
+  document and says so, instead of refusing the whole request. Nothing sends
+  one today, because the browser sends a template's id and not its code.
+- **Smaller fixes:**
+  - The intake pack now carries a business name containing `$` or characters
+    XML cannot hold without corrupting the file (`packPresentation.ts`).
+  - Safari no longer cancels the intake pack download: the file's link is kept
+    for 1.5 s after the click.
+  - The C&I cash flow print window falls back to the standard document if the
+    design cannot be written into it.
+- **Security**, recorded in
+  [`TEMPLATE_BROKER_TABLES.md`](../security/TEMPLATE_BROKER_TABLES.md):
+  - the Template Builder's broker exposed staff credentials and integration
+    keys to any staff login;
+  - the design read now asks the Template Builder's own `view` permission
+    before it reads a template row.
+
+Found and recorded for the owner rather than changed:
+
+6. **The "legacy layout" downloads do not wear the chosen design.** They are:
+   - Borrowing Capacity, Cash Flow (and its Flatten and Print View), and the
+     Cash Flow Comparison;
+   - Portfolio "Download & Save PDF", and Client Details' Formara;
+   - the Report Q&A editors and transcript, and Market Intelligence.
+
+   The chooser now says so. Their generators already accept a design through
+   `loadLegacyDocumentBrand`, so each could take one, or be retired. Portfolio
+   is the one where this matters most: its legacy generator is still how a
+   Portfolio report is first created, and the file it stores is what the
+   portal publishes.
+7. **Missing figures still print as $0, 0% or "N/A" in several legacy
+   documents.** These are the Portfolio legacy PDF, the Cash Flow Print View,
+   the legacy cash flow comparison, the Commercial and Industrial reports, the
+   Overview snapshot and the legacy Borrowing Capacity PDF.
+   `monthlyFigureOrUnavailable` is the pattern to follow.
+8. **The Cash Flow Comparison prints a score the AI gave, with no scale.** The
+   typeset document prints it as "Score given", the legacy one as
+   "Score"/"Overall Score". Keep it qualified as it is, or drop it.
+9. **The Template Builder can export a held report type's real record through
+   a template's own pages** ("Load sample from real report", then any export).
+   That is the page-drawing the hold withholds everywhere else. It needs the
+   Template Builder's `edit` permission.
+10. **The report library's "Download" is the stored markdown as a .txt file.**
+    It is not scrubbed, so its "N/A" cells and `{{…}}` chart directives come
+    with it, and the viewer's copy is logged as a PDF download.
+11. **The scheduled Market Intelligence email** attaches whatever PDF the report
+    row holds, in the design it was downloaded in. The email's signature,
+    banner and disclaimer come from the Branding page with no clone guard.
+12. **Documents stored before this release are served as stored.** That covers
+    a clone's PDFs made before the 26 Sep white-label work, and any held report
+    type drawn through a template's pages before the hold. Finding them needs a
+    storage query this work did not run.
+13. **Outside the reporting scope**, and so not touched here:
+    - **The Buyer's Agent Agreement.** It names the house on a clone. On a
+      clone with no email set, it routes the agent's DocuSign signature to the
+      house mailbox.
+    - **The finance portal.** The commission statement, the RCTI record and
+      the compliance print carry the house's palette and name.
+14. **Unreachable code** could be deleted:
+    - about 1,400 lines after `return data;` in `useReportGenerator.tsx`;
+    - `report-qa`'s `send-email` and `export-pdf` actions;
+    - `ClientPDFGenerator`, which nothing mounts;
+    - `render-investment-report-pdf`, which nothing calls.
+15. **Smaller items:**
+    - The Q&A transcript copies page 1 of an uploaded template PDF with no
+      check for house identity.
+    - The disclaimer block's defaults ("ABN 00 000 000 000") print if an author
+      leaves them unbound.
+    - The Commercial report's discounted cash flow uses assumptions it does not
+      show: 1.5% selling costs and 5% vacancy.
+16. **Nothing records which design a document was drawn in.** The route says
+    so when it answers (`DesignEcho`), and the document shows it. But no row
+    records it: not the report, not the render ledger. Recording it would
+    answer "which design did this client receive?" after the fact.
 
 ## Releasing a report type's pages
 

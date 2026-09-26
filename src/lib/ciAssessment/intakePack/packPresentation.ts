@@ -207,6 +207,37 @@ export function recolourWorksheet(xml: string, design: DrawnDocumentDesign): str
 
 // ── Names ────────────────────────────────────────────────────────────────────
 
+/** The longest business name a pack carries. */
+const NAME_LIMIT = 200;
+
+/** Whether XML 1.0 allows this code point in a document at all. */
+function isXmlChar(cp: number): boolean {
+  return cp === 0x9 || cp === 0xa || cp === 0xd
+    || (cp >= 0x20 && cp <= 0xd7ff)
+    || (cp >= 0xe000 && cp <= 0xfffd)
+    || (cp >= 0x10000 && cp <= 0x10ffff);
+}
+
+/**
+ * A business name as a pack can carry it, or null for nobody named.
+ *
+ * A character XML does not allow makes the whole part unreadable, so it is
+ * removed rather than escaped, and runs of space become one space. Found in
+ * the audit before this shipped: a control character in a clone's name left
+ * fourteen parts of the workbook malformed.
+ *
+ * A name longer than any business name is read as nobody named rather than
+ * cut short, because a shortened name is not the business's name. The pack's
+ * own placeholders stand in, as they do for a clone that names nobody.
+ */
+export function packSafeName(name: string | null): string | null {
+  if (name === null) return null;
+  const allowed = Array.from(name).filter((ch) => isXmlChar(ch.codePointAt(0) ?? 0)).join('');
+  const cleaned = allowed.replace(/\s+/g, ' ').trim();
+  if (!cleaned || Array.from(cleaned).length > NAME_LIMIT) return null;
+  return cleaned;
+}
+
 function escapeXml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -238,9 +269,14 @@ const HOUSE = PACK_HOUSE_NAME.replace(/\s+/g, '\\s+');
 export function renameInText(xml: string, issuerName: string | null): string {
   const bracketed = new RegExp(`\\(${HOUSE}\\)`, 'g');
   const bare = new RegExp(HOUSE, 'g');
+  const name = packSafeName(issuerName);
+  // Function replacers: a string replacement expands `$&`, `$'` and `` $` ``,
+  // and escaping turns `$'` into `$&apos;`, which starts with `$&`.
+  const signOff = `(${escapeXml(name ?? PACK_PLACEHOLDER.signOff)})`;
+  const consent = escapeXml(name ?? PACK_PLACEHOLDER.consent);
   return xml
-    .replace(bracketed, `(${escapeXml(issuerName ?? PACK_PLACEHOLDER.signOff)})`)
-    .replace(bare, escapeXml(issuerName ?? PACK_PLACEHOLDER.consent));
+    .replace(bracketed, () => signOff)
+    .replace(bare, () => consent);
 }
 
 /** Excel's own limit on one header or footer, in characters. */
@@ -254,7 +290,8 @@ const HEADER_FOOTER_LIMIT = 255;
  * limit, leaves the footer reading "Confidential" alone, as the guide's
  * footer always has.
  */
-export function renameInHeadersAndFooters(xml: string, issuerName: string | null): string {
+export function renameInHeadersAndFooters(xml: string, rawIssuerName: string | null): string {
+  const issuerName = packSafeName(rawIssuerName);
   const named = new RegExp(`${HOUSE}(\\s*·\\s*)?`, 'g');
   return xml.replace(
     /<(oddHeader|oddFooter|evenHeader|evenFooter|firstHeader|firstFooter)>([\s\S]*?)<\/\1>/g,
@@ -264,7 +301,7 @@ export function renameInHeadersAndFooters(xml: string, issuerName: string | null
         : null;
       const next = withName !== null && unescapeXml(withName).length <= HEADER_FOOTER_LIMIT
         ? withName
-        : body.replace(named, '');
+        : body.replace(named, () => '');
       return `<${tag}>${next}</${tag}>`;
     },
   );
@@ -275,9 +312,11 @@ export function renameInHeadersAndFooters(xml: string, issuerName: string | null
  * editor is nobody, because on the approved files it is a person at the house.
  */
 export function renameInCoreProperties(xml: string, issuerName: string | null): string {
+  const name = packSafeName(issuerName);
+  const creator = `<dc:creator>${name ? escapeXml(name) : ''}</dc:creator>`;
   return xml
-    .replace(/<dc:creator>[\s\S]*?<\/dc:creator>/, `<dc:creator>${issuerName ? escapeXml(issuerName) : ''}</dc:creator>`)
-    .replace(/<cp:lastModifiedBy>[\s\S]*?<\/cp:lastModifiedBy>/, '<cp:lastModifiedBy></cp:lastModifiedBy>');
+    .replace(/<dc:creator>[\s\S]*?<\/dc:creator>/, () => creator)
+    .replace(/<cp:lastModifiedBy>[\s\S]*?<\/cp:lastModifiedBy>/, () => '<cp:lastModifiedBy></cp:lastModifiedBy>');
 }
 
 /** The words a part carries, for asking whether it names the house. */

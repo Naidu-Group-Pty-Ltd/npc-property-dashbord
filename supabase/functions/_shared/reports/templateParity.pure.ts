@@ -81,7 +81,12 @@ export const TEMPLATE_DESIGN_NOTICE = Object.freeze({
 
 /** The same, for the chooser, where the report type is named. */
 export function templateDesignExplanation(formatLabel: string): string {
+  // The second sentence is said because several of these report types still
+  // offer a "(legacy layout)" download beside their own, and that one is drawn
+  // as it always was: a choice that quietly does not reach a document is one
+  // the person did not knowingly make.
   return `${formatLabel} reports keep their own pages, with everything the standard document `
     + 'prints, and take their design from the template you choose: its typefaces, colours, '
-    + 'cover and table style.';
+    + 'cover and table style. A download marked "legacy layout" is drawn as it always was, '
+    + 'without the design.';
 }

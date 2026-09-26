@@ -138,6 +138,29 @@ describe('the composed PDF', () => {
     expect(pdfPath).not.toMatch(/`\$\{i \+ 3\}`/);
     expect(pdfPath).toMatch(/pdf\.setPage\(tocPageRef\)/);
   });
+
+  it('lists a finding that is both high-priority and a warning once', () => {
+    expect(pdfPath).toMatch(/const actionItems = \[\.\.\.highPriority, \.\.\.warnings\]\s*\.filter\(\(item, at, all\) => all\.indexOf\(item\) === at\)/);
+  });
+
+  it('never names the platform as the author, owner or adviser of an unbranded report', () => {
+    // An unbranded clone's report is issued by Aurixa, which supplies the
+    // software and prepared none of it (`PLATFORM_DISCLAIMER`).
+    expect(pdfPath).toMatch(/const platformIssued = legacyBrand\.artwork === 'issuer' && legacyBrand\.issuer\.kind === 'platform'/);
+    expect(pdfPath).toMatch(/if \(!platformIssued\) pdf\.text\('PREPARED BY'/);
+    expect(pdfPath).toMatch(/const disclaimerText = platformIssued \? \[\s*\.\.\.PLATFORM_DISCLAIMER\.split/);
+    const platformBranch = pdfPath.slice(
+      pdfPath.indexOf('const disclaimerText = platformIssued ? ['),
+      pdfPath.indexOf('] : [', pdfPath.indexOf('const disclaimerText = platformIssued ? [')),
+    );
+    expect(platformBranch).not.toMatch(/prepared by|©|All rights reserved/i);
+    // Every "advisory" tagline is drawn only for a named business.
+    for (const tagline of ['MARKET RESEARCH  •  ADVISORY', 'Market Research  •  Strategic Advisory']) {
+      const at = pdfPath.indexOf(tagline);
+      expect(at, tagline).toBeGreaterThan(-1);
+      expect(pdfPath.slice(Math.max(0, at - 200), at)).toMatch(/if \(!platformIssued\) \{/);
+    }
+  });
 });
 
 describe('the report page', () => {

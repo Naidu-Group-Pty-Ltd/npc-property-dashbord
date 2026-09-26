@@ -78,7 +78,10 @@ import {
   TEMPLATE_DESIGN_NOTICE,
   templateDesignExplanation,
 } from '../../../supabase/functions/_shared/reports/templateParity.pure.ts';
-import { drawnDocumentsNote } from '../../../supabase/functions/_shared/reports/templateDesignRoute.pure.ts';
+import {
+  borrowedDesignNote,
+  drawnDocumentsNote,
+} from '../../../supabase/functions/_shared/reports/templateDesignRoute.pure.ts';
 
 /** The sentinel for "no fixed template" — the resolver's ranking decides. */
 const AUTOMATIC = '__automatic__';
@@ -217,6 +220,8 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
   const held = isTemplateDeliveryHeld(format);
   /** The documents drawn without a template that wear this choice too. */
   const drawnNote = drawnDocumentsNote(format);
+  /** The report types that borrow this choice as their own design. */
+  const borrowedNote = borrowedDesignNote(format);
 
   /** The library's production designs for this format, grouped by family. */
   const { families, loose } = useMemo(() => {
@@ -486,6 +491,7 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
                 <AlertDescription>
                   {templateDesignExplanation(formatLabel)}
                   {drawnNote && <span data-testid="template-drawn-documents"> {drawnNote}</span>}
+                  {borrowedNote && <span data-testid="template-borrowed-design"> {borrowedNote}</span>}
                 </AlertDescription>
               </Alert>
             )}
@@ -515,11 +521,15 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center gap-2 text-sm font-medium">
                       <Wand2 className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
-                      Choose automatically
+                      {held ? 'Standard design' : 'Choose automatically'}
                     </span>
                     <span className="mt-1 block text-xs text-muted-foreground">
-                      Use whichever active template ranks highest for this format. This is what
-                      happens when nothing is chosen.
+                      {held
+                        // A held report type takes no design unless one is chosen:
+                        // nothing chosen is its own standard document, never the
+                        // template the ranking would have picked.
+                        ? 'Draw these reports in their own standard design. This is what happens when nothing is chosen.'
+                        : 'Use whichever active template ranks highest for this format. This is what happens when nothing is chosen.'}
                     </span>
                   </span>
                 </label>
@@ -773,7 +783,7 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
                                 {state?.status === 'selected' && state.selectedTemplateId === template.id && (
                                   <Badge className="text-[10px]">Current</Badge>
                                 )}
-                                {!drawn && (
+                                {!drawn && !held && (
                                   // Selectable, and honest: this is what the ranking
                                   // would have picked too, and it produces the legacy
                                   // document either way.

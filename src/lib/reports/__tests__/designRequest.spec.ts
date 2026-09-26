@@ -19,8 +19,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const superadmin = vi.hoisted(() => ({ ok: false }));
+/** Whether the caller may view templates — the Template Builder's own permission. */
+const templatesView = vi.hoisted(() => ({ ok: true, asked: [] as string[] }));
 vi.mock('../../../../supabase/functions/_shared/authz.ts', () => ({
   requireSuperadmin: vi.fn(async () => (superadmin.ok ? { ok: true } : { ok: false, error: 'no' })),
+  requireModulePermission: vi.fn(async (_s: unknown, _a: unknown, moduleKey: string, perm: string) => {
+    templatesView.asked.push(`${moduleKey}:${perm}`);
+    return templatesView.ok ? { ok: true } : { ok: false, error: 'no' };
+  }),
 }));
 
 import { parseRenderRequest as parseBorrowing } from '../../../../supabase/functions/_shared/reports/borrowingCapacity/route.pure';
@@ -42,6 +48,8 @@ import {
   type TemplateDesignRefusal,
 } from '../../../../supabase/functions/_shared/reportDesign/templateDesign.pure';
 import {
+  borrowedDesignNote,
+  designBorrowersOf,
   designRowUsableFor,
   templateVisibleTo,
   type DesignTemplateRow,
@@ -101,6 +109,12 @@ describe.each(ROUTES)('the %s route reads a design', (_name, parse, body) => {
       .toEqual({ kind: 'template', templateId: TEMPLATE });
   });
 
+  it('as a catalogue code the catalogue no longer holds: a retired design is not a broken request', () => {
+    // It is still drawn, in the standard design, and says so (`unknown_design`).
+    expect(accepted(parse, { ...body, design: { code: 'zz-99' } }).design)
+      .toEqual({ kind: 'catalogue', code: 'zz-99', colourway: null });
+  });
+
   it('and changes nothing else in the request', () => {
     const plain = accepted(parse, body);
     const designed = accepted(parse, { ...body, design: { code: 'de-01' } });
@@ -111,7 +125,7 @@ describe.each(ROUTES)('the %s route reads a design', (_name, parse, body) => {
     ['a bare string', 'de-01'],
     ['a list', ['de-01']],
     ['neither a code nor a template', {}],
-    ['a code the catalogue does not hold', { code: 'zz-99' }],
+    ['a code that is not a catalogue code at all', { code: 'chancery' }],
     ['a template id that is not a uuid', { templateId: 'chancery' }],
     ['a colourway that is not an id', { code: 'pb-01', colourway: 'Oxblood!' }],
   ])('and refuses %s, rather than drawing the standard design without saying so', (_label, design) => {
@@ -125,7 +139,9 @@ describe('what a route says back', () => {
   const reasons = Object.keys(DESIGN_REFUSAL_TEXT) as TemplateDesignRefusal[];
 
   it('has a sentence for every refusal, and no two alike', () => {
-    expect(reasons.sort()).toEqual(['palette_illegible', 'palette_incomplete', 'template_unavailable', 'unknown_design']);
+    expect(reasons.sort()).toEqual([
+      'palette_illegible', 'palette_incomplete', 'template_unavailable', 'template_unreadable', 'unknown_design',
+    ]);
     expect(new Set(reasons.map((r) => DESIGN_REFUSAL_TEXT[r])).size).toBe(reasons.length);
   });
 
@@ -193,6 +209,18 @@ describe('whose template a route may draw in', () => {
     expect(designRowUsableFor(row({ report_type: 'cashflow', is_draft: true }), 'cash_flow_comparison')).toBe(false);
     expect(designRowUsableFor(row({ report_type: 'cashflow' }), 'portfolio')).toBe(false);
   });
+
+  it('is said where the lender\'s choice is made, in every spelling of it, and nowhere else', () => {
+    for (const spelling of ['cashflow', 'cash_flow']) {
+      expect(designBorrowersOf(spelling)).toEqual(['cash_flow_comparison']);
+      expect(borrowedDesignNote(spelling))
+        .toBe('Also sets the design of the Cash Flow Comparison, which is made from this report.');
+    }
+    for (const other of ['portfolio', 'investment', 'cash_flow_comparison']) {
+      expect(designBorrowersOf(other)).toEqual([]);
+      expect(borrowedDesignNote(other)).toBeNull();
+    }
+  });
 });
 
 describe('resolveRequestedDesign', () => {
@@ -235,6 +263,8 @@ describe('resolveRequestedDesign', () => {
 
   beforeEach(() => {
     superadmin.ok = false;
+    templatesView.ok = true;
+    templatesView.asked = [];
     vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
@@ -250,6 +280,29 @@ describe('resolveRequestedDesign', () => {
     expect(r.design?.code).toBe('de-01');
     expect(r.echo?.applied?.code).toBe('de-01');
     expect(calls).toHaveLength(0);
+  });
+
+  it("asks the Template Builder's own permission before a template row is read", async () => {
+    const { supabase, calls } = client({ data: templateRow(), error: null });
+    await ask(supabase, { kind: 'template', templateId: TEMPLATE });
+    expect(templatesView.asked).toEqual(['templates:can_view']);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('refuses a template row to somebody who may not view templates, without reading it', async () => {
+    // The chooser and the drawn documents refuse the same person the same row,
+    // and asking first means the refusal says nothing about whether it exists.
+    templatesView.ok = false;
+    const { supabase, calls } = client({ data: templateRow(), error: null });
+    const r = await ask(supabase, { kind: 'template', templateId: TEMPLATE });
+    expect(r).toEqual({ design: null, echo: refusedEcho('template_unavailable') });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('refuses a catalogue design the catalogue no longer holds, and draws the standard design', async () => {
+    const { supabase } = client({ data: null, error: null });
+    const r = await ask(supabase, { kind: 'catalogue', code: 'zz-99', colourway: null });
+    expect(r).toEqual({ design: null, echo: refusedEcho('unknown_design') });
   });
 
   it('refuses a catalogue colourway the family does not have, and draws the standard design', async () => {
@@ -297,11 +350,12 @@ describe('resolveRequestedDesign', () => {
     expect(r.echo?.refusal).toBe('palette_incomplete');
   });
 
-  it('treats a failed read as a template it cannot use — and logs the database\'s own words', async () => {
+  it('says a failed read failed, rather than that the template is gone — and logs the database\'s own words', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { supabase } = client({ data: null, error: { message: 'connection reset' } });
     const r = await ask(supabase, { kind: 'template', templateId: TEMPLATE });
-    expect(r).toEqual({ design: null, echo: refusedEcho('template_unavailable') });
+    expect(r).toEqual({ design: null, echo: refusedEcho('template_unreadable') });
+    expect(r.echo?.message).toMatch(/could not be read just now.*Try again/);
     expect(warn.mock.calls.flat().join(' ')).toContain('connection reset');
   });
 
@@ -309,7 +363,7 @@ describe('resolveRequestedDesign', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const supabase = { from: () => { throw new Error('socket hang up'); } };
     const r = await ask(supabase, { kind: 'template', templateId: TEMPLATE });
-    expect(r).toEqual({ design: null, echo: refusedEcho('template_unavailable') });
+    expect(r).toEqual({ design: null, echo: refusedEcho('template_unreadable') });
     expect(warn.mock.calls.flat().join(' ')).toContain('socket hang up');
   });
 });

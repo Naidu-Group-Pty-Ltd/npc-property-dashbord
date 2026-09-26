@@ -4,14 +4,16 @@ Read this before touching `reportTemplateSelection.pure.ts`, the picker, or
 anything in the generation path that decides which `report_templates` row a
 document is drawn from.
 
-> **Since 26 Sep 2026 a choice applies only where the report type is
-> released.** For every report type but Investment, a template document did
-> not carry the same information as the standard document, so those nine are
-> produced as their standard documents whatever is chosen. Choosing still
-> works and is kept, and the chooser, the format card and the download each
-> say so. Which report types are released, and what releasing one takes, is
-> [`TEMPLATE_PARITY.md`](./TEMPLATE_PARITY.md). Everything below still
-> describes how a choice reaches a released report type.
+> **Since 26 Sep 2026 a template's pages are used only where the report type
+> is released, and that is Investment alone.** For the other nine, a template
+> document did not carry the same information as the standard document, so
+> each is drawn by its own route and the chosen template supplies only its
+> design: typefaces, colourway, cover ground and table rules. The choice is
+> honoured on every document, and the chooser says so before anything is
+> chosen. Which report types are released, what releasing one takes, and how
+> a design reaches a route, is [`TEMPLATE_PARITY.md`](./TEMPLATE_PARITY.md).
+> Everything below still describes how a choice is stored and resolved, and
+> how it reaches a released report type's pages.
 
 ---
 

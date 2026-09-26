@@ -546,13 +546,26 @@ export function TenYearCashFlowCard() {
     const reportWindow = window.open('', '_blank');
     if (reportWindow) {
       reportWindow.opener = null;
-      void drawnDesignFor('commercial_cash_flow').then((design) => {
+      const fill = (design: DrawnDocumentDesign | null) => {
         reportWindow.document.open();
         reportWindow.document.write(buildPdfHtml(design));
         reportWindow.document.close();
         reportWindow.focus();
         reportWindow.print();
-      });
+      };
+      void drawnDesignFor('commercial_cash_flow')
+        .then(fill)
+        .catch((error) => {
+          // Never an unhandled rejection, and never a blank tab where the
+          // house document can still be printed. A window the reader has
+          // already closed is simply gone.
+          console.error('[TenYearCashFlowCard] the print window could not be filled in the chosen design', error);
+          try {
+            if (!reportWindow.closed) fill(null);
+          } catch {
+            /* the window is gone */
+          }
+        });
     }
     setLastPdfGeneratedAt(timestamp);
     setPdfExportHistory(history => [...history, { timestamp, calculationVersion: generatedCashFlow?.calculationVersion ?? TEN_YEAR_CALCULATION_VERSION, reportVersion: TEN_YEAR_REPORT_VERSION, scenarioName: scenarioName || '10-Year Cash Flow Scenario' }]);

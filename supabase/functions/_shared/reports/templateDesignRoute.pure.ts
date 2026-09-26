@@ -73,6 +73,28 @@ export function designLenderFor(reportType: string): string | null {
   return DESIGN_BORROWED_FROM[normaliseReportType(reportType)] ?? null;
 }
 
+/** What each report type that borrows a design is called where the choice is made. */
+const BORROWER_LABEL: Readonly<Record<string, string>> = Object.freeze({
+  cash_flow_comparison: 'Cash Flow Comparison',
+});
+
+/** The report types that wear this one's chosen design (`DESIGN_BORROWED_FROM`). */
+export function designBorrowersOf(reportType: string): string[] {
+  const lender = normaliseReportType(reportType);
+  return Object.keys(DESIGN_BORROWED_FROM).filter((borrower) => DESIGN_BORROWED_FROM[borrower] === lender);
+}
+
+/**
+ * The sentence the chooser shows for a report type whose choice another one
+ * wears too, or null. Said where the choice is made, because a choice that
+ * quietly changes a second document is one nobody knowingly made.
+ */
+export function borrowedDesignNote(reportType: string): string | null {
+  const names = designBorrowersOf(reportType).map((borrower) => BORROWER_LABEL[borrower] ?? borrower);
+  if (names.length === 0) return null;
+  return `Also sets the design of the ${names.join(' and ')}, which is made from this report.`;
+}
+
 /**
  * Whether a visible row may be drawn in for this report type.
  *

@@ -92,7 +92,7 @@ export function designBody(design: StandardDesignRequest | null): { design?: Sta
 }
 
 const REFUSALS: readonly TemplateDesignRefusal[] = [
-  'unknown_design', 'palette_incomplete', 'palette_illegible', 'template_unavailable',
+  'unknown_design', 'palette_incomplete', 'palette_illegible', 'template_unavailable', 'template_unreadable',
 ];
 
 /** The route's answer about a design, read defensively: it crossed a network. */

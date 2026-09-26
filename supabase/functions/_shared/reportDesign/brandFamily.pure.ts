@@ -242,7 +242,10 @@ export function familyFromDesignPalette(palette: ResolvedReportPalette): BrandFa
     field,
     onField: ensureContrast(palette.onFieldInk, field, CONTRAST_FLOOR.body),
     bodyInk: onWashes(palette.bodyInk, CONTRAST_FLOOR.body),
-    mutedInk: ensureContrast(palette.mutedInk, SHEET, CONTRAST_FLOOR.micro),
+    // Held on the wash like the other inks: drawn documents set their quiet
+    // lines on the washes too, and 225 of the 500 designs measured their muted
+    // ink there at 6.33–6.99:1 when it was held to the sheet alone.
+    mutedInk: onWashes(palette.mutedInk, CONTRAST_FLOOR.micro),
     palette,
   };
 }

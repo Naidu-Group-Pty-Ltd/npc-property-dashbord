@@ -4,11 +4,13 @@
  *
  * Most drawn documents open on the issuer's cover (`legacyIssuerCover.ts`),
  * which takes a design whole. A few compose a cover of their own — the
- * Commercial and Industrial Investment Reports, the Overview snapshot, the
- * quantitative market report — and keep it: its words, its figures and where
- * they sit are the document's. What a design changes on those covers is the
- * ground under the words and the inks the words are set in, the same three
- * grounds the catalogue draws (`drawnDesign.pure.ts`):
+ * Commercial and Industrial Investment Reports and the Overview snapshot —
+ * and keep it: its words, its figures and where they sit are the document's.
+ * What a design changes on those covers is the ground under the words and the
+ * inks the words are set in, the same three grounds the catalogue draws
+ * (`drawnDesign.pure.ts`). (The quantitative market report does not paint
+ * one: every page of it is dark, so it takes a design's colours through its
+ * own dark palette, `darkReportPalette` in `ReportViewer.tsx`.)
  *
  *  - **field** — the whole sheet in the design's field, every word in its
  *    field inks;

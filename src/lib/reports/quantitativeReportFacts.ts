@@ -130,6 +130,13 @@ export function readQuantitativeReportFacts(
   // The pipeline counts the listings with no suburb as one suburb more
   // (`l.suburb || "Unknown"`). Where its own suburb chart shows that bucket,
   // the count is one more than the suburbs the listings name.
+  //
+  // That chart is the ten busiest suburbs. Where it is cut at ten and the
+  // bucket falls below the cut, nothing stored says the bucket exists, so the
+  // pipeline's own count is printed as it always was, and it can be one more
+  // than the suburbs named. Counting only named suburbs is the pipeline's fix
+  // (`unique_suburbs`, at a new `REPORT_VERSION`), recorded with its other
+  // defects in `TEMPLATE_PARITY.md`.
   const storedSuburbs = count(kpis.unique_suburbs, analytics.unique_suburbs);
   const pipelineSuburbs = charts.find((c) => c.chart_key === 'suburb_volume' || c.chart_key === 'suburb_volume_distribution');
   const countsNoSuburb = Boolean(pipelineSuburbs

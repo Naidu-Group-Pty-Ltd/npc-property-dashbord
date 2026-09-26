@@ -277,6 +277,48 @@ describe('a design', () => {
   });
 });
 
+describe('a name the pack has to carry safely', () => {
+  /** Whether a part still parses as XML. A malformed one is a file Word or Excel calls corrupt. */
+  const wellFormed = (xml: string) => {
+    const doc = new DOMParser().parseFromString(xml, 'application/xml');
+    return doc.getElementsByTagName('parsererror').length === 0;
+  };
+
+  // Each of these broke the files in the audit before this shipped: a string
+  // replacement expands `$&`, `$'` and `` $` ``, and a control character is
+  // not allowed in an XML document at all.
+  it.each([
+    ['Evil $` Co', 'Evil $` Co'],
+    ["Evil $' Co", "Evil $' Co"],
+    ['Evil $& Co', 'Evil $& Co'],
+    ['Evil $$ Co', 'Evil $$ Co'],
+    ['Harbour\u0001 Advisory', 'Harbour Advisory'],
+    ['Harbour￾ Advisory', 'Harbour Advisory'],
+    ['Harbour\uD800 Advisory', 'Harbour Advisory'],
+    ['  Harbour \n\t Advisory  ', 'Harbour Advisory'],
+  ])('%j is carried as %j, and every part still parses', async (name, carried) => {
+    for (const [bytes, kind] of [[WORKBOOK, 'workbook'], [GUIDE, 'guide']] as const) {
+      const all = await parts(await present(bytes, kind, { issuerName: name }));
+      for (const [part, xml] of all) {
+        if (!/\.(xml|rels)$/.test(part)) continue;
+        expect(wellFormed(xml), `${kind} ${part}`).toBe(true);
+      }
+      const creator = /<dc:creator>([\s\S]*?)<\/dc:creator>/.exec(all.get('docProps/core.xml')!)?.[1] ?? '';
+      expect(words(creator.replace(/&apos;/g, "'").replace(/&quot;/g, '"')).trim()).toBe(carried);
+    }
+  });
+
+  it.each([
+    ['longer than any business name', `Harbour ${'x'.repeat(500)}`],
+    ['made only of what XML refuses', '\u0001\u0002'],
+  ])('reads a name %s as nobody named, never cut short', async (_label, name) => {
+    const guide = await parts(await present(GUIDE, 'guide', { issuerName: name }));
+    expect(guide.get('docProps/core.xml')).toContain('<dc:creator></dc:creator>');
+    expect(words(guide.get('word/document.xml')!)).toContain(`Completed by (${PACK_PLACEHOLDER.signOff})`);
+    expect(guide.get('word/document.xml')).not.toContain('xxxxxxxxxx');
+  });
+});
+
 describe('what cannot happen', () => {
   it('a clone is never handed a pack that still names the house', async () => {
     const zip = await JSZip.loadAsync(GUIDE);

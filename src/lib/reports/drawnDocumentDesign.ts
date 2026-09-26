@@ -126,7 +126,8 @@ export async function drawnDesignFor(
   try {
     row = await deps.fetchTemplateRow(templateId);
   } catch (e) {
-    return refuse('template_unavailable', e instanceof Error ? e.message : String(e));
+    // A read that failed is not a template that is gone: try again, not choose another.
+    return refuse('template_unreadable', e instanceof Error ? e.message : String(e));
   }
   if (!row) return refuse('template_unavailable', 'no such template, or not visible to this person');
   if (!designRowUsableFor(row, reportType)) return refuse('template_unavailable', `not offered for ${reportType}`);

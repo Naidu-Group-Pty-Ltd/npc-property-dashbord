@@ -88,6 +88,9 @@ describe('every colour a drawn document paints is legible where it is painted', 
     for (const ground of [f.wash, f.stripe]) {
       expect(contrastRatio(f.bodyInk, ground)).toBeGreaterThanOrEqual(7);
       expect(contrastRatio(f.accentInk, ground)).toBeGreaterThanOrEqual(4.5);
+      // Quiet lines are set on the washes too: 225 of the 500 designs put the
+      // muted ink there at 6.33–6.99:1 while it was held to the sheet alone.
+      expect(contrastRatio(f.mutedInk, ground)).toBeGreaterThanOrEqual(7 - 0.01);
     }
     // Captions: measured on the sheet the family is derived against, which
     // holds on white with room to spare.

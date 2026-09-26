@@ -166,8 +166,14 @@ export type TemplateDesignRefusal =
   | 'palette_incomplete'
   /** The colours are there and cannot be printed legibly. */
   | 'palette_illegible'
-  /** The template row could not be read, or is not the caller's to use. */
-  | 'template_unavailable';
+  /** The template row is not the caller's to use: gone, not offered for this report, or not theirs to see. */
+  | 'template_unavailable'
+  /**
+   * The template row could not be read just now: a database or network fault.
+   * The choice itself stands, so the person is told to try again rather than
+   * to choose another.
+   */
+  | 'template_unreadable';
 
 // ── What a route says about the design it was asked for ─────────────────────
 
@@ -204,6 +210,8 @@ export const DESIGN_REFUSAL_TEXT: Readonly<Record<TemplateDesignRefusal, string>
     + 'was used. Open it in the Template Builder and raise the contrast of its text colours.',
   template_unavailable: 'The template you chose is no longer available to you for this report, so the '
     + 'standard design was used. Choose another in the template chooser.',
+  template_unreadable: 'The template you chose could not be read just now, so the standard design was used. '
+    + 'Try again in a moment: your choice is still set in the template chooser.',
 });
 
 /** The echo for a design that was applied. */
@@ -706,6 +714,11 @@ const COLOURWAY = /^[a-z]{2}-[a-z0-9-]{1,60}$/;
  * that is present and malformed is refused rather than ignored, so a caller
  * that meant to ask for a design is told it did not, instead of silently
  * receiving the standard document. Absent is `null`: no design was asked for.
+ *
+ * A code that is well formed but not in the catalogue is NOT malformed: it is
+ * a design that was retired, or a stored choice that outlived it. It is read
+ * as a reference, and resolving it draws the standard document with the
+ * `unknown_design` echo, because a design is never worth the document.
  */
 export function readTemplateDesignReference(
   raw: unknown,
@@ -720,7 +733,7 @@ export function readTemplateDesignReference(
   }
   if (r.code !== undefined && r.code !== null) {
     const code = String(r.code).trim().toLowerCase();
-    if (!CODE.test(code) || !catalogueDesign(code)) return { ok: false, error: 'design.code names no catalogue design' };
+    if (!CODE.test(code)) return { ok: false, error: 'design.code is not a catalogue code' };
     const colourwayRaw = r.colourway === undefined || r.colourway === null || r.colourway === ''
       ? null : String(r.colourway).trim().toLowerCase();
     if (colourwayRaw !== null && !COLOURWAY.test(colourwayRaw)) {

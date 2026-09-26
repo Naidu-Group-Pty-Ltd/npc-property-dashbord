@@ -49,6 +49,8 @@ const PACK_EXTENSIONS = ['.xlsx', '.xlsm', '.xls'];
 const PACK_MIME_HINTS = ['spreadsheetml', 'ms-excel', 'excel'];
 const MAX_PACK_BYTES = 15 * 1024 * 1024;
 const MAX_SUPPORTING_BYTES = 25 * 1024 * 1024;
+/** How long a downloaded pack's object URL is kept before it is released. */
+const PACK_URL_GRACE_MS = 1500;
 
 /**
  * The two documents, each offered two ways.
@@ -197,9 +199,11 @@ export function IntakePackPanel({
       document.body.appendChild(anchor);
       anchor.click();
       document.body.removeChild(anchor);
-      // The browser has the file once the click is handled; an object URL is
-      // released on the next turn, never before the download starts.
-      setTimeout(pack.release, 0);
+      // An object URL revoked before the browser has started reading it
+      // cancels the download (Safari does, on the next turn), so it is
+      // released after the same grace the PDF downloads give theirs
+      // (`triggerPdfDownload`).
+      setTimeout(pack.release, PACK_URL_GRACE_MS);
       toast({
         title: `${pack.fileName} downloaded`,
         description: kind === 'workbook'

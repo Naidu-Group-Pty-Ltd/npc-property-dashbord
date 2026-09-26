@@ -39,6 +39,7 @@ import { REPORT_QA_TEMPLATES } from '../../../../scripts/template-library/invest
 import { COMMERCIAL_CAPACITY_TEMPLATES } from '../../../../scripts/template-library/investmentCompass/commercialCapacity';
 import { MARKET_INTELLIGENCE_TEMPLATES } from '../../../../scripts/template-library/investmentCompass/marketIntelligence';
 import { SAMPLE_REPORT_DATA } from '../sampleReportData';
+import { withIssuerTagline, ISSUER_TAGLINE_BINDING } from '@/lib/reportTemplate/houseTaglineGuard.pure';
 
 interface SchemaBlock { id: string; type: string; name?: string; props: Record<string, unknown> }
 interface SchemaPage { id: string; name: string; blocks: SchemaBlock[] }
@@ -183,5 +184,67 @@ describe('the cover tagline', () => {
       const drawn = (h: string) => h.replace(/\n[ \t]*(?=\n)/g, '');
       expect(drawn(html), master.name).toBe(drawn(render(withoutTaglineBlock(cover), clone)));
     }
+  });
+});
+
+/*
+ * Where the seed never arrives.
+ *
+ * A clone takes migrations through Mission Control's cascade, which never
+ * carries a seed this size, and the v23 refresh leaves a customised master as
+ * it was. Either way a master can still hold the literal on the day it is
+ * drawn, so the rule is applied again where the document is drawn
+ * (`houseTaglineGuard.pure.ts`, called by `routeReportThroughTemplate`).
+ */
+describe('a master that still carries the literal', () => {
+  it("is drawn on a clone exactly as the v23 master is, on every master", () => {
+    const clone = dataFor(false);
+    for (const master of MASTERS) {
+      const cover = coverOnly(master);
+      const guarded = withIssuerTagline(withLiteralTagline(cover), { prime: false });
+      const html = render(guarded, clone);
+      expect(html.toLowerCase(), master.name).not.toContain(HOUSE_COVER_TAGLINE.toLowerCase());
+      expect(html, master.name).toBe(render(cover, clone));
+    }
+  });
+
+  it('is left exactly as it is on the prime, the same object', () => {
+    const literal = withLiteralTagline(coverOnly(MASTERS[0]));
+    expect(withIssuerTagline(literal, { prime: true })).toBe(literal);
+  });
+
+  it('changes only a value that is the tagline, however cased or spaced, and never mutates the master', () => {
+    const schema = {
+      pages: [{
+        blocks: [
+          { type: 'text-block', props: { body: '  YOUR dedicated   property partner ' } },
+          { type: 'text-block', props: { heading: 'Your dedicated property partner', body: 'Kept' } },
+          { type: 'text-block', props: { body: 'We are your dedicated property partner.' } },
+          { type: 'divider', props: { thickness: 1 } },
+        ],
+      }],
+    };
+    const before = JSON.stringify(schema);
+    const out = withIssuerTagline(schema, { prime: false });
+    expect(JSON.stringify(schema)).toBe(before);
+    expect(out.pages[0].blocks.map((b) => b.props)).toEqual([
+      { body: ISSUER_TAGLINE_BINDING },
+      { heading: ISSUER_TAGLINE_BINDING, body: 'Kept' },
+      { body: 'We are your dedicated property partner.' },
+      { thickness: 1 },
+    ]);
+    // A master with nothing to change is returned as it was given.
+    const clean = coverOnly(MASTERS[0]);
+    expect(withIssuerTagline(clean, { prime: false })).toBe(clean);
+  });
+
+  it('is applied by the one route every templated document is drawn through, before either renderer', () => {
+    const route = readFileSync(resolve(__dirname, '../../reportTemplate/routeReportThroughTemplate.ts'), 'utf-8');
+    const guard = route.indexOf('schema = withIssuerTagline(schema, { prime: isPrimeDeployment() });');
+    expect(guard).toBeGreaterThan(-1);
+    // After any composition, and before the browser and the final renderer read the schema.
+    expect(guard).toBeGreaterThan(route.indexOf('schema = parseTemplate(composition.schema);'));
+    expect(guard).toBeLessThan(route.indexOf('preloadImagesWithReport(schema'));
+    expect(guard).toBeLessThan(route.indexOf('compileTemplateHtmlForPdf(schema'));
   });
 });

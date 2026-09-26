@@ -171,10 +171,10 @@ describe('the house design, said nothing about', () => {
 });
 
 describe('a choice that cannot be honoured is said out loud, and the document is still produced', () => {
-  it('when the chosen template cannot be read', async () => {
+  it('when the chosen template cannot be read, saying to try again rather than to choose another', async () => {
     const d = deps({ fetchTemplateRow: vi.fn(async () => { throw new Error('boom'); }) });
     expect(await drawnDesignFor('strategy_rationale', d)).toBeNull();
-    expect(d.notified).toEqual([[DESIGN_NOT_USED_TITLE, DESIGN_REFUSAL_TEXT.template_unavailable]]);
+    expect(d.notified).toEqual([[DESIGN_NOT_USED_TITLE, DESIGN_REFUSAL_TEXT.template_unreadable]]);
   });
 
   it('when it is not the person\'s to use', async () => {
@@ -221,5 +221,20 @@ describe('the read', () => {
       fetchTemplateRow: vi.fn(async () => ({ ...ROW, tokens: 'not an object' as never })),
     });
     await expect(drawnDesignFor('strategy_rationale', d)).resolves.toBeNull();
+  });
+});
+
+describe('what a drawn document prints', () => {
+  it('the Client Property Analysis never invents an analysis when the reply cannot be read', () => {
+    // It used to print a score and a grade computed from the yield, stock
+    // strengths and risks, and a ten-year projection at 5% as the model's
+    // assessment of the property. A reply that cannot be read now fails.
+    const source = readFileSync(
+      resolve(__dirname, '../../../components/clients/PropertyReportGenerator.tsx'),
+      'utf8',
+    );
+    const onParseFailure = source.slice(source.indexOf('} catch (parseError) {'), source.indexOf('setReportData({'));
+    expect(onParseFailure).toContain("throw new Error('the analysis could not be read. Try again.');");
+    expect(onParseFailure).not.toMatch(/analysis\s*=|investmentScore:|investmentGrade:|strengths:|tenYearProjection:/);
   });
 });

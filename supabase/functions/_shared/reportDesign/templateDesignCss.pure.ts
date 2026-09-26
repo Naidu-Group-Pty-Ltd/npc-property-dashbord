@@ -1,10 +1,14 @@
 /**
  * The rules a chosen design adds to the standard report stylesheet.
  *
- * Appended after everything `buildReportCss` emits, so each rule here wins by
- * order rather than by specificity — no `!important`, and the standard sheet
- * above it stays readable on its own. With no design nothing is appended and
- * the sheet is byte for byte what it always was.
+ * Appended after everything `buildReportCss` emits, so a rule here wins over
+ * one of EQUAL specificity by order — no `!important`, and the standard sheet
+ * above it stays readable on its own. A more specific rule in the standard
+ * sheet still wins (the ledger's last-row and total-row rules keep their own
+ * borders under a grid, and the paper cover's lockup rule keeps its own
+ * display), so a rule here that must win is written at least as specifically
+ * as the one it overrides. With no design nothing is appended and the sheet is
+ * byte for byte what it always was.
  *
  * ## What a rule here may do
  *
@@ -271,6 +275,33 @@ function italicRules(layer: TemplateDesignLayer): string {
   .pull-quote { font-family: ${layer.typography.accent}; }`;
 }
 
+/**
+ * A design never costs a figure.
+ *
+ * Measured over 459 renders with WeasyPrint 69.0 (26 Sep 2026, release audit):
+ * under 31 of the 50 designs the Commercial & Industrial Capacity report's
+ * six-column "Financial periods" table lost its Evidence column at the edge of
+ * the sheet, and under the raised (rounded) designs the tail of Adjusted
+ * EBITDA as well. The standard document already runs that table about 19 mm
+ * into its right margin, because its uppercase, tracked numeric headers never
+ * wrap. A design then either narrows the text area (a rail, grid padding),
+ * widens the header face, or clips the table at its own rounded shell
+ * (`overflow: hidden` on a raised surface), and what was in the margin is cut.
+ *
+ * So under a design a numeric column's HEAD may wrap between its words, while
+ * its figures still never do (the house sheet's rule for a figure stands), and
+ * a table's shell clips nothing: its rounded border stays and only the header
+ * band's own corners are no longer trimmed to it. Neither can add, remove or
+ * reorder a word.
+ */
+function fitRules(): string {
+  return `
+  /* A design never costs a figure: a numeric column's head may wrap between
+     words (its figures still never do), and a table's shell clips nothing. */
+  table.data th.num { white-space: normal; }
+  .table-block, table.data { overflow: visible; }`;
+}
+
 function surfaceRules(layer: TemplateDesignLayer, options: ReportDesignOptions): string {
   if (options.surfaceStyle !== 'raised' || layer.radius <= 0) return '';
   const r = `${Number((layer.radius * 0.75).toFixed(2))}pt`;
@@ -295,6 +326,7 @@ export function templateDesignCss(
     tableRules(layer, palette, d),
     italicRules(layer),
     surfaceRules(layer, options),
+    fitRules(),
   ].filter(Boolean);
   if (!parts.length) return '';
   return `
