@@ -7,6 +7,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { BuilderConversationThread } from '@/components/listings/BuilderStockConversation';
 import { useNotificationsOptional } from '@/contexts/NotificationsContext';
+import { useBuilderStockMarketplaceFlag } from '@/hooks/useBuilderStockMarketplaceFlag';
 import { cn } from '@/lib/utils';
 import {
   builderStockPropertyPath, conversationAccessLost, marketplaceStockImageUrl, useBuilderPortalActivations,
@@ -35,7 +36,26 @@ const STATUS_LABEL: Record<ActivationStatus, string> = {
 
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString('en-AU') : null);
 
+/**
+ * The page exists only where the server says Builder Stock is on: a direct
+ * visit is refused here as well as the entry being left out of navigation,
+ * and the server refuses every call behind it while the flag is off.
+ */
 export default function BuilderPortal() {
+  const flag = useBuilderStockMarketplaceFlag();
+  if (flag.loading) return <div className="p-4 md:p-6"><Skeleton className="h-32 w-full" /></div>;
+  if (!flag.enabled) {
+    return (
+      <div className="space-y-2 p-4 md:p-6">
+        <h1 className="text-2xl font-semibold text-foreground">Builder Portal</h1>
+        <p className="text-sm text-muted-foreground">Builder Stock is not switched on for this workspace.</p>
+      </div>
+    );
+  }
+  return <BuilderPortalContent />;
+}
+
+function BuilderPortalContent() {
   const params = useParams<{ tab?: string; conversationId?: string }>();
   const navigate = useNavigate();
   const tab: Tab = params.tab === 'messaging' ? 'messaging' : 'activated';

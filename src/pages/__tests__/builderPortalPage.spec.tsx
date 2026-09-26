@@ -51,6 +51,9 @@ vi.mock('@/lib/marketplaceBuilderStock', async () => {
   };
 });
 
+const flag = { loading: false, enabled: true };
+vi.mock('@/hooks/useBuilderStockMarketplaceFlag', () => ({ useBuilderStockMarketplaceFlag: () => flag }));
+
 const markedRead: string[] = [];
 vi.mock('@/contexts/NotificationsContext', () => ({
   useNotificationsOptional: () => ({
@@ -87,6 +90,7 @@ const CONVERSATION = (overrides: Record<string, unknown> = {}) => ({
 beforeEach(() => {
   for (const key of Object.keys(state)) delete state[key];
   markedRead.length = 0;
+  flag.loading = false; flag.enabled = true;
   state.activations = { activations: [ACTIVATION(), ACTIVATION({
     activation_key: 'k2', activated_by: 'Otto Other', acknowledged_by: null, acknowledged_at: null,
     status: 'awaiting_acknowledgement', conversation_id: null,
@@ -225,6 +229,14 @@ describe('Messaging', () => {
     renderAt('/admin/builder-portal/messaging');
     expect(screen.getByText(/could not be loaded/i)).toBeInTheDocument();
     expect(screen.queryByText(/no conversations yet/i)).toBeNull();
+  });
+
+  it('a direct visit while Builder Stock is off shows nothing of the portal', () => {
+    flag.enabled = false;
+    renderAt('/admin/builder-portal/messaging/conv-1');
+    expect(screen.getByText(/not switched on/i)).toBeInTheDocument();
+    expect(screen.queryByRole('tab')).toBeNull();
+    expect(screen.queryByRole('log')).toBeNull();
   });
 
   it('an empty inbox says how a conversation starts', () => {

@@ -126,6 +126,17 @@ function world() {
 }
 
 describe('reading a conversation is for its participants', () => {
+  it('a participant past the server\'s row ceiling is still recognised, and the whole roster is read', async () => {
+    const tables = world();
+    for (let i = 0; i < 1201; i += 1) {
+      tables.builder_network_conversation_participants.unshift({ conversation_id: 'conv-1', participant_ref: `bulk-${String(i).padStart(4, '0')}`,
+        side: 'builder', local_user_id: null, display_name: `Builder ${i}`, state: 'joined', version: 1 });
+    }
+    const read = await readParticipantConversation(standIn(tables, { maxRows: 1000 }).client, { conversationId: 'conv-1', viewerUserId: ME });
+    if (!read.ok) throw new Error(`refused: ${(read as { reason?: string }).reason}`);
+    expect(read.participants.length).toBe(1203);
+  });
+
   it('R38/R18. a participant reads the whole thread and both sides\' current participants', async () => {
     const read = await readParticipantConversation(standIn(world()).client, { conversationId: 'conv-1', viewerUserId: ME });
     if (!read.ok) throw new Error(`refused: ${(read as { reason?: string }).reason}`);

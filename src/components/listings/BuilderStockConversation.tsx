@@ -71,6 +71,22 @@ export function BuilderStockConversations({ stockItemId, builderName }: { stockI
       </Card>
     );
   }
+  // A list that could not be read says so; only a successful empty read is
+  // the statement that the viewer is in no conversation here.
+  if (mine.error && !mine.data) {
+    return (
+      <Card>
+        <CardHeader><CardTitle className="text-base">Messages with {builderName ?? 'the builder'}</CardTitle></CardHeader>
+        <CardContent>
+          <p role="status" className="text-sm text-muted-foreground">
+            {conversationAccessLost(mine.error)
+              ? 'Your conversations about this property are not available to you.'
+              : 'Your conversations about this property could not be loaded just now. They will try again shortly.'}
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
   if (!conversations.length) {
     return (
       <Card>
@@ -378,6 +394,11 @@ function People({ conversationId, conversation }: {
         <div className="rounded-md border border-border p-3">
           {invitees.isLoading ? (
             <p className="text-sm text-muted-foreground">Loading colleagues…</p>
+          ) : invitees.error && !invitees.data ? (
+            <div role="status" className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+              <span>Your colleagues could not be loaded just now.</span>
+              <Button type="button" size="sm" variant="outline" onClick={() => void invitees.refetch?.()}>Try again</Button>
+            </div>
           ) : (invitees.data ?? []).length ? (
             <ul className="space-y-1">
               {(invitees.data ?? []).map((person) => (

@@ -18,7 +18,7 @@ const REPO_ROOT = join(__dirname, '..', '..', '..', '..');
 const code = (p: string) => readFileSync(join(REPO_ROOT, p), 'utf8')
   .replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
 
-const state: { conversation: any; error: unknown } = { conversation: null, error: null };
+const state: { conversation: any; error: unknown; inboxError?: unknown; inviteesError?: unknown } = { conversation: null, error: null };
 const sent: Array<{ clientMessageId: string; body: string }> = [];
 const sendFailures = { remaining: 0 };
 const retried: string[] = [];
@@ -44,13 +44,14 @@ vi.mock('@/lib/marketplaceBuilderStock', async () => ({
     isPending: false,
     mutateAsync: vi.fn(async (id: string) => { retried.push(id); return {}; }),
   }),
-  useConversationInvitees: () => ({ data: [], isLoading: false, error: null }),
+  useConversationInvitees: () => ({ data: state.inviteesError ? undefined : [], isLoading: false, error: state.inviteesError ?? null, refetch: vi.fn() }),
   useInviteConversationParticipant: () => ({ isPending: false, mutateAsync: vi.fn() }),
   useLeaveConversation: () => ({ isPending: false, mutateAsync: vi.fn() }),
-  useMyBuilderConversations: () => ({ data: { conversations: [] }, isLoading: false, error: null }),
+  useMyBuilderConversations: () => ({ data: state.inboxError ? undefined : { conversations: [] }, isLoading: false, error: state.inboxError ?? null }),
 }));
 
-import { BuilderConversationThread } from '../BuilderStockConversation';
+import { MemoryRouter } from 'react-router-dom';
+import { BuilderConversationThread, BuilderStockConversations } from '../BuilderStockConversation';
 
 const MESSAGE = (overrides: Record<string, unknown>) => ({
   id: 'm', side: 'command_centre', sender_display_name: 'Olive Owner', body: 'Hello',
@@ -61,6 +62,8 @@ const MESSAGE = (overrides: Record<string, unknown>) => ({
 beforeEach(() => {
   state.conversation = null;
   state.error = null;
+  delete state.inboxError;
+  delete state.inviteesError;
   sent.length = 0;
   sendFailures.remaining = 0;
   retried.length = 0;
@@ -241,6 +244,25 @@ describe('the builder conversation card', () => {
   it('no model and no email: a message is text between people', () => {
     const source = code('src/components/listings/BuilderStockConversation.tsx');
     expect(source).not.toMatch(/openrouter|anthropic|openai|claude|resend|sendEmail/i);
+  });
+});
+
+describe('a read that failed is never shown as an absence', () => {
+  it('the property card says its conversations could not be loaded, not that there are none', () => {
+    state.inboxError = Object.assign(new Error('unavailable'), { status: 503 });
+    render(<MemoryRouter><BuilderStockConversations stockItemId="item-1" builderName="Proof Homes" /></MemoryRouter>);
+    expect(screen.getByText(/could not be loaded/i)).toBeInTheDocument();
+    expect(screen.queryByText(/you are not in a conversation/i)).toBeNull();
+  });
+
+  it('Add user says the colleagues could not be loaded, not that there is nobody', () => {
+    state.inviteesError = Object.assign(new Error('unavailable'), { status: 503 });
+    state.conversation = { conversation_id: 'conv-1', open: true, can_send: true, can_invite: true, can_leave: true,
+      participants: [], messages: [] };
+    renderCard();
+    fireEvent.click(screen.getByRole('button', { name: /add user/i }));
+    expect(screen.getByText(/colleagues could not be loaded/i)).toBeInTheDocument();
+    expect(screen.queryByText(/nobody else/i)).toBeNull();
   });
 });
 
