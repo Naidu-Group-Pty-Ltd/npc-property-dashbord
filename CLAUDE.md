@@ -3114,8 +3114,29 @@ document needs (an accent, its 7:1 ink, a deep shade of its own hue for
 headings, washes, a hairline), because poured into the navy's place a light
 brand makes every heading unreadable. No colour means Aurixa's gold on
 obsidian, and the semantic reds and greens stay the palette's, so a tenant
-cannot make risk green. The model's persona (`getBrandConfig`) is deliberately
-unchanged: the prose is content, which the owner excluded.
+cannot make risk green. Portfolio's and Formara's gold ramp grows from that same
+colour on a clone (`highlightColourFor`), so one document never carries two.
+
+**The writer works for the issuer, and where that is the platform it works for
+nobody** (`writerFirm.pure.ts`, §9 of the same doc). Every report persona read
+Report Settings, so a clone seeded from the prime's row was written by a model
+told it worked for NPC, and Market Intelligence printed the name in the
+document ("How `<company>` Would Approach This"). Load it through
+`loadReportWriterIdentity()`, never `getBrandConfig().companyName`: on the prime
+it is the same name, byte for byte; on a clone it is the clone's own business;
+and where a clone has named nobody `firm` is `null` and the persona drops its
+"for `<company>`" clause, because the platform's own disclaimer on that page
+says Aurixa prepared none of it and is nobody's buyer's agent. A
+`{{brand_name}}` template is resolved with `brand_name: null` to take the firm
+out (`withoutFirmToken`), never filled with Aurixa's name.
+
+**A continuation is sent no document, so the first invocation keeps it**
+(`reportDocumentContext.pure.ts`; `INVESTMENT_REPORT_RESUME.md` §14). The
+brochure's or listing's words used to reach the first batch of sections only.
+The composed context is kept at `listing-images/report-sources/<reportId>/document.json`,
+read back by any invocation handed none, used only for the same report at the
+same address, and composed from the kept fields alone, so every section states
+the document the way the first did.
 
 ## A premium document, and the eighteen per cent that was bold
 

@@ -8,7 +8,7 @@ import { secureStorageUpload } from '@/hooks/useSecureStorage';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { drawBorrowingCapacitySections, transformAssessmentToSectionData } from '@/utils/borrowingCapacityPdfSections';
-import { issuerClosingPage, issuerSectionColours, loadLegacyDocumentBrand, rgbObject, type LegacyDocumentBrand } from '@/lib/reports/legacyDocumentBrand';
+import { highlightColourFor, issuerClosingPage, issuerSectionColours, loadLegacyDocumentBrand, rgbObject, type LegacyDocumentBrand } from '@/lib/reports/legacyDocumentBrand';
 import { drawLegacyIssuerCover } from '@/lib/reports/legacyIssuerCover';
 import { issuerContactDetails } from '@/lib/reports/issuerIdentity.pure';
 import { drawJsPDFDisclaimerPage } from '@/utils/pdfDisclaimerPage';
@@ -487,7 +487,6 @@ export function FormaraPDFGenerator({
     if (actionLock.current) return null;
     actionLock.current = true;
     setIsGenerating(true);
-    applyBrandGold(brand.brandColor);
     let iframe: HTMLIFrameElement | null = null;
 
     try {
@@ -506,6 +505,10 @@ export function FormaraPDFGenerator({
         async () => (await fetchGlobalReportSettings())?.contactDetails?.company_name,
       );
       applyDocumentDeep(legacyBrand);
+      // The gold ramp: from the app's accent on the prime, as always, and on a
+      // clone from the colour the rest of this form is drawn in
+      // (`highlightColourFor`).
+      applyBrandGold(highlightColourFor(legacyBrand, brand.brandColor));
 
       // Pre-load cover image as data URL to avoid cross-origin / hanging issues.
       // NPC's cover artwork is the prime's alone.
