@@ -177,6 +177,40 @@ export function winAnsiSafe(text: string): string {
     .trim();
 }
 
+/**
+ * The characters WinAnsi carries beyond Latin-1: the euro, the curly quotes,
+ * the en and em dash, the bullet, the ellipsis and the rest of cp1252's 0x80
+ * row.
+ */
+const WIN_ANSI_BEYOND_LATIN1 = '\u20AC\u201A\u0192\u201E\u2026\u2020\u2021\u02C6\u2030\u0160\u2039\u0152\u017D\u2018\u2019\u201C\u201D\u2022\u2013\u2014\u02DC\u2122\u0161\u203A\u0153\u017E\u0178';
+const NOT_WIN_ANSI = new RegExp(`[^\\x20-\\x7E\\xA0-\\xFF${WIN_ANSI_BEYOND_LATIN1}]`, 'g');
+
+/**
+ * Text the standard fonts can encode, keeping the typography WinAnsi has.
+ *
+ * `winAnsiSafe` flattens every dash and curly quote to ASCII. The prime's own
+ * cover is drawn through it, so it stays exactly as it is. But WinAnsi carries
+ * the en and em dash, the curly quotes, the bullet and the ellipsis, and both
+ * pdf-lib and jsPDF draw them from the standard fonts (measured, with and
+ * without tracking). So a cover drawn for an issuer keeps them. "Scenario —
+ * Finance Hand-off" set as "Scenario - Finance Hand-off" is a typing error the
+ * document never made. Only what WinAnsi lacks is mapped or dropped.
+ */
+export function winAnsiTypographic(text: string): string {
+  return String(text ?? '')
+    .replace(/\u201B/g, '\u2019')
+    .replace(/\u201F/g, '\u201D')
+    .replace(/\u2032/g, "'")
+    .replace(/\u2033/g, '"')
+    .replace(/[\u2010\u2011\u2212]/g, '-')
+    .replace(/\u2012/g, '\u2013')
+    .replace(/\u2015/g, '\u2014')
+    .replace(/[\u00A0\u2000-\u200B\u202F\u205F\u3000]/g, ' ')
+    .replace(NOT_WIN_ANSI, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /** How the cover's address line is set. */
 export interface CoverAddressSetting {
   text: string;
@@ -194,13 +228,17 @@ export interface CoverAddressSetting {
  * only past all of that — longer than any address the corpus holds — the
  * address cut at a word with an ellipsis. Never smaller than 8pt: below that it
  * is not a line anybody reads on a cover.
+ *
+ * `sanitize` is `winAnsiSafe` for the prime's own cover, whose address line is
+ * drawn exactly as it always was; an issuer's cover passes `winAnsiTypographic`.
  */
 export function fitCoverAddress(
   address: string,
   measure: (text: string, size: number) => number,
   maxWidth: number = COVER_DIVIDER.right - COVER_DIVIDER.left,
+  sanitize: (text: string) => string = winAnsiSafe,
 ): CoverAddressSetting | null {
-  const written = winAnsiSafe(address);
+  const written = sanitize(address);
   if (!written) return null;
   const widthOf = (text: string, size: number, tracking: number) =>
     measure(text, size) + tracking * Math.max(0, text.length - 1);

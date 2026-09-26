@@ -67,7 +67,7 @@ import {
 import { investmentReportFileName } from '@/lib/reports/investment/reportFileName.pure';
 import { fetchGlobalReportSettings, type GlobalReportSettings } from '@/hooks/useGlobalReportSettings';
 import { drawPdfLibDisclaimerPage } from '@/utils/pdfDisclaimerPage';
-import { resolveReportDisclaimer } from '@/lib/reports/issuerIdentity.pure';
+import { issuerContactDetails, resolveReportDisclaimer } from '@/lib/reports/issuerIdentity.pure';
 import { DOCUMENT_IDENTITY } from './tierIdentity.pure';
 import { loadStandardPresentationBrand } from './standardPresentationBrand';
 import { standardDocumentMetadata } from './standardCover.pure';
@@ -1682,8 +1682,9 @@ export async function generateInvestmentPdfBlob(
         // The issuer the cover names, and the disclaimer that issuer is
         // entitled to speak (`issuerIdentity.pure.ts`): a deployment that has
         // not said who it is prints the platform's, never a stored one, and
-        // stored wording that names the house prints only on the house's own
-        // document — on a clone it is the issuer's default wording instead.
+        // on a clone stored wording that names the house is the issuer's
+        // default wording instead, and a contact field that names the house is
+        // left out. The prime reads its settings exactly as it always has.
         const issued = resolveReportDisclaimer(brand.issuer, settings.disclaimer, brand.deployment);
         const page = drawPdfLibDisclaimerPage(
           pdfDoc,
@@ -1691,7 +1692,7 @@ export async function generateInvestmentPdfBlob(
           pageHeight,
           helveticaFont,
           helveticaBold,
-          { ...settings.contactDetails, company_name: brand.issuer.name },
+          issuerContactDetails(settings.contactDetails, brand.issuer, brand.deployment),
           { ...settings.disclaimer, text: issued.text, is_enabled: issued.text !== '' },
           family?.palette,
         );

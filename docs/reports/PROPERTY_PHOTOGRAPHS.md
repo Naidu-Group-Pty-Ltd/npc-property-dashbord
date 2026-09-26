@@ -680,8 +680,10 @@ Every other document opens on a cover drawn for its issuer
   exactly where the artwork cover has them, so the photograph lands in the same
   place on either cover. Without a photograph, the document's one-line
   standfirst takes the band's place.
-- **Colour.** The field and gold are the closing page's, from the one default
-  palette, so the first and last pages are a pair.
+- **Colour.** The issuer's brand family (`brandFamily.pure.ts`): its brand
+  colour on the dark field, in the shade that clears the print floor, and the
+  same family on the closing page, so the first and last pages are a pair. An
+  issuer with no brand colour prints in Aurixa's platform gold on obsidian.
 
 The issuer is resolved once, from the resolver every surface uses: the report
 contact's company name, then the Branding page's name, then the platform. An
@@ -733,7 +735,9 @@ contents, which numbers the report's sections.
 - **Not yet seen on a real clone.** The white-label cover reads the clone's own
   `whitelabel_settings` and `global_report_settings`; no clone has drawn one
   yet. PENDING.
-- **Colour is the product's, not the tenant's.** The white-label cover, like
-  the closing page and the body, uses the standard palette's dark field and
-  gold; a tenant's own brand colour is not applied to this presentation.
-  A chosen template is where a tenant's design system applies.
+- **A tenant's colour has been drawn from fixtures only.** Since 26 Sep 2026
+  the cover, the body and the closing page take the issuer's brand family
+  rather than the house pair (`WHITE_LABEL_DOCUMENTS.md` §4). A teal and no
+  colour at all were drawn and looked at; every other colour is held to the
+  print floors by `brandFamily.spec.ts`, not by a render. No clone's own colour
+  has been drawn. PENDING, with the clone renders above.

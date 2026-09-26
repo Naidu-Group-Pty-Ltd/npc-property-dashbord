@@ -3032,7 +3032,14 @@ unreadable. And **a lot is an address only against the same lot**
 (`brochurePhotographsAreOfReportAddress`): `isSameProperty` refuses a
 lot-only address, which is a new build's only address, so the brochure's
 form requires one lot on both sides and everything either side states to
-agree.
+agree. **Its words reach the report too** (§8 of
+[`WHITE_LABEL_DOCUMENTS.md`](./docs/reports/WHITE_LABEL_DOCUMENTS.md)): the
+form sent `data.pdfContent`, a field `parse-property-pdf` has never returned,
+so every report made from an uploaded PDF was written as though the document
+had no words in it. The browser reads the text layer now — the FRONT of the
+document (a brochure ends on the builder's other estates), 8,000 characters
+cut at a paragraph, nothing from a scan — and the generator bounds it from the
+front as well (`uploadedDocumentText.pure.ts`).
 
 **A floor plan is never a photograph** (the owner, 25 Sep 2026; §9 of the
 same doc). Every photo slot crops to fill its frame, and a cropped plan is a
@@ -3077,6 +3084,38 @@ own document is pixel-identical to what it was.
 The resale section also draws the published price history
 (`priceHistoryChart`, §6 of `MARKET_FIGURES_IN_THE_REPORT.md`): the latest
 quarter of each of ten years, from the record, or nothing.
+
+## A clone's documents are its own
+Read [`WHITE_LABEL_DOCUMENTS.md`](./docs/reports/WHITE_LABEL_DOCUMENTS.md)
+before touching `issuerIdentity.pure.ts`, `legacyDocumentBrand.ts`,
+`legacyIssuerCover.ts`, `brandFamily.pure.ts`, `buildReportBrandSnapshot`,
+`issuerDisclaimerSetting`, `organisationProjection.pure.ts` or any PDF
+generator that draws a cover, a closing page or a contact block. The older
+documents — Borrowing Capacity, Strategy Rationale, the Cash Flow export,
+Portfolio, Formara, Market Intelligence, the Overview snapshot and the Q&A
+editors — drew NPC's cover artwork, name, tagline, contact details and
+disclaimer on every deployment. The owner's rule (26 Sep 2026): **the house's
+identity is a legacy the prime keeps and a clone never sees; content and
+delivery are the same everywhere, and only the template changes.**
+
+Three rules bite. **The deployment decides, never a name**:
+`isPrimeDeployment()` / `deploymentKind(SUPABASE_URL)`, both failing closed,
+because a clone seeded from the prime holds NPC's name in its rows. On the
+prime nothing is read that was not read before, which is why every loader
+takes the settings read as a thunk; the prime's four jsPDF documents were
+compared object by object with the code before this and are identical.
+**A row that is the house's is withheld whole** (`isHouseContactRow`): a phone
+number, an office address and an ABN name nobody, so no reading of the value
+can recognise them, and the first seeded render printed NPC's landline, office
+and ABN under "Aurixa Systems". A document that says less is recoverable; one
+that prints another business's ABN is not. And **one brand colour is a family,
+never a substitute**: `resolveBrandFamily` grows it into the roles a drawn
+document needs (an accent, its 7:1 ink, a deep shade of its own hue for
+headings, washes, a hairline), because poured into the navy's place a light
+brand makes every heading unreadable. No colour means Aurixa's gold on
+obsidian, and the semantic reds and greens stay the palette's, so a tenant
+cannot make risk green. The model's persona (`getBrandConfig`) is deliberately
+unchanged: the prose is content, which the owner excluded.
 
 ## A premium document, and the eighteen per cent that was bold
 

@@ -27,7 +27,7 @@
 import { rgb, type PDFDocument, type PDFFont, type PDFPage, type RGB } from 'pdf-lib';
 import { hexToRgb01 } from '@/lib/reportDesign/color.pure';
 import type { BrandFamily } from '@/lib/reportDesign/brandFamily.pure';
-import { drawTracked, winAnsiSafe } from './investmentPdfPictures';
+import { drawTracked, winAnsiTypographic } from './investmentPdfPictures';
 
 /** The template content page's own box — see the module comment. */
 export const TEMPLATE_CONTENT_BOX = Object.freeze({ x: 0, y: 7.8299813, width: 595.5, height: 842.2499787 });
@@ -85,7 +85,7 @@ export function issuerRunningHeadLayout(margin: number): {
 
 /** The widest a running-head string may run: half the measure, less a gap. */
 function fitHead(text: string, font: PDFFont, room: number): string {
-  let value = winAnsiSafe(text).toUpperCase().trim();
+  let value = winAnsiTypographic(text).toUpperCase().trim();
   const width = (s: string) => font.widthOfTextAtSize(s, RUNNING_HEAD.size) + RUNNING_HEAD.tracking * Math.max(0, s.length - 1);
   if (width(value) <= room) return value;
   while (value.length > 1 && width(`${value}…`) > room) value = value.slice(0, -1).trimEnd();

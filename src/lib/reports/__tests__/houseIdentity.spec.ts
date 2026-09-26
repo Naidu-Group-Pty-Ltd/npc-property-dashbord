@@ -16,7 +16,9 @@ import {
   PLATFORM_ISSUER_NAME,
   WORKSPACE_DEFAULT_DISCLAIMER,
   houseWordingWithheld,
+  isHouseContactRow,
   isHouseName,
+  issuerContactDetails,
   namesTheHouse,
   resolveReportDisclaimer,
   resolveReportIssuer,
@@ -69,6 +71,15 @@ describe('who a document is issued by', () => {
     expect(resolveReportIssuer({ companyName: 'Harbour & Vine' }, CLONE)).toEqual(workspace('Harbour & Vine'));
   });
 
+  it('passes over the house trading under a variation of its name, but not a stranger who shares its initials', () => {
+    for (const companyName of ['NPC Services Melbourne', 'Naidu Property Consulting Services Group', 'www.npcservices.com.au']) {
+      expect(resolveReportIssuer({ companyName }, CLONE)).toEqual(platform);
+    }
+    expect(resolveReportIssuer({ companyName: 'NPC Realty' }, CLONE)).toEqual(workspace('NPC Realty'));
+    // The prime reads a variation exactly as it always did.
+    expect(resolveReportIssuer({ companyName: 'NPC Services Melbourne' }, PRIME)).toEqual(workspace('NPC Services Melbourne'));
+  });
+
   it('reads every name exactly as it always did on the prime, and wherever no deployment is given', () => {
     const inputs = [
       { companyName: 'Naidu Property Consulting Services' },
@@ -117,14 +128,71 @@ describe('what a document says about who issued it', () => {
     }
   });
 
-  it("withholds it on the prime too when the prime is issuing as somebody else, as its cover does", () => {
-    expect(houseWordingWithheld(houseText, workspace('Harbour & Vine'), PRIME)).toBe(true);
-    expect(houseWordingWithheld(houseText, workspace('Naidu Property Consulting Services'), PRIME)).toBe(false);
+  it('withholds nothing on the prime, whoever the prime is issuing as — its settings are its own', () => {
+    for (const issuer of [workspace('Harbour & Vine'), workspace('Naidu Property Consulting Services'), platform]) {
+      expect(houseWordingWithheld(houseText, issuer, PRIME)).toBe(false);
+    }
+    expect(resolveReportDisclaimer(workspace('Harbour & Vine'), { text: houseText, is_enabled: true }, PRIME))
+      .toEqual({ text: houseText, source: 'stored' });
     expect(houseWordingWithheld(houseText, workspace('Naidu Property Consulting Services'), CLONE)).toBe(true);
+    expect(houseWordingWithheld(ownText, workspace('Coastline Realty'), CLONE)).toBe(false);
   });
 
   it('reads stored text as it always did where no deployment is given', () => {
     expect(resolveReportDisclaimer(workspace('Coastline Realty'), { text: houseText, is_enabled: true }))
       .toEqual({ text: houseText, source: 'stored' });
+  });
+});
+
+describe('how a document says to reach its issuer', () => {
+  const seeded = {
+    company_name: 'Naidu Property Consulting Services',
+    website: 'www.npcservices.com.au',
+    email: 'admin@npcservices.com.au',
+    phone: '02 9000 0000',
+    address: '1 Example Street, Sydney NSW 2000',
+    abn: '12 345 678 901',
+  };
+
+  it("prints the issuer's name, and gives a clone nothing from a row that is the house's own", () => {
+    // Its line, its office and its ABN name nobody, so they cannot be told from
+    // the clone's own by reading them; the row's company says whose they are.
+    const issuer = workspace('Coastline Realty');
+    expect(issuerContactDetails(seeded, issuer, CLONE)).toEqual({
+      company_name: 'Coastline Realty',
+      website: '',
+      email: '',
+      phone: '',
+      address: '',
+      abn: '',
+    });
+    expect(isHouseContactRow(seeded)).toBe(true);
+    expect(isHouseContactRow({ company_name: 'NPC Services Melbourne' })).toBe(true);
+    expect(isHouseContactRow({ company_name: 'NPC Realty' })).toBe(false);
+    expect(isHouseContactRow(null)).toBe(false);
+  });
+
+  it("leaves out only the field that names the house from a clone's own row", () => {
+    const own = { company_name: 'Coastline Realty', website: 'www.npcservices.com.au', email: 'hello@coastline.example', phone: '07 5555 0000' };
+    expect(issuerContactDetails(own, workspace('Coastline Realty'), CLONE)).toEqual({ ...own, website: '' });
+  });
+
+  it("keeps a clone's own details as it stored them", () => {
+    const own = { company_name: 'Coastline Realty', website: 'coastline.example', email: 'hello@coastline.example', phone: '07 5555 0000' };
+    expect(issuerContactDetails(own, workspace('Coastline Realty'), CLONE)).toEqual(own);
+  });
+
+  it('reads every field as stored on the prime, and wherever no deployment is given', () => {
+    const house = workspace('Naidu Property Consulting Services');
+    expect(issuerContactDetails(seeded, house, PRIME)).toEqual(seeded);
+    expect(issuerContactDetails(seeded, workspace('Harbour & Vine'), PRIME)).toEqual({ ...seeded, company_name: 'Harbour & Vine' });
+    expect(issuerContactDetails(seeded, house)).toEqual(seeded);
+  });
+
+  it('never changes the row it was handed', () => {
+    const row = { ...seeded };
+    issuerContactDetails(row, workspace('Coastline Realty'), CLONE);
+    expect(row).toEqual(seeded);
+    expect(issuerContactDetails(null, platform, CLONE)).toEqual({ company_name: PLATFORM_ISSUER_NAME });
   });
 });

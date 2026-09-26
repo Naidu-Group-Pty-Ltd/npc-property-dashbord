@@ -11,6 +11,7 @@ import {
   fitLine,
   floorPlanSheetLayout,
   winAnsiSafe,
+  winAnsiTypographic,
   drawStandardCoverPhotograph,
   type InvestmentPdfPicture,
 } from '../investmentPdfPictures';
@@ -292,6 +293,26 @@ describe('the cover address', () => {
     expect(fitCoverAddress('', measure)).toBeNull();
     expect(winAnsiSafe('12 O’Brien Street – Unit 3 🏠')).toBe("12 O'Brien Street - Unit 3");
     expect(fitLine('   ', (t) => t.length, 100)).toBeNull();
+  });
+
+  it("keeps the typography WinAnsi carries on an issuer's cover, and the prime's address line exactly as it was", async () => {
+    // The dashes, curly quotes, bullet, ellipsis and euro are all WinAnsi, and
+    // the standard fonts draw them; only what WinAnsi lacks is mapped or dropped.
+    expect(winAnsiTypographic('12–14 O’Brien Street — “Lot 3” • … € 🏠')).toBe('12–14 O’Brien Street — “Lot 3” • … €');
+    expect(winAnsiTypographic('a\u00A0b\u2011c\u2212d\u2012e\u2015f\u201Bg\u2032h\u201Fi')).toBe("a b-c-d–e—f’g'h”i");
+    expect(winAnsiTypographic('   ')).toBe('');
+    // The standard fonts encode every character it keeps: nothing it answers can throw.
+    const pdf = await PDFDocument.create();
+    const kept = winAnsiTypographic('€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ ¡¢£¤¥ ÀÉÎÕÜ àéîõü ÿ');
+    for (const face of [StandardFonts.Helvetica, StandardFonts.TimesRoman, StandardFonts.TimesRomanItalic]) {
+      const font = await pdf.embedFont(face);
+      expect(() => font.widthOfTextAtSize(kept, 10)).not.toThrow();
+      expect(() => font.encodeText(kept)).not.toThrow();
+    }
+    // The prime's cover passes nothing, and is drawn through `winAnsiSafe` as it always was.
+    const measure = await measureWith();
+    expect(fitCoverAddress('12–14 O’Brien Street', measure)!.text).toBe("12-14 O'BRIEN STREET");
+    expect(fitCoverAddress('12–14 O’Brien Street', measure, undefined, winAnsiTypographic)!.text).toBe('12–14 O’BRIEN STREET');
   });
 });
 

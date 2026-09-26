@@ -17,7 +17,14 @@ import { dimensionWasScored } from "../_shared/reports/investment/scoreSections.
 import { publishableGrade } from "../_shared/reports/investment/scoreSections.pure.ts";
 import { presentStoredMarkdown } from "../_shared/reports/investment/derivedHygiene.pure.ts";
 import { readEvidenceInventory } from "../_shared/reports/investment/chartEvidence.pure.ts";
-import { PLATFORM_ISSUER_NAME, resolveReportDisclaimer, resolveReportIssuer } from "../_shared/reports/issuerIdentity.pure.ts";
+import {
+  PLATFORM_ISSUER_NAME,
+  issuerContactDetails,
+  resolveReportDisclaimer,
+  resolveReportIssuer,
+  type IssuerDeployment,
+} from "../_shared/reports/issuerIdentity.pure.ts";
+import { deploymentKind } from "../_shared/emailIdentity.pure.ts";
 import { governedAuthorityBlockFromFlags } from "../_shared/reports/contract/governedNarrativeAuthority.pure.ts";
 // Both are called by `wrapInsightSections` below and neither was imported, so
 // every call to `buildHtml` threw `ReferenceError: wrapInsightHeadingSections is
@@ -2600,7 +2607,12 @@ async function injectTableCharts(html: string): Promise<string> {
   return html.replace(/<table[\s\S]*?<\/table>/gi, () => replacements[i++]);
 }
 
-async function buildFinancialChartsHtml(fin: any): Promise<string> {
+/**
+ * `projectionsBy` names whose projections the captions attribute. The prime's
+ * documents have always said "NPC"; a clone's say the issuer's name, because
+ * NPC's name is the prime's alone (`issuerIdentity.pure.ts`).
+ */
+async function buildFinancialChartsHtml(fin: any, projectionsBy = "NPC"): Promise<string> {
   const rows = projectionRows(fin).slice(0, 10);
   const labels = rows.map((r, i) => String(r?.year ?? r?.label ?? `Year ${i + 1}`).replace(/^year\s*/i, "Yr "));
   const charts: string[] = [];
@@ -2629,7 +2641,7 @@ async function buildFinancialChartsHtml(fin: any): Promise<string> {
           },
         },
       }, CHART_PRESETS.TREND_WIDE.width, CHART_PRESETS.TREND_WIDE.height, "financial:value-equity-debt");
-      if (uri) charts.push(`<div class="chart-wrap financial-chart"><div class="chart-title">10-year value, equity and debt path</div><figure class="auto-chart"><img src="${uri}" alt="10-year value equity and debt chart"/><figcaption>Source: NPC projections, modelled over 10 years.</figcaption></figure></div>`);
+      if (uri) charts.push(`<div class="chart-wrap financial-chart"><div class="chart-title">10-year value, equity and debt path</div><figure class="auto-chart"><img src="${uri}" alt="10-year value equity and debt chart"/><figcaption>Source: ${esc(projectionsBy)} projections, modelled over 10 years.</figcaption></figure></div>`);
     }
 
     const cashFlow = pickSeries(rows, ["cashFlow", "annualNet", "netCashflow", "annualNetCashflow"]);
@@ -2652,7 +2664,7 @@ async function buildFinancialChartsHtml(fin: any): Promise<string> {
           },
         },
       }, CHART_PRESETS.BAR_WIDE.width, CHART_PRESETS.BAR_WIDE.height, "financial:rent-cashflow");
-      if (uri) charts.push(`<div class="chart-wrap financial-chart"><div class="chart-title">Rental income versus net cash flow</div><figure class="auto-chart"><img src="${uri}" alt="Rental income and cash flow chart"/><figcaption>Source: NPC projections, modelled over 10 years.</figcaption></figure></div>`);
+      if (uri) charts.push(`<div class="chart-wrap financial-chart"><div class="chart-title">Rental income versus net cash flow</div><figure class="auto-chart"><img src="${uri}" alt="Rental income and cash flow chart"/><figcaption>Source: ${esc(projectionsBy)} projections, modelled over 10 years.</figcaption></figure></div>`);
     }
   }
 
@@ -2675,7 +2687,7 @@ async function buildFinancialChartsHtml(fin: any): Promise<string> {
         },
       },
     }, CHART_PRESETS.BAR_WIDE.width, CHART_PRESETS.BAR_WIDE.height, "financial:yield-bars");
-    if (uri) charts.push(`<div class="chart-wrap financial-chart"><div class="chart-title">Yield and leverage profile</div><figure class="auto-chart"><img src="${uri}" alt="Yield and leverage chart"/><figcaption>Source: NPC key-metrics snapshot.</figcaption></figure></div>`);
+    if (uri) charts.push(`<div class="chart-wrap financial-chart"><div class="chart-title">Yield and leverage profile</div><figure class="auto-chart"><img src="${uri}" alt="Yield and leverage chart"/><figcaption>Source: ${esc(projectionsBy)} key-metrics snapshot.</figcaption></figure></div>`);
   }
 
   return charts.length ? `<section class="body-page financial-charts"><h2 id="ch-financial-visuals">Financial Visuals</h2>${charts.join("")}</section>` : "";
@@ -2966,17 +2978,33 @@ export async function buildHtml(
     designOptions?: unknown;
     contact?: Record<string, any>;
     disclaimer?: { is_enabled?: boolean; text?: string; font_size?: string };
+    /**
+     * Which deployment is rendering. NPC's identity — its name, its cover
+     * artwork, its contact details and its wording — belongs to the prime; a
+     * clone issues under its own name, or the platform's, whatever a seeded
+     * settings row says. Not given means the prime, which is every document
+     * exactly as it was.
+     */
+    deployment?: IssuerDeployment | null;
   } = {},
 ): Promise<string> {
-  const contact = opts.contact || {};
+  const deployment = opts.deployment ?? null;
+  const onClone = Boolean(deployment && !deployment.prime);
   const disclaimer = opts.disclaimer || {};
   // Who this document is issued BY. Resolved ONCE, here, because four places
   // below used to answer it separately and printed three different businesses
   // on one unbranded report — `NPC` in the watermark, `NPC Property` in the PDF
   // metadata and `PROPERTY CONSULTING` on the back page. See
   // `_shared/reports/issuerIdentity.pure.ts`.
-  const issuer = resolveReportIssuer({ companyName: contact.company_name, brandName });
-  const issuedDisclaimer = resolveReportDisclaimer(issuer, disclaimer);
+  const issuer = resolveReportIssuer({ companyName: opts.contact?.company_name, brandName }, deployment);
+  const issuedDisclaimer = resolveReportDisclaimer(issuer, disclaimer, deployment);
+  // On a clone every line that printed the stored name prints the issuer's,
+  // and a contact field naming the house is left out. The prime reads both as
+  // stored.
+  const contact: Record<string, any> = onClone
+    ? issuerContactDetails(opts.contact || {}, issuer, deployment)
+    : (opts.contact || {});
+  if (onClone) brandName = issuer.name;
   // Keep report-wide advisor attribution initialized before any generated HTML/CSS
   // fragments so later Phase blocks cannot accidentally hit a temporal-dead-zone.
   const advisorLine = contact.name || contact.advisor || issuer.name;
@@ -3099,7 +3127,7 @@ export async function buildHtml(
     ) as string)
     : "";
   const financialChartsHtml = includeCharts && contentPolicy.financialModelling
-    ? await buildFinancialChartsHtml(fin)
+    ? await buildFinancialChartsHtml(fin, onClone ? issuer.name : "NPC")
     : "";
 
   // KPI tiles (with optional sparklines from projection series)
@@ -3307,7 +3335,10 @@ export async function buildHtml(
   // function source, which broke deploys for unrelated functions (see the note
   // at the top of this file). It is a `data:` URI either way by the time the
   // renderer sees it. See `scripts/reportDesign/buildDefaultAssets.ts`.
-  const coverArtSrc = await loadHouseCoverArt();
+  // NPC's artwork is the prime's alone: a clone's cover carries the gradient
+  // and foil treatment without it, exactly as a cover whose artwork failed to
+  // load always has.
+  const coverArtSrc = onClone ? null : await loadHouseCoverArt();
   const coverBgImg = coverArtSrc
     ? `<img class="cover-bg" src="${coverArtSrc}" alt="" />`
     : "";
@@ -5858,6 +5889,7 @@ if (import.meta.main) Deno.serve(async (req) => {
       designOptions,
       contact,
       disclaimer,
+      deployment: { prime: deploymentKind(SUPABASE_URL) === "prime" },
     });
     const safeAddr = String(report.property_address || "report")
       .replace(/[^a-zA-Z0-9]+/g, "-")

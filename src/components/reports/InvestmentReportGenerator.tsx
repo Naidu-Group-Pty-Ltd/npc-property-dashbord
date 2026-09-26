@@ -22,6 +22,7 @@ import { useActivityLogger } from '@/hooks/useActivityLogger';
 import { addBackgroundJob } from '@/components/BackgroundJobTracker';
 import { Loader2, MapPin, Hash, Globe, TrendingUp, FileText, Link, Upload, X, Image, AlertCircle, Sparkles, ClipboardPaste } from 'lucide-react';
 import { convertPdfToImages, isPdfFile, isImageFile, imageFileToBase64 } from '@/utils/pdfToImages';
+import { readUploadedDocumentText } from '@/lib/reports/uploadedDocumentText';
 import { PreGenerationOverrides, PreGenerationData } from './PreGenerationOverrides';
 import { BrochurePhotographsPicker } from './BrochurePhotographsPicker';
 import { removeCommas } from '@/hooks/useFormattedNumber';
@@ -94,7 +95,7 @@ export function InvestmentReportGenerator() {
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [conversionProgress, setConversionProgress] = useState<{ current: number; total: number } | null>(null);
-  const [pdfParsedData, setPdfParsedData] = useState<{ propertyAddress: string; pdfContent: string } | null>(null);
+  const [pdfParsedData, setPdfParsedData] = useState<{ propertyAddress: string; pdfContent: string | null } | null>(null);
   const [isPdfGenerating, setIsPdfGenerating] = useState(false);
   // The brochure's own photographs, read beside the parse and confirmed by
   // the adviser before the report is made (`useBrochurePhotographs`).
@@ -1186,6 +1187,11 @@ export function InvestmentReportGenerator() {
       console.log('Processing file:', pdfFile.name, 'Type:', pdfFile.type);
       
       let requestBody: any = { fileName: pdfFile.name };
+      // The document's own words. `parse-property-pdf` reads the pages as
+      // images and answers fields, never text, so the report used to be handed
+      // a `pdfContent` nothing had ever filled. Read from the text layer while
+      // the parser reads the pages; nothing about it can fail the parse.
+      let documentText: Promise<string | null> = Promise.resolve(null);
       
       if (isPdfFile(pdfFile)) {
         console.log('🔄 Converting PDF to images...');
@@ -1209,6 +1215,7 @@ export function InvestmentReportGenerator() {
         // The brochure's own photographs, read while the parser reads the
         // pages. Nothing about it can fail the parse.
         brochurePhotographs.begin(pdfFile);
+        documentText = readUploadedDocumentText(pdfFile);
         
         requestBody.pageImages = conversionResult.images.map(img => ({
           pageNumber: img.pageNumber,
@@ -1272,7 +1279,7 @@ export function InvestmentReportGenerator() {
       // Store parsed data for later generation
       setPdfParsedData({
         propertyAddress,
-        pdfContent: data.pdfContent,
+        pdfContent: await documentText.catch(() => null),
       });
       // Now the brochure has named its property, its pages can be read for it.
       brochurePhotographs.settle({ address: extracted.extractedAddress, suburb: extracted.extractedSuburb });

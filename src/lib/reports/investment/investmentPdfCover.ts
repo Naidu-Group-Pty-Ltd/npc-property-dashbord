@@ -44,7 +44,7 @@ import {
   coverFit,
   drawTracked,
   fitCoverAddress,
-  winAnsiSafe,
+  winAnsiTypographic,
   type Box,
   type InvestmentPdfPicture,
 } from './investmentPdfPictures';
@@ -80,6 +80,22 @@ const TITLE_GAP = 18;
 const TITLE_SIZE = 9;
 const TITLE_TRACKING = 2.2;
 const STANDFIRST = Object.freeze({ size: 12.5, leading: 18, measure: 330 });
+
+/**
+ * How the issuer's cover sets its type, for a second drawing of the same cover
+ * in another library (`legacyIssuerCover.ts`, in jsPDF) — one set of numbers,
+ * so the two drawings cannot drift apart.
+ */
+export const ISSUER_COVER_TYPE = Object.freeze({
+  timesCap: TIMES_CAP,
+  helveticaCap: HELVETICA_CAP,
+  title: Object.freeze({ size: TITLE_SIZE, tracking: TITLE_TRACKING }),
+  standfirst: STANDFIRST,
+  measure: MEASURE,
+  frameStroke: 0.6,
+  rule: 0.75,
+  divider: 0.5,
+});
 
 /** The mark's printed size: fitted to its box, never upscaled past 150dpi. */
 export function issuerMarkSize(image: { width: number; height: number }): { width: number; height: number } {
@@ -222,7 +238,7 @@ export async function drawIssuerCover(pdfDoc: PDFDocument, input: IssuerCoverInp
   const markImage = await embedMark(pdfDoc, input.mark);
   const markSize = markImage ? issuerMarkSize({ width: markImage.width, height: markImage.height }) : null;
   const name = fitIssuerName(
-    winAnsiSafe(input.issuerName),
+    winAnsiTypographic(input.issuerName),
     (text, size) => serif.widthOfTextAtSize(text, size),
     MEASURE.right - MEASURE.left,
   );
@@ -243,11 +259,11 @@ export async function drawIssuerCover(pdfDoc: PDFDocument, input: IssuerCoverInp
     page.drawImage(photo, placed);
     page.pushOperators(popGraphicsState());
     const top = layout.band.y + layout.band.height;
-    page.drawLine({ start: { x: layout.band.x, y: top }, end: { x: layout.band.x + layout.band.width, y: top }, thickness: 0.75, color: gold });
+    page.drawLine({ start: { x: layout.band.x, y: top }, end: { x: layout.band.x + layout.band.width, y: top }, thickness: ISSUER_COVER_TYPE.rule, color: gold });
   }
 
   // The frame last among the rules, so it runs cleanly over the photograph's edge.
-  page.drawRectangle({ ...layout.frame, borderColor: gold, borderWidth: 0.6 });
+  page.drawRectangle({ ...layout.frame, borderColor: gold, borderWidth: ISSUER_COVER_TYPE.frameStroke });
 
   if (markImage && layout.mark) page.drawImage(markImage, containFit({ width: markImage.width, height: markImage.height }, layout.mark));
 
@@ -259,20 +275,21 @@ export async function drawIssuerCover(pdfDoc: PDFDocument, input: IssuerCoverInp
       });
     });
   }
-  page.drawLine({ start: { x: layout.rule.x1, y: layout.rule.y }, end: { x: layout.rule.x2, y: layout.rule.y }, thickness: 0.75, color: gold });
+  page.drawLine({ start: { x: layout.rule.x1, y: layout.rule.y }, end: { x: layout.rule.x2, y: layout.rule.y }, thickness: ISSUER_COVER_TYPE.rule, color: gold });
 
-  const title = winAnsiSafe(input.documentTitle).toUpperCase();
+  const title = winAnsiTypographic(input.documentTitle).toUpperCase();
   if (title) {
     const width = sans.widthOfTextAtSize(title, TITLE_SIZE) + TITLE_TRACKING * Math.max(0, title.length - 1);
     drawTracked(page, title, { x: W / 2 - width / 2, y: layout.titleBaseline, size: TITLE_SIZE, tracking: TITLE_TRACKING, font: sans, color: ivory });
   }
 
-  page.drawLine({ start: { x: layout.divider.x1, y: layout.divider.y }, end: { x: layout.divider.x2, y: layout.divider.y }, thickness: 0.5, color: gold });
+  page.drawLine({ start: { x: layout.divider.x1, y: layout.divider.y }, end: { x: layout.divider.x2, y: layout.divider.y }, thickness: ISSUER_COVER_TYPE.divider, color: gold });
 
   const address = fitCoverAddress(
     String(input.address ?? ''),
     (text, size) => sans.widthOfTextAtSize(text, size),
     MEASURE.right - MEASURE.left,
+    winAnsiTypographic,
   );
   if (address) {
     drawTracked(page, address.text, {
@@ -285,7 +302,7 @@ export async function drawIssuerCover(pdfDoc: PDFDocument, input: IssuerCoverInp
     });
   }
 
-  const standfirst = winAnsiSafe(input.standfirst ?? '');
+  const standfirst = winAnsiTypographic(input.standfirst ?? '');
   if (!photo && standfirst) {
     const lines = balanceLines(standfirst, (line) => italic.widthOfTextAtSize(line, STANDFIRST.size), STANDFIRST.measure).slice(0, 4);
     const middle = (layout.standfirstZone.top + layout.standfirstZone.bottom) / 2;

@@ -31,6 +31,7 @@
  * the postal address came to be missing from every design-system document
  * while the letterhead beside them looked fine.
  */
+import { isPrimeDeployment } from '@/lib/primeDeployment';
 import { supabase } from '@/integrations/supabase/client';
 import { SUPABASE_URL } from '@/integrations/supabase/env';
 import { getAuthenticatedSupabaseClient } from '@/hooks/useAuthenticatedSupabase';
@@ -162,7 +163,8 @@ export async function applyOrganisationAndBrand(
   const [row, marks, settings] = await Promise.all([
     loadOrganisation(), loadBrandMarks(), loadReportSettings(),
   ]);
-  return applyOrganisationProjection(data, row, marks, settings);
+  // On a clone the letterhead is never the house's (`issuerIdentity.pure.ts`).
+  return applyOrganisationProjection(data, row, marks, settings, { prime: isPrimeDeployment() });
 }
 
 /**
