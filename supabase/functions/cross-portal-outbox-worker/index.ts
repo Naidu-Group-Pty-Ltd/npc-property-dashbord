@@ -140,12 +140,15 @@ async function sendActivationAcknowledgedEmail(db: any, event: any) {
     .eq('id', selectionId).maybeSingle();
   if (selectionError) throw new Error('activation_unreadable');
   if (!selection) return;
-  const [{ data: user }, { data: item }, { data: org }] = await Promise.all([
+  const [{ data: user, error: userError }, { data: item, error: itemError }, { data: org, error: orgError }] = await Promise.all([
     db.from('custom_users').select('email, first_name, last_name, username, is_active, deleted_at')
       .eq('id', selection.selected_by_user_id).maybeSingle(),
     db.from('builder_network_stock_items').select('address_line, lot_number').eq('id', selection.stock_item_id).maybeSingle(),
     db.from('builder_network_stock_organisations').select('legal_name, trading_name').eq('id', selection.organisation_id).maybeSingle(),
   ]);
+  // A read that failed is not an absent user or a nameless builder: throw, and
+  // the outbox's backoff asks again rather than marking the job done.
+  if (userError || itemError || orgError) throw new Error('acknowledgement_email_facts_unreadable');
   if (!user || !user.is_active || user.deleted_at || !user.email) return;
   const email = acknowledgementEmail({
     builderName: (typeof org?.trading_name === 'string' && org.trading_name.trim()) || org?.legal_name || 'The builder',
@@ -157,8 +160,8 @@ async function sendActivationAcknowledgedEmail(db: any, event: any) {
   const sent = await sendPortalNotificationEmail({
     to: String(user.email),
     clientFirstName: (typeof user.first_name === 'string' && user.first_name.trim()) || userDisplayName(user) || 'there',
-    title: email.subject,
-    message: email.text,
+    title: email.title,
+    message: email.html,
     type: 'success',
     category: 'property',
     actionUrl: '/admin/builder-portal/activated',

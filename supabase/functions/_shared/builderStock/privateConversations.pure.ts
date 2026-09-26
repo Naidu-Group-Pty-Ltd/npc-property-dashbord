@@ -108,20 +108,32 @@ export function activationKey(selectionId: string): string {
   return `a${hash.toString(16).padStart(8, '0')}${second.toString(16).padStart(8, '0')}`;
 }
 
+/** For setting builder-supplied words into an HTML body. */
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 /**
  * The acknowledgement email. It names the builder company, the property and,
  * where the builder sent one, who acknowledged it — never the client.
  */
 export function acknowledgementEmail(facts: {
   builderName: string; address: string; lotNumber: string | null; acknowledgedBy: string | null; link: string | null;
-}): { subject: string; title: string; text: string } {
+}): { subject: string; title: string; text: string; html: string } {
   const property = propertyLabel({ lot_number: facts.lotNumber ?? undefined, address_line: facts.address });
   const by = facts.acknowledgedBy ? ` ${facts.acknowledgedBy} acknowledged it on the builder's behalf.` : '';
+  const text = `${facts.builderName} has acknowledged your activation of ${property}.${by}`
+    + ' You can now message the builder about it from Portals → Builder Portal.';
   return {
     subject: `${facts.builderName} acknowledged your activation`,
+    // Fixed words: the title is set into the email as markup and as its
+    // subject, so nothing the builder wrote goes there.
     title: 'Activation acknowledged',
-    text: `${facts.builderName} has acknowledged your activation of ${property}.${by}`
-      + ' You can now message the builder about it from Portals → Builder Portal.',
+    text,
+    // Every value here came from the builder over the network, and the email
+    // helper sets its message into HTML as it is given.
+    html: escapeHtml(text),
   };
 }
 

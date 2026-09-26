@@ -671,9 +671,9 @@ Deno.serve(async (req) => {
       // is offered that the server would refuse.
       const canSend = read.open && listingsEdit.ok && networkOn;
       const mine = read.participants.filter((p) => p.side === 'command_centre');
-      // Live is the database's rule for leaving: the activation stands and the
-      // connection is active. Only then must someone on this side stay.
-      const live = !['withdrawn', 'not_connected', 'not_activated'].includes(read.closed_reason ?? '');
+      // Live is the database's rule for leaving: the conversation is open.
+      // Only then must someone on this side stay.
+      const live = read.open;
       return json({
         success: true,
         conversation_id: read.conversation_id,

@@ -512,13 +512,11 @@ BEGIN
   IF v_p.participant_ref IS NULL THEN
     RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'AGENCY_NOT_A_PARTICIPANT';
   END IF;
-  -- A live conversation keeps someone on this side; a closed one can be left
-  -- freely, and leaving never erases what was said.
-  v_live := v_c.selection_ref IS NOT NULL
-    AND EXISTS (SELECT 1 FROM public.builder_stock_selections s
-                 WHERE s.id = v_c.selection_ref AND s.status <> 'withdrawn')
-    AND EXISTS (SELECT 1 FROM public.builder_network_connections c
-                 WHERE c.id = v_c.connection_id AND c.state = 'active');
+  -- A live conversation keeps someone on this side; a closed one, for ANY
+  -- reason, can be left freely, and leaving never erases what was said.
+  -- "Live" is the same decision every other act reads, so nobody can be held
+  -- in a conversation that no act can reopen from their side.
+  v_live := public.builder_network_conversation_closed_reason(v_c.id) IS NULL;
   IF v_live AND NOT EXISTS (
     SELECT 1 FROM public.builder_network_conversation_participants o
      WHERE o.conversation_id = v_c.id AND o.side = 'command_centre' AND o.state = 'joined'

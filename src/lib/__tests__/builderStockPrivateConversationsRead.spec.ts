@@ -321,6 +321,25 @@ describe('the acknowledgement email', () => {
     expect(historical.text).not.toMatch(/null|undefined/);
   });
 
+  it('carries nothing the builder wrote into the email as markup', () => {
+    const email = acknowledgementEmail({
+      builderName: '<a href="https://evil.example">Evil</a> Homes', address: '<img src=x onerror=alert(1)>',
+      lotNumber: '1"2', acknowledgedBy: '<b>Avery</b>', link: null,
+    });
+    expect(email.html).not.toMatch(/<a |<img|<b>/);
+    expect(email.html).toContain('&lt;a href=');
+    expect(email.title).not.toMatch(/Evil|Avery/);
+  });
+
+  it('the worker sends the escaped message under the fixed title, and retries when a read it needs fails', () => {
+    const worker = readCode('supabase/functions/cross-portal-outbox-worker/index.ts');
+    const body = worker.slice(worker.indexOf('async function sendActivationAcknowledgedEmail'),
+      worker.indexOf('async function amlPartnerEventsEnabled'));
+    expect(body).toMatch(/title:\s*email\.title/);
+    expect(body).toMatch(/message:\s*email\.html/);
+    for (const read of ['userError', 'itemError', 'orgError']) expect(body).toContain(read);
+  });
+
   it('is sent by the existing worker through the workspace\'s own email identity, once per activation', () => {
     const worker = readCode('supabase/functions/cross-portal-outbox-worker/index.ts');
     expect(worker).toMatch(/builder_activation_acknowledged/);

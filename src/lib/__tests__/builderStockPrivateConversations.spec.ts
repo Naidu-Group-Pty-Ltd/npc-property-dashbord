@@ -521,6 +521,19 @@ describe.skipIf(!runs)('one activation, one private conversation (Command Centre
     });
   });
 
+  describe('closed for any reason', () => {
+    it('the last participant may leave a conversation closed for a reason other than withdrawal', () => {
+      db.sql(`UPDATE public.builder_network_stock_items SET lifecycle_status = 'archived' WHERE id = ${lit(ITEM)}`);
+      try {
+        expect(db.sql(`SELECT public.builder_network_conversation_closed_reason(${lit(C2)})`)).toBe('delisted');
+        expect(members(C2)).toContain('command_centre:Otto Other:joined');
+        expect(leave(C2, OWNER_2)).toBe('left');
+      } finally {
+        db.sql(`UPDATE public.builder_network_stock_items SET lifecycle_status = 'active' WHERE id = ${lit(ITEM)}`);
+      }
+    });
+  });
+
   describe('withdrawal', () => {
     it('R30. a withdrawn activation closes the conversation to writing and inviting, and keeps it for its participants', () => {
       db.sql(`UPDATE public.builder_stock_selections SET status = 'withdrawn', withdrawn_at = now() WHERE id = ${lit(S1)}`);
