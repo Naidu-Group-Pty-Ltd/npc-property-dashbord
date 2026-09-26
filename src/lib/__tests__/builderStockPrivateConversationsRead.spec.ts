@@ -42,6 +42,7 @@ function standIn(tables: Record<string, Row[]>) {
     log.push(entry);
     let orders: Array<[string, boolean]> = [];
     let cap = Infinity;
+    let offset = 0;
     const builder: any = {
       select() { return builder; },
       eq(col: string, v: unknown) { entry.filters.push(['eq', col, v]); return builder; },
@@ -50,6 +51,7 @@ function standIn(tables: Record<string, Row[]>) {
       is(col: string, v: unknown) { entry.filters.push(['is', col, v]); return builder; },
       order(col: string, o?: { ascending?: boolean }) { orders = [...orders, [col, o?.ascending !== false]]; return builder; },
       limit(n: number) { cap = n; return builder; },
+      range(a: number, b: number) { offset = a; cap = b - a + 1; return builder; },
       maybeSingle() { return builder.then((r: any) => ({ data: r.data[0] ?? null, error: null })); },
       then(resolve: (v: unknown) => unknown) {
         let rows = (tables[table] ?? []).filter((row) => entry.filters.every(([op, col, v]) =>
@@ -59,7 +61,7 @@ function standIn(tables: Record<string, Row[]>) {
         for (const [col, asc] of [...orders].reverse()) {
           rows = [...rows].sort((a, b) => (String(a[col]) < String(b[col]) ? -1 : String(a[col]) > String(b[col]) ? 1 : 0) * (asc ? 1 : -1));
         }
-        return Promise.resolve({ data: rows.slice(0, cap), error: null }).then(resolve);
+        return Promise.resolve({ data: rows.slice(offset, offset + cap), error: null }).then(resolve);
       },
     };
     return builder;
@@ -203,6 +205,22 @@ describe('Activated Properties', () => {
     expect(rows.activations.map((r) => r.status).sort()).toEqual(['acknowledged', 'awaiting_acknowledgement', 'withdrawn']);
     const withdrawn = rows.activations.find((r) => r.status === 'withdrawn')!;
     expect(withdrawn.acknowledged_by).toBeNull();
+  });
+
+  it('every activation is listed however many there are, and every lookup is asked in bounded chunks', async () => {
+    const tables = world();
+    for (let i = 0; i < 1201; i += 1) {
+      tables.builder_stock_selections.push({
+        id: `bulk-${i}`, stock_item_id: `item-${i}`, organisation_id: ORG, selected_by_user_id: ME, status: 'selected',
+        selected_at: '2026-01-01T00:00:00Z', acknowledged_at: null, acknowledged_by_display_name: null,
+      } as never);
+    }
+    const stand = standIn(tables);
+    const rows = await listActivatedProperties(stand.client, { viewerUserId: ME });
+    if (!rows.ok) throw new Error('failed');
+    expect(rows.activations).toHaveLength(1204);
+    const inSizes = stand.log.flatMap((e) => e.filters.filter(([op]) => op === 'in').map(([, , v]) => (v as unknown[]).length));
+    expect(Math.max(...inSizes)).toBeLessThanOrEqual(200);
   });
 
   it('R37. links to a conversation only for a current participant', async () => {

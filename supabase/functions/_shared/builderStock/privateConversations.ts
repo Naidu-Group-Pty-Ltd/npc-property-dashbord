@@ -155,29 +155,52 @@ export function listPropertyConversations(supabase: Client, args: { stockItemId:
   return summaries(supabase, args.viewerUserId, { stockItemId: args.stockItemId });
 }
 
+const ACTIVATION_PAGE = 500;
+const IN_CHUNK = 200;
+
+/** A `.in()` lookup over any number of ids, asked in bounded chunks. */
+async function readIn(
+  supabase: Client, table: string, columns: string, column: string, values: unknown[],
+): Promise<{ data: Row[]; error: unknown }> {
+  const ids = [...new Set(values.map(String))];
+  const data: Row[] = [];
+  for (let i = 0; i < ids.length; i += IN_CHUNK) {
+    const { data: rows, error } = await supabase.from(table).select(columns).in(column, ids.slice(i, i + IN_CHUNK));
+    if (error) return { data: [], error };
+    data.push(...((rows ?? []) as Row[]));
+  }
+  return { data, error: null };
+}
+
 /** One row per activation: the property, the builder company, and the people. */
 export async function listActivatedProperties(
   supabase: Client, args: { viewerUserId: string },
 ): Promise<{ ok: true; activations: ActivatedPropertyRow[] } | { ok: false }> {
-  const { data: selections, error } = await supabase.from('builder_stock_selections')
-    .select('id, stock_item_id, organisation_id, selected_by_user_id, selected_at, status, acknowledged_at, acknowledged_by_display_name')
-    .order('selected_at', { ascending: false })
-    .limit(500);
-  if (error) return { ok: false };
-  const list = (selections ?? []) as Row[];
+  // Every activation, read a page at a time: a fixed cap would silently drop
+  // the oldest ones and their conversation links from the portal.
+  const list: Row[] = [];
+  for (let from = 0; ; from += ACTIVATION_PAGE) {
+    const { data, error } = await supabase.from('builder_stock_selections')
+      .select('id, stock_item_id, organisation_id, selected_by_user_id, selected_at, status, acknowledged_at, acknowledged_by_display_name')
+      .order('selected_at', { ascending: false })
+      .order('id', { ascending: true })
+      .range(from, from + ACTIVATION_PAGE - 1);
+    if (error) return { ok: false };
+    const page = (data ?? []) as Row[];
+    list.push(...page);
+    if (page.length < ACTIVATION_PAGE) break;
+  }
   if (!list.length) return { ok: true, activations: [] };
 
   const [items, orgs, users, conversations, mine] = await Promise.all([
-    supabase.from('builder_network_stock_items')
-      .select('id, address_line, suburb, lot_number, primary_image_id, source_row')
-      .in('id', [...new Set(list.map((s) => s.stock_item_id))]),
-    supabase.from('builder_network_stock_organisations')
-      .select('id, legal_name, trading_name, contact_email, contact_phone, website')
-      .in('id', [...new Set(list.map((s) => s.organisation_id))]),
-    supabase.from('custom_users').select('id, username, first_name, last_name')
-      .in('id', [...new Set(list.map((s) => s.selected_by_user_id).filter(Boolean))]),
-    supabase.from('builder_network_conversations').select('id, selection_ref')
-      .in('selection_ref', list.map((s) => s.id)),
+    readIn(supabase, 'builder_network_stock_items', 'id, address_line, suburb, lot_number, primary_image_id, source_row',
+      'id', list.map((s) => s.stock_item_id)),
+    readIn(supabase, 'builder_network_stock_organisations', 'id, legal_name, trading_name, contact_email, contact_phone, website',
+      'id', list.map((s) => s.organisation_id)),
+    readIn(supabase, 'custom_users', 'id, username, first_name, last_name',
+      'id', list.map((s) => s.selected_by_user_id).filter(Boolean)),
+    readIn(supabase, 'builder_network_conversations', 'id, selection_ref',
+      'selection_ref', list.map((s) => s.id)),
     supabase.from('builder_network_conversation_participants').select('conversation_id')
       .eq('local_user_id', args.viewerUserId).eq('side', 'command_centre').eq('state', 'joined'),
   ]);

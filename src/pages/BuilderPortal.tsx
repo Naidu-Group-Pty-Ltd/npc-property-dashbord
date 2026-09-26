@@ -64,13 +64,16 @@ export default function BuilderPortal() {
 function ActivatedProperties() {
   const query = useBuilderPortalActivations();
   const notifications = useNotificationsOptional();
-  // Seeing the list is seeing the acknowledgements: the badge clears.
+  // Seeing the list is seeing the acknowledgements: the badge clears, but
+  // only once the list has actually been read and drawn. A failed or pending
+  // read shows the reader nothing, so it clears nothing.
+  const listShown = query.isSuccess;
   useEffect(() => {
-    if (!notifications) return;
+    if (!notifications || !listShown) return;
     for (const n of notifications.notifications) {
       if (!n.read && n.type === 'builder_activation_acknowledged') notifications.markAsRead(n.id);
     }
-  }, [notifications]);
+  }, [notifications, listShown]);
 
   if (query.isLoading) return <Skeleton className="h-32 w-full" />;
   if (query.error) {
@@ -84,7 +87,18 @@ function ActivatedProperties() {
   }
   const rows = query.data?.activations ?? [];
   if (!rows.length) {
-    return <p className="text-sm text-muted-foreground">No property has been activated with a builder yet.</p>;
+    return (
+      <div className="space-y-2 text-sm text-muted-foreground">
+        <p>No property has been activated with a builder yet.</p>
+        <p>
+          A property appears here once you activate one of a builder&apos;s properties for a client, from{' '}
+          <Link to="/listings?section=builder-stock" className="text-primary underline underline-offset-4">
+            Builder Stock
+          </Link>{' '}
+          in Listings. When the builder acknowledges it, its private conversation opens under Messaging.
+        </p>
+      </div>
+    );
   }
   return (
     <div className="space-y-3">

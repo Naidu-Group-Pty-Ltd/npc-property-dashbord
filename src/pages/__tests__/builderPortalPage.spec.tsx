@@ -30,7 +30,10 @@ vi.mock('@/lib/marketplaceBuilderStock', async () => {
     scrollLogToEnd: () => undefined,
     scrollMessageIntoView: () => undefined,
     marketplaceStockImageUrl: async () => null,
-    useBuilderPortalActivations: () => ({ data: state.activations, error: null, isLoading: false }),
+    useBuilderPortalActivations: () => ({
+      data: state.activationsError ? undefined : state.activations, error: state.activationsError ?? null,
+      isLoading: false, isSuccess: !state.activationsError,
+    }),
     useMyBuilderConversations: () => ({ data: state.inbox, error: null, isLoading: false }),
     useParticipantConversation: () => ({ data: state.conversation, error: state.conversationError ?? null, isLoading: false, isFetching: false }),
     useSendConversationMessage: () => ({
@@ -47,6 +50,14 @@ vi.mock('@/lib/marketplaceBuilderStock', async () => {
     }),
   };
 });
+
+const markedRead: string[] = [];
+vi.mock('@/contexts/NotificationsContext', () => ({
+  useNotificationsOptional: () => ({
+    notifications: [{ id: 'n1', read: false, type: 'builder_activation_acknowledged' }],
+    markAsRead: (id: string) => { markedRead.push(id); },
+  }),
+}));
 
 import BuilderPortal from '../BuilderPortal';
 
@@ -75,6 +86,7 @@ const CONVERSATION = (overrides: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
   for (const key of Object.keys(state)) delete state[key];
+  markedRead.length = 0;
   state.activations = { activations: [ACTIVATION(), ACTIVATION({
     activation_key: 'k2', activated_by: 'Otto Other', acknowledged_by: null, acknowledged_at: null,
     status: 'awaiting_acknowledgement', conversation_id: null,
@@ -190,6 +202,22 @@ describe('Messaging', () => {
     expect(screen.queryByRole('log')).toBeNull();
     expect(screen.queryByRole('list', { name: /participants/i })).toBeNull();
     expect(screen.getByText(/not in this conversation/i)).toBeInTheDocument();
+  });
+
+  it('the acknowledgement badge clears once the list has been read, and not when the read failed', () => {
+    state.activationsError = Object.assign(new Error('unavailable'), { status: 503 });
+    const failed = renderAt('/admin/builder-portal/activated');
+    expect(markedRead).toEqual([]);
+    failed.unmount();
+    delete state.activationsError;
+    renderAt('/admin/builder-portal/activated');
+    expect(markedRead).toEqual(['n1']);
+  });
+
+  it('with nothing activated, says where a property is activated', () => {
+    state.activations = { activations: [] };
+    renderAt('/admin/builder-portal/activated');
+    expect(screen.getByRole('link', { name: /builder stock/i })).toHaveAttribute('href', '/listings?section=builder-stock');
   });
 
   it('an empty inbox says how a conversation starts', () => {
