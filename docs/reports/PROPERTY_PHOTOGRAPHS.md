@@ -378,7 +378,13 @@ this address and property, and never a picture chosen to fill a slot.
    can tick up to six and untick any.
 6. **The ticks are filed once the report exists** (`op:
    'capture_brochure_photograph'`, one request a photograph, in order, never
-   awaited by the generation). The server authenticates, asks for the
+   awaited by the generation). **The page is held while they are in flight**
+   (`fileWhilePageHeld`): the pictures exist nowhere but that page, so closing
+   or reloading it asks first, and the report is announced and the form
+   cleared only once they have landed or a minute has passed. Before this the
+   filing was fire-and-forget behind an announcement that invited the adviser
+   to leave, and a close in those seconds lost the pictures for good (Codex's
+   review of #2775, P1). The server authenticates, asks for the
    `reports` permission, meters (30 a minute for a person, 60 for an address),
    files only for the report's author, never for a derived report and never
    beside a listing capture. It writes `brochure.json` first (the brochure's

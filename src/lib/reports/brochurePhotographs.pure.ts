@@ -811,3 +811,19 @@ export function describeBrochureFiling(outcome: BrochureFiling): { title: string
     description: `None of the ${pictures(notUsed)} could be used${why}. The report is made without them.`,
   };
 }
+
+/**
+ * What to tell the adviser when the patience for the filing ran out first.
+ * The report has started, and the pictures are still on their way from this
+ * page, which is the only place they exist.
+ */
+export const BROCHURE_FILING_STILL_RUNNING: { title: string; description: string } = {
+  title: 'Still adding the brochure pictures',
+  description: 'The report has started. Keep this page open until the pictures are confirmed.',
+};
+
+/** What to tell the adviser when the filing could not be carried out at all. */
+export const BROCHURE_FILING_BROKE: { title: string; description: string } = {
+  title: 'Brochure pictures not added',
+  description: 'The pictures chosen from the brochure could not be sent. The report is made without them.',
+};

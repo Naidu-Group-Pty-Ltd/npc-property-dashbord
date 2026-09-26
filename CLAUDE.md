@@ -3021,7 +3021,10 @@ failed the first time still becomes the cover.
 `useBrochurePhotographs` or `op: 'capture_brochure_photograph'`. The browser
 reads the brochure with pdf.js beside the parse, the server's own vision
 module judges each picture on the same 64-pixel square, the adviser ticks
-what goes in, and the ticks are filed once the report row exists. Three
+what goes in, and the ticks are filed once the report row exists — with the
+page held while they are in flight (`fileWhilePageHeld`), because the pictures
+exist nowhere else and a close used to lose them behind an announcement that
+said the adviser could go. Three
 rules bite. **Only a page that names this property can offer a picture**:
 the owner's example names its lot on page 1 beside the facade render, and
 its pages 5 and 6 are another estate and four homes built elsewhere, which

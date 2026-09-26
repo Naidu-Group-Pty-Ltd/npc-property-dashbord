@@ -889,13 +889,30 @@ describe('the generator reads the brochure beside the parse and files the ticks 
     expect(parse.slice(parse.indexOf('} catch (error) {'))).toContain('brochurePhotographs.reset();');
   });
 
-  it('files the ticks after the report row exists, beside the generation and never awaited', () => {
+  it('files the ticks once the report row exists and its generation has started, and holds the page until they land', () => {
+    // Renegotiated after Codex's review of #2775: this used to assert the
+    // filing was "never awaited", which was the defect — the report was
+    // announced and the form cleared while the only copy of the pictures was
+    // still in flight from this page.
     const insert = generate.indexOf("report_content: 'Generating report from PDF...',");
+    const generation = generate.indexOf("invokeSecureFunction('generate-investment-report', {");
     const filing = generate.indexOf('const brochureFiling = brochurePhotographs.filingArgs();');
-    expect(insert).toBeGreaterThan(-1);
-    expect(filing).toBeGreaterThan(insert);
-    expect(generate.slice(filing, filing + 600)).toMatch(/void fileChosenBrochurePhotographs\(\{\s*invoke: \(request\) => invokeSecureFunction\('listing-images', \{ \.\.\.request \}\),\s*reportId: pendingReport\.id,/);
-    expect(generate).toContain('const message = describeBrochureFiling(outcome);');
+    const held = generate.indexOf('const held = await fileWhilePageHeld(');
+    const announced = generate.indexOf('title: "Report Generation Started",');
+    const cleared = generate.indexOf('brochurePhotographs.reset();', held);
+    for (const at of [insert, generation, filing, held, announced, cleared]) expect(at).toBeGreaterThan(-1);
+    // The generation never waits for the pictures: a document reads them when it is drawn.
+    expect(generation).toBeGreaterThan(insert);
+    expect(filing).toBeGreaterThan(generation);
+    // The report is announced, and the form cleared, only after the held filing answers.
+    expect(announced).toBeGreaterThan(held);
+    expect(cleared).toBeGreaterThan(announced);
+    expect(generate.slice(held, held + 400)).toMatch(/\(\) => fileChosenBrochurePhotographs\(\{\s*invoke: \(request\) => invokeSecureFunction\('listing-images', \{ \.\.\.request \}\),\s*reportId: pendingReport\.id,/);
+    expect(generate).not.toMatch(/void fileChosenBrochurePhotographs/);
+    expect(generate).toContain('{ onLateOutcome: reportBrochureFiling },');
+    expect(generate).toContain("const message = outcome ? describeBrochureFiling(outcome) : BROCHURE_FILING_BROKE;");
+    expect(generate).toContain("if (held.state === 'settled') reportBrochureFiling(held.outcome);");
+    expect(generate).toContain('else toast(BROCHURE_FILING_STILL_RUNNING);');
   });
 
   it('forgets a brochure\'s photographs when the file changes, is removed, or the form is cleared', () => {

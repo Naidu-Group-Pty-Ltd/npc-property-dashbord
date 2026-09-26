@@ -24,6 +24,9 @@
  *    before this.
  *  - It never trusts itself. Every photograph it sends is judged again by the
  *    server, on the server's own decode of the bytes it received.
+ *  - It never lets a close or a reload take a ticked picture silently. The
+ *    pictures exist only in this page, so the page is held while they are in
+ *    flight (`fileWhilePageHeld`).
  */
 import { loadPdfjs } from '@/lib/pdf/pdfjs';
 import {
@@ -474,4 +477,77 @@ export async function fileChosenBrochurePhotographs(args: {
   }
   if (!requests.length) return { filed: 0, refused: {}, failed: 0 };
   return fileBrochurePhotographs(args.invoke, requests);
+}
+
+/** How long Generate waits for the ticked pictures before it lets the adviser go on. */
+export const BROCHURE_FILING_PATIENCE_MS = 60_000;
+
+/** The part of `window` that holds a page open. */
+export interface UnloadTarget {
+  addEventListener(type: 'beforeunload', listener: (event: BeforeUnloadEvent) => void): void;
+  removeEventListener(type: 'beforeunload', listener: (event: BeforeUnloadEvent) => void): void;
+}
+
+export type HeldFiling =
+  | { state: 'settled'; outcome: BrochureFiling | null }
+  | { state: 'pending' };
+
+/**
+ * Files the ticked pictures while the page is held open.
+ *
+ * The pictures exist only in this page. They were cut out of the brochure in
+ * the browser and nothing on the server can cut them out again, so a filing
+ * that a close or a reload interrupts is lost for good, and the report is
+ * finished without them. For as long as the filing is in flight, closing or
+ * reloading the page asks first.
+ *
+ * The caller waits on this before it announces the report and clears the
+ * form, because announcing it is what tells an adviser they may leave. The
+ * wait is bounded: each picture may take three attempts at the transport's
+ * minute, so an outage could otherwise hold the button for many minutes. Past
+ * the patience this resolves `pending`; the filing carries on, still holding
+ * the page, and `onLateOutcome` reports it when it lands. `outcome` is null
+ * where the filing threw, which it is not meant to.
+ */
+export function fileWhilePageHeld(
+  file: () => Promise<BrochureFiling>,
+  options: {
+    patienceMs?: number;
+    target?: UnloadTarget | null;
+    onLateOutcome?: (outcome: BrochureFiling | null) => void;
+  } = {},
+): Promise<HeldFiling> {
+  const target = options.target === undefined
+    ? (typeof window === 'undefined' ? null : window)
+    : options.target;
+  const hold = (event: BeforeUnloadEvent) => {
+    event.preventDefault();
+    event.returnValue = '';
+  };
+  target?.addEventListener('beforeunload', hold);
+  const filing = (async () => {
+    try {
+      return await file();
+    } catch {
+      return null;
+    } finally {
+      target?.removeEventListener('beforeunload', hold);
+    }
+  })();
+  return new Promise<HeldFiling>((resolve) => {
+    let answered = false;
+    const patience = setTimeout(() => {
+      answered = true;
+      resolve({ state: 'pending' });
+    }, options.patienceMs ?? BROCHURE_FILING_PATIENCE_MS);
+    void filing.then((outcome) => {
+      if (answered) {
+        options.onLateOutcome?.(outcome);
+        return;
+      }
+      answered = true;
+      clearTimeout(patience);
+      resolve({ state: 'settled', outcome });
+    });
+  });
 }
