@@ -1,27 +1,29 @@
 /**
- * Which report types may be drawn through a template, and what a person is
- * told about the rest (`templateParity.pure.ts`).
+ * Which report types may be drawn through a template's own pages, and what a
+ * chosen template does for the rest (`templateParity.pure.ts`).
  *
- * The owner's rule (26 Sep 2026): a template changes the layout of a document
- * and nothing else. On 26 Sep 2026 none of the nine non-Investment report
- * types carried the same information through a template as through its
- * standard document, so each is held on its standard document until its parity
- * check passes. This file holds the register to three things:
+ * The owner's rule (26 Sep 2026): a template changes how a document looks and
+ * nothing else. On 26 Sep 2026 none of the nine non-Investment report types
+ * carried the same information through a template's pages as through its
+ * standard document, so each keeps its own pages and wears the chosen
+ * template as its DESIGN (`standardDesign.ts`). This file holds the register
+ * to three things:
  *
  *   - **Only Investment is released today**, and a report type joins only by
  *     editing the one register, never by a surface deciding for itself.
  *   - **Every format the chooser offers is accounted for**: released, or held
- *     and saying so. A format added to the adapter registry is held until it
- *     is released, because the register fails closed.
- *   - **The words are plain**: what happens today, that the choice is kept,
- *     and when it applies. No internal term reaches the person.
+ *     and drawn in the chosen design. A format added to the adapter registry
+ *     is held until it is released, because the register fails closed.
+ *   - **The words are plain**: what a choice does — the report's own pages, in
+ *     the chosen typefaces, colours, cover and table style. No internal term
+ *     reaches the person.
  */
 import { describe, expect, it } from 'vitest';
 import {
   isTemplateDeliveryHeld,
-  TEMPLATE_HOLD_NOTICE,
+  TEMPLATE_DESIGN_NOTICE,
   TEMPLATE_RELEASED_REPORT_TYPES,
-  templateHoldExplanation,
+  templateDesignExplanation,
 } from '../../../../supabase/functions/_shared/reports/templateParity.pure';
 import { normaliseReportType } from '../../../../supabase/functions/_shared/reports/reportTemplateSelection.pure';
 import { listReportFormats } from '../reportFormats';
@@ -61,17 +63,25 @@ describe('the release register', () => {
 
 describe('what a person is told', () => {
   const words = [
-    TEMPLATE_HOLD_NOTICE.title,
-    TEMPLATE_HOLD_NOTICE.description,
-    templateHoldExplanation('Portfolio Performance Review'),
+    TEMPLATE_DESIGN_NOTICE.title,
+    TEMPLATE_DESIGN_NOTICE.description,
+    templateDesignExplanation('Portfolio Performance Review'),
   ];
 
-  it('says what happens today, that the choice is kept, and when it applies', () => {
-    expect(TEMPLATE_HOLD_NOTICE.title).toMatch(/standard layout/);
-    expect(TEMPLATE_HOLD_NOTICE.description).toMatch(/choice is kept/);
-    expect(TEMPLATE_HOLD_NOTICE.description).toMatch(/applies as soon as/);
-    expect(templateHoldExplanation('Portfolio Performance Review'))
-      .toMatch(/^Portfolio Performance Review reports use the standard layout/);
+  it('says what a choice does: the report\'s own pages, in the chosen design', () => {
+    expect(TEMPLATE_DESIGN_NOTICE.title).toMatch(/design/);
+    // The promise that matters to the reader: nothing the standard document
+    // prints is lost, whichever design is chosen.
+    expect(TEMPLATE_DESIGN_NOTICE.description).toMatch(/every figure the standard document carries/);
+    expect(TEMPLATE_DESIGN_NOTICE.description).toMatch(/typefaces.*colours.*cover/);
+    expect(templateDesignExplanation('Portfolio Performance Review'))
+      .toMatch(/^Portfolio Performance Review reports keep their own pages/);
+  });
+
+  it('never says a choice is waiting, held back or not applied — it is applied', () => {
+    for (const text of words) {
+      expect(text).not.toMatch(/for now|on hold|applies as soon as|standard layout/i);
+    }
   });
 
   it('speaks the reader\'s language, not the system\'s', () => {

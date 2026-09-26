@@ -43,10 +43,7 @@ import {
   normaliseReportType,
   selectionsByFormat,
 } from './templateSelection';
-import {
-  isTemplateDeliveryHeld,
-  TEMPLATE_HOLD_NOTICE,
-} from '../../../supabase/functions/_shared/reports/templateParity.pure.ts';
+import { isTemplateDeliveryHeld } from '../../../supabase/functions/_shared/reports/templateParity.pure.ts';
 
 export interface TemplateDocument {
   blob: Blob;
@@ -163,22 +160,6 @@ export function notifySelectionNotUsed(detail?: string, cause?: string): void {
 }
 
 /**
- * The person chose a template for a report type that is held on its standard
- * document (`templateParity.pure.ts`).
- *
- * Said every time, like the other fall-throughs, because a choice that is
- * kept but not applied must never look like one that was honoured. It is an
- * explanation beside a working file, not a warning about a failure: nothing
- * went wrong, the standard document is the complete one.
- */
-export function notifyTemplateHeld(): void {
-  toast.info(TEMPLATE_HOLD_NOTICE.title, {
-    description: TEMPLATE_HOLD_NOTICE.description,
-    duration: 12_000,
-  });
-}
-
-/**
  * The person chose a template, the print engine did not draw it, and the
  * in-tab renderer drew the same template instead.
  *
@@ -260,19 +241,15 @@ export async function tryTemplateDocument(
   },
 ): Promise<TemplateDocument | null> {
   /*
-   * A held report type is produced as its standard document, whatever was
-   * chosen, until its template carries everything the standard one prints.
+   * A held report type never reaches a template's pages. Its standard route is
+   * the caller's next line, and that route draws the report's own pages in the
+   * chosen template's DESIGN (`standardDesign.ts`, `templateDesign.pure.ts`),
+   * so the choice is honoured there — which is why nothing is said here.
    *
    * First, before the record or the choice is read, so that no path below can
-   * reach a template for it. The standard route is the caller's next line, so
-   * returning null here is the same fall-through every other gate uses. The
-   * person is told only when there is a choice being held back; otherwise
-   * nothing changed for them and there is nothing to say.
+   * reach a template's pages for it.
    */
-  if (isTemplateDeliveryHeld(reportType)) {
-    if (await hasTemplateSelection(reportType)) notifyTemplateHeld();
-    return null;
-  }
+  if (isTemplateDeliveryHeld(reportType)) return null;
 
   /*
    * No record, no template — but say so when a choice is being dropped.

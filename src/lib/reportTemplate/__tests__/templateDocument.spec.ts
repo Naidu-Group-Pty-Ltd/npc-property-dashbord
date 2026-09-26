@@ -267,14 +267,14 @@ describe('asking for the templated document', () => {
   });
 });
 
-describe('a report type held on its standard document', () => {
+describe('a report type held from a template\'s pages', () => {
   /**
-   * The owner's rule (26 Sep 2026): a template changes the layout and nothing
-   * else. None of the nine non-Investment report types carried the same
-   * information through a template as through its standard document, so each
-   * is produced as its standard document, whatever was chosen, until its
-   * parity check passes (`templateParity.pure.ts`). These run on the REAL
-   * register.
+   * The owner's rule (26 Sep 2026): a template changes how a document looks
+   * and nothing else. None of the nine non-Investment report types carried the
+   * same information through a template's pages as through its standard
+   * document, so each is drawn by its own route, in the chosen template's
+   * design (`templateParity.pure.ts`, `standardDesign.ts`). These run on the
+   * REAL register.
    */
   beforeEach(() => { h.realRegister = true; });
 
@@ -298,12 +298,14 @@ describe('a report type held on its standard document', () => {
     expect(h.routeCalls).toEqual([]);
   });
 
-  it('tells the person when their choice is held back, and says nothing when there is none', async () => {
+  it('says nothing, chosen or not: the report\'s own route draws the choice as its design', async () => {
+    // The choice is not held back any more — `standardDesign.ts` sends it to
+    // the standard route, which draws this report's own pages in it. A notice
+    // here would be about a choice that IS being honoured.
     h.selections = [{ id: 's1', report_type: 'portfolio', template_id: 'tpl-chosen' }];
     await tryTemplateDocument('portfolio', 'p-1');
-    expect(h.toasts).toEqual([['info', 'This report uses its standard layout for now']]);
+    expect(h.toasts).toEqual([]);
 
-    h.toasts = [];
     h.selections = [];
     await tryTemplateDocument('portfolio', 'p-1');
     expect(h.toasts).toEqual([]);

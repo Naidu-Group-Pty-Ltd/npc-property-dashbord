@@ -1,14 +1,15 @@
 /**
- * Which report types may be drawn through a design-system template today.
+ * Which report types may be drawn through a template's own pages today, and
+ * what a template does for the rest.
  *
  * ## The owner's rule
  *
- * A template changes the LAYOUT of a document and nothing else. For every
- * report type other than the five Investment tiers, the information a
- * template carries must be exactly the information the report's standard
- * document carries (owner, 26 Sep 2026).
+ * A template changes how a document LOOKS and nothing else. For every report
+ * type other than the five Investment tiers, the information a document
+ * carries must be exactly the information the report's standard document
+ * carries, whatever template was chosen (owner, 26 Sep 2026).
  *
- * ## Why nine of the ten are held
+ * ## Why nine of the ten never reach a template's pages
  *
  * On 26 Sep 2026 each non-Investment report type's standard document and its
  * template document were rendered from the same real record, on all 50
@@ -21,14 +22,19 @@
  *     says "No tax position is modelled".
  *   - Client Details never printed the primary contact's email or mobile.
  *
- * `docs/reports/TEMPLATE_PARITY.md` lists every difference found. The tests
- * that should have caught them checked wiring (projections restate the
- * normaliser, masters bind only published paths), and no test ever rendered
- * one record through both paths and compared what was printed.
+ * `docs/reports/TEMPLATE_PARITY.md` lists every difference found. A master's
+ * page sequence is a second statement of what a report says, and two
+ * statements drift.
  *
- * A template that drops a figure is not a layout. So a held report type is
- * produced as its standard document for every person, whatever template they
- * chose, until its parity check passes, and the person is told why.
+ * ## What a template does for a held report type
+ *
+ * It supplies the DESIGN, and the report's own route draws every page in it:
+ * the chosen template's typefaces, colourway, cover ground, and how tables and
+ * section headings are ruled (`templateDesign.pure.ts`, asked for by
+ * `standardDesign.ts`). The information is the standard document's by
+ * construction, and `templateDesignParity.spec.ts` proves it for every report
+ * type and every design. So "held" means held from a template's PAGES — never
+ * from the person's choice, which is honoured on every document.
  *
  * ## Released means proven
  *
@@ -40,8 +46,8 @@
  * `tierContent.pure.ts` and `audienceContent.pure.ts`.
  *
  * One register, read by the one function every delivery path calls
- * (`tryTemplateDocument`), so no surface can release a report type by
- * itself.
+ * (`tryTemplateDocument`) and the one that asks a route for a design
+ * (`standardDesignFor`), so no surface can release a report type by itself.
  */
 import { normaliseReportType } from './reportTemplateSelection.pure.ts';
 
@@ -52,29 +58,30 @@ import { normaliseReportType } from './reportTemplateSelection.pure.ts';
 export const TEMPLATE_RELEASED_REPORT_TYPES: readonly string[] = Object.freeze(['investment']);
 
 /**
- * Whether a report type is held on its standard document.
+ * Whether a report type is drawn by its own route, in the chosen template's
+ * design, rather than through a template's own pages.
  *
  * Anything not released is held, an empty or unrecognised type included: a
  * register that answers "not held" for a spelling it does not know is one
  * that a new alias releases by accident. Only a released report type ever
- * reaches a template.
+ * reaches a template's pages.
  */
 export function isTemplateDeliveryHeld(reportType?: string | null): boolean {
   return !TEMPLATE_RELEASED_REPORT_TYPES.includes(normaliseReportType(reportType));
 }
 
-/** What a person who chose a template for a held report type is told. */
-export const TEMPLATE_HOLD_NOTICE = Object.freeze({
-  title: 'This report uses its standard layout for now',
+/** What the chooser says about a held report type, before anything is chosen. */
+export const TEMPLATE_DESIGN_NOTICE = Object.freeze({
+  title: 'Your template sets this report’s design',
   description:
-    'Templates for this report are on hold until they carry everything the standard document '
-    + 'prints. Your choice is kept, and it applies as soon as this report is released.',
+    'The pages and everything printed on them are this report’s own, so every figure the '
+    + 'standard document carries is in it. The template you choose sets the typefaces, the '
+    + 'colours, the cover and how tables and headings are ruled.',
 });
 
 /** The same, for the chooser, where the report type is named. */
-export function templateHoldExplanation(formatLabel: string): string {
-  return `${formatLabel} reports use the standard layout until their templates carry everything `
-    + 'the standard document prints. Report types are released one at a time, as each passes '
-    + 'that check. You can still look through the designs and save a choice; it applies as soon '
-    + 'as this report type is released.';
+export function templateDesignExplanation(formatLabel: string): string {
+  return `${formatLabel} reports keep their own pages, with everything the standard document `
+    + 'prints, and take their design from the template you choose: its typefaces, colours, '
+    + 'cover and table style.';
 }

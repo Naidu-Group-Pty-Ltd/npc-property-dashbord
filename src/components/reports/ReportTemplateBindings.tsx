@@ -26,17 +26,29 @@ import {
 import { buildFormatTemplateState } from '@/lib/reportTemplate/templateSelection';
 import { listReportFormats, type ReportFormatDescriptor } from '@/lib/reportTemplate/reportFormats';
 import { isTemplateDeliveryHeld } from '../../../supabase/functions/_shared/reports/templateParity.pure.ts';
+import {
+  designLenderFor,
+  drawnDocumentsNote,
+} from '../../../supabase/functions/_shared/reports/templateDesignRoute.pure.ts';
 
 interface RowState {
   format: ReportFormatDescriptor;
   state: ReturnType<typeof buildFormatTemplateState>;
+  /**
+   * The format whose chosen design this one wears, when it has no templates of
+   * its own (`DESIGN_BORROWED_FROM`). Its row shows that choice and changes it.
+   */
+  designLender: ReportFormatDescriptor | null;
 }
 
-function BindingRow({ format, state, onChange }: RowState & { onChange: () => void }) {
-  // A production format held on its standard document (`templateParity.pure.ts`).
-  // A preview-only format already says why a choice changes nothing, so it is
-  // not told twice.
+function BindingRow({ format, state, designLender, onChange }: RowState & { onChange: () => void }) {
+  // A production format drawn by its own route, in the chosen template's
+  // design (`templateParity.pure.ts`). A preview-only format that borrows a
+  // design says whose; any other preview-only one already says why a choice
+  // changes nothing, so it is not told twice.
   const held = format.supportsProduction && isTemplateDeliveryHeld(format.reportType);
+  const designed = held || designLender !== null;
+  const drawnNote = drawnDocumentsNote(format.reportType);
   const summary = (() => {
     if (state.status === 'selected') {
       return (
@@ -73,21 +85,33 @@ function BindingRow({ format, state, onChange }: RowState & { onChange: () => vo
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium">{format.label}</span>
-          {!format.supportsProduction && (
+          {!format.supportsProduction && !designLender && (
             <Badge variant="outline" className="text-[10px]">Preview only</Badge>
           )}
-          {held && (
-            <Badge variant="outline" className="text-[10px]" data-testid="template-hold-badge">On hold</Badge>
+          {designed && (
+            <Badge variant="outline" className="text-[10px]" data-testid="template-design-badge">Design</Badge>
           )}
         </div>
         <div className="mt-1 min-w-0">{summary}</div>
-        {!format.supportsProduction && format.previewOnlyReason && (
+        {!format.supportsProduction && !designLender && format.previewOnlyReason && (
           <p className="mt-1 text-xs text-muted-foreground">{format.previewOnlyReason}</p>
         )}
         {held && (
           <p className="mt-1 text-xs text-muted-foreground">
-            Produced with its standard layout for now. Your choice is kept and applies once this
-            format's templates carry everything the standard document prints.
+            Keeps its own pages, with everything the standard document prints. The template you
+            choose sets its typefaces, colours, cover and table style.
+          </p>
+        )}
+        {designLender && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Drawn in the design chosen for the {designLender.label}, the report it is made from.
+          </p>
+        )}
+        {drawnNote && (
+          // The documents drawn without a template of their own that wear this
+          // choice (`DRAWN_DOCUMENTS`), named where the choice is made.
+          <p className="mt-1 text-xs text-muted-foreground" data-testid="template-drawn-documents">
+            {drawnNote}
           </p>
         )}
       </div>
@@ -105,14 +129,21 @@ export function ReportTemplateBindings() {
 
   const rows = useMemo<RowState[]>(() => {
     if (!templates.data || !selections.data) return [];
-    return listReportFormats().map((format) => ({
-      format,
-      state: buildFormatTemplateState({
-        reportType: format.reportType,
-        templates: templates.data,
-        selections: selections.data,
-      }),
-    }));
+    const formats = listReportFormats();
+    return formats.map((format) => {
+      const lenderKey = designLenderFor(format.reportType);
+      const designLender = lenderKey ? formats.find((f) => f.reportType === lenderKey) ?? null : null;
+      return {
+        format,
+        designLender,
+        // A format that borrows its design shows the choice it wears.
+        state: buildFormatTemplateState({
+          reportType: designLender?.reportType ?? format.reportType,
+          templates: templates.data,
+          selections: selections.data,
+        }),
+      };
+    });
   }, [templates.data, selections.data]);
 
   const loading = templates.isLoading || selections.isLoading;
@@ -148,12 +179,14 @@ export function ReportTemplateBindings() {
             </AlertDescription>
           </Alert>
         ) : (
-          rows.map(({ format, state }) => (
+          rows.map(({ format, state, designLender }) => (
             <BindingRow
               key={format.reportType}
               format={format}
               state={state}
-              onChange={() => setPicking(format)}
+              designLender={designLender}
+              // Changing a borrowed design changes it where it is chosen.
+              onChange={() => setPicking(designLender ?? format)}
             />
           ))
         )}

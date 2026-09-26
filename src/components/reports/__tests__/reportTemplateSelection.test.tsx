@@ -29,6 +29,7 @@ Object.defineProperty(globalThis, 'ResizeObserver', { writable: true, value: Tes
 
 import { ReportTemplateSelector } from '../ReportTemplateSelector';
 import { ReportTemplateBindings } from '../ReportTemplateBindings';
+import { DRAWN_DOCUMENTS } from '../../../../supabase/functions/_shared/reports/templateDesignRoute.pure';
 
 const TEMPLATES = [
   {
@@ -275,5 +276,18 @@ describe('the per-format list', () => {
     fireEvent.click(screen.getAllByRole('button', { name: 'Choose' })[0]);
     expect(await screen.findByText('Choose a template')).toBeTruthy();
     expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it('names, under the report type they wear, the documents drawn without a template of their own', async () => {
+    renderBindings();
+    await screen.findByText('Investment Report');
+    const notes = screen.getAllByTestId('template-drawn-documents').map((n) => n.textContent ?? '');
+    // One line per report type that dresses something, and every drawn
+    // document named exactly once across them (`DRAWN_DOCUMENTS`).
+    expect(notes).toHaveLength(new Set(DRAWN_DOCUMENTS.map((d) => d.designFrom)).size);
+    for (const doc of DRAWN_DOCUMENTS) {
+      expect(notes.filter((n) => n.includes(doc.label)), doc.label).toHaveLength(1);
+    }
+    expect(notes.join(' ')).not.toMatch(/lender packet/i);
   });
 });

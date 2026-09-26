@@ -2985,8 +2985,10 @@ Three rules bite:
   the photographic covers use one: over a white facade one pass leaves these
   covers' small type at 3.48:1, below the 7:1 print floor, and two passes give
   7.89:1. Without a photograph each cover draws exactly what it drew before,
-  and nothing fills the space. It is composed in code; the Claude Design
-  catalogue does not draw it.
+  and nothing fills the space. It is composed in code. The Claude Design
+  catalogue shows it too, since the owner added the photograph cover pages and
+  the floor-plan pages there on 26 Sep 2026; `source.json` is unchanged, so the
+  generator still composes it rather than reading it from the catalogue.
 
 **A URL-extract report carries the listing's own photographs** (the owner's
 decision, 25 Sep 2026; §6 of the same doc). The extraction names them: on
@@ -3549,6 +3551,50 @@ keep the ratio the originals were chosen on — roughly three times the largest
 legitimate input — and are DERIVED from the declared budget, not measured
 against the corpus, because one 91,340-character observation is not a
 distribution.
+
+## A template dresses nine report types, and never pages them
+Read [`TEMPLATE_PARITY.md`](./docs/reports/TEMPLATE_PARITY.md) before touching
+`templateParity.pure.ts`, `templateDesign*.pure.ts`, `templateDesignRead.ts`,
+`standardDesign.ts`, `drawnDesign.pure.ts`, `drawnDocumentDesign.ts` or a
+master for any report type but Investment. On 26 Sep 2026 none of the nine
+non-Investment report types printed the same information through a template
+as through its standard document, because a master's page sequence is a second
+statement of what a report says, and two statements drift. The owner's rule is
+that a template changes how a document LOOKS and nothing else. So for those
+nine a chosen template supplies only a **design**: its typefaces, colourway,
+cover ground and table rules. The report's own route draws every page in it.
+
+Three rules bite.
+
+- **The body is the standard body, proved.** `templateDesignParity.spec.ts`
+  holds every held report type's `<body>` byte for byte under 141 designs. The
+  design sheet may restyle a word and never add, hide, reorder or re-case one,
+  so it may not use `display: none`, `content`, `text-transform` or
+  `visibility`.
+- **A design never costs the document.** A row the Template Builder would not
+  list, or the chooser would not offer, is refused. So is an unusable colour,
+  or a face the container lacks. The route draws the standard document and says
+  what it drew (`DesignEcho`). A route that answers nothing about a design it
+  was sent is said out loud too.
+- **Nine browser documents wear the choice** made for the report type they come
+  from (`DRAWN_DOCUMENTS`), and each must ask for it by its own key.
+  `drawnDocumentDesign.spec.ts` fails on a register entry nothing reads,
+  because the chooser promises the design to every one it names.
+
+The lender packet's cover sheet is deliberately not in the register: it is
+drawn in the partner's session, which cannot read the adviser's choice. With
+nothing chosen, every document draws exactly what it drew before, compared
+object by object.
+
+The same work removed the quantitative market report's fabrications:
+
+- "$0" and "0.0%" read from fields the pipeline stopped writing;
+- "Agency 1…5" and ten fixed Perth suburbs at invented prices;
+- a week of activity from `Math.random()`.
+
+The pipeline's own four mislabelled charts are left out while it stays at
+`REPORT_VERSION` 1 (`quantitativeCharts.ts`), and fixing them at source is
+an owner decision recorded in the same doc.
 
 ## Generated reports / PDFs
 **Read [`docs/reports/COVERAGE.md`](./docs/reports/COVERAGE.md) before anything

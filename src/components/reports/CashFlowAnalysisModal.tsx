@@ -3557,7 +3557,10 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
   type ReviewedProjection = {
     wire: ReturnType<typeof toWireProjection>;
     storedScenario: ReturnType<typeof matchStoredScenario>;
+    /** The template drawn through its own pages — only once this report type is released. */
     selectedTemplateId: string | null;
+    /** The template this report's own pages are drawn in the design of, while it is held. */
+    designTemplateId: string | null;
     key: string;
   };
   type ProducedCashFlowDocument = {
@@ -3599,20 +3602,23 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     // say "Moderate"; otherwise it says "Adviser-reviewed" — never a scenario
     // label the series does not satisfy.
     const storedScenario = matchStoredScenario(wire, report);
-    // Read ONCE, here, so the key this document is filed under and the template
-    // the route renders are the same reading (`selectedTemplateId` below).
-    // The key records the template IN EFFECT: while the report type is held on
-    // its standard document (`templateParity.pure.ts`) a choice changes nothing
-    // on the page, so it must not change the key either, and a document made
-    // while held must not be served as the templated one once it is released.
-    const selectedTemplateId = isTemplateDeliveryHeld('cashflow')
-      ? null
-      : await selectedTemplateFor('cashflow');
+    // Read ONCE, here, so the key this document is filed under and the design
+    // the route draws are the same reading. While this report type is held
+    // (`templateParity.pure.ts`) the choice is worn as the standard document's
+    // DESIGN (`designTemplateId`, `standardDesign.ts`); once released it would
+    // be drawn through the template's own pages (`selectedTemplateId`). The
+    // same template drawn the two ways is two documents, so the key says which,
+    // and a document made while held is never served as the templated one.
+    const chosen = await selectedTemplateFor('cashflow');
+    const held = isTemplateDeliveryHeld('cashflow');
+    const selectedTemplateId = held ? null : chosen;
+    const designTemplateId = held ? chosen : null;
     return {
       wire,
       storedScenario,
       selectedTemplateId,
-      key: cashFlowFinalKey({ wire, scenario: storedScenario, selectedTemplateId }),
+      designTemplateId,
+      key: cashFlowFinalKey({ wire, scenario: storedScenario, selectedTemplateId, designTemplateId }),
     };
   }, [report, baseFinancialData, projections]);
 
@@ -3620,7 +3626,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     reviewed: ReviewedProjection,
   ): Promise<ProducedCashFlowDocument> => {
     if (!report) throw new Error('This report could not be resolved. Close the analysis and reopen it.');
-    const { wire, storedScenario, selectedTemplateId, key } = reviewed;
+    const { wire, storedScenario, selectedTemplateId, designTemplateId, key } = reviewed;
 
     // ALWAYS the series on screen, never a re-read. The payload used to be
     // sent only when the screen and the store disagreed, which left the
@@ -3652,7 +3658,12 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     // them — a download saves them, a send points the portal at them.
     let legacyBlob: Blob | null = null;
     const result = await requestCashFlowPdf(
-      { reportId: report.id, projection: wire },
+      {
+        reportId: report.id,
+        projection: wire,
+        // The same reading the key was made from — never a second one.
+        design: designTemplateId ? { templateId: designTemplateId } : null,
+      },
       async () => {
         const blob = await exportSingleReportPDF({ returnBlob: true });
         if (!blob || !(blob instanceof Blob)) return null;
@@ -3665,10 +3676,18 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       },
     );
 
+    // A document the design did not reach IS the standard document, and is
+    // filed as one. Filed under the key that names the design, the next Send
+    // would hand it over as though the design had been applied; filed under
+    // its own key, the next attempt asks the route again.
+    const filedKey = designTemplateId && result.design !== 'applied'
+      ? cashFlowFinalKey({ wire, scenario: storedScenario, selectedTemplateId, designTemplateId: null })
+      : key;
+
     if (result.source === 'legacy') {
       if (!legacyBlob) throw new Error('The PDF renderer produced no document.');
       return {
-        key, source: 'legacy', blob: legacyBlob, fileName: result.fileName,
+        key: filedKey, source: 'legacy', blob: legacyBlob, fileName: result.fileName,
         storagePath: null, brandGaps: [], pageCount: null,
       };
     }
@@ -3677,7 +3696,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     const res = await fetch(result.url);
     if (!res.ok) throw new Error(`Download failed (${res.status})`);
     return {
-      key, source: 'route', blob: await res.blob(), fileName: result.fileName,
+      key: filedKey, source: 'route', blob: await res.blob(), fileName: result.fileName,
       storagePath: result.storagePath, brandGaps: result.brandGaps, pageCount: result.pageCount,
     };
   }, [report, exportSingleReportPDF]);

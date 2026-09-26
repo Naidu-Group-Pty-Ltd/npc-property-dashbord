@@ -75,9 +75,10 @@ import { ColourwaySwatch } from '@/components/templateLibrary/TemplateColourwayP
 import { ReportTemplateSheet } from '@/components/reports/ReportTemplateSheet';
 import {
   isTemplateDeliveryHeld,
-  TEMPLATE_HOLD_NOTICE,
-  templateHoldExplanation,
+  TEMPLATE_DESIGN_NOTICE,
+  templateDesignExplanation,
 } from '../../../supabase/functions/_shared/reports/templateParity.pure.ts';
+import { drawnDocumentsNote } from '../../../supabase/functions/_shared/reports/templateDesignRoute.pure.ts';
 
 /** The sentinel for "no fixed template" — the resolver's ranking decides. */
 const AUTOMATIC = '__automatic__';
@@ -212,8 +213,10 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
   const [consentedChoice, setConsentedChoice] = useState<string | null>(null);
 
   const format = normaliseReportType(reportType);
-  /** Whether this format is produced as its standard document whatever is chosen. */
+  /** Whether a choice here sets this format's design rather than its pages. */
   const held = isTemplateDeliveryHeld(format);
+  /** The documents drawn without a template that wear this choice too. */
+  const drawnNote = drawnDocumentsNote(format);
 
   /** The library's production designs for this format, grouped by family. */
   const { families, loose } = useMemo(() => {
@@ -472,15 +475,18 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
         ) : (
           <div className="space-y-3 py-1">
             {held && (
-              // A held report type is produced as its standard document
-              // whatever is chosen here (`templateParity.pure.ts`). Choosing
-              // still works and is kept, so this says what a choice does TODAY
-              // before the person spends time on one — never a disabled
-              // gallery, which would read as a broken page.
-              <Alert variant="default" data-testid="template-hold-notice">
+              // A held report type keeps its own pages and takes its DESIGN
+              // from the template chosen here (`templateParity.pure.ts`,
+              // `standardDesign.ts`). Said before anything is chosen, because
+              // a gallery of full documents otherwise reads as a choice of
+              // pages — and what the person gets is their report, in this look.
+              <Alert variant="default" data-testid="template-design-notice">
                 <Info className="h-4 w-4" />
-                <AlertTitle>{TEMPLATE_HOLD_NOTICE.title}</AlertTitle>
-                <AlertDescription>{templateHoldExplanation(formatLabel)}</AlertDescription>
+                <AlertTitle>{TEMPLATE_DESIGN_NOTICE.title}</AlertTitle>
+                <AlertDescription>
+                  {templateDesignExplanation(formatLabel)}
+                  {drawnNote && <span data-testid="template-drawn-documents"> {drawnNote}</span>}
+                </AlertDescription>
               </Alert>
             )}
 
