@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { waitFor, fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -22,6 +22,7 @@ const state: { conversation: any; error: unknown; inboxError?: unknown; invitees
 const sent: Array<{ clientMessageId: string; body: string }> = [];
 const sendFailures = { remaining: 0 };
 const retried: string[] = [];
+const retryAnswer: { message?: unknown } = {};
 
 const scrolled: unknown[] = [];
 const earlierAsked: string[] = [];
@@ -49,7 +50,7 @@ vi.mock('@/lib/marketplaceBuilderStock', async () => ({
   }),
   useRetryConversationMessage: () => ({
     isPending: false,
-    mutateAsync: vi.fn(async (id: string) => { retried.push(id); return {}; }),
+    mutateAsync: vi.fn(async (id: string) => { retried.push(id); return retryAnswer.message ? { message: retryAnswer.message } : {}; }),
   }),
   useConversationInvitees: () => ({ data: state.inviteesError ? undefined : [], isLoading: false, error: state.inviteesError ?? null, refetch: vi.fn() }),
   useInviteConversationParticipant: () => ({ isPending: false, mutateAsync: vi.fn() }),
@@ -74,6 +75,7 @@ beforeEach(() => {
   sent.length = 0;
   sendFailures.remaining = 0;
   retried.length = 0;
+  delete retryAnswer.message;
   earlierAsked.length = 0;
   for (const key of Object.keys(earlierPages)) delete earlierPages[key];
 });
@@ -358,6 +360,19 @@ describe('the whole history can be read', () => {
     const log = screen.getByRole('log');
     expect(within(log).getAllByText(/message$/).map((n) => n.textContent))
       .toEqual(['Older message', 'Newest message', 'Arrived message', 'Latest message']);
+  });
+
+  it('a failed message from an earlier page that is sent again shows what the server now says of it', async () => {
+    state.conversation = conversation();
+    earlierPages.newest = { messages: [MESSAGE({ id: 'older', body: 'Older message', sent_at: '2026-09-20T12:00:00Z',
+      delivery_state: 'failed', failure_reason: 'not_delivered', can_retry: true })], has_earlier: false, earlier_cursor: null };
+    retryAnswer.message = MESSAGE({ id: 'older', body: 'Older message', sent_at: '2026-09-20T12:00:00Z',
+      delivery_state: 'queued', can_retry: false });
+    render(<MemoryRouter><BuilderConversationThread conversationId="conv-1" /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: /show earlier messages/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /send again/i }));
+    expect(retried).toEqual(['older']);
+    await waitFor(() => expect(screen.queryByRole('button', { name: /send again/i })).toBeNull());
   });
 
   it('says nothing about earlier messages when there are none', () => {
