@@ -36,11 +36,12 @@
  * presentation reads it today.
  */
 
+import { isHouseName } from '../issuerIdentity.pure.ts';
+
 /**
  * Who a document is issued by, as `resolveReportIssuer` answers it
- * (`reports/issuerIdentity.pure.ts`). Stated by shape rather than imported,
- * because this folder's modules import only their siblings; the resolver's own
- * issuer type satisfies it exactly.
+ * (`reports/issuerIdentity.pure.ts`). Stated by shape so a caller holding the
+ * resolver's own issuer type passes it straight through.
  */
 export interface CoverIssuer {
   /** The name printed on the document. Never empty. */
@@ -56,37 +57,16 @@ export type StandardCoverKind =
   | 'issuer';
 
 /**
- * The names the template cover's artwork stands for, normalised.
- *
- * The artwork reads NAIDU PROPERTY CONSULTING SERVICES, and the business also
- * trades as NPC Services. `NPC` and `NPC Property` alone are not here: the
- * issuer resolver refuses both as placeholders, so neither can arrive.
+ * The names the template cover's artwork stands for are the house's
+ * (`issuerIdentity.pure.ts`): the artwork reads NAIDU PROPERTY CONSULTING
+ * SERVICES, and the business also trades as NPC Services. One list, so the
+ * cover, the issuer and the disclaimer cannot disagree about who the house is.
  */
-const TEMPLATE_COVER_OWNERS: ReadonlySet<string> = new Set([
-  'naidu property consulting services',
-  'naidu property consulting',
-  'npc services',
-]);
-
-/** A trailing legal form, which does not change which business a name is. */
-const LEGAL_FORM = /\s+(pty\s+ltd|pty\s+limited|proprietary\s+limited|ltd|limited)$/;
-
-/** A company name reduced to the words that identify it. */
-export function normaliseCompanyName(name: unknown): string {
-  if (typeof name !== 'string') return '';
-  return name
-    .toLowerCase()
-    .replace(/&/g, ' and ')
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(LEGAL_FORM, '')
-    .trim();
-}
+export { normaliseCompanyName } from '../issuerIdentity.pure.ts';
 
 /** Is this the business the template cover's artwork names? */
 export function isTemplateCoverOwner(name: unknown): boolean {
-  return TEMPLATE_COVER_OWNERS.has(normaliseCompanyName(name));
+  return isHouseName(name);
 }
 
 /**

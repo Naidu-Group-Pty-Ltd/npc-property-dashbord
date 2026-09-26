@@ -127,6 +127,28 @@ export function normalizeBrandColour(value: unknown): string | null {
   return null;
 }
 
+/**
+ * The tenant's brand colour, read off a `whitelabel_settings` row the way every
+ * render route reads it: `theme_config.brandColour`, then the `primary_color`
+ * column the Branding page writes — then normalised, so a colour the routes
+ * would drop is dropped here too.
+ *
+ * Nine render routes spell the precedence inline as
+ * `themeConfig.brandColour ?? whitelabel.primary_color`. It is written here once
+ * for the documents drawn in the browser, which must answer "what is this
+ * tenant's colour?" exactly as the typeset ones do or one tenant prints in two
+ * colours. `??`, not `||`, on purpose: an empty `brandColour` is an answer
+ * ("none"), exactly as it is on the routes.
+ */
+export function whitelabelBrandColour(row: unknown): string | null {
+  if (!row || typeof row !== 'object') return null;
+  const record = row as Record<string, unknown>;
+  const theme = record.theme_config && typeof record.theme_config === 'object'
+    ? record.theme_config as Record<string, unknown>
+    : {};
+  return normalizeBrandColour(theme.brandColour ?? record.primary_color ?? '');
+}
+
 const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
 
 export interface BuildSnapshotInput {

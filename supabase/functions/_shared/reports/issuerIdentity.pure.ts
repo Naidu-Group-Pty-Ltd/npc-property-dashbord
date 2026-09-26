@@ -137,18 +137,100 @@ export interface IssuerInput {
   brandName?: unknown;
 }
 
+// ── The house: NPC's identity belongs to the prime ─────────────────────────
+//
+// This repository ships with one business's identity inside it: Naidu Property
+// Consulting Services, which also trades as NPC Services — its cover artwork,
+// its name and its disclaimer wording. The prime is that business's own
+// deployment; every clone is somebody else's, built from the same tree.
+//
+// A clone's settings rows can still carry the house's values: a row seeded from
+// the prime's, a restored backup, a disclaimer copied across by hand. So "is
+// this the house?" is never answered from a row. The caller says which
+// deployment it is (`IssuerDeployment`, from the backend it talks to), and
+// on a clone the house's name is not an identity and the house's wording is not
+// the issuer's own — the owner's rule, 26 Sep 2026: NPC's artwork, and "the
+// Disclaimer that might be hardcoded as NPC Services or Naidu property
+// consulting services", are available on the prime and hidden on the clone.
+
+/** Which deployment a document is drawn on — the prime, or a clone. */
+export interface IssuerDeployment {
+  /** True only where the backend is the prime's own (never judged from a name). */
+  prime: boolean;
+}
+
+/** The names the house trades under, normalised (`normaliseCompanyName`). */
+const HOUSE_NAMES: ReadonlySet<string> = new Set([
+  'naidu property consulting services',
+  'naidu property consulting',
+  'npc services',
+]);
+
+/** A trailing legal form, which does not change which business a name is. */
+const LEGAL_FORM = /\s+(pty\s+ltd|pty\s+limited|proprietary\s+limited|ltd|limited)$/;
+
+/** A company name reduced to the words that identify it. */
+export function normaliseCompanyName(name: unknown): string {
+  if (typeof name !== 'string') return '';
+  return name
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(LEGAL_FORM, '')
+    .trim();
+}
+
+/**
+ * Is this the house's own name?
+ *
+ * `NPC` and `NPC Property` alone are not here: they are placeholders
+ * (`NON_IDENTITIES`), which no deployment issues under.
+ */
+export function isHouseName(name: unknown): boolean {
+  return HOUSE_NAMES.has(normaliseCompanyName(name));
+}
+
+/**
+ * The ways running text names the house: its two trading names, its web and
+ * mail domain, and its initials set as a word in capitals.
+ *
+ * "Naidu" alone is a surname and is not enough; "NPC" in lower case is too
+ * ordinary to be a name. Both of those would condemn a stranger's wording.
+ */
+const HOUSE_MENTIONS: readonly RegExp[] = [
+  /\bnaidu\s+property\b/i,
+  /\bnpc\s+services\b/i,
+  /\bnpcservices\b/i,
+  /\bNPC\b/,
+];
+
+/** Does this text name the house? */
+export function namesTheHouse(text: unknown): boolean {
+  if (!isNonEmpty(text)) return false;
+  return HOUSE_MENTIONS.some((re) => re.test(text));
+}
+
 /**
  * Resolve the issuing identity.
  *
  * The contact name outranks the brand name because that is the order every
  * report surface already read them in (`contact.company_name || brandName`);
  * this changes only what happens when both are absent.
+ *
+ * Given the deployment, a clone never issues under the house's name: a row
+ * that says it is NPC is passed over like a placeholder, and the next name —
+ * or the platform — issues instead. Without it, every name reads as it always
+ * did, which is what every caller that has not been told about deployments
+ * relies on.
  */
-export function resolveReportIssuer(input: IssuerInput): ReportIssuer {
+export function resolveReportIssuer(input: IssuerInput, deployment?: IssuerDeployment | null): ReportIssuer {
   for (const candidate of [input.companyName, input.brandName]) {
     if (!isNonEmpty(candidate)) continue;
     const name = candidate.trim();
     if (NON_IDENTITIES.has(name.toLowerCase())) continue;
+    if (deployment && !deployment.prime && isHouseName(name)) continue;
     return { name, kind: 'workspace' };
   }
   return { name: PLATFORM_ISSUER_NAME, kind: 'platform' };
@@ -232,8 +314,29 @@ export interface StoredDisclaimer {
 export interface ResolvedDisclaimer {
   /** The text to print. Empty only when a named issuer switched it off. */
   text: string;
-  /** Where it came from — for logs and tests, never for the page. */
-  source: 'stored' | 'workspace_default' | 'platform' | 'disabled';
+  /**
+   * Where it came from — for logs and tests, never for the page.
+   * `house_withheld` is stored wording that named the house, on a document the
+   * house does not issue.
+   */
+  source: 'stored' | 'workspace_default' | 'platform' | 'disabled' | 'house_withheld';
+}
+
+/**
+ * Is this stored wording the house's, on a document the house does not issue?
+ *
+ * The house's wording prints where the house issues on its own deployment and
+ * nowhere else — so on a clone a disclaimer that names NPC Services is never
+ * the clone's own, and on the prime it is withheld only when the prime has been
+ * renamed on its settings pages and is issuing as somebody else.
+ */
+export function houseWordingWithheld(
+  text: unknown,
+  issuer: ReportIssuer,
+  deployment: IssuerDeployment,
+): boolean {
+  if (!namesTheHouse(text)) return false;
+  return !(deployment.prime && issuer.kind === 'workspace' && isHouseName(issuer.name));
 }
 
 /**
@@ -248,9 +351,18 @@ export interface ResolvedDisclaimer {
 export function resolveReportDisclaimer(
   issuer: ReportIssuer,
   stored?: StoredDisclaimer | null,
+  deployment?: IssuerDeployment | null,
 ): ResolvedDisclaimer {
   if (issuer.kind === 'platform') return { text: PLATFORM_DISCLAIMER, source: 'platform' };
   if (stored?.is_enabled === false) return { text: '', source: 'disabled' };
-  if (isNonEmpty(stored?.text)) return { text: stored.text.trim(), source: 'stored' };
+  if (isNonEmpty(stored?.text)) {
+    // The house's wording is the house's statement about the house; under
+    // anybody else's name it is the defect this module was written against.
+    // Given no deployment, stored text reads as it always did.
+    if (deployment && houseWordingWithheld(stored.text, issuer, deployment)) {
+      return { text: WORKSPACE_DEFAULT_DISCLAIMER, source: 'house_withheld' };
+    }
+    return { text: stored.text.trim(), source: 'stored' };
+  }
   return { text: WORKSPACE_DEFAULT_DISCLAIMER, source: 'workspace_default' };
 }

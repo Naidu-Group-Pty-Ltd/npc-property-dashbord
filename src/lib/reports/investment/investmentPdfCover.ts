@@ -6,8 +6,9 @@
  * cover sits, so the two presentations of a report differ in whose name is on
  * them and nothing else:
  *   - the same sheet (595.5 × 842.25pt, the template's own);
- *   - the same dark field and gold as the closing page, from the one default
- *     palette (`resolveReportPalette()`), so the first and last pages of the
+ *   - the same dark field as the closing page, with the issuer's brand in
+ *     the accent — its brand family (`brandFamily.pure.ts`), or the platform's
+ *     gold where it has no colour — so the first and last pages of the
  *     document are a pair;
  *   - the lockup (the issuer's mark, its name, the document's title) in the
  *     upper field, where the template carries its lockup;
@@ -36,7 +37,7 @@ import {
   type PDFPage,
   type RGB,
 } from 'pdf-lib';
-import { resolveReportPalette } from '@/lib/reportDesign/brandResolve.pure';
+import { resolveBrandFamily, type BrandFamily } from '@/lib/reportDesign/brandFamily.pure';
 import { hexToRgb01 } from '@/lib/reportDesign/color.pure';
 import {
   containFit,
@@ -191,6 +192,8 @@ export interface IssuerCoverInput {
   address: string | null | undefined;
   photograph: InvestmentPdfPicture | null | undefined;
   fonts: { serif: PDFFont; italic: PDFFont; sans: PDFFont };
+  /** The issuer's colours. Absent, the platform's — the family of no brand colour. */
+  family?: BrandFamily | null;
 }
 
 /** What was drawn, for the log line and the tests. */
@@ -206,10 +209,10 @@ export interface IssuerCoverResult {
  * document that has none yet.
  */
 export async function drawIssuerCover(pdfDoc: PDFDocument, input: IssuerCoverInput): Promise<IssuerCoverResult> {
-  const palette = resolveReportPalette();
-  const field = hex(palette.field);
-  const gold = hex(palette.accentOnField);
-  const ivory = hex(palette.onFieldInk);
+  const family = input.family ?? resolveBrandFamily(null);
+  const field = hex(family.field);
+  const gold = hex(family.accentOnField);
+  const ivory = hex(family.onField);
   const { serif, italic, sans } = input.fonts;
   const { width: W, height: H } = ISSUER_COVER_SIZE;
 

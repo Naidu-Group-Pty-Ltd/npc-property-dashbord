@@ -387,9 +387,13 @@ describe('the cover belongs to whoever issues the document', () => {
     // nowhere in the file, reachable or not.
     expect(contents.fonts.filter((f) => ARTWORK_FONTS.test(f))).toEqual([]);
     expect(contents.images).not.toContain('640x512');
-    // The name the rows hold is still who issues it, set as that issuer's cover.
-    expect(flat(clone.pages[0])).toContain('NAIDUPROPERTYCONSULTINGSERVICES');
+    // Nor its name: a clone whose rows still hold the house's name does not
+    // issue under it (the owner's rule, 26 Sep 2026 — NPC's identity is the
+    // prime's alone). With no other name the platform issues, on every page.
+    expect(flat(clone.pages[0])).toContain('AURIXASYSTEMS');
     expect(flat(clone.pages[0])).toContain(flat(ADDRESS.toUpperCase()));
+    expect(flat(clone.pages.join(' '))).not.toMatch(/NAIDUPROPERTY|NPCSERVICES/);
+    expect(JSON.stringify(contents.info)).not.toMatch(/NPC|Naidu/);
   }, 120_000);
 
   it("draws a tenant's cover from its own settings: its name, its mark, its closing page, its metadata", async () => {

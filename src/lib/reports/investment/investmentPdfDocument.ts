@@ -72,6 +72,8 @@ import { DOCUMENT_IDENTITY } from './tierIdentity.pure';
 import { loadStandardPresentationBrand } from './standardPresentationBrand';
 import { standardDocumentMetadata } from './standardCover.pure';
 import { drawIssuerCover } from './investmentPdfCover';
+import { addIssuerContentPage } from './investmentPdfIssuerPage';
+import { hexToRgb01 } from '@/lib/reportDesign/color.pure';
 
 /**
  * The five tiers this presentation draws. `strategic` was missing, so the
@@ -1470,6 +1472,7 @@ export async function generateInvestmentPdfBlob(
           standfirst: identity.standfirst,
           address: report.address,
           photograph: photographs[0] ?? null,
+          family: brand.family,
           fonts: {
             serif: await pdfDoc.embedFont(StandardFonts.TimesRoman),
             italic: await pdfDoc.embedFont(StandardFonts.TimesRomanItalic),
@@ -1495,19 +1498,38 @@ export async function generateInvestmentPdfBlob(
       // because the floor-plan sheet seats its title block against it.
       const footerRuleY = 52;
 
-      // ─── Premium Design Tokens (Dark & Gold) ────────────────────────────
-      const GOLD_RGB = rgb(191 / 255, 155 / 255, 80 / 255);     // #BF9B50
+      // ─── The document's colours ─────────────────────────────────────────
+      //
+      // Under NPC's artwork, NPC's house pair — the gold and the navy below,
+      // exactly as they have always been drawn, so the prime's own document
+      // does not move by a byte.
+      //
+      // Every other issuer's pages are drawn in its brand family
+      // (`brandFamily.pure.ts`): its colour for rules and bars, a deep shade of
+      // it where the navy was (headings, table heads), washes of it for the
+      // panels, stripes and hairlines, and its contrast-corrected ink wherever
+      // the gold is set as TYPE. With no colour on the Branding page the
+      // family is the platform's own gold on obsidian.
+      const family = brand.family;
+      const tone = (value: string) => {
+        const [r, g, b] = hexToRgb01(value);
+        return rgb(r, g, b);
+      };
+      const GOLD_RGB = family ? tone(family.accent) : rgb(191 / 255, 155 / 255, 80 / 255);     // #BF9B50
+      /** The gold where it is set as type — an issuer's brand ink, contrast-corrected. */
+      const GOLD_TEXT_RGB = family ? tone(family.accentInk) : GOLD_RGB;
       const GOLD_LIGHT_RGB = rgb(245 / 255, 235 / 255, 210 / 255); // #F5EBD2
-      const NAVY_RGB = rgb(13 / 255, 38 / 255, 77 / 255);       // #0D264D
+      const NAVY_RGB = family ? tone(family.deep) : rgb(13 / 255, 38 / 255, 77 / 255);       // #0D264D
       const DARK_BG_RGB = rgb(20 / 255, 20 / 255, 20 / 255);    // #141414
       const WHITE_RGB = rgb(1, 1, 1);
       const BODY_TEXT_RGB = rgb(55 / 255, 55 / 255, 55 / 255);   // #373737
-      const SECTION_BG_RGB = rgb(250 / 255, 247 / 255, 240 / 255); // Warm off-white for callouts
+      const SECTION_BG_RGB = family ? tone(family.wash) : rgb(250 / 255, 247 / 255, 240 / 255); // Warm off-white for callouts
       const TABLE_HEADER_BG = NAVY_RGB;
       const TABLE_HEADER_TEXT = WHITE_RGB;
-      const TABLE_ALT_ROW = rgb(252 / 255, 249 / 255, 242 / 255); // Very light gold tint
-      const TABLE_BORDER = rgb(210 / 255, 195 / 255, 160 / 255);  // Gold-tinted border
-      const FOOTER_TEXT_RGB = rgb(128 / 255, 128 / 255, 128 / 255);
+      const TABLE_ALT_ROW = family ? tone(family.stripe) : rgb(252 / 255, 249 / 255, 242 / 255); // Very light gold tint
+      const TABLE_BORDER = family ? tone(family.hairline) : rgb(210 / 255, 195 / 255, 160 / 255);  // Gold-tinted border
+      /** Captions and the folio. An issuer's is the palette's muted ink, 7:1 at 7pt. */
+      const FOOTER_TEXT_RGB = family ? tone(family.mutedInk) : rgb(128 / 255, 128 / 255, 128 / 255);
       const titleSize = 14;
       const textSize = 9.5; // Slightly smaller for more content per page
       
@@ -1635,8 +1657,19 @@ export async function generateInvestmentPdfBlob(
           .trim();
       };
 
-      // Helper function to add a new content page by copying from template
+      // Helper function to add a new content page by copying from template —
+      // NPC's page under NPC's artwork, and a page drawn in the issuer's own
+      // colours for everybody else (`investmentPdfIssuerPage.ts`).
       const addContentPage = async () => {
+        if (family) {
+          return addIssuerContentPage(pdfDoc, {
+            issuerName: brand.issuer.name,
+            documentTitle: documentTitleForTier(reportTier),
+            family,
+            font: helveticaFont,
+            margin,
+          });
+        }
         // Load template again to get a fresh page 2
         const freshTemplate = await PDFDocument.load(templateBytes);
         const [copiedPage] = await pdfDoc.copyPages(freshTemplate, [1]);
@@ -1648,8 +1681,10 @@ export async function generateInvestmentPdfBlob(
       const addContactDisclaimerPage = async (settings: GlobalReportSettings) => {
         // The issuer the cover names, and the disclaimer that issuer is
         // entitled to speak (`issuerIdentity.pure.ts`): a deployment that has
-        // not said who it is prints the platform's, never a stored one.
-        const issued = resolveReportDisclaimer(brand.issuer, settings.disclaimer);
+        // not said who it is prints the platform's, never a stored one, and
+        // stored wording that names the house prints only on the house's own
+        // document — on a clone it is the issuer's default wording instead.
+        const issued = resolveReportDisclaimer(brand.issuer, settings.disclaimer, brand.deployment);
         const page = drawPdfLibDisclaimerPage(
           pdfDoc,
           pageWidth,
@@ -1658,6 +1693,7 @@ export async function generateInvestmentPdfBlob(
           helveticaBold,
           { ...settings.contactDetails, company_name: brand.issuer.name },
           { ...settings.disclaimer, text: issued.text, is_enabled: issued.text !== '' },
+          family?.palette,
         );
         console.log('✓ Added contact/disclaimer page with global settings');
         return page;
@@ -2394,7 +2430,7 @@ export async function generateInvestmentPdfBlob(
           y: startY - panelPadding - 2,
           size: 7.5,
           font: helveticaBold,
-          color: GOLD_RGB,
+          color: GOLD_TEXT_RGB,
         });
         
         // Draw the callout text
@@ -3545,7 +3581,7 @@ export async function generateInvestmentPdfBlob(
               y: yPosition - 5,
               size: 7,
               font: helveticaBold,
-              color: GOLD_RGB,
+              color: GOLD_TEXT_RGB,
             });
             yPosition -= 15;
             yPosition = drawKPIBoxes(currentPage, yPosition, kpiMetrics.row2, pageWidth - 2 * margin);
@@ -4091,7 +4127,7 @@ export async function generateInvestmentPdfBlob(
             y: tocY,
             size: fontSize,
             font: fontToUse,
-            color: GOLD_RGB,
+            color: GOLD_TEXT_RGB,
           });
           
           // Calculate number text width for positioning

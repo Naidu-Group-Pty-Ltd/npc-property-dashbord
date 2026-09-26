@@ -13,6 +13,7 @@ import {
   type StandardPresentationBrandDeps,
 } from '../standardPresentationBrand';
 import { PLATFORM_ISSUER_NAME } from '@/lib/reports/issuerIdentity.pure';
+import { resolveBrandFamily } from '@/lib/reportDesign/brandFamily.pure';
 
 /**
  * Whose cover the standard presentation opens on.
@@ -68,6 +69,7 @@ describe('the issuer, read from the deployment', () => {
   const deps = (over: Partial<StandardPresentationBrandDeps> = {}): StandardPresentationBrandDeps => ({
     loadOrganisation: vi.fn(async () => null),
     loadBrandMarks: vi.fn(async () => ({})),
+    loadBrandColour: vi.fn(async () => null),
     prime: () => false,
     picture: vi.fn(async () => ({ bytes: new Uint8Array([1]), format: 'png' as const })),
     staticPicture: vi.fn(async () => ({ bytes: new Uint8Array([2]), format: 'png' as const })),
@@ -107,10 +109,50 @@ describe('the issuer, read from the deployment', () => {
     const broken = deps({
       loadOrganisation: async () => { throw new Error('offline'); },
       loadBrandMarks: async () => { throw new Error('offline'); },
+      loadBrandColour: async () => { throw new Error('offline'); },
       prime: () => { throw new Error('unparseable'); },
     });
     const brand = await loadStandardPresentationBrand('Harbour & Vine', broken);
-    expect(brand).toEqual({ issuer: workspace('Harbour & Vine'), cover: 'issuer', mark: null });
+    expect(brand).toEqual({
+      issuer: workspace('Harbour & Vine'),
+      deployment: { prime: false },
+      cover: 'issuer',
+      mark: null,
+      family: resolveBrandFamily(null),
+    });
+  });
+
+  it("draws an issuer's pages in its brand colour's family, and a platform document in the platform's", async () => {
+    const coloured = deps({ loadBrandColour: vi.fn(async () => '#1E3A8A') });
+    const tenant = await loadStandardPresentationBrand('Coastline Realty', coloured);
+    expect(tenant.family).toEqual(resolveBrandFamily('#1E3A8A'));
+    expect(tenant.family?.source).toBe('tenant');
+
+    // No colour on the Branding page: the platform's family under the tenant's own name.
+    expect((await loadStandardPresentationBrand('Coastline Realty', deps())).family).toEqual(resolveBrandFamily(null));
+
+    // No name at all: the platform issues, in the platform's colours, whatever colour a row holds.
+    const unnamed = await loadStandardPresentationBrand('', deps({ loadBrandColour: vi.fn(async () => '#C62828') }));
+    expect(unnamed.issuer).toEqual(platform);
+    expect(unnamed.family).toEqual(resolveBrandFamily(null));
+  });
+
+  it("keeps the house colours for NPC's own document: no family is resolved and no colour is read", async () => {
+    const npc = deps({ prime: () => true, loadBrandColour: vi.fn(async () => '#1E3A8A') });
+    const brand = await loadStandardPresentationBrand('Naidu Property Consulting Services', npc);
+    expect(brand.family).toBeNull();
+    expect(npc.loadBrandColour).not.toHaveBeenCalled();
+    expect(brand.deployment).toEqual({ prime: true });
+  });
+
+  it("never issues a clone's document under the house's name, whatever its rows say", async () => {
+    const seeded = deps({ loadOrganisation: async () => ({ company_name: 'Coastline Realty' }) });
+    expect((await loadStandardPresentationBrand('Naidu Property Consulting Services', seeded)).issuer)
+      .toEqual(workspace('Coastline Realty'));
+    expect((await loadStandardPresentationBrand('NPC Services Pty Ltd', deps())).issuer).toEqual(platform);
+    // The prime reads every name as it always did.
+    expect((await loadStandardPresentationBrand('Naidu Property Consulting Services', deps({ prime: () => true }))).issuer)
+      .toEqual(workspace('Naidu Property Consulting Services'));
   });
 });
 

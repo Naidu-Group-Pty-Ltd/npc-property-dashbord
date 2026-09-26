@@ -1,30 +1,47 @@
 /**
- * Who the standard presentation is issued by, which cover that earns, and the
- * issuer's own mark for it — read from this deployment's settings.
+ * Who the standard presentation is issued by, which cover that earns, the
+ * issuer's own mark for it, and the colours its pages are drawn in — read from
+ * this deployment's settings.
  *
  * The decisions are `standardCover.pure.ts`; this module only gathers what they
  * need. The issuer comes from the resolver every other report surface uses
  * (`resolveReportIssuer`): the report contact's company name first, then the
  * Branding page's name, then the platform. The mark comes from the same brand
  * store a chosen template's lockup does (`loadBrandMarks`), in its knockout
- * form, because the cover is a dark ground.
+ * form, because the cover is a dark ground. The colours are the Branding
+ * page's brand colour grown into a family (`brandFamily.pure.ts`) — the
+ * platform's own gold-on-obsidian where the deployment has none.
+ *
+ * Under NPC's artwork there is no family: the prime's own document keeps the
+ * house colours it has always been drawn in, byte for byte.
  *
  * Never throws. A setting that cannot be read resolves the way an unset one
  * does, and a mark that cannot be read is a cover with a name and no mark —
  * a document is never lost to its letterhead.
  */
-import { loadBrandMarks, loadOrganisation } from '@/lib/reportTemplate/adapters/organisation';
+import { loadBrandColour, loadBrandMarks, loadOrganisation } from '@/lib/reportTemplate/adapters/organisation';
+import { resolveBrandFamily, type BrandFamily } from '@/lib/reportDesign/brandFamily.pure';
 import { pictureFromDataUri } from '@/lib/reportTemplate/adapters/reportPhotographs';
 import { isPrimeDeployment } from '@/lib/primeDeployment';
-import { resolveReportIssuer, type ReportIssuer } from '@/lib/reports/issuerIdentity.pure';
+import { resolveReportIssuer, type IssuerDeployment, type ReportIssuer } from '@/lib/reports/issuerIdentity.pure';
 import { standardCoverFor, type StandardCoverKind } from './standardCover.pure';
 import type { InvestmentPdfPicture } from './investmentPdfPictures';
 
 export interface StandardPresentationBrand {
   issuer: ReportIssuer;
+  /**
+   * Which deployment this is — the answer every identity decision below took,
+   * handed on so the closing page's disclaimer takes the same one.
+   */
+  deployment: IssuerDeployment;
   cover: StandardCoverKind;
   /** The issuer's mark for a dark ground; null where it has none or it could not be read. */
   mark: InvestmentPdfPicture | null;
+  /**
+   * The colours an issuer's pages are drawn in. Null under NPC's artwork, whose
+   * document keeps the house colours it has always had.
+   */
+  family: BrandFamily | null;
 }
 
 /**
@@ -40,6 +57,8 @@ export const PLATFORM_COVER_MARK = '/brand/aurixa-emblem-240.png';
 export interface StandardPresentationBrandDeps {
   loadOrganisation: () => Promise<{ company_name?: string | null } | null>;
   loadBrandMarks: () => Promise<{ mark?: string | null; markMono?: string | null }>;
+  /** The Branding page's colour as `#RRGGBB`, or null for none. */
+  loadBrandColour: () => Promise<string | null>;
   prime: () => boolean;
   /** A `data:` URI as a picture pdf-lib can embed, or null. */
   picture: (dataUri: string) => Promise<InvestmentPdfPicture | null>;
@@ -85,9 +104,10 @@ async function staticPicture(path: string): Promise<InvestmentPdfPicture | null>
   return png ? { bytes, format: 'png' } : null;
 }
 
-const DEFAULT_DEPS: StandardPresentationBrandDeps = {
+export const DEFAULT_DEPS: StandardPresentationBrandDeps = {
   loadOrganisation,
   loadBrandMarks,
+  loadBrandColour,
   prime: () => isPrimeDeployment(),
   picture: markPicture,
   staticPicture,
@@ -106,10 +126,49 @@ export async function loadStandardPresentationBrand(
 ): Promise<StandardPresentationBrand> {
   const brandName = await deps.loadOrganisation()
     .then((row) => row?.company_name ?? null, () => null);
-  const issuer = resolveReportIssuer({ companyName: contactCompanyName, brandName });
-  const cover = standardCoverFor(issuer, { prime: isPrime(deps) });
-  if (cover === 'template') return { issuer, cover, mark: null };
-  return { issuer, cover, mark: await issuerMark(issuer, deps) };
+  // On a clone the house's name is not an identity, whatever a row says
+  // (`issuerIdentity.pure.ts`); on the prime every name reads as it always did.
+  const deployment: IssuerDeployment = { prime: isPrime(deps) };
+  const issuer = resolveReportIssuer({ companyName: contactCompanyName, brandName }, deployment);
+  const cover = standardCoverFor(issuer, deployment);
+  if (cover === 'template') return { issuer, deployment, cover, mark: null, family: null };
+  const { mark, family } = await loadIssuerLook(issuer, deps);
+  return { issuer, deployment, cover, mark, family };
+}
+
+/**
+ * The issuer's mark for a dark ground and its colours — what any document
+ * drawn under the issuer's own name needs, whichever library draws it. The
+ * older client-side documents ask the same question (`legacyDocumentBrand.ts`)
+ * and get the same answer.
+ */
+export async function loadIssuerLook(
+  issuer: ReportIssuer,
+  deps: StandardPresentationBrandDeps = DEFAULT_DEPS,
+): Promise<{ mark: InvestmentPdfPicture | null; family: BrandFamily }> {
+  const [mark, family] = await Promise.all([issuerMark(issuer, deps), issuerFamily(issuer, deps)]);
+  return { mark, family };
+}
+
+/** Whether this build is the prime's, read safely — the rule `isPrimeDeployment` states. */
+export function isPrimeBuild(deps: StandardPresentationBrandDeps = DEFAULT_DEPS): boolean {
+  return isPrime(deps);
+}
+
+/**
+ * The issuer's colours: its brand colour's family, or the platform's.
+ *
+ * A document the platform issues (no business named) takes the platform's
+ * colours even where a colour is stored — an unbranded deployment is Aurixa's,
+ * and the name and the colour on its cover should agree about whose it is.
+ */
+async function issuerFamily(
+  issuer: ReportIssuer,
+  deps: StandardPresentationBrandDeps,
+): Promise<BrandFamily> {
+  if (issuer.kind === 'platform') return resolveBrandFamily(null);
+  const colour = await deps.loadBrandColour().catch(() => null);
+  return resolveBrandFamily(colour);
 }
 
 /** A build whose deployment cannot be read is not the prime — the rule `isPrimeDeployment` states. */
