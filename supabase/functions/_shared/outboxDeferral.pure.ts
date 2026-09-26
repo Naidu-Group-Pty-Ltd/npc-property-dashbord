@@ -12,6 +12,11 @@
  * tenth attempt while the lease still stood and dead-letter an email that was
  * never sent. So a deferral is never terminal, and it waits until the time it
  * names (never less than a minute, so a time already past cannot spin).
+ *
+ * Every claim also counts an attempt, and a claim that found the lease held
+ * made no delivery attempt, so a deferral gives that count back (`attempts`
+ * is the count to store). Otherwise a worker that died mid-send would leave
+ * the email with fewer than ten real attempts before it is dead-lettered.
  */
 export class OutboxDeferral extends Error {
   constructor(message: string, readonly retryAt: string) {
@@ -25,15 +30,16 @@ const MIN_DEFERRAL_MS = 60_000;
 
 export function outboxFailureDisposition(
   error: unknown, attempts: number, now: number,
-): { terminal: boolean; availableAt: string; deferred: boolean } {
+): { terminal: boolean; availableAt: string; deferred: boolean; attempts: number } {
   if (error instanceof OutboxDeferral) {
     const until = Date.parse(error.retryAt);
     const at = Number.isFinite(until) ? Math.max(until, now + MIN_DEFERRAL_MS) : now + MIN_DEFERRAL_MS;
-    return { terminal: false, availableAt: new Date(at).toISOString(), deferred: true };
+    return { terminal: false, availableAt: new Date(at).toISOString(), deferred: true, attempts: Math.max(0, attempts - 1) };
   }
   return {
     terminal: attempts >= OUTBOX_TERMINAL_ATTEMPTS,
     availableAt: new Date(now + Math.min(3600, 2 ** attempts) * 1000).toISOString(),
     deferred: false,
+    attempts,
   };
 }

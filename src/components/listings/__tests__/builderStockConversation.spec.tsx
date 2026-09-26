@@ -338,28 +338,31 @@ describe('the whole history can be read', () => {
   });
 
   it('a message that slides out of the polled window after an earlier page was read stays in the history', async () => {
-    state.conversation = conversation();
+    // A real window is 500 messages and moves by the few that arrived, so
+    // consecutive windows overlap; two-message windows stand in for that.
+    const w = (a: [string, string, string], b: [string, string, string], cursor: string) => conversation({
+      messages: [MESSAGE({ id: a[0], body: a[1], sent_at: a[2] }), MESSAGE({ id: b[0], body: b[1], sent_at: b[2] })],
+      earlier_cursor: cursor,
+    });
+    const NEWEST: [string, string, string] = ['newest', 'Newest message', '2026-09-25T12:00:00Z'];
+    const MID: [string, string, string] = ['mid', 'Mid message', '2026-09-25T13:00:00Z'];
+    const ARRIVED: [string, string, string] = ['arrived', 'Arrived message', '2026-09-26T12:00:00Z'];
+    const LATEST: [string, string, string] = ['latest', 'Latest message', '2026-09-27T12:00:00Z'];
+    state.conversation = w(NEWEST, MID, 'newest');
     earlierPages.newest = { messages: [MESSAGE({ id: 'older', body: 'Older message', sent_at: '2026-09-20T12:00:00Z' })],
       has_earlier: false, earlier_cursor: null };
     const view = render(<MemoryRouter><BuilderConversationThread conversationId="conv-1" /></MemoryRouter>);
     fireEvent.click(screen.getByRole('button', { name: /show earlier messages/i }));
     expect(await screen.findByText('Older message')).toBeInTheDocument();
-    // A new message arrives and the newest window moves on: the message the
-    // page was read from is no longer in it.
-    state.conversation = conversation({
-      messages: [MESSAGE({ id: 'arrived', body: 'Arrived message', sent_at: '2026-09-26T12:00:00Z' })],
-      earlier_cursor: 'arrived',
-    });
+    // New messages arrive and the window moves on twice: the message the page
+    // was read from, and then the one after it, leave the window.
+    state.conversation = w(MID, ARRIVED, 'mid');
     view.rerender(<MemoryRouter><BuilderConversationThread conversationId="conv-1" /></MemoryRouter>);
-    // A later poll moves it again: nothing seen since the page was read is lost.
-    state.conversation = conversation({
-      messages: [MESSAGE({ id: 'latest', body: 'Latest message', sent_at: '2026-09-27T12:00:00Z' })],
-      earlier_cursor: 'latest',
-    });
+    state.conversation = w(ARRIVED, LATEST, 'arrived');
     view.rerender(<MemoryRouter><BuilderConversationThread conversationId="conv-1" /></MemoryRouter>);
     const log = screen.getByRole('log');
     expect(within(log).getAllByText(/message$/).map((n) => n.textContent))
-      .toEqual(['Older message', 'Newest message', 'Arrived message', 'Latest message']);
+      .toEqual(['Older message', 'Newest message', 'Mid message', 'Arrived message', 'Latest message']);
   });
 
   it('a failed message from an earlier page that is sent again shows what the server now says of it', async () => {
@@ -373,6 +376,28 @@ describe('the whole history can be read', () => {
     fireEvent.click(await screen.findByRole('button', { name: /send again/i }));
     expect(retried).toEqual(['older']);
     await waitFor(() => expect(screen.queryByRole('button', { name: /send again/i })).toBeNull());
+  });
+
+  it('a poll window that no longer touches what was kept pages again from the new window, so nothing between is unreachable', async () => {
+    state.conversation = conversation();
+    earlierPages.newest = { messages: [MESSAGE({ id: 'older', body: 'Older message', sent_at: '2026-09-20T12:00:00Z' })],
+      has_earlier: false, earlier_cursor: null };
+    const view = render(<MemoryRouter><BuilderConversationThread conversationId="conv-1" /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: /show earlier messages/i }));
+    expect(await screen.findByText('Older message')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /show earlier messages/i })).toBeNull();
+    // A whole window's worth arrived while the tab slept: the new window
+    // shares nothing with the one kept, and there are messages between.
+    state.conversation = conversation({
+      messages: [MESSAGE({ id: 'far', body: 'Far later message', sent_at: '2026-09-30T12:00:00Z' })],
+      has_earlier: true, earlier_cursor: 'far',
+    });
+    view.rerender(<MemoryRouter><BuilderConversationThread conversationId="conv-1" /></MemoryRouter>);
+    earlierPages.far = { messages: [MESSAGE({ id: 'between', body: 'Between message', sent_at: '2026-09-28T12:00:00Z' })],
+      has_earlier: true, earlier_cursor: 'between' };
+    fireEvent.click(await screen.findByRole('button', { name: /show earlier messages/i }));
+    expect(await screen.findByText('Between message')).toBeInTheDocument();
+    expect(earlierAsked).toEqual(['newest', 'far']);
   });
 
   it('says nothing about earlier messages when there are none', () => {

@@ -78,7 +78,9 @@ page is reached with "Show earlier messages" (a cursor on the read, never a
 larger window), so the whole history is readable however long it grows.
 Once an earlier page has been read, every newest window a poll brings is kept
 too, so a message that slides out of the window as others arrive stays in the
-history. Posting takes the conversation row before the poster's participant
+history; a window that shares nothing with the last one (a whole window
+arrived unseen) restarts paging from the new window, so nothing between is
+unreachable. Posting takes the conversation row before the poster's participant
 row, the order leaving takes them in, so a post and a leave cannot deadlock.
 Inviting is stopped by the network kill switch exactly as sending is.
 Inviting someone already in the conversation changes nothing. A conversation
@@ -186,7 +188,8 @@ out after ten minutes), sends it, and records it as sent
 that token. A claim another worker holds is retried later rather than taken
 as done; a worker that dies mid-send leaves a lease that runs out, so a later
 retry sends it (a held lease DEFERS the outbox job until the lease ends,
-which never spends the outbox's retry budget or dead-letters,
+which never dead-letters and gives back the attempt its claim counted, so
+ten real delivery attempts are still allowed,
 `outboxDeferral.pure.ts`); and every attempt carries the same provider idempotency key
 (`builder-activation-acknowledged/<selection id>`), so a send whose record was
 lost is not delivered twice.

@@ -519,7 +519,7 @@ describe('a deferred outbox job does not spend its retry budget', () => {
 
   it('a deferral is never terminal, even on the last attempt, and waits until the time it names', () => {
     const d = outboxFailureDisposition(new OutboxDeferral('acknowledgement_email_in_progress', '2026-09-26T05:10:00.000Z'), 10, now);
-    expect(d).toEqual({ terminal: false, availableAt: '2026-09-26T05:10:00.000Z', deferred: true });
+    expect(d).toEqual({ terminal: false, availableAt: '2026-09-26T05:10:00.000Z', deferred: true, attempts: 9 });
     expect(outboxFailureDisposition(new OutboxDeferral('x', '2026-09-26T05:10:00.000Z'), 25, now).terminal).toBe(false);
   });
 
@@ -530,10 +530,21 @@ describe('a deferred outbox job does not spend its retry budget', () => {
 
   it('an ordinary failure keeps the existing backoff and is terminal at the tenth attempt', () => {
     expect(outboxFailureDisposition(new Error('down'), 3, now)).toEqual({
-      terminal: false, availableAt: new Date(now + 8_000).toISOString(), deferred: false,
+      terminal: false, availableAt: new Date(now + 8_000).toISOString(), deferred: false, attempts: 3,
     });
     expect(outboxFailureDisposition(new Error('down'), 10, now).terminal).toBe(true);
     expect(outboxFailureDisposition(new Error('down'), 12, now).availableAt).toBe(new Date(now + 3_600_000).toISOString());
+  });
+
+  it('the attempt a deferred claim consumed is given back, so ten real deliveries are still allowed', () => {
+    // Every claim counts an attempt. A claim that found the lease held did not
+    // try to deliver, so the count it added is returned; an ordinary failure
+    // keeps its count.
+    expect(outboxFailureDisposition(new OutboxDeferral('x', '2026-09-26T05:10:00.000Z'), 4, now).attempts).toBe(3);
+    expect(outboxFailureDisposition(new OutboxDeferral('x', '2026-09-26T05:10:00.000Z'), 0, now).attempts).toBe(0);
+    expect(outboxFailureDisposition(new Error('down'), 4, now).attempts).toBe(4);
+    const worker = readCode('supabase/functions/cross-portal-outbox-worker/index.ts');
+    expect(worker).toMatch(/update\(\{attempts:disposition\.attempts,available_at:/);
   });
 
   it('the cross-portal worker decides every failure through it', () => {

@@ -267,6 +267,9 @@ describe('Messaging', () => {
     state.inbox = { conversations: [] };
     renderAt('/admin/builder-portal/messaging');
     expect(screen.getByText(/when a builder acknowledges an activation/i)).toBeInTheDocument();
+    // And what to do next: activate a property, or see what is waiting on a builder.
+    expect(screen.getByRole('link', { name: /builder stock/i })).toHaveAttribute('href', '/listings?section=builder-stock');
+    expect(screen.getByRole('link', { name: /activated properties/i })).toHaveAttribute('href', '/admin/builder-portal/activated');
   });
 });
 

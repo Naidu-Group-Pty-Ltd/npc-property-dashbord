@@ -254,10 +254,23 @@ function Messaging({ conversationId }: { conversationId: string | null }) {
           </p>
         ) : null}
         {!query.isLoading && !query.error && !conversations.length ? (
-          <p className="text-sm text-muted-foreground">
-            No conversations yet. When a builder acknowledges an activation, the person who activated it and the builder
-            who acknowledged it can message each other here, and either can add a colleague.
-          </p>
+          <div className="space-y-2 text-sm text-muted-foreground">
+            <p>
+              No conversations yet. When a builder acknowledges an activation, the person who activated it and the builder
+              who acknowledged it can message each other here, and either can add a colleague.
+            </p>
+            <p>
+              Activate a property from{' '}
+              <Link to="/listings?section=builder-stock" className="text-primary underline underline-offset-4">
+                Builder Stock
+              </Link>
+              , or see which activations are waiting on a builder under{' '}
+              <Link to="/admin/builder-portal/activated" className="text-primary underline underline-offset-4">
+                Activated Properties
+              </Link>
+              .
+            </p>
+          </div>
         ) : null}
         <ul className="space-y-1">
           {conversations.map((c) => (
