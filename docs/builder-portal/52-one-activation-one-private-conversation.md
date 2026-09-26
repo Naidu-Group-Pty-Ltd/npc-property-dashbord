@@ -211,6 +211,15 @@ It is a dry run unless `apply` is true, and it reads both projects:
     participants, Add user and Leave chat.
 - The property page's Messages card lists only the viewer's own activation
   conversations for that property.
+- The entry's badge is the server's count of the viewer's own unread
+  acknowledgements (`count_activation_acknowledgements`). It is not counted
+  from the bell, which holds only its newest fifty notifications. Opening
+  Activated Properties, once the list has been read for that visit, marks
+  every one of them read (`mark_activation_acknowledgements_read`).
+- Every private read in the browser is cached under the signed-in user's id.
+  The app's one query cache outlives a sign-out, so a key without the reader
+  would show the next person on the same browser the previous person's
+  threads.
 
 **Builder Portal.** Agencies → Messages lists only the conversations the
 viewer is in, with the same participant list, Add user and Leave chat.

@@ -28,7 +28,8 @@ import {
 } from '../../../supabase/functions/_shared/builderStock/privateConversations.pure';
 import { sendActivationAcknowledgedEmail } from '../../../supabase/functions/_shared/builderStock/acknowledgementEmailJob';
 import {
-  listActivatedProperties, listMyConversations, listPropertyConversations, readParticipantConversation,
+  countUnreadAcknowledgementNotices, listActivatedProperties, listMyConversations, listPropertyConversations,
+  markAcknowledgementNoticesRead, readParticipantConversation,
 } from '../../../supabase/functions/_shared/builderStock/privateConversations';
 
 const REPO_ROOT = join(__dirname, '..', '..', '..');
@@ -390,6 +391,63 @@ describe('the acknowledgement email', () => {
     const migration = readCode('supabase/migrations/20261224090000_one_activation_one_private_conversation.sql');
     expect(migration).toMatch(/enqueue_integration_event/);
     expect(migration).toMatch(/'builder_activation_acknowledged:' \|\|/);
+  });
+});
+
+describe('the Builder Portal badge counts the server, not the bell\'s window', () => {
+  /** Records every filter a notices read or write applies, so its scope can be asserted. */
+  function noticesDb(options: { error?: boolean; count?: number } = {}) {
+    const calls: Array<{ op: string; filters: Array<[string, string, unknown]>; values?: unknown; head?: boolean }> = [];
+    const from = (table: string) => {
+      expect(table).toBe('notifications');
+      const call: { op: string; filters: Array<[string, string, unknown]>; values?: unknown; head?: boolean } = { op: '', filters: [] };
+      calls.push(call);
+      const q: any = {
+        select(_cols: string, opts?: { count?: string; head?: boolean }) { call.op = call.op || 'select'; call.head = !!opts?.head; return q; },
+        update(values: unknown) { call.op = 'update'; call.values = values; return q; },
+        eq(col: string, val: unknown) { call.filters.push(['eq', col, val]); return q; },
+        then(resolve: (v: unknown) => unknown) {
+          return Promise.resolve(options.error
+            ? { data: null, count: null, error: { message: 'x' } }
+            : { data: null, count: options.count ?? 0, error: null }).then(resolve);
+        },
+      };
+      return q;
+    };
+    return { db: { from }, calls };
+  }
+  const scopedToViewer = (filters: Array<[string, string, unknown]>) => {
+    expect(filters).toContainEqual(['eq', 'target_user_id', 'viewer-1']);
+    expect(filters).toContainEqual(['eq', 'type', 'builder_activation_acknowledged']);
+    expect(filters).toContainEqual(['eq', 'read', false]);
+  };
+
+  it('counts every unread acknowledgement the viewer holds, however old', async () => {
+    const { db, calls } = noticesDb({ count: 73 });
+    expect(await countUnreadAcknowledgementNotices(db, { viewerUserId: 'viewer-1' })).toEqual({ ok: true, count: 73 });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].head).toBe(true);
+    scopedToViewer(calls[0].filters);
+  });
+
+  it('a count that cannot be read is not a count of zero', async () => {
+    const { db } = noticesDb({ error: true });
+    expect(await countUnreadAcknowledgementNotices(db, { viewerUserId: 'viewer-1' })).toEqual({ ok: false });
+  });
+
+  it('marking read reaches every unread acknowledgement of the viewer\'s, and nobody else\'s', async () => {
+    const { db, calls } = noticesDb();
+    expect(await markAcknowledgementNoticesRead(db, { viewerUserId: 'viewer-1' })).toEqual({ ok: true });
+    expect(calls[0].op).toBe('update');
+    expect(calls[0].values).toEqual({ read: true });
+    scopedToViewer(calls[0].filters);
+    expect((await markAcknowledgementNoticesRead(noticesDb({ error: true }).db, { viewerUserId: 'viewer-1' })).ok).toBe(false);
+  });
+
+  it('both are operations on the edge function, for the session\'s user only', () => {
+    const code = readCode('supabase/functions/builder-stock-marketplace/index.ts');
+    expect(code).toMatch(/'count_activation_acknowledgements'[\s\S]{0,300}countUnreadAcknowledgementNotices\(supabase, \{ viewerUserId: userId \}\)/);
+    expect(code).toMatch(/'mark_activation_acknowledgements_read'[\s\S]{0,300}markAcknowledgementNoticesRead\(supabase, \{ viewerUserId: userId \}\)/);
   });
 });
 

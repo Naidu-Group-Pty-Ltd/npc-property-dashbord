@@ -22,7 +22,9 @@ const state: Record<string, any> = {};
 const invited: string[] = [];
 const left: string[] = [];
 const sent: Array<{ clientMessageId: string; body: string }> = [];
+const serverMarked: string[] = [];
 
+const markOnServer = () => { serverMarked.push('all'); };
 vi.mock('@/lib/marketplaceBuilderStock', async () => {
   const actual = await vi.importActual<typeof import('@/lib/marketplaceBuilderStock')>('@/lib/marketplaceBuilderStock');
   return {
@@ -39,6 +41,7 @@ vi.mock('@/lib/marketplaceBuilderStock', async () => {
       isLoading: false, isSuccess: !state.activationsError,
       isFetchedAfterMount: !state.cachedOnly, isFetching: !!state.cachedOnly,
     }),
+    useMarkActivationAcknowledgementsRead: () => ({ mutate: markOnServer }),
     useMyBuilderConversations: () => ({ data: state.inboxError ? undefined : state.inbox, error: state.inboxError ?? null, isLoading: false }),
     useParticipantConversation: () => ({ data: state.conversation, error: state.conversationError ?? null, isLoading: false, isFetching: false }),
     useSendConversationMessage: () => ({
@@ -95,6 +98,7 @@ const CONVERSATION = (overrides: Record<string, unknown> = {}) => ({
 beforeEach(() => {
   for (const key of Object.keys(state)) delete state[key];
   markedRead.length = 0;
+  serverMarked.length = 0;
   flag.loading = false; flag.enabled = true;
   state.activations = { activations: [ACTIVATION(), ACTIVATION({
     activation_key: 'k2', activated_by: 'Otto Other', acknowledged_by: null, acknowledged_at: null,
@@ -217,9 +221,12 @@ describe('Messaging', () => {
     state.activationsError = Object.assign(new Error('unavailable'), { status: 503 });
     const failed = renderAt('/admin/builder-portal/activated');
     expect(markedRead).toEqual([]);
+    expect(serverMarked).toEqual([]);
     failed.unmount();
     delete state.activationsError;
     renderAt('/admin/builder-portal/activated');
+    // The server marks every acknowledgement of the reader's, beyond the bell's window; the bell's copy follows.
+    expect(serverMarked).toEqual(['all']);
     expect(markedRead).toEqual(['n1']);
   });
 
@@ -227,6 +234,7 @@ describe('Messaging', () => {
     state.cachedOnly = true;
     renderAt('/admin/builder-portal/activated');
     expect(markedRead).toEqual([]);
+    expect(serverMarked).toEqual([]);
   });
 
   it('with nothing activated, says where a property is activated', () => {

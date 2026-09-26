@@ -264,3 +264,35 @@ export async function listActivatedProperties(
     }),
   };
 }
+
+/**
+ * The Builder Portal badge. The bell reads only its newest fifty
+ * notifications, so an unread acknowledgement older than that would drop out
+ * of any count taken there; this counts every one the viewer holds, and only
+ * the viewer's. A count that could not be read is not a count of zero.
+ */
+const ACKNOWLEDGEMENT_NOTICE = 'builder_activation_acknowledged';
+
+export async function countUnreadAcknowledgementNotices(
+  supabase: Client, args: { viewerUserId: string },
+): Promise<{ ok: true; count: number } | { ok: false }> {
+  const { count, error } = await supabase.from('notifications')
+    .select('id', { count: 'exact', head: true })
+    .eq('target_user_id', args.viewerUserId)
+    .eq('type', ACKNOWLEDGEMENT_NOTICE)
+    .eq('read', false);
+  if (error || typeof count !== 'number') return { ok: false };
+  return { ok: true, count };
+}
+
+/** Seeing Activated Properties is seeing the acknowledgements: every one of the viewer's is marked read. */
+export async function markAcknowledgementNoticesRead(
+  supabase: Client, args: { viewerUserId: string },
+): Promise<{ ok: boolean }> {
+  const { error } = await supabase.from('notifications')
+    .update({ read: true })
+    .eq('target_user_id', args.viewerUserId)
+    .eq('type', ACKNOWLEDGEMENT_NOTICE)
+    .eq('read', false);
+  return { ok: !error };
+}

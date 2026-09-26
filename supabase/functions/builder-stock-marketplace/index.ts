@@ -49,7 +49,8 @@ import {
 import { applyManualStatsToAll } from '../_shared/builderStock/manualStats.pure.ts';
 import { readPropertyDetail } from '../_shared/builderStock/propertyDetail.ts';
 import {
-  listActivatedProperties, listMyConversations, listPropertyConversations, readParticipantConversation,
+  countUnreadAcknowledgementNotices, listActivatedProperties, listMyConversations, listPropertyConversations,
+  markAcknowledgementNoticesRead, readParticipantConversation,
 } from '../_shared/builderStock/privateConversations.ts';
 import { agencyMessageRefusal, projectConversationMessages } from '../_shared/builderStock/agencyMessages.pure.ts';
 import {
@@ -648,6 +649,20 @@ Deno.serve(async (req) => {
       const read = await listActivatedProperties(supabase, { viewerUserId: userId });
       if (!read.ok) return json({ success: false, error: 'activations_could_not_be_read' }, 503);
       return json({ success: true, activations: read.activations });
+    }
+
+    // The Builder Portal badge: the reader's own unread acknowledgements,
+    // counted here because the bell holds only its newest fifty.
+    if (operation === 'count_activation_acknowledgements') {
+      const read = await countUnreadAcknowledgementNotices(supabase, { viewerUserId: userId });
+      if (!read.ok) return json({ success: false, error: 'acknowledgements_could_not_be_counted' }, 503);
+      return json({ success: true, count: read.count });
+    }
+
+    if (operation === 'mark_activation_acknowledgements_read') {
+      const done = await markAcknowledgementNoticesRead(supabase, { viewerUserId: userId });
+      if (!done.ok) return json({ success: false, error: 'acknowledgements_could_not_be_marked' }, 503);
+      return json({ success: true });
     }
 
     if (operation === 'list_my_builder_conversations') {

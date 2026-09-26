@@ -1,21 +1,18 @@
-import { useNotificationsOptional } from '@/contexts/NotificationsContext';
+import { useActivationAcknowledgementCount } from '@/lib/marketplaceBuilderStock';
 import type { NavItemDef } from '@/lib/navigation/registry';
 
-/** Which notification types each badge counts. */
-const BADGE_TYPES: Record<NonNullable<NavItemDef['badge']>, readonly string[]> = {
-  // A builder acknowledged the reader's activation (docs/builder-portal/52).
-  builder_activations: ['builder_activation_acknowledged'],
-};
-
 /**
- * The unread count beside a navigation entry. It reads the bell's own feed,
- * which is the reader's notifications only, so it can never count somebody
- * else's.
+ * The unread count beside a navigation entry.
+ *
+ * `builder_activations` is the reader's unread builder acknowledgements
+ * (docs/builder-portal/52), counted by the server for the session's user only.
+ * It is not read from the bell's feed: that holds only the newest fifty
+ * notifications, so an older acknowledgement the reader has still not seen
+ * would drop out of the count. A count that could not be read draws nothing.
  */
 export function NavItemBadge({ kind }: { kind: NonNullable<NavItemDef['badge']> }) {
-  const context = useNotificationsOptional();
-  const types = BADGE_TYPES[kind];
-  const count = (context?.notifications ?? []).filter((n) => !n.read && types.includes(String(n.type))).length;
+  const query = useActivationAcknowledgementCount(kind === 'builder_activations');
+  const count = query.data?.count ?? 0;
   if (!count) return null;
   return (
     <span

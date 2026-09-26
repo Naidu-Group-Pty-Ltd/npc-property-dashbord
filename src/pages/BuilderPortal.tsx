@@ -11,7 +11,7 @@ import { useBuilderStockMarketplaceFlag } from '@/hooks/useBuilderStockMarketpla
 import { cn } from '@/lib/utils';
 import {
   builderStockPropertyPath, conversationAccessLost, marketplaceStockImageUrl, useBuilderPortalActivations,
-  useMyBuilderConversations, type ActivatedPropertyRow, type ActivationStatus,
+  useMarkActivationAcknowledgementsRead, useMyBuilderConversations, type ActivatedPropertyRow, type ActivationStatus,
 } from '@/lib/marketplaceBuilderStock';
 
 /**
@@ -91,6 +91,14 @@ function ActivatedProperties() {
   // clears only once a read made for THIS visit has succeeded and nothing is
   // still being fetched, so a newer acknowledgement is never cleared unseen.
   const listShown = query.isSuccess && query.isFetchedAfterMount && !query.isFetching;
+  // The server marks every one of the reader's acknowledgements read, including
+  // any older than the bell's fifty; the bell's own copies follow at once.
+  const markRead = useMarkActivationAcknowledgementsRead();
+  const { mutate: markAllRead } = markRead;
+  useEffect(() => {
+    if (!listShown) return;
+    markAllRead();
+  }, [listShown, markAllRead]);
   useEffect(() => {
     if (!notifications || !listShown) return;
     for (const n of notifications.notifications) {

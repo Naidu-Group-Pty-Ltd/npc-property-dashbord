@@ -10,6 +10,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
+import { useAuthUserIdOptional } from '@/hooks/useAuth';
 import type { BuilderStockItem, BuilderStockSelection } from '@/lib/builderStock';
 import type { MirrorSource } from '../../supabase/functions/_shared/builderStock/mirrorAvailability.pure';
 import type { PropertyDetail } from '../../supabase/functions/_shared/builderStock/propertyDetail.pure';
@@ -272,11 +273,21 @@ export function builderConversationPollInterval(data: { open?: boolean } | undef
   return data?.open === false ? BUILDER_CONVERSATION_CLOSED_POLL_MS : BUILDER_CONVERSATION_POLL_MS;
 }
 
-const conversationKey = (conversationId: string) =>
-  [...marketplaceStockKeys.root(), 'conversation', conversationId] as const;
-const conversationListKey = (stockItemId?: string) =>
-  [...marketplaceStockKeys.root(), 'my-conversations', stockItemId ?? 'all'] as const;
-const activationsKey = () => [...marketplaceStockKeys.root(), 'portal-activations'] as const;
+/**
+ * Every private read is keyed by the signed-in user. The app's one
+ * QueryClient outlives a sign-out, so a key that did not name the reader
+ * would hand the next person to sign in on the same browser the previous
+ * person's inbox, threads and activations from the cache.
+ */
+type Reader = string | null;
+const privateRoot = (reader: Reader) => [...marketplaceStockKeys.root(), 'private', reader ?? 'signed-out'] as const;
+const conversationKey = (reader: Reader, conversationId: string) =>
+  [...privateRoot(reader), 'conversation', conversationId] as const;
+const conversationListRoot = (reader: Reader) => [...privateRoot(reader), 'my-conversations'] as const;
+const conversationListKey = (reader: Reader, stockItemId?: string) =>
+  [...conversationListRoot(reader), stockItemId ?? 'all'] as const;
+const activationsKey = (reader: Reader) => [...privateRoot(reader), 'portal-activations'] as const;
+const acknowledgementCountKey = (reader: Reader) => [...privateRoot(reader), 'acknowledgement-count'] as const;
 
 /**
  * A refusal says the reader may no longer see this conversation: signed out,
@@ -319,8 +330,9 @@ export function listRefetchInterval(ms: number) {
 
 /** Portals → Builder Portal → Activated Properties: one row per activation. */
 export function useBuilderPortalActivations(enabled = true) {
+  const reader = useAuthUserIdOptional();
   return useQuery({
-    queryKey: activationsKey(),
+    queryKey: activationsKey(reader),
     enabled,
     queryFn: () => invoke<{ activations: ActivatedPropertyRow[] }>({ operation: 'list_builder_portal_activations' }),
     refetchInterval: listRefetchInterval(60_000),
@@ -329,10 +341,38 @@ export function useBuilderPortalActivations(enabled = true) {
   });
 }
 
+/**
+ * The reader's unread builder acknowledgements, counted by the server. The
+ * bell holds only its newest fifty notifications, so counting there would
+ * lose an older acknowledgement the reader has still not seen.
+ */
+export function useActivationAcknowledgementCount(enabled = true) {
+  const reader = useAuthUserIdOptional();
+  return useQuery({
+    queryKey: acknowledgementCountKey(reader),
+    enabled,
+    queryFn: () => invoke<{ count: number }>({ operation: 'count_activation_acknowledgements' }),
+    refetchInterval: listRefetchInterval(60_000),
+    refetchIntervalInBackground: false,
+    retry: retryUnlessAccessLost,
+  });
+}
+
+/** Seeing Activated Properties is seeing the acknowledgements: all of the reader's are marked read. */
+export function useMarkActivationAcknowledgementsRead() {
+  const reader = useAuthUserIdOptional();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => invoke<{ success: boolean }>({ operation: 'mark_activation_acknowledgements_read' }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: acknowledgementCountKey(reader) }),
+  });
+}
+
 /** The conversations the reader is in now — all of them, or one property's. */
 export function useMyBuilderConversations(stockItemId?: string, enabled = true) {
+  const reader = useAuthUserIdOptional();
   return useQuery({
-    queryKey: conversationListKey(stockItemId),
+    queryKey: conversationListKey(reader, stockItemId),
     enabled,
     queryFn: () => invoke<{ conversations: ConversationSummary[] }>({
       operation: 'list_my_builder_conversations', ...(stockItemId ? { stock_item_id: stockItemId } : {}),
@@ -344,8 +384,9 @@ export function useMyBuilderConversations(stockItemId?: string, enabled = true) 
 }
 
 export function useParticipantConversation(conversationId: string, enabled = true) {
+  const reader = useAuthUserIdOptional();
   return useQuery({
-    queryKey: conversationKey(conversationId),
+    queryKey: conversationKey(reader, conversationId),
     enabled: enabled && !!conversationId,
     queryFn: () => invoke<BuilderConversation>({
       operation: 'get_builder_conversation', conversation_id: conversationId,
@@ -361,30 +402,33 @@ export function useParticipantConversation(conversationId: string, enabled = tru
  * reuses it for any repeat of the same send, so a timeout is safe to retry.
  */
 export function useSendConversationMessage(conversationId: string) {
+  const reader = useAuthUserIdOptional();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: { clientMessageId: string; body: string }) => invoke<{ message: ConversationMessageView | null }>({
       operation: 'send_builder_message', conversation_id: conversationId,
       client_message_id: input.clientMessageId, body: input.body,
     }),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: conversationKey(conversationId) }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: conversationKey(reader, conversationId) }),
   });
 }
 
 export function useRetryConversationMessage(conversationId: string) {
+  const reader = useAuthUserIdOptional();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (messageId: string) => invoke<{ message: ConversationMessageView | null }>({
       operation: 'retry_builder_message', message_id: messageId,
     }),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: conversationKey(conversationId) }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: conversationKey(reader, conversationId) }),
   });
 }
 
 /** Colleagues who may be added: the server decides who, from its own rows. */
 export function useConversationInvitees(conversationId: string, enabled: boolean) {
+  const reader = useAuthUserIdOptional();
   return useQuery({
-    queryKey: [...conversationKey(conversationId), 'invitees'] as const,
+    queryKey: [...conversationKey(reader, conversationId), 'invitees'] as const,
     enabled: enabled && !!conversationId,
     queryFn: async () => (await invoke<{ invitees: Array<{ user_id: string; display_name: string }> }>({
       operation: 'list_builder_conversation_invitees', conversation_id: conversationId,
@@ -394,26 +438,28 @@ export function useConversationInvitees(conversationId: string, enabled: boolean
 }
 
 export function useInviteConversationParticipant(conversationId: string) {
+  const reader = useAuthUserIdOptional();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (inviteeUserId: string) => invoke<{ result: string }>({
       operation: 'invite_builder_conversation_participant', conversation_id: conversationId, invitee_user_id: inviteeUserId,
     }),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: conversationKey(conversationId) }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: conversationKey(reader, conversationId) }),
   });
 }
 
 /** Leave a conversation. It names only the person leaving. */
 export function useLeaveConversation(conversationId: string) {
+  const reader = useAuthUserIdOptional();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () => invoke<{ result: string }>({
       operation: 'leave_builder_conversation', conversation_id: conversationId,
     }),
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: [...marketplaceStockKeys.root(), 'my-conversations'] });
-      queryClient.invalidateQueries({ queryKey: activationsKey() });
-      queryClient.removeQueries({ queryKey: conversationKey(conversationId) });
+      queryClient.invalidateQueries({ queryKey: conversationListRoot(reader) });
+      queryClient.invalidateQueries({ queryKey: activationsKey(reader) });
+      queryClient.removeQueries({ queryKey: conversationKey(reader, conversationId) });
     },
   });
 }
