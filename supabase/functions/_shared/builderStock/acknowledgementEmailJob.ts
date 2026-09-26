@@ -10,8 +10,9 @@
  * token. So:
  *
  * - a claim that cannot be made throws with nothing sent (the outbox retries);
- * - a claim another worker holds throws `in_progress`, and the outbox asks
- *   again later rather than marking the job done;
+ * - a claim another worker holds DEFERS the job (`in_progress`) until its
+ *   lease ends: the outbox offers it again then, and a deferral never spends
+ *   the retry budget or dead-letters (`outboxDeferral.pure.ts`);
  * - a send that fails or throws releases the claim and throws, so the retry
  *   can send it;
  * - a worker that dies between claiming and recording leaves a lease that
@@ -24,6 +25,7 @@
  * tested without a mail service.
  */
 import { acknowledgementEmail, userDisplayName } from './privateConversations.pure.ts';
+import { OutboxDeferral } from '../outboxDeferral.pure.ts';
 
 type Db = any;
 type Send = (input: {
@@ -69,7 +71,9 @@ export async function sendActivationAcknowledgedEmail(db: Db, event: { payload?:
     _selection_id: selectionId, _lease_seconds: ACKNOWLEDGEMENT_EMAIL_LEASE_SECONDS,
   });
   if (claimError || !claim || typeof claim.state !== 'string') throw new Error('acknowledgement_email_claim_failed');
-  if (claim.state === 'held') throw new Error('acknowledgement_email_in_progress');
+  // Held by a worker that has not finished or has died: offered again when
+  // its lease ends, without spending the outbox's retry budget.
+  if (claim.state === 'held') throw new OutboxDeferral('acknowledgement_email_in_progress', String(claim.until ?? ''));
   if (claim.state !== 'claimed' || typeof claim.token !== 'string') return;
   const token = claim.token;
 

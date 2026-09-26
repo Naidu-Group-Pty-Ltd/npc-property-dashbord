@@ -646,9 +646,11 @@ Deno.serve(async (req) => {
     }, 403);
 
     if (operation === 'list_builder_portal_activations') {
+      // Taken BEFORE the read: marking read later reaches only what this list could show.
+      const asOf = new Date().toISOString();
       const read = await listActivatedProperties(supabase, { viewerUserId: userId });
       if (!read.ok) return json({ success: false, error: 'activations_could_not_be_read' }, 503);
-      return json({ success: true, activations: read.activations });
+      return json({ success: true, activations: read.activations, as_of: asOf });
     }
 
     // The Builder Portal badge: the reader's own unread acknowledgements,
@@ -660,7 +662,9 @@ Deno.serve(async (req) => {
     }
 
     if (operation === 'mark_activation_acknowledgements_read') {
-      const done = await markAcknowledgementNoticesRead(supabase, { viewerUserId: userId });
+      const asOf = typeof body.as_of === 'string' ? body.as_of : '';
+      if (!Number.isFinite(Date.parse(asOf))) return json({ success: false, error: 'as_of_required' }, 400);
+      const done = await markAcknowledgementNoticesRead(supabase, { viewerUserId: userId, asOf });
       if (!done.ok) return json({ success: false, error: 'acknowledgements_could_not_be_marked' }, 503);
       return json({ success: true });
     }

@@ -24,7 +24,7 @@ const left: string[] = [];
 const sent: Array<{ clientMessageId: string; body: string }> = [];
 const serverMarked: string[] = [];
 
-const markOnServer = () => { serverMarked.push('all'); };
+const markOnServer = (asOf: string) => { serverMarked.push(asOf); };
 vi.mock('@/lib/marketplaceBuilderStock', async () => {
   const actual = await vi.importActual<typeof import('@/lib/marketplaceBuilderStock')>('@/lib/marketplaceBuilderStock');
   return {
@@ -65,7 +65,11 @@ vi.mock('@/hooks/useBuilderStockMarketplaceFlag', () => ({ useBuilderStockMarket
 const markedRead: string[] = [];
 vi.mock('@/contexts/NotificationsContext', () => ({
   useNotificationsOptional: () => ({
-    notifications: [{ id: 'n1', read: false, type: 'builder_activation_acknowledged' }],
+    notifications: [
+      { id: 'n1', read: false, type: 'builder_activation_acknowledged', timestamp: new Date('2026-09-26T04:59:00.000Z') },
+      // Arrived after the list was read: it was not shown, so it stays unread.
+      { id: 'n2', read: false, type: 'builder_activation_acknowledged', timestamp: new Date('2026-09-26T05:01:00.000Z') },
+    ],
     markAsRead: (id: string) => { markedRead.push(id); },
   }),
 }));
@@ -100,7 +104,7 @@ beforeEach(() => {
   markedRead.length = 0;
   serverMarked.length = 0;
   flag.loading = false; flag.enabled = true;
-  state.activations = { activations: [ACTIVATION(), ACTIVATION({
+  state.activations = { as_of: '2026-09-26T05:00:00.000Z', activations: [ACTIVATION(), ACTIVATION({
     activation_key: 'k2', activated_by: 'Otto Other', acknowledged_by: null, acknowledged_at: null,
     status: 'awaiting_acknowledgement', conversation_id: null,
   })] };
@@ -226,7 +230,7 @@ describe('Messaging', () => {
     delete state.activationsError;
     renderAt('/admin/builder-portal/activated');
     // The server marks every acknowledgement of the reader's, beyond the bell's window; the bell's copy follows.
-    expect(serverMarked).toEqual(['all']);
+    expect(serverMarked).toEqual(['2026-09-26T05:00:00.000Z']);
     expect(markedRead).toEqual(['n1']);
   });
 

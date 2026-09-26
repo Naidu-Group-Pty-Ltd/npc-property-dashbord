@@ -91,20 +91,25 @@ function ActivatedProperties() {
   // clears only once a read made for THIS visit has succeeded and nothing is
   // still being fetched, so a newer acknowledgement is never cleared unseen.
   const listShown = query.isSuccess && query.isFetchedAfterMount && !query.isFetching;
-  // The server marks every one of the reader's acknowledgements read, including
-  // any older than the bell's fifty; the bell's own copies follow at once.
-  const markRead = useMarkActivationAcknowledgementsRead();
-  const { mutate: markAllRead } = markRead;
+  // Only what this list could show is marked read: the server's own read time
+  // is the cutoff, so an acknowledgement that arrived after it stays unread.
+  // The server marks every one up to it (older than the bell's fifty too); the
+  // bell's own copies follow at once.
+  const asOf = listShown ? query.data?.as_of ?? null : null;
+  const { mutate: markAllRead } = useMarkActivationAcknowledgementsRead();
   useEffect(() => {
-    if (!listShown) return;
-    markAllRead();
-  }, [listShown, markAllRead]);
+    if (asOf) markAllRead(asOf);
+  }, [asOf, markAllRead]);
   useEffect(() => {
-    if (!notifications || !listShown) return;
+    if (!notifications || !asOf) return;
+    const cutoff = Date.parse(asOf);
     for (const n of notifications.notifications) {
-      if (!n.read && n.type === 'builder_activation_acknowledged') notifications.markAsRead(n.id);
+      const at = n.timestamp instanceof Date ? n.timestamp.getTime() : Date.parse(String(n.timestamp));
+      if (!n.read && n.type === 'builder_activation_acknowledged' && Number.isFinite(at) && at <= cutoff) {
+        notifications.markAsRead(n.id);
+      }
     }
-  }, [notifications, listShown]);
+  }, [notifications, asOf]);
 
   if (query.isLoading) return <Skeleton className="h-32 w-full" />;
   if (query.error) {

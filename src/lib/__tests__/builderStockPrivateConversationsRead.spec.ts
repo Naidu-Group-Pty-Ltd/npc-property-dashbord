@@ -27,6 +27,7 @@ import {
   acknowledgementEmail, activationStatus, projectParticipants,
 } from '../../../supabase/functions/_shared/builderStock/privateConversations.pure';
 import { sendActivationAcknowledgedEmail } from '../../../supabase/functions/_shared/builderStock/acknowledgementEmailJob';
+import { OutboxDeferral, outboxFailureDisposition } from '../../../supabase/functions/_shared/outboxDeferral.pure';
 import {
   countUnreadAcknowledgementNotices, listActivatedProperties, listMyConversations, listPropertyConversations,
   markAcknowledgementNoticesRead, readParticipantConversation,
@@ -406,6 +407,7 @@ describe('the Builder Portal badge counts the server, not the bell\'s window', (
         select(_cols: string, opts?: { count?: string; head?: boolean }) { call.op = call.op || 'select'; call.head = !!opts?.head; return q; },
         update(values: unknown) { call.op = 'update'; call.values = values; return q; },
         eq(col: string, val: unknown) { call.filters.push(['eq', col, val]); return q; },
+        lte(col: string, val: unknown) { call.filters.push(['lte', col, val]); return q; },
         then(resolve: (v: unknown) => unknown) {
           return Promise.resolve(options.error
             ? { data: null, count: null, error: { message: 'x' } }
@@ -435,19 +437,61 @@ describe('the Builder Portal badge counts the server, not the bell\'s window', (
     expect(await countUnreadAcknowledgementNotices(db, { viewerUserId: 'viewer-1' })).toEqual({ ok: false });
   });
 
-  it('marking read reaches every unread acknowledgement of the viewer\'s, and nobody else\'s', async () => {
+  it('marking read reaches the viewer\'s unread acknowledgements up to the list the viewer was shown, and nobody else\'s', async () => {
+    const asOf = '2026-09-26T05:00:00.000Z';
     const { db, calls } = noticesDb();
-    expect(await markAcknowledgementNoticesRead(db, { viewerUserId: 'viewer-1' })).toEqual({ ok: true });
+    expect(await markAcknowledgementNoticesRead(db, { viewerUserId: 'viewer-1', asOf })).toEqual({ ok: true });
     expect(calls[0].op).toBe('update');
     expect(calls[0].values).toEqual({ read: true });
     scopedToViewer(calls[0].filters);
-    expect((await markAcknowledgementNoticesRead(noticesDb({ error: true }).db, { viewerUserId: 'viewer-1' })).ok).toBe(false);
+    // An acknowledgement that arrived after the list was read is left unread.
+    expect(calls[0].filters).toContainEqual(['lte', 'created_at', asOf]);
+    expect((await markAcknowledgementNoticesRead(noticesDb({ error: true }).db, { viewerUserId: 'viewer-1', asOf })).ok).toBe(false);
+  });
+
+  it('marking read without a readable cutoff marks nothing', async () => {
+    for (const asOf of ['', 'not a time', undefined as unknown as string]) {
+      const { db, calls } = noticesDb();
+      expect(await markAcknowledgementNoticesRead(db, { viewerUserId: 'viewer-1', asOf })).toEqual({ ok: false });
+      expect(calls).toHaveLength(0);
+    }
   });
 
   it('both are operations on the edge function, for the session\'s user only', () => {
     const code = readCode('supabase/functions/builder-stock-marketplace/index.ts');
     expect(code).toMatch(/'count_activation_acknowledgements'[\s\S]{0,300}countUnreadAcknowledgementNotices\(supabase, \{ viewerUserId: userId \}\)/);
-    expect(code).toMatch(/'mark_activation_acknowledgements_read'[\s\S]{0,300}markAcknowledgementNoticesRead\(supabase, \{ viewerUserId: userId \}\)/);
+    expect(code).toMatch(/'mark_activation_acknowledgements_read'[\s\S]{0,400}markAcknowledgementNoticesRead\(supabase, \{ viewerUserId: userId, asOf \}\)/);
+    // The list says when it was read, and that time is taken before the read.
+    expect(code).toMatch(/'list_builder_portal_activations'[\s\S]{0,200}const asOf = new Date\(\)\.toISOString\(\);[\s\S]{0,200}listActivatedProperties[\s\S]{0,300}as_of: asOf/);
+  });
+});
+
+describe('a deferred outbox job does not spend its retry budget', () => {
+  const now = Date.parse('2026-09-26T05:00:00.000Z');
+
+  it('a deferral is never terminal, even on the last attempt, and waits until the time it names', () => {
+    const d = outboxFailureDisposition(new OutboxDeferral('acknowledgement_email_in_progress', '2026-09-26T05:10:00.000Z'), 10, now);
+    expect(d).toEqual({ terminal: false, availableAt: '2026-09-26T05:10:00.000Z', deferred: true });
+    expect(outboxFailureDisposition(new OutboxDeferral('x', '2026-09-26T05:10:00.000Z'), 25, now).terminal).toBe(false);
+  });
+
+  it('a deferral naming no usable time waits a minute rather than spinning', () => {
+    expect(outboxFailureDisposition(new OutboxDeferral('x', 'not a time'), 3, now).availableAt).toBe('2026-09-26T05:01:00.000Z');
+    expect(outboxFailureDisposition(new OutboxDeferral('x', '2026-09-26T04:00:00.000Z'), 3, now).availableAt).toBe('2026-09-26T05:01:00.000Z');
+  });
+
+  it('an ordinary failure keeps the existing backoff and is terminal at the tenth attempt', () => {
+    expect(outboxFailureDisposition(new Error('down'), 3, now)).toEqual({
+      terminal: false, availableAt: new Date(now + 8_000).toISOString(), deferred: false,
+    });
+    expect(outboxFailureDisposition(new Error('down'), 10, now).terminal).toBe(true);
+    expect(outboxFailureDisposition(new Error('down'), 12, now).availableAt).toBe(new Date(now + 3_600_000).toISOString());
+  });
+
+  it('the cross-portal worker decides every failure through it', () => {
+    const worker = readCode('supabase/functions/cross-portal-outbox-worker/index.ts');
+    expect(worker).toMatch(/outboxFailureDisposition\(error,\s*event\.attempts,\s*Date\.now\(\)\)/);
+    expect(worker).not.toMatch(/const terminal=event\.attempts>=10;/);
   });
 });
 
@@ -528,7 +572,7 @@ describe('the acknowledgement email job: once, on a lease, never finalised befor
         if (notice.outcome !== 'notified') return { data: { state: 'not_owed' }, error: null };
         if (notice.email_sent_at) return { data: { state: 'sent' }, error: null };
         if (notice.token && notice.claimed_at !== null && state.clock - notice.claimed_at < args._lease_seconds) {
-          return { data: { state: 'held' }, error: null };
+          return { data: { state: 'held', until: '2026-09-26T05:10:00.000Z' }, error: null };
         }
         notice.token = `token-${++state.seq}`; notice.claimed_at = state.clock;
         return { data: { state: 'claimed', token: notice.token }, error: null };
@@ -573,11 +617,14 @@ describe('the acknowledgement email job: once, on a lease, never finalised befor
     expect(sent).toHaveLength(0);
   });
 
-  it('a claim another worker holds is not taken as done: it throws, and the outbox asks again later', async () => {
+  it('a claim another worker holds is not taken as done: it defers the job until the lease runs out', async () => {
     const { db, notice } = jobDb();
     notice.token = 'someone-else'; notice.claimed_at = 0;
     const sent: any[] = [];
-    await expect(sendActivationAcknowledgedEmail(db, event, ok(sent))).rejects.toThrow(/in_progress/);
+    const failure = await sendActivationAcknowledgedEmail(db, event, ok(sent)).then(() => null, (e) => e);
+    expect(failure).toBeInstanceOf(OutboxDeferral);
+    expect(failure.message).toMatch(/in_progress/);
+    expect(failure.retryAt).toBe('2026-09-26T05:10:00.000Z');
     expect(sent).toHaveLength(0);
   });
 

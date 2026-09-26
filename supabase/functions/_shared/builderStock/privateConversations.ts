@@ -285,14 +285,21 @@ export async function countUnreadAcknowledgementNotices(
   return { ok: true, count };
 }
 
-/** Seeing Activated Properties is seeing the acknowledgements: every one of the viewer's is marked read. */
+/**
+ * Seeing Activated Properties is seeing the acknowledgements — the ones that
+ * list could have shown. `asOf` is the server's time taken before that list
+ * was read; an acknowledgement created after it was not on the screen and
+ * stays unread. Without a readable cutoff nothing is marked.
+ */
 export async function markAcknowledgementNoticesRead(
-  supabase: Client, args: { viewerUserId: string },
+  supabase: Client, args: { viewerUserId: string; asOf: string },
 ): Promise<{ ok: boolean }> {
+  if (typeof args.asOf !== 'string' || !Number.isFinite(Date.parse(args.asOf))) return { ok: false };
   const { error } = await supabase.from('notifications')
     .update({ read: true })
     .eq('target_user_id', args.viewerUserId)
     .eq('type', ACKNOWLEDGEMENT_NOTICE)
-    .eq('read', false);
+    .eq('read', false)
+    .lte('created_at', new Date(Date.parse(args.asOf)).toISOString());
   return { ok: !error };
 }

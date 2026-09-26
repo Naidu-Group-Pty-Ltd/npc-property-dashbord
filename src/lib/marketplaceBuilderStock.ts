@@ -334,7 +334,7 @@ export function useBuilderPortalActivations(enabled = true) {
   return useQuery({
     queryKey: activationsKey(reader),
     enabled,
-    queryFn: () => invoke<{ activations: ActivatedPropertyRow[] }>({ operation: 'list_builder_portal_activations' }),
+    queryFn: () => invoke<{ activations: ActivatedPropertyRow[]; as_of?: string }>({ operation: 'list_builder_portal_activations' }),
     refetchInterval: listRefetchInterval(60_000),
     refetchIntervalInBackground: false,
     retry: retryUnlessAccessLost,
@@ -358,12 +358,16 @@ export function useActivationAcknowledgementCount(enabled = true) {
   });
 }
 
-/** Seeing Activated Properties is seeing the acknowledgements: all of the reader's are marked read. */
+/**
+ * Seeing Activated Properties is seeing the acknowledgements it listed. `asOf`
+ * is the list's own read time from the server, so one that arrived after the
+ * list was read stays unread.
+ */
 export function useMarkActivationAcknowledgementsRead() {
   const reader = useAuthUserIdOptional();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => invoke<{ success: boolean }>({ operation: 'mark_activation_acknowledgements_read' }),
+    mutationFn: (asOf: string) => invoke<{ success: boolean }>({ operation: 'mark_activation_acknowledgements_read', as_of: asOf }),
     onSettled: () => queryClient.invalidateQueries({ queryKey: acknowledgementCountKey(reader) }),
   });
 }

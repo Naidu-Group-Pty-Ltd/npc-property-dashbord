@@ -94,7 +94,10 @@ CREATE INDEX IF NOT EXISTS builder_network_participants_user_idx
 -- that makes the notification and the email happen once.
 CREATE TABLE IF NOT EXISTS public.builder_network_acknowledgement_notices (
   selection_id uuid PRIMARY KEY,
-  outcome text NOT NULL CHECK (outcome IN ('notified', 'historical')),
+  -- `awaiting_activator`: acknowledged while the activating user was inactive
+  -- or removed. The conversation exists and nobody is added in their place;
+  -- it completes (joined, notified, emailed) if that user becomes active.
+  outcome text NOT NULL CHECK (outcome IN ('notified', 'historical', 'awaiting_activator')),
   conversation_id uuid,
   inbound_event_id uuid,
   email_sent_at timestamptz,
@@ -585,7 +588,8 @@ BEGIN
      AND s.acknowledged_at IS NOT NULL AND s.status <> 'withdrawn'
    FOR UPDATE;
   IF v_s.id IS NULL OR v_conn.id IS NULL THEN RETURN 'skipped'; END IF;
-  IF EXISTS (SELECT 1 FROM public.builder_network_acknowledgement_notices n WHERE n.selection_id = v_s.id) THEN
+  IF EXISTS (SELECT 1 FROM public.builder_network_acknowledgement_notices n
+              WHERE n.selection_id = v_s.id AND n.outcome <> 'awaiting_activator') THEN
     RETURN 'already';
   END IF;
 
@@ -609,10 +613,20 @@ BEGIN
     ON CONFLICT (id) DO UPDATE SET selection_ref = COALESCE(public.builder_network_conversations.selection_ref, EXCLUDED.selection_ref);
   END IF;
 
-  v_activator := public.builder_network_user_display_name(v_s.selected_by_user_id);
-  IF v_activator IS NOT NULL THEN
-    PERFORM public.builder_network_join_local(v_conversation, v_s.selected_by_user_id, v_activator);
+  -- The activator is the Command Centre's one initial participant, and
+  -- nobody is ever added in their place. An activator who is inactive or
+  -- removed is not joined, notified or emailed: the acknowledgement is
+  -- recorded as awaiting them, and the sweep completes it if they return.
+  IF NOT EXISTS (SELECT 1 FROM public.custom_users u
+                  WHERE u.id = v_s.selected_by_user_id AND u.is_active = true AND u.deleted_at IS NULL) THEN
+    INSERT INTO public.builder_network_acknowledgement_notices(selection_id, outcome, conversation_id, inbound_event_id)
+    VALUES (v_s.id, 'awaiting_activator', v_conversation, v_event.id)
+    ON CONFLICT (selection_id) DO NOTHING;
+    RETURN 'awaiting_activator';
   END IF;
+  -- An active user with no name on record still joins, under a neutral one.
+  v_activator := COALESCE(public.builder_network_user_display_name(v_s.selected_by_user_id), 'Command Centre user');
+  PERFORM public.builder_network_join_local(v_conversation, v_s.selected_by_user_id, v_activator);
 
   SELECT COALESCE(nullif(btrim(o.trading_name), ''), o.legal_name) INTO v_builder
     FROM public.builder_network_stock_organisations o WHERE o.id = v_s.organisation_id;
@@ -623,7 +637,7 @@ BEGIN
 
   -- The bell and the badge: one notification, for the activator only, naming
   -- the builder company, the property and who acknowledged it. No client.
-  IF v_activator IS NOT NULL THEN
+  BEGIN
     INSERT INTO public.notifications(type, title, message, link, target_user_id, entity_id, metadata)
     VALUES ('builder_activation_acknowledged',
             'Activation acknowledged by ' || v_builder,
@@ -637,10 +651,13 @@ BEGIN
     PERFORM public.enqueue_integration_event('builder_stock_selection', v_s.id,
       'builder_activation_acknowledged', 1, jsonb_build_object('selection_id', v_s.id),
       'builder_activation_acknowledged:' || v_s.id, NULL);
-  END IF;
+  END;
 
   INSERT INTO public.builder_network_acknowledgement_notices(selection_id, outcome, conversation_id, inbound_event_id)
-  VALUES (v_s.id, 'notified', v_conversation, v_event.id);
+  VALUES (v_s.id, 'notified', v_conversation, v_event.id)
+  ON CONFLICT (selection_id) DO UPDATE
+    SET outcome = 'notified', inbound_event_id = EXCLUDED.inbound_event_id
+    WHERE public.builder_network_acknowledgement_notices.outcome = 'awaiting_activator';
   PERFORM public.builder_network_kick_outbox();
   RETURN 'notified';
 END
@@ -666,7 +683,14 @@ BEGIN
      WHERE e.event_type = 'stock.selection.acknowledged'
        AND e.processed_at IS NOT NULL AND e.apply_error IS NULL
        AND s.acknowledged_at IS NOT NULL AND s.status <> 'withdrawn'
-       AND NOT EXISTS (SELECT 1 FROM public.builder_network_acknowledgement_notices n WHERE n.selection_id = s.id)
+       AND (
+         NOT EXISTS (SELECT 1 FROM public.builder_network_acknowledgement_notices n WHERE n.selection_id = s.id)
+         -- One awaiting its activator is retried only once that user is
+         -- active again, so a departed user's never crowds out new work.
+         OR EXISTS (SELECT 1 FROM public.builder_network_acknowledgement_notices n
+                     JOIN public.custom_users u ON u.id = s.selected_by_user_id
+                    WHERE n.selection_id = s.id AND n.outcome = 'awaiting_activator'
+                      AND u.is_active = true AND u.deleted_at IS NULL))
      ORDER BY e.received_at
      LIMIT greatest(1, least(_limit, 200))
   LOOP
@@ -1319,7 +1343,8 @@ BEGIN
   END IF;
   IF v_n.email_claim_token IS NOT NULL
      AND v_n.email_claimed_at > now() - make_interval(secs => greatest(coalesce(_lease_seconds, 0), 0)) THEN
-    RETURN jsonb_build_object('state', 'held');
+    RETURN jsonb_build_object('state', 'held',
+      'until', v_n.email_claimed_at + make_interval(secs => greatest(coalesce(_lease_seconds, 0), 0)));
   END IF;
   v_token := gen_random_uuid();
   UPDATE public.builder_network_acknowledgement_notices

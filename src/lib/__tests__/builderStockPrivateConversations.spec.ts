@@ -579,6 +579,65 @@ describe.skipIf(!runs)('one activation, one private conversation (Command Centre
     });
   });
 
+  describe('an acknowledgement whose activator is unavailable waits for them, and nobody else is added', () => {
+    const AWAY = randomUUID(); const NAMELESS = randomUUID();
+    let S_AWAY = ''; let S_NAMELESS = ''; let C_AWAY = ''; let C_NAMELESS = '';
+    const outcome = (selection: string) => db.sql(`SELECT coalesce(string_agg(outcome, ','), '')
+      FROM public.builder_network_acknowledgement_notices WHERE selection_id = ${lit(selection)}`);
+
+    beforeAll(() => {
+      db.sql(`INSERT INTO public.custom_users(id, username, email, first_name, last_name, is_active)
+              VALUES (${lit(AWAY)}, 'away', 'away@example.test', 'Ada', 'Away', false),
+                     (${lit(NAMELESS)}, NULL, 'nameless@example.test', NULL, NULL, true)`);
+      const client = () => db.sql(`INSERT INTO public.clients(primary_first_name, primary_surname) VALUES ('Away', 'Client') RETURNING id`);
+      S_AWAY = db.sql(`INSERT INTO public.builder_stock_selections(stock_item_id, organisation_id, client_id, selected_by_user_id, status)
+                       VALUES (${lit(ITEM)}, ${lit(ORG_A)}, ${lit(client())}, ${lit(AWAY)}, 'selected') RETURNING id`);
+      S_NAMELESS = db.sql(`INSERT INTO public.builder_stock_selections(stock_item_id, organisation_id, client_id, selected_by_user_id, status)
+                           VALUES (${lit(ITEM)}, ${lit(ORG_A)}, ${lit(client())}, ${lit(NAMELESS)}, 'selected') RETURNING id`);
+      C_AWAY = activationConversationId(NET_A, S_AWAY);
+      C_NAMELESS = activationConversationId(NET_A, S_NAMELESS);
+    });
+
+    it('an inactive activator is not joined, notified or emailed, and the acknowledgement is not recorded as notified', () => {
+      acknowledge(CONN_A, S_AWAY, ITEM);
+      expect(count(`public.builder_network_conversations WHERE id = ${lit(C_AWAY)}`)).toBe('1');
+      expect(members(C_AWAY)).toBe('');
+      expect(notifications(AWAY)).toBe('0');
+      expect(emails(S_AWAY)).toBe('0');
+      expect(outcome(S_AWAY)).toBe('awaiting_activator');
+    });
+
+    it('a replay while they are still unavailable changes nothing', () => {
+      acknowledge(CONN_A, S_AWAY, ITEM);
+      db.sql('SELECT public.builder_network_process_acknowledgements(50)');
+      expect(members(C_AWAY)).toBe('');
+      expect(notifications(AWAY)).toBe('0');
+      expect(emails(S_AWAY)).toBe('0');
+      expect(outcome(S_AWAY)).toBe('awaiting_activator');
+    });
+
+    it('once the activator is active again the sweep completes it: joined, notified and emailed once', () => {
+      db.sql(`UPDATE public.custom_users SET is_active = true WHERE id = ${lit(AWAY)}`);
+      db.sql('SELECT public.builder_network_process_acknowledgements(50)');
+      expect(members(C_AWAY)).toBe('command_centre:Ada Away:joined');
+      expect(notifications(AWAY)).toBe('1');
+      expect(emails(S_AWAY)).toBe('1');
+      expect(outcome(S_AWAY)).toBe('notified');
+      db.sql('SELECT public.builder_network_process_acknowledgements(50)');
+      acknowledge(CONN_A, S_AWAY, ITEM);
+      expect(notifications(AWAY)).toBe('1');
+      expect(emails(S_AWAY)).toBe('1');
+    });
+
+    it('an active activator with no name on record still joins, under a neutral name', () => {
+      acknowledge(CONN_A, S_NAMELESS, ITEM);
+      expect(members(C_NAMELESS)).toBe('command_centre:Command Centre user:joined');
+      expect(isParticipant(C_NAMELESS, NAMELESS)).toBe('t');
+      expect(notifications(NAMELESS)).toBe('1');
+      expect(outcome(S_NAMELESS)).toBe('notified');
+    });
+  });
+
   describe('the acknowledgement email is leased, never finalised before it is sent', () => {
     const SEL = randomUUID();
     const claim = (lease: number) => JSON.parse(db.sql(
@@ -596,7 +655,10 @@ describe.skipIf(!runs)('one activation, one private conversation (Command Centre
       const first = claim(600);
       expect(first.state).toBe('claimed');
       expect(first.token).toMatch(/^[0-9a-f-]{36}$/);
-      expect(claim(600).state).toBe('held');
+      const held = claim(600);
+      expect(held.state).toBe('held');
+      // It names when the lease ends, so the outbox can defer until then.
+      expect(Date.parse(held.until) - Date.now()).toBeGreaterThan(590_000);
       expect(sentAt()).toBe('');
     });
 

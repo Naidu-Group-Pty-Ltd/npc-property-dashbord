@@ -159,6 +159,13 @@ connection's own builder, one idempotent step
    cross-portal worker sends it through the workspace's own email identity,
    retrying with the outbox's backoff.
 
+If the activator is inactive or removed when the builder acknowledges,
+nobody is added in their place: the conversation is created, the activator
+is not joined, notified or emailed, and the acknowledgement is recorded as
+`awaiting_activator`. The acknowledgement sweep completes it (joined,
+notified, emailed, once) if that user becomes active again. An active
+activator with no name on record joins as "Command Centre user".
+
 Steps 5 and 6 happen only the first time. Their anchor is a row keyed by the
 activation, so a replayed or reordered acknowledgement adds nothing. An email
 that cannot be sent is retried, and after the outbox's limit dead-lettered.
@@ -170,7 +177,9 @@ out after ten minutes), sends it, and records it as sent
 (`builder_network_settle_acknowledgement_email`) only while it still holds
 that token. A claim another worker holds is retried later rather than taken
 as done; a worker that dies mid-send leaves a lease that runs out, so a later
-retry sends it; and every attempt carries the same provider idempotency key
+retry sends it (a held lease DEFERS the outbox job until the lease ends,
+which never spends the outbox's retry budget or dead-letters,
+`outboxDeferral.pure.ts`); and every attempt carries the same provider idempotency key
 (`builder-activation-acknowledged/<selection id>`), so a send whose record was
 lost is not delivered twice.
 
@@ -215,7 +224,10 @@ It is a dry run unless `apply` is true, and it reads both projects:
   acknowledgements (`count_activation_acknowledgements`). It is not counted
   from the bell, which holds only its newest fifty notifications. Opening
   Activated Properties, once the list has been read for that visit, marks
-  every one of them read (`mark_activation_acknowledgements_read`).
+  read every one created up to the time that list was read — the server's
+  own `as_of`, taken before the read (`mark_activation_acknowledgements_read`).
+  One that arrived after the list was read was never on the screen and stays
+  unread.
 - Every private read in the browser is cached under the signed-in user's id.
   The app's one query cache outlives a sign-out, so a key without the reader
   would show the next person on the same browser the previous person's
