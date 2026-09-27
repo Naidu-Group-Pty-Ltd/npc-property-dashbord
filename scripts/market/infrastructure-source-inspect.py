@@ -18,39 +18,52 @@ import html, json, re, sys, time, urllib.parse, urllib.request, urllib.error
 
 UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36'
 
+# Round 2 (27 Sep 2026). Round 1 read the NSW pages for the projects near
+# 37 Bolin Street, Tallawong, and found the federal iPAMS layers in the
+# Department of Infrastructure's catalogue; this round reads what those layers
+# hold and whether they answer a question asked by LOCATION. Round 1's lists
+# are in this file's history.
+TALLAWONG = (-33.6903115, 150.8816157)  # Nominatim, round 1: 37 Bolin Street
+IPAMS = 'https://spatial.infrastructure.gov.au/server/rest/services/iPAMS-DB'
+def near(layer, km=15):
+  lat, lon = TALLAWONG
+  q = urllib.parse.urlencode({
+    'geometry': f'{lon},{lat}', 'geometryType': 'esriGeometryPoint', 'inSR': '4326',
+    'spatialRel': 'esriSpatialRelIntersects', 'distance': str(km * 1000), 'units': 'esriSRUnit_Meter',
+    'outFields': '*', 'returnGeometry': 'true', 'outSR': '4326', 'resultRecordCount': '60', 'f': 'json',
+  })
+  return f'{IPAMS}/{layer}/MapServer/0/query?{q}'
+
 PAGES = [
-  'https://www.nsw.gov.au/departments-and-agencies/health-infrastructure/news/construction-starts-for-new-rouse-hill-hospital',
-  'https://www.nsw.gov.au/departments-and-agencies/health-infrastructure/news/rouse-hill-hospital-construction-works-notices',
-  'https://www.nsw.gov.au/ministerial-releases/new-rouse-hill-hospital-moves-from-planning-to-delivery',
-  'https://www.nsw.gov.au/ministerial-releases/construction-underway-under-minns-labor-government-on-long-promised-rouse-hill-hospital',
+  # The project page's own map link carries its coordinate.
   'https://www.rousehillhospital.health.nsw.gov.au/',
-  'https://www.schoolinfrastructure.nsw.gov.au/projects/new-schools/new-high-school-for-schofields-and-tallawong.html',
-  'https://www.nsw.gov.au/ministerial-releases/construction-officially-underway-on-first-new-high-school-tallawong',
-  'https://www.schoolinfrastructure.nsw.gov.au/projects/new-schools/new-primary-and-high-school-in-box-hill-terry-road.html',
-  'https://www.transport.nsw.gov.au/projects/current-projects/richmond-road-upgrade-between-m7-motorway-and-townson-road-marsden-park',
-  'https://www.nsw.gov.au/ministerial-releases/major-construction-begins-on-720-million-richmond-road-upgrade',
-  'https://www.transport.nsw.gov.au/projects/current-projects/north-west-sydney',
 ]
 
 REGISTERS = [
-  'https://spatial.infrastructure.gov.au/portal/sharing/rest/content/items/25824e38421a4385a74a6937f6610988/data?f=json',
-  'https://spatial.infrastructure.gov.au/portal/sharing/rest/content/items/25824e38421a4385a74a6937f6610988?f=json',
-  'https://spatial.infrastructure.gov.au/server/rest/services?f=json',
-  'https://catalogue.data.infrastructure.gov.au/api/3/action/package_search?q=infrastructure%20investment&rows=40',
-  'https://data.gov.au/data/api/3/action/package_search?q=infrastructure%20investment%20program&rows=20',
-  'https://data.nsw.gov.au/data/api/3/action/package_search?q=major%20projects&rows=25',
-  'https://data.nsw.gov.au/data/api/3/action/package_search?q=infrastructure%20pipeline&rows=25',
-  'https://www.planningportal.nsw.gov.au/major-projects/projects?lga=Blacktown',
-  'https://investment.infrastructure.gov.au/projects',
+  f'{IPAMS}?f=json',
+  f'{IPAMS}/AuslinkGIS_Derived_Point_web/MapServer/0?f=json',
+  f'{IPAMS}/AuslinkGIS_Point_web/MapServer/0?f=json',
+  f'{IPAMS}/AuslinkGIS_Line_web/MapServer/0?f=json',
+  f'{IPAMS}/AuslinkGIS_Poly_web/MapServer/0?f=json',
+  f'{IPAMS}/AuslinkGIS_Derived_Point_web/MapServer/0/query?where=1%3D1&returnCountOnly=true&f=json',
+  f'{IPAMS}/AuslinkGIS_Point_web/MapServer/0/query?where=1%3D1&returnCountOnly=true&f=json',
+  f'{IPAMS}/AuslinkGIS_Line_web/MapServer/0/query?where=1%3D1&returnCountOnly=true&f=json',
+  near('AuslinkGIS_Derived_Point_web'),
+  near('AuslinkGIS_Point_web'),
+  near('AuslinkGIS_Line_web'),
+  near('AuslinkGIS_Poly_web'),
+  'https://spatial.infrastructure.gov.au/portal/sharing/rest/content/items/b14670d2f1654a029a8da30288694adc/data?f=json',
+  'https://data.nsw.gov.au/data/api/3/action/package_search?q=infrastructure%20statement&rows=15',
+  'https://data.nsw.gov.au/data/api/3/action/package_search?q=school%20infrastructure&rows=15',
+  'https://data.nsw.gov.au/data/api/3/action/package_search?q=health%20infrastructure%20projects&rows=15',
+  'https://data.gov.au/data/api/3/action/package_search?q=capital%20works%20program%20location&rows=20',
 ]
 
 GEOCODE = [
-  'Rouse Hill Hospital, Commercial Road, Rouse Hill NSW',
-  'corner Commercial Road and Windsor Road, Rouse Hill NSW 2155',
-  '201 Guntawong Road, Tallawong NSW 2762',
-  'Terry Road, Box Hill NSW 2765',
-  'Richmond Road, Marsden Park NSW 2765',
-  '37 Bolin Street, Tallawong NSW 2762',
+  'Rouse Hill Hospital',
+  'Commercial Road, Rouse Hill NSW 2155',
+  'Tallawong Station, Tallawong NSW',
+  'Schofields Park, Schofields NSW',
 ]
 
 
@@ -93,7 +106,10 @@ for url in PAGES:
   text = readable(body)
   i = text.find('Rouse Hill') if 'Rouse Hill' in text else 0
   # The article body sits after the site chrome; print a generous window.
-  print(text[:9000])
+  print(text[:1500])
+  raw = body.decode('utf-8', 'replace')
+  print('  map links:', sorted(set(re.findall(r'href="([^"]*(?:maps\.google|google\.com/maps|maps\.apple|openstreetmap|/maps\?|[-]3[0-9]\.[0-9]{3,}[^"]*)[^"]*)"', raw)))[:20])
+  print('  coordinates in page:', sorted(set(re.findall(r'-3[0-9]\.[0-9]{4,},\s*1[45][0-9]\.[0-9]{4,}', raw)))[:20])
 
 print('\n' + '=' * 100)
 print('REGISTERS')
@@ -119,7 +135,7 @@ for url in REGISTERS:
       urls = sorted(set(re.findall(r'https?://[^"\\ ]+(?:FeatureServer|MapServer)[^"\\ ]*', s)))
       print('  service urls:', urls[:40])
       print('  keys:', list(data.keys())[:40] if isinstance(data, dict) else type(data))
-      print('  head:', s[:3000])
+      print('  head:', s[:12000])
   else:
     text = readable(body)
     print(text[:6000])
