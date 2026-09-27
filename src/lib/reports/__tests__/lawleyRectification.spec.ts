@@ -390,6 +390,9 @@ describe('the exit outlook describes only what it draws (page 19 introduced a pr
     const exit = composeExitOutlook(lawleyStrategy(), 'Resale Liquidity & Exit Outlook');
     expect(exit).not.toContain('What the position looks like at a future year');
     expect(exit).toContain('None of the sources checked for this report holds days on market, time to sell or buyer depth');
+    // One thing was introduced, so it is not "neither".
+    expect(exit).toContain('It does not answer *how easily this sells*');
+    expect(exit).not.toContain('Neither answers');
   });
 });
 

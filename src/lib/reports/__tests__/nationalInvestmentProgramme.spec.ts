@@ -8,6 +8,7 @@
  * stand-in placed where each project runs.
  */
 import { describe, expect, it } from 'vitest';
+import { registerHeaderKey } from '../../../../supabase/functions/_shared/reports/investment/registerTables.pure';
 
 import {
   IPAMS_LAYERS,
@@ -184,6 +185,13 @@ describe('the outlook a client reads (37 Bolin Street, Tallawong)', () => {
   };
   const evidence = buildInfrastructureEvidence({ planningData });
   const page = renderInfrastructureOutlook(evidence);
+
+  it('draws no date column where no entry carries a date, so no copy of it can say a project is undated', () => {
+    const header = page.split('\n').find((l) => l.startsWith('| Reference |')) ?? '';
+    expect(header).toBe('| Reference | Project or instrument | Type | Status | Where | Stated cost | Funding | Delivery timing |');
+    expect(page).not.toContain('No date stated');
+    expect(registerHeaderKey(header)).not.toBeNull();
+  });
 
   it('names the Richmond Road upgrade with its status, cost, federal share and expected dates', () => {
     expect(page).toContain('Richmond Road Upgrade, M7 Motorway to Townson Road');

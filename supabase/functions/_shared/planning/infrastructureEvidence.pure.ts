@@ -938,7 +938,7 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
       });
     }
   } else if (act) {
-    note('development applications', act, uncheckedSentence('Development applications', 'The council’s own application tracker shows activity near the property.'));
+    note('development applications', act, uncheckedSentence('Development applications', 'The council’s own application tracker lists any applications near the property.'));
   }
 
   /*
@@ -1294,13 +1294,27 @@ export function renderInfrastructureOutlook(evidence: InfrastructureEvidence): s
     // nothing in it could be looked up. Funding and timing get columns of
     // their own precisely BECAUSE no register read here publishes either:
     // an absence stated in a footnote is an absence most readers never see.
-    lines.push('| Reference | Project or instrument | Type | Status | Date recorded | Where | Stated cost | Funding | Delivery timing |');
-    lines.push('|---|---|---|---|---|---|---|---|---|');
+    // The date column is drawn only where some entry carries a date. On a
+    // table of national programme entries alone (the 37 Bolin Street Compass,
+    // 27 Sep 2026) every cell read "No date stated" beside a delivery column
+    // that states the Department's own expected start and end — and the
+    // writer, handed the table, copied that column into a table of its own
+    // headed "Recorded milestone", saying no project had a date.
+    const dated = evidence.items.some((i) => i.date);
+    // Two literal pushes each, so `aRegisterIsPrintedOnce.spec.ts` can read
+    // both spellings of the header this module draws.
+    if (dated) {
+      lines.push('| Reference | Project or instrument | Type | Status | Date recorded | Where | Stated cost | Funding | Delivery timing |');
+      lines.push('|---|---|---|---|---|---|---|---|---|');
+    } else {
+      lines.push('| Reference | Project or instrument | Type | Status | Where | Stated cost | Funding | Delivery timing |');
+      lines.push('|---|---|---|---|---|---|---|---|');
+    }
     for (const i of evidence.items) {
       const when = i.date ? `${i.dateLabel ?? 'Recorded'} ${auDate(i.date)}` : 'No date stated';
       const where = i.address ?? i.where ?? '—';
       lines.push(
-        `| ${i.reference ?? '—'} | ${i.name} | ${kindCell(i)} | ${statusCell(i)} | ${when} | ${where} | `
+        `| ${i.reference ?? '—'} | ${i.name} | ${kindCell(i)} | ${statusCell(i)} | ${dated ? `${when} | ` : ''}${where} | `
         + `${costCell(i)} | ${fundingCell(i)} | `
         + `${i.statedDelivery ?? 'Not published'} |`,
       );

@@ -352,7 +352,7 @@ const ZONE_UNCONFIRMED = 'The zone has not been confirmed for this report. A zon
 
 /** Where the development-application register could not be checked at all. */
 const DA_UNCHECKED = uncheckedSentence('Development applications',
-  'The council\u2019s own application tracker shows activity near the property.');
+  'The council\u2019s own application tracker lists any applications near the property.');
 
 /**
  * Where the land use table was asked for and the request failed. The block
