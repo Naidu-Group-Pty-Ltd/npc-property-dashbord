@@ -448,6 +448,28 @@ export interface ForkDocuments {
  * the recorded chapters are composed only when the Financial report is being
  * produced, because they are what replaces routed prose about the same money.
  */
+/**
+ * The lens line is said once: on the first section that carries it.
+ *
+ * Every lens-routed section used to open with it, so the 37 Bolin Street Due
+ * Diligence report printed the same two sentences under seven headings — a
+ * statement about the whole document, repeated as though each section needed
+ * telling. It is a property of the document, so it stands where the document
+ * first reads that way and nowhere after. Matched on the text itself, because
+ * an operator's `report_engine_config` overlay may reword it.
+ */
+export function lensOnce<T extends { ordinal: number; body: string }>(sections: T[], lens: string): T[] {
+  const line = lens.trim();
+  if (!line) return sections;
+  let seen = false;
+  return [...sections].sort((a, b) => a.ordinal - b.ordinal).map((s) => {
+    const body = s.body.trimStart();
+    if (!body.startsWith(line)) return s;
+    if (!seen) { seen = true; return s; }
+    return { ...s, body: body.slice(line.length).trimStart() };
+  });
+}
+
 export function composeForkDocuments(input: {
   registry: LoadedSplitRegistry;
   parentContent: string;
@@ -619,6 +641,9 @@ export function composeForkDocuments(input: {
     : [];
 
   const mergedDueDiligence = mergeComposedChapters(dueDiligenceSections, dueDiligenceComposed);
+
+  mergedFinancial.sections = lensOnce(mergedFinancial.sections, input.registry.finLensPreamble);
+  mergedDueDiligence.sections = lensOnce(mergedDueDiligence.sections, input.registry.plddLensPreamble);
 
   const financial = finaliseVariantMarkdown(
     renderVariantMarkdown(input.registry, 'financial', input.propertyAddress, mergedFinancial.sections, generatedOn),

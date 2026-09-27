@@ -609,3 +609,25 @@ describe('the Financial report opens on the money, not a third copy of the locat
     expect(md).not.toMatch(/Financial Analysis Report's own ledger/);
   });
 });
+
+describe('the lens line is said once, as a statement about the document', () => {
+  it('opens the first lens section of the Due Diligence document and no other', async () => {
+    const out = await compose({ strategy: strategyRecord() });
+    const md = out.dueDiligence.markdown;
+    const lens = /This report reads the property and its locality/g;
+    expect((md.match(lens) ?? []).length).toBe(1);
+    expect(md).not.toMatch(/Reading this through a/);
+    expect(md).not.toMatch(/focus on liveability/);
+  });
+
+  it('keeps an operator\'s reworded lens once too', async () => {
+    const { lensOnce } = await import('../../../../supabase/functions/_shared/reports/investment/forkSplit.pure');
+    const lens = '_Custom lens._';
+    const out = lensOnce([
+      { ordinal: 4, body: `${lens}\n\nFour.` },
+      { ordinal: 3, body: `${lens}\n\nThree.` },
+      { ordinal: 5, body: 'Five.' },
+    ], lens);
+    expect(out.map((s) => s.body)).toEqual([`${lens}\n\nThree.`, 'Four.', 'Five.']);
+  });
+});
