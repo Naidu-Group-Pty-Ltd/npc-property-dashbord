@@ -1,4 +1,4 @@
--- @effect: select 1 from public.template_master_refresh_repairs where repair = '20261226090000_refresh_masters_whose_refresh_ran_before_its_seed'
+-- @effect: select 1 from public.template_master_refresh_repairs where repair = '20261226100000_refresh_masters_whose_refresh_ran_before_its_seed'
 -- The line above is this file's own statement of what is true once it has
 -- run: one row per database, written whether or not there was anything to
 -- repair, so the drift report can tell "ran and found nothing" from "never
@@ -273,7 +273,7 @@ insert into public.template_master_refresh_decisions
   (template_id, release, entry_id, verdict, differing_keys)
 select
   c.template_id,
-  '20261226090000_refresh_masters_whose_refresh_ran_before_its_seed',
+  '20261226100000_refresh_masters_whose_refresh_ran_before_its_seed',
   c.entry_id,
   c.verdict,
   c.differing_keys
@@ -285,7 +285,7 @@ insert into public.report_template_refresh_snapshots
   (template_id, migration, schema, config, differing_keys)
 select
   c.template_id,
-  '20261226090000_refresh_masters_whose_refresh_ran_before_its_seed',
+  '20261226100000_refresh_masters_whose_refresh_ran_before_its_seed',
   c.row_schema,
   c.row_config,
   c.differing_keys
@@ -323,7 +323,7 @@ where t.id = c.template_id
 insert into public.template_master_refresh_repairs
   (repair, early_refreshes, examined, refreshed, already_current, deferred_customised)
 select
-  '20261226090000_refresh_masters_whose_refresh_ran_before_its_seed',
+  '20261226100000_refresh_masters_whose_refresh_ran_before_its_seed',
   coalesce(
     (select array_agg(x.refresh_migration order by x.refresh_migration) from _early_refresh_releases x),
     '{}'::text[]
@@ -340,13 +340,13 @@ drop table if exists _early_refresh_releases;
 -- What this found on a database, in one row:
 --
 --   select * from public.template_master_refresh_repairs
---   where repair = '20261226090000_refresh_masters_whose_refresh_ran_before_its_seed';
+--   where repair = '20261226100000_refresh_masters_whose_refresh_ran_before_its_seed';
 --
 -- Every master it examined, and what it decided:
 --
 --   select template_id, verdict, differing_keys
 --   from public.template_master_refresh_decisions
---   where release = '20261226090000_refresh_masters_whose_refresh_ran_before_its_seed'
+--   where release = '20261226100000_refresh_masters_whose_refresh_ran_before_its_seed'
 --   order by verdict, template_id;
 --
 -- To restore one row exactly as it stood before this migration:
@@ -355,5 +355,5 @@ drop table if exists _early_refresh_releases;
 --   set schema = s.schema, config = s.config, updated_at = now()
 --   from public.report_template_refresh_snapshots s
 --   where s.template_id = t.id
---     and s.migration = '20261226090000_refresh_masters_whose_refresh_ran_before_its_seed'
+--     and s.migration = '20261226100000_refresh_masters_whose_refresh_ran_before_its_seed'
 --     and t.id = '<the template id>';

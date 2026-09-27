@@ -1,6 +1,6 @@
 /**
  * The repair of library refreshes that ran before their seeds
- * (`20261226090000_refresh_masters_whose_refresh_ran_before_its_seed`).
+ * (`20261226100000_refresh_masters_whose_refresh_ran_before_its_seed`).
  *
  * A refresh run ahead of its seed finds no baseline, replaces nothing and is
  * recorded, so its masters stay on the old release for good. Measured 23–26
@@ -27,7 +27,7 @@
 import { describe, expect, it } from 'vitest';
 import { migrationNames, migrationText } from '../../testSupport/migrationCorpus';
 
-const FILE = '20261226090000_refresh_masters_whose_refresh_ran_before_its_seed.sql';
+const FILE = '20261226100000_refresh_masters_whose_refresh_ran_before_its_seed.sql';
 const REPAIR = FILE.replace(/\.sql$/, '');
 
 const sql = migrationText(FILE);
