@@ -2548,6 +2548,32 @@ the thing it prohibits, so the guard is written as ASSERTED forms — a sentence
 forbidding a rating is the guarantee working, and rewording it to satisfy a
 regex would delete the guarantee to keep the guard.
 
+**The national investment programme IS a feed, and it is read at every
+coordinate.** Read §10 of
+[`NATIONAL_PIPELINE_EVIDENCE.md`](./docs/reports/NATIONAL_PIPELINE_EVIDENCE.md)
+before touching `_shared/planning/nationalInvestmentProgramme.pure.ts`,
+`strategyOutlook.pure.ts` or the `outlook` on `StrategyRecord`. The Priority
+List is still not one; the Australian Government's own iPAMS register is
+(61,762 + 1,134 + 59 features, CC BY, keyless, answered at five report
+addresses in four states), so `planning-data-service` asks it within 15 km for
+every jurisdiction and the infrastructure chapter names each major project
+with the Department's status word, its ESTIMATED cost beside the federal share
+(never the whole as federal money), and its expected end verbatim in a
+ten-year horizon table titled *as the publishers date it*. Three rules bite.
+**An expected date is not a completion, and an unpublished date is not
+stated**: the owner remembered Rouse Hill Hospital opening in 2027, and no
+page Health Infrastructure publishes says so, so the register row states its
+status and stages and says no opening date is published — while the Tallawong
+high school's *"On track to open Day 1 Term 1 2027"* IS published and is
+carried verbatim. **A development application is never an opportunity**: the
+SWOT files published projects under Opportunities, each disowning any effect
+on value, rent or demand, and an applicant's stated cost never reaches a
+quadrant. And **the SWOT reads what the chapter prints** — the Compass said
+"none identified" beside a chapter naming a $910m hospital, so the Compass,
+the Financial and the Due Diligence SWOTs all read the same two registers now,
+and the Financial SWOT is the record's composer rather than the scorer's four
+free-text lists.
+
 **Forward demand is a different claim from measured growth, and the premise
 was wrong.** Read
 [`FORWARD_DEMAND_EVIDENCE.md`](./docs/reports/FORWARD_DEMAND_EVIDENCE.md)
