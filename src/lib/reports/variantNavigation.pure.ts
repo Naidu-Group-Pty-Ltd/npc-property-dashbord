@@ -68,3 +68,38 @@ export function variantAction(
   if (child.id === currentReportId) return { kind: 'here' };
   return { kind: 'open', reportId: child.id, stale: child.stale, status: child.status };
 }
+
+/**
+ * What one click prepares for a whole family: every report this Compass does
+ * not have yet, and every one it has that is older than it.
+ *
+ * Four buttons, four waits, one at a time, was the only way to have a full set
+ * — and a set assembled across a Compass regeneration mixes two versions of
+ * it. `prepareReportFamily` makes them in parallel from one plan.
+ */
+export interface FamilyPreparation {
+  /** Variants with no report in this family. */
+  missing: SubReportVariant[];
+  /** Variants whose current report is older than the Compass. */
+  stale: SubReportVariant[];
+  /** Both, in the order the buttons are drawn. */
+  all: SubReportVariant[];
+  /** How many of them are model runs (Briefing and Snapshot are; the fork is not). */
+  modelRuns: number;
+}
+
+const FAMILY_ORDER: readonly SubReportVariant[] = ['financial', 'strategic', 'briefing', 'snapshot'];
+
+export function familyPreparation(family: ReportFamily | null | undefined): FamilyPreparation {
+  const empty: FamilyPreparation = { missing: [], stale: [], all: [], modelRuns: 0 };
+  if (!family || !family.parentId) return empty;
+  const missing: SubReportVariant[] = [];
+  const stale: SubReportVariant[] = [];
+  for (const variant of FAMILY_ORDER) {
+    const child = currentChildOf(family, variant);
+    if (!child) missing.push(variant);
+    else if (child.stale) stale.push(variant);
+  }
+  const all = FAMILY_ORDER.filter((v) => missing.includes(v) || stale.includes(v));
+  return { missing, stale, all, modelRuns: all.filter((v) => v === 'briefing' || v === 'snapshot').length };
+}

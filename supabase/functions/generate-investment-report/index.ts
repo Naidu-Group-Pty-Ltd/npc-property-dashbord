@@ -151,6 +151,7 @@ import {
   readStrategyRecord,
   strategySectionRules,
 } from '../_shared/reports/investment/strategyPositions.pure.ts';
+import { restoreGradeMethodology } from '../_shared/reports/investment/gradeMethodologyOnRead.pure.ts';
 import {
   headingSequence,
   mergeBlocksIntoSections,
@@ -8664,6 +8665,22 @@ This report should feel like a polished advisory document that inspires confiden
         `Merged ${mergeableBlocks.length} evidence block(s) into their chapters `
         + `(${before} -> ${after.length} sections; closes on ${after[after.length - 1] ?? 'nothing'})`,
       );
+    }
+    /*
+     * The grade's method is the record's, whatever the document already held.
+     *
+     * `mergeBlocksIntoSections` skips a block whose heading is already present,
+     * so a section carrying "How this grade was reached" from anywhere else
+     * kept that copy and the composed one never landed. The stored document is
+     * written with the complete section the record composes, the same rule
+     * every reader applies on the way out (`gradeMethodologyOnRead.pure.ts`).
+     */
+    {
+      const method = restoreGradeMethodology(reportContent, enhancedData.investmentScore);
+      if (method.restored) {
+        reportContent = method.markdown;
+        console.log('Grade method restored from the record');
+      }
     }
 
 

@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
-import { currentChildOf, variantAction } from '../variantNavigation.pure';
+import { currentChildOf, familyPreparation, variantAction } from '../variantNavigation.pure';
 import type { ReportFamily } from '../investment/subReportFamily.pure';
 
 const child = (id: string, variant: 'financial' | 'strategic' | 'briefing' | 'snapshot', at: string, stale = false) => ({
@@ -62,5 +62,30 @@ describe('what a report button does', () => {
     // generateSubReport is reached from the create path alone.
     expect(source.match(/generateSubReport\(/g)?.length).toBe(1);
     expect(source).toMatch(/action\.kind === 'generate'[\s\S]{0,80}await create\(/);
+  });
+});
+
+describe('one click prepares the whole family', () => {
+  const child = (id: string, variant: string, stale = false) =>
+    ({ id, variant, stale, status: 'completed', row: { variant_generated_at: '2026-09-27T14:35:00Z' } }) as never;
+
+  it('lists what is missing and what is out of date, in the order the buttons are drawn', () => {
+    const plan = familyPreparation({
+      parentId: 'compass', children: [child('fin', 'financial', true), child('dd', 'strategic')], staleChildren: [],
+    } as never);
+    expect(plan.missing).toEqual(['briefing', 'snapshot']);
+    expect(plan.stale).toEqual(['financial']);
+    expect(plan.all).toEqual(['financial', 'briefing', 'snapshot']);
+    expect(plan.modelRuns).toBe(2);
+  });
+
+  it('offers nothing for a complete, current family or an unread one', () => {
+    const complete = familyPreparation({
+      parentId: 'compass',
+      children: ['financial', 'strategic', 'briefing', 'snapshot'].map((v) => child(v, v)),
+      staleChildren: [],
+    } as never);
+    expect(complete.all).toEqual([]);
+    expect(familyPreparation(null).all).toEqual([]);
   });
 });
