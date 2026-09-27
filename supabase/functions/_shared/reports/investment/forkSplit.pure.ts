@@ -39,6 +39,7 @@ import {
   type ComposedChapter,
 } from './financialChapters.pure.ts';
 import {
+  composeFinancialMarketPosition,
   composeStrategySections,
   type StrategyRecord,
   type StrategySection,
@@ -525,6 +526,16 @@ export function composeForkDocuments(input: {
     })
     : [];
 
+  // The market positioning is the record's too: the routed copy was the
+  // Compass's demand prose, the location case a third time over.
+  const marketHeading = finHeading(input.registry, 'Price, Rent & Yield');
+  const marketEntry = input.registry.finSectionOrder.find((e) => e.heading === marketHeading);
+  const marketPosition = input.composeFinancial && input.strategy && marketEntry
+    ? composeFinancialMarketPosition(input.strategy, marketHeading)
+    : null;
+  if (marketPosition && marketEntry) {
+    strategySections.push({ ordinal: marketEntry.ordinal, heading: marketHeading, markdown: marketPosition });
+  }
   // A section composed from the strategy record replaces the chapter of the
   // same heading, never sits beside it.
   const strategyHeadings = new Set(strategySections.map((c) => c.heading));

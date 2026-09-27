@@ -578,3 +578,34 @@ describe('the Financial SWOT is composed from the record, not the scorer’s fre
     expect(swot).not.toContain('Measured demand in this market is soft');
   });
 });
+
+describe('the Financial report opens on the money, not a third copy of the location case', () => {
+  const sectionOf = (md: string, heading: string) => {
+    const at = md.indexOf(`## ${heading}`);
+    return at < 0 ? '' : md.slice(at).split(/\n## /)[0];
+  };
+
+  it('writes the decision summary, the inputs and the rent chapter from the calculation', async () => {
+    const md = (await compose({ strategy: strategyRecord() })).financial.markdown;
+    const summary = sectionOf(md, 'Client Investment Decision Summary');
+    expect(summary).toContain('| The purchase in figures |');
+    expect(summary).not.toMatch(/Prose for/);
+    expect(sectionOf(md, 'Financial Input Snapshot')).toContain('| Input | Value used |');
+    const rent = sectionOf(md, 'Vacancy Risk, Tenant Income & Rent Sustainability');
+    expect(rent).toContain('| Rent and vacancy |');
+    expect(rent).not.toMatch(/Prose for/);
+  });
+
+  it('writes the market positioning from the record, with no verdict between price and median', async () => {
+    const md = (await compose({ strategy: strategyRecord() })).financial.markdown;
+    const market = sectionOf(md, 'Price, Rent & Yield Market Positioning');
+    expect(market).toContain('| Measure | Figure | Source |');
+    expect(market).not.toMatch(/Prose for/);
+    expect(market).not.toMatch(/\b(?:undervalued|overvalued|below the median|bargain)\b/i);
+  });
+
+  it('never sends the reader of the Financial Analysis Report to the Financial Analysis Report', async () => {
+    const md = (await compose({ strategy: strategyRecord() })).financial.markdown;
+    expect(md).not.toMatch(/Financial Analysis Report's own ledger/);
+  });
+});
