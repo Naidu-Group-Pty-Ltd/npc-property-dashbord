@@ -184,40 +184,68 @@ def count_by(url, field):
   print('   ', clip(json.dumps(groups), 3000))
 
 
-for url in DIRECTORIES:
+ROUND = 2
+# Round 2 (27 Sep 2026). Round 1 established that NSW layer 229 is the
+# RFS-certified Bush Fire Prone Land map (statewide) and that NSW layer 230
+# carries flood planning maps for ten named councils. It also found services
+# nothing here reads: NSW's own `Fire` and `Flood` folders, Victoria's
+# `bushfire_prone_area` feature type (the statutory designation, separate from
+# the planning scheme's overlay), the ACT's `Bushfire_Prone_Area_Details_2026`,
+# its flood extent, Tasmania's SES flood mapping and South Australia's hosted
+# flooding layers. This round reads each one and asks it at a real address.
+
+VIC_WFS = 'https://opendata.maps.vic.gov.au/geoserver/wfs'
+ACT = 'https://services1.arcgis.com/E5n4f1VY84i0xSjy/arcgis/rest/services'
+
+for url in (f'{NSW}/Fire', f'{NSW}/Flood'):
   directory(url)
-for url in LAYERS:
-  layer(url)
+  status, _, body = fetch(url + '?f=json')
+  for s2 in (as_json(body) or {}).get('services') or []:
+    svc = f"{NSW}/{s2.get('name')}/{s2.get('type')}"
+    layer(svc)
+
+for svc in (f'{ACT}/Bushfire_Prone_Area_Details_2026/FeatureServer', f'{ACT}/Bushfire_Prone_Area_Overview_2026/FeatureServer',
+            f'{ACT}/ACTGOV_FLOOD_EXTENT/FeatureServer', f'{ACT}/Flood_Boundary/FeatureServer',
+            f'{ACT}/Bushfire_Prone_Area_Details_2026/FeatureServer/0', f'{ACT}/ACTGOV_FLOOD_EXTENT/FeatureServer/0',
+            'https://services.thelist.tas.gov.au/arcgis/rest/services/Public/SES_FloodMapping/MapServer',
+            'https://dpti.geohub.sa.gov.au/server/rest/services/Hosted/Flooding_v15_WFL1/FeatureServer',
+            'https://dpti.geohub.sa.gov.au/server/rest/services/Hosted/Flooding_v15_WFL1/FeatureServer/0',
+            'https://dpti.geohub.sa.gov.au/server/rest/services/Hosted/Code_Amendment__BaseLayers/FeatureServer'):
+  layer(svc)
 
 print('\n\n######## POINT READINGS')
-hz = f'{NSW}/ePlanning/Planning_Portal_Hazard/MapServer'
-for key in ('NSW', 'NSW2'):
-  label, lng, lat = POINTS[key]
-  print(f'\n--- {label}')
-  identify(hz, lng, lat, 'all:229,230,231,232')
-  identify(hz, lng, lat, 'all')
-  query('https://maps.six.nsw.gov.au/arcgis/rest/services/public/NSW_Bushfire_Prone_Land/MapServer/0', lng, lat, 'six BFPL')
-
-label, lng, lat = POINTS['QLD']
+label, lng, lat = POINTS['ACT']
 print(f'\n--- {label}')
-query('https://spatial-gis.information.qld.gov.au/arcgis/rest/services/Environment/BushfireProneAreas/MapServer/0', lng, lat, 'QLD BPA')
-identify('https://spatial-gis.information.qld.gov.au/arcgis/rest/services/FloodCheck/RapidHazardAssessment/MapServer', lng, lat)
+query(f'{ACT}/Bushfire_Prone_Area_Details_2026/FeatureServer/0', lng, lat, 'ACT BPA details')
+query(f'{ACT}/ACTGOV_FLOOD_EXTENT/FeatureServer/0', lng, lat, 'ACT flood extent')
+# A point known to be bush-edge in Canberra (Chapman, on Mount Arawang's slope).
+query(f'{ACT}/Bushfire_Prone_Area_Details_2026/FeatureServer/0', 149.0395, -35.3565, 'ACT BPA details — Chapman')
 
-print('\n\n######## COVERAGE — which councils publish a flood planning map to the NSW layer')
-for lid in (230, 231):
-  layer_url = f'{hz}/{lid}'
-  status, _, body = fetch(layer_url + '?f=json')
-  j = as_json(body) or {}
-  fields = [f.get('name') for f in j.get('fields') or []]
-  print(f'\n layer {lid} {j.get("name")} fields={fields}')
-  for candidate in ('LGA_NAME', 'LGA', 'COUNCIL', 'EPI_NAME', 'LEP_NAME', 'EPI'):
-    if candidate in fields:
-      count_by(layer_url, candidate)
-      break
+for key, extra in (('VIC', None), ('VIC_BUSH', (145.3580, -37.8450))):
+  label, lng, lat = POINTS['VIC'] if key == 'VIC' else ('Belgrave (Dandenong Ranges)', *extra)
+  print(f'\n--- {label}')
+  p = urllib.parse.urlencode({
+    'service': 'WFS', 'version': '2.0.0', 'request': 'GetFeature', 'typeNames': 'open-data-platform:bushfire_prone_area',
+    'outputFormat': 'application/json', 'count': '5',
+    'CQL_FILTER': f'INTERSECTS(geom,POINT({lat} {lng}))',
+  })
+  status, _, body = fetch(f'{VIC_WFS}?{p}')
+  j = as_json(body)
+  feats = (j or {}).get('features') if isinstance(j, dict) else None
+  print(f'  VIC BPA (lat lng) status={status} features={None if feats is None else len(feats)}')
+  if feats is None:
+    print('  ', clip(body.decode('utf-8', 'replace'), 400))
+  for f in (feats or [])[:3]:
+    print('   ·', clip(json.dumps(f.get('properties')), 400))
+  p2 = urllib.parse.urlencode({'service': 'WFS', 'version': '2.0.0', 'request': 'DescribeFeatureType',
+                               'typeNames': 'open-data-platform:bushfire_prone_area'})
+  if key == 'VIC':
+    status, _, body = fetch(f'{VIC_WFS}?{p2}', 'application/xml')
+    print('  schema:', re.findall(r'name="([^"]+)"', body.decode('utf-8', 'replace'))[:20])
 
-print('\n\nVIC — bushfire-prone-area and flood feature types on the Vicmap WFS')
-status, _, body = fetch('https://opendata.maps.vic.gov.au/geoserver/wfs?service=WFS&request=GetCapabilities', 'application/xml')
-text = body.decode('utf-8', 'replace')
-names = re.findall(r'<Name>([^<]+)</Name>', text)
-print(f' status={status} feature types={len(names)}')
-print(' hazard-shaped:', [n for n in names if HAZARD.search(n)][:60])
+label, lng, lat = POINTS['TAS']
+print(f'\n--- {label}')
+identify('https://services.thelist.tas.gov.au/arcgis/rest/services/Public/SES_FloodMapping/MapServer', lng, lat)
+label, lng, lat = POINTS['SA']
+print(f'\n--- {label}')
+query('https://dpti.geohub.sa.gov.au/server/rest/services/Hosted/Flooding_v15_WFL1/FeatureServer/0', lng, lat, 'SA flooding v15')
