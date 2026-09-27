@@ -249,3 +249,65 @@ identify('https://services.thelist.tas.gov.au/arcgis/rest/services/Public/SES_Fl
 label, lng, lat = POINTS['SA']
 print(f'\n--- {label}')
 query('https://dpti.geohub.sa.gov.au/server/rest/services/Hosted/Flooding_v15_WFL1/FeatureServer/0', lng, lat, 'SA flooding v15')
+
+
+# Round 3 (27 Sep 2026). Round 2 read Victoria's `bushfire_prone_area` with the
+# point written latitude-first and no SRID, and found Belgrave inside and Golden
+# Square outside. Before a report says "not mapped" on the strength of it, the
+# axis order has to be settled against points whose answer is known both ways,
+# in every spelling a reader might write — a wrong axis answers "nothing here"
+# everywhere, which is the one failure a designation map must never have. The
+# ACT answered nothing at Braddon and at Chapman; this asks it where a
+# designated area cannot be absent, and reads what the service says of itself.
+print('\n\n######## ROUND 3 — axis order and known points')
+VIC_POINTS = [
+  ('Belgrave (expected inside)', 145.3580, -37.8450),
+  ('Kinglake (expected inside)', 145.3450, -37.5280),
+  ('Melbourne CBD (expected outside)', 144.9631, -37.8136),
+  ('Golden Square', 144.2610, -36.7755),
+]
+FORMS = [
+  ('POINT(lat lng)', lambda lng, lat: f'INTERSECTS(geom,POINT({lat} {lng}))'),
+  ('SRID=4326;POINT(lng lat)', lambda lng, lat: f'INTERSECTS(geom,SRID=4326;POINT({lng} {lat}))'),
+  ('POINT(lng lat)', lambda lng, lat: f'INTERSECTS(geom,POINT({lng} {lat}))'),
+]
+for label, lng, lat in VIC_POINTS:
+  print(f'\n--- {label}')
+  for form, cql in FORMS:
+    p = urllib.parse.urlencode({
+      'service': 'WFS', 'version': '2.0.0', 'request': 'GetFeature', 'typeNames': 'open-data-platform:bushfire_prone_area',
+      'outputFormat': 'application/json', 'count': '3',
+      'propertyName': 'lga_name,plan_number,gazettal_date', 'CQL_FILTER': cql(lng, lat),
+    })
+    status, _, body = fetch(f'{VIC_WFS}?{p}')
+    j = as_json(body)
+    feats = (j or {}).get('features') if isinstance(j, dict) else None
+    first = json.dumps((feats or [{}])[0].get('properties')) if feats else ''
+    print(f'  {form:26s} status={status} features={None if feats is None else len(feats)} {clip(first, 200)}')
+    if feats is None:
+      print('   ', clip(body.decode('utf-8', 'replace'), 300))
+  p = urllib.parse.urlencode({
+    'service': 'WFS', 'version': '2.0.0', 'request': 'GetFeature', 'typeNames': 'open-data-platform:plan_overlay',
+    'outputFormat': 'application/json', 'count': '10', 'propertyName': 'zone_code',
+    'CQL_FILTER': f'INTERSECTS(geom,SRID=4326;POINT({lng} {lat}))',
+  })
+  status, _, body = fetch(f'{VIC_WFS}?{p}')
+  j = as_json(body)
+  codes = [(f.get('properties') or {}).get('zone_code') for f in ((j or {}).get('features') or [])]
+  print(f'  plan_overlay (production form) status={status} codes={codes}')
+
+print('\n--- ACT: what the services say of themselves')
+for svc in (f'{ACT}/Bushfire_Prone_Area_Details_2026/FeatureServer', f'{ACT}/Bushfire_Prone_Area_Overview_2026/FeatureServer'):
+  status, _, body = fetch(svc + '?f=json')
+  j = as_json(body) or {}
+  print(f'  {svc.rsplit("/", 2)[-2]} copyrightText={clip(str(j.get("copyrightText")), 200)!r}')
+  print(f'    description={clip(str(j.get("description") or j.get("serviceDescription")), 400)!r}')
+  print(f'    spatialReference={j.get("spatialReference")}')
+  status, _, body = fetch(svc + '/0/query?' + urllib.parse.urlencode({'f': 'json', 'where': '1=1', 'returnCountOnly': 'true'}))
+  print(f'    count status={status} {clip(body.decode("utf-8", "replace"), 120)}')
+  status, _, body = fetch(svc + '/0/query?' + urllib.parse.urlencode({'f': 'json', 'where': '1=1', 'returnExtentOnly': 'true', 'outSR': '4326'}))
+  print(f'    extent status={status} {clip(body.decode("utf-8", "replace"), 300)}')
+for label, lng, lat in (('Tharwa village', 149.0697, -35.5092), ('Stromlo', 149.0250, -35.3200),
+                        ('Namadgi (Orroral)', 148.9500, -35.6300), ('Braddon', 149.1334, -35.2750)):
+  query(f'{ACT}/Bushfire_Prone_Area_Details_2026/FeatureServer/0', lng, lat, f'ACT BPA details — {label}')
+  query(f'{ACT}/Bushfire_Prone_Area_Overview_2026/FeatureServer/0', lng, lat, f'ACT BPA overview — {label}')
