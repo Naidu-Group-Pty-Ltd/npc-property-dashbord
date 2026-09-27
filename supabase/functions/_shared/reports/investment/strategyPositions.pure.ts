@@ -1390,8 +1390,10 @@ export function composeSuitability(rec: StrategyRecord, heading: string): string
     if (isNum(f.upfront)) {
       reqs.push({
         claim: `${money(f.upfront)} of capital at settlement.`,
+        // Printed in the Financial Analysis itself, so it names the schedule,
+        // not the report the reader is holding.
         basis: 'Deposit plus the recorded acquisition costs — stamp duty, legal and the rest of the upfront schedule '
-          + 'in the Financial Analysis Report.',
+          + 'under Purchase Costs.',
       });
     }
     if (isNum(f.weeklyNet) && f.weeklyNet < 0) {

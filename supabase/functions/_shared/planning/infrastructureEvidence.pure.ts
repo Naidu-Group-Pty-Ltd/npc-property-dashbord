@@ -1073,10 +1073,12 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
         standing: readDeliveryStanding(p.status),
         dateLabel: null,
         date: null,
-        where: [
-          p.distanceKm === null ? null : `${p.distanceKm.toFixed(1)} km from the property, to the nearest part of the works`,
-          p.mode ? `${p.mode}` : null,
-        ].filter(Boolean).join(' · ') || null,
+        // One phrase that reads in a table cell and in a sentence alike: the
+        // mode used to follow a " · ", which the SWOT printed mid-sentence.
+        where: p.distanceKm === null
+          ? (p.mode ? `${p.mode.toLowerCase()} works` : null)
+          : `${p.distanceKm.toFixed(1)} km from the property, to the nearest part of the works`
+            + (p.mode ? ` (${p.mode.toLowerCase()})` : ''),
         address: null,
         statedCost: p.estimatedCost,
         costBasis: p.estimatedCost === null ? null : 'estimated_project_cost',
@@ -1173,7 +1175,7 @@ function fundingCell(item: InfrastructureItem): string {
     if (item.federalContribution == null) return 'Australian Government funded; its share is not stated on this entry';
     const whole = item.statedCost !== null && item.federalContribution < item.statedCost;
     return `Australian Government ${money(item.federalContribution)}`
-      + (whole ? '; the balance is not attributed in this register' : '');
+      + (whole ? '; the Department does not say who funds the balance' : '');
   }
   // A programme entry names its contributors; a DA entry names nobody, and
   // the figure beside it is the applicant's own cost rather than investment.
