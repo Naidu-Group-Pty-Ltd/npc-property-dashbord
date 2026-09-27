@@ -18,53 +18,49 @@ import html, json, re, sys, time, urllib.parse, urllib.request, urllib.error
 
 UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36'
 
-# Round 2 (27 Sep 2026). Round 1 read the NSW pages for the projects near
-# 37 Bolin Street, Tallawong, and found the federal iPAMS layers in the
-# Department of Infrastructure's catalogue; this round reads what those layers
-# hold and whether they answer a question asked by LOCATION. Round 1's lists
-# are in this file's history.
-TALLAWONG = (-33.6903115, 150.8816157)  # Nominatim, round 1: 37 Bolin Street
+# Round 3 (27 Sep 2026). Round 2 found the federal iPAMS layers answer by
+# LOCATION — 1,134 point projects, 61,762 line segments, 65,220 derived points
+# — and that most of what lies near a property is completed minor works (Roads
+# to Recovery, Black Spot). This round reads the layers' own vocabulary
+# (status, sub-programme, field list) and what a LIVE-project query returns
+# around five real report addresses in four states. Earlier rounds' lists are
+# in this file's history.
 IPAMS = 'https://spatial.infrastructure.gov.au/server/rest/services/iPAMS-DB'
-def near(layer, km=15):
-  lat, lon = TALLAWONG
+LAYERS = ['AuslinkGIS_Line_web', 'AuslinkGIS_Point_web', 'AuslinkGIS_Poly_web']
+SITES = {
+  'Tallawong NSW (37 Bolin St)': (-33.6903115, 150.8816157),
+  'Kellyville NSW (97 Poole Rd)': (-33.7065, 150.9530),
+  'Golden Square VIC (9 Hollow St)': (-36.7727, 144.2519),
+  'Maryborough QLD (262 Pallas St)': (-25.5405, 152.7040),
+  'Geraldton WA (Spalding)': (-28.7430, 114.6290),
+}
+FIELDS = 'Project_ID,ProjectName,ProjectStatus,SubProgram,TransportMode,EstimatedProjectCost,AGC,ExpectedStartDate,ExpectedEndDate,State,URL'
+
+def stats(layer, field):
   q = urllib.parse.urlencode({
-    'geometry': f'{lon},{lat}', 'geometryType': 'esriGeometryPoint', 'inSR': '4326',
-    'spatialRel': 'esriSpatialRelIntersects', 'distance': str(km * 1000), 'units': 'esriSRUnit_Meter',
-    'outFields': '*', 'returnGeometry': 'true', 'outSR': '4326', 'resultRecordCount': '60', 'f': 'json',
+    'where': '1=1', 'groupByFieldsForStatistics': field,
+    'outStatistics': json.dumps([{'statisticType': 'count', 'onStatisticField': 'OBJECTID', 'outStatisticFieldName': 'n'}]),
+    'f': 'json',
   })
   return f'{IPAMS}/{layer}/MapServer/0/query?{q}'
 
-PAGES = [
-  # The project page's own map link carries its coordinate.
-  'https://www.rousehillhospital.health.nsw.gov.au/',
-]
+def live_near(layer, lat, lon, km=15):
+  q = urllib.parse.urlencode({
+    'where': "ProjectStatus <> 'Completed'",
+    'geometry': f'{lon},{lat}', 'geometryType': 'esriGeometryPoint', 'inSR': '4326',
+    'spatialRel': 'esriSpatialRelIntersects', 'distance': str(km * 1000), 'units': 'esriSRUnit_Meter',
+    'outFields': FIELDS, 'returnGeometry': 'false', 'returnDistinctValues': 'true', 'f': 'json',
+  })
+  return f'{IPAMS}/{layer}/MapServer/0/query?{q}'
 
-REGISTERS = [
-  f'{IPAMS}?f=json',
-  f'{IPAMS}/AuslinkGIS_Derived_Point_web/MapServer/0?f=json',
-  f'{IPAMS}/AuslinkGIS_Point_web/MapServer/0?f=json',
-  f'{IPAMS}/AuslinkGIS_Line_web/MapServer/0?f=json',
-  f'{IPAMS}/AuslinkGIS_Poly_web/MapServer/0?f=json',
-  f'{IPAMS}/AuslinkGIS_Derived_Point_web/MapServer/0/query?where=1%3D1&returnCountOnly=true&f=json',
-  f'{IPAMS}/AuslinkGIS_Point_web/MapServer/0/query?where=1%3D1&returnCountOnly=true&f=json',
-  f'{IPAMS}/AuslinkGIS_Line_web/MapServer/0/query?where=1%3D1&returnCountOnly=true&f=json',
-  near('AuslinkGIS_Derived_Point_web'),
-  near('AuslinkGIS_Point_web'),
-  near('AuslinkGIS_Line_web'),
-  near('AuslinkGIS_Poly_web'),
-  'https://spatial.infrastructure.gov.au/portal/sharing/rest/content/items/b14670d2f1654a029a8da30288694adc/data?f=json',
-  'https://data.nsw.gov.au/data/api/3/action/package_search?q=infrastructure%20statement&rows=15',
-  'https://data.nsw.gov.au/data/api/3/action/package_search?q=school%20infrastructure&rows=15',
-  'https://data.nsw.gov.au/data/api/3/action/package_search?q=health%20infrastructure%20projects&rows=15',
-  'https://data.gov.au/data/api/3/action/package_search?q=capital%20works%20program%20location&rows=20',
-]
-
-GEOCODE = [
-  'Rouse Hill Hospital',
-  'Commercial Road, Rouse Hill NSW 2155',
-  'Tallawong Station, Tallawong NSW',
-  'Schofields Park, Schofields NSW',
-]
+PAGES = []
+REGISTERS = [f'{IPAMS}/AuslinkGIS_Line_web/MapServer/0?f=json']
+for layer in LAYERS:
+  REGISTERS += [stats(layer, 'ProjectStatus'), stats(layer, 'SubProgram')]
+for label, (lat, lon) in SITES.items():
+  for layer in LAYERS:
+    REGISTERS.append(live_near(layer, lat, lon))
+GEOCODE = []
 
 
 def fetch(url, accept='*/*'):
@@ -131,6 +127,14 @@ for url in REGISTERS:
         for r in p.get('resources', [])[:8]:
           print(f"      {r.get('format')} {r.get('url')}")
     else:
+      if isinstance(data, dict) and 'fields' in data and 'features' not in data:
+        print('  fields:', [(f.get('name'), f.get('type')) for f in data['fields']])
+      if isinstance(data, dict) and 'features' in data:
+        feats = data['features']
+        print(f'  features={len(feats)} exceededTransferLimit={data.get("exceededTransferLimit")}')
+        for ft in feats[:80]:
+          print('   ', json.dumps(ft.get('attributes'), ensure_ascii=False)[:600])
+        continue
       s = json.dumps(data)
       urls = sorted(set(re.findall(r'https?://[^"\\ ]+(?:FeatureServer|MapServer)[^"\\ ]*', s)))
       print('  service urls:', urls[:40])
