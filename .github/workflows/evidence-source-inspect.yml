@@ -38,7 +38,9 @@ jobs:
         if: inputs.target == 'infrastructure'
       - name: Read the infrastructure pipeline's publishers
         if: inputs.target == 'infrastructure'
-        run: python3 scripts/market/infrastructure-source-inspect.py
+        run: |
+          pip install --quiet pypdf
+          python3 scripts/market/infrastructure-source-inspect.py
       - uses: actions/setup-python@v5
         if: inputs.target != 'infrastructure'
         with:

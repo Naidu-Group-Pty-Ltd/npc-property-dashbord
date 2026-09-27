@@ -18,48 +18,22 @@ import html, json, re, sys, time, urllib.parse, urllib.request, urllib.error
 
 UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36'
 
-# Round 3 (27 Sep 2026). Round 2 found the federal iPAMS layers answer by
-# LOCATION — 1,134 point projects, 61,762 line segments, 65,220 derived points
-# — and that most of what lies near a property is completed minor works (Roads
-# to Recovery, Black Spot). This round reads the layers' own vocabulary
-# (status, sub-programme, field list) and what a LIVE-project query returns
-# around five real report addresses in four states. Earlier rounds' lists are
-# in this file's history.
-IPAMS = 'https://spatial.infrastructure.gov.au/server/rest/services/iPAMS-DB'
-LAYERS = ['AuslinkGIS_Line_web', 'AuslinkGIS_Point_web', 'AuslinkGIS_Poly_web']
-SITES = {
-  'Tallawong NSW (37 Bolin St)': (-33.6903115, 150.8816157),
-  'Kellyville NSW (97 Poole Rd)': (-33.7065, 150.9530),
-  'Golden Square VIC (9 Hollow St)': (-36.7727, 144.2519),
-  'Maryborough QLD (262 Pallas St)': (-25.5405, 152.7040),
-  'Geraldton WA (Spalding)': (-28.7430, 114.6290),
-}
-FIELDS = 'Project_ID,ProjectName,ProjectStatus,SubProgram,TransportMode,EstimatedProjectCost,AGC,ExpectedStartDate,ExpectedEndDate,State,URL'
-
-def stats(layer, field):
-  q = urllib.parse.urlencode({
-    'where': '1=1', 'groupByFieldsForStatistics': field,
-    'outStatistics': json.dumps([{'statisticType': 'count', 'onStatisticField': 'OBJECTID', 'outStatisticFieldName': 'n'}]),
-    'f': 'json',
-  })
-  return f'{IPAMS}/{layer}/MapServer/0/query?{q}'
-
-def live_near(layer, lat, lon, km=15):
-  q = urllib.parse.urlencode({
-    'where': "ProjectStatus <> 'Completed'",
-    'geometry': f'{lon},{lat}', 'geometryType': 'esriGeometryPoint', 'inSR': '4326',
-    'spatialRel': 'esriSpatialRelIntersects', 'distance': str(km * 1000), 'units': 'esriSRUnit_Meter',
-    'outFields': FIELDS, 'returnGeometry': 'false', 'returnDistinctValues': 'true', 'f': 'json',
-  })
-  return f'{IPAMS}/{layer}/MapServer/0/query?{q}'
-
-PAGES = []
-REGISTERS = [f'{IPAMS}/AuslinkGIS_Line_web/MapServer/0?f=json']
-for layer in LAYERS:
-  REGISTERS += [stats(layer, 'ProjectStatus'), stats(layer, 'SubProgram')]
-for label, (lat, lon) in SITES.items():
-  for layer in LAYERS:
-    REGISTERS.append(live_near(layer, lat, lon))
+# Round 4 (27 Sep 2026). Round 1 read Health Infrastructure's pages for the
+# Rouse Hill Hospital and found no opening date on any of them; its works
+# notices page links three construction updates as PDFs, which a page read
+# cannot see. This round follows those links and reads the PDFs' text, and
+# follows the two School Infrastructure NSW pages that answered 301.
+# Earlier rounds' lists are in this file's history.
+FOLLOW = [
+  # (page, pattern of the links on it to follow)
+  ('https://www.nsw.gov.au/departments-and-agencies/health-infrastructure/news/rouse-hill-hospital-construction-works-notices', r'\.pdf'),
+  ('https://www.rousehillhospital.health.nsw.gov.au/', r'(?:newsletter|update|timeline|\.pdf)'),
+]
+PAGES = [
+  'https://www.schoolinfrastructure.nsw.gov.au/projects/new-schools/new-high-school-for-schofields-and-tallawong.html',
+  'https://www.schoolinfrastructure.nsw.gov.au/projects/new-schools/new-primary-and-high-school-in-box-hill-terry-road.html',
+]
+REGISTERS = []
 GEOCODE = []
 
 
@@ -93,10 +67,45 @@ def dates_of(body):
   return sorted(out)
 
 
+def pdf_text(body):
+  try:
+    import io, pypdf
+    reader = pypdf.PdfReader(io.BytesIO(body))
+    return '\n'.join((pg.extract_text() or '') for pg in reader.pages)
+  except Exception as e:  # noqa: BLE001
+    return f'(pdf unreadable: {e!r})'
+
+try:
+  FOLLOW
+except NameError:
+  FOLLOW = []
+for page, pattern in FOLLOW:
+  st, ct, body = fetch(page)
+  raw = body.decode('utf-8', 'replace')
+  links = sorted(set(re.findall(r'href="([^"]+)"', raw)))
+  hits = [l for l in links if re.search(pattern, l, re.I)]
+  print('=' * 100)
+  print(f'FOLLOW {page} status={st} links={len(links)} matching={len(hits)}')
+  for l in hits[:12]:
+    url = urllib.parse.urljoin(page, html.unescape(l))
+    s2, c2, b2 = fetch(url)
+    print('\n' + '-' * 100)
+    print(f'{url}\n  status={s2} type={c2} bytes={len(b2)}')
+    if b2[:4] == b'%PDF':
+      print(pdf_text(b2)[:7000])
+    else:
+      print(readable(b2)[:3000])
+
 print('=' * 100)
 print('PAGES')
 for url in PAGES:
   st, ct, body = fetch(url)
+  if st in (301, 302, 307, 308):
+    moved = re.search(r'href="([^"]+)"', body.decode('utf-8', 'replace'))
+    if moved:
+      print(f'{url} moved to {moved.group(1)}')
+      url = urllib.parse.urljoin(url, moved.group(1))
+      st, ct, body = fetch(url)
   print('\n' + '-' * 100)
   print(f'{url}\n  status={st} type={ct} bytes={len(body)} dates={dates_of(body)}')
   text = readable(body)
