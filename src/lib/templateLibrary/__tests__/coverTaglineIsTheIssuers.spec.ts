@@ -40,6 +40,7 @@ import { COMMERCIAL_CAPACITY_TEMPLATES } from '../../../../scripts/template-libr
 import { MARKET_INTELLIGENCE_TEMPLATES } from '../../../../scripts/template-library/investmentCompass/marketIntelligence';
 import { SAMPLE_REPORT_DATA } from '../sampleReportData';
 import { withIssuerTagline, ISSUER_TAGLINE_BINDING } from '@/lib/reportTemplate/houseTaglineGuard.pure';
+import { TREE_IS_PRIME } from '../../testSupport/primeTree';
 
 interface SchemaBlock { id: string; type: string; name?: string; props: Record<string, unknown> }
 interface SchemaPage { id: string; name: string; blocks: SchemaBlock[] }
@@ -120,7 +121,15 @@ describe('the cover tagline', () => {
     }
   });
 
-  it('is what the newest seed carries too, in the schema and the preview of every master', () => {
+  // The prime's tree only. Every seed from v20 on is over the 40 MiB the
+  // cascade can write, so a clone holds the generator and never the file: its
+  // newest seed is v19, which predates the binding. Run on a clone, it read
+  // v19 and asserted v23. On 26 Sep 2026 that failed the cascade pull request
+  // carrying it into npc-client-dashboard (#264), and held back the two clones
+  // queued behind that one. See `testSupport/primeTree.ts`. The masters
+  // themselves are asserted above, wherever they are carried, and the
+  // draw-time guard below is what a clone relies on instead.
+  it.runIf(TREE_IS_PRIME)('is what the newest seed carries too, in the schema and the preview of every master', () => {
     // The seed is what a deployment applies, so a fix that reached only the
     // definitions would reach no document. Newest by its own version number.
     const dir = resolve(__dirname, '../../../../supabase/migrations');
