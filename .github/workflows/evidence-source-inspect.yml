@@ -46,7 +46,10 @@ jobs:
           set -u
           base=https://npc-property-dashbord.lovable.app
           mkdir -p live && cd live
-          curl -sS -L -m 60 -o index.html -w 'index %{http_code} %{size_download}\n' "$base/"
+          curl -sS -L -m 60 -D headers.txt -o index.html -w 'index %{http_code} %{size_download}\n' "$base/"
+          sed -n '1,25p' headers.txt
+          # What a refusal says, so a challenge page is told from a real 403.
+          sed -e 's/<[^>]*>/ /g' index.html | tr -s ' \n' | head -c 1500; echo
           grep -o 'src="/[^"]*\.js"\|href="/[^"]*\.js"' index.html | sed -E 's/^(src|href)="//; s/"$//' | sort -u > entry.txt
           cat entry.txt
           seen=entry.txt; : > all.txt
