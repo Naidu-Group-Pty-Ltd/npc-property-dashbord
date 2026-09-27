@@ -790,12 +790,14 @@ export function buildSwot(rec: StrategyRecord): Swot {
    * the Demand dimension for exactly that reason.
    */
   const population = subjectRow(rec.market, 'populationGrowth');
-  const popRate = population ? parseFloat(population.value.replace(/[^0-9.+-]/g, '')) : NaN;
-  if (population && Number.isFinite(popRate) && popRate !== 0) {
+  const popValue = population?.value ?? null;
+  // A value may be written with a typographic minus; read it as the sign it is.
+  const popRate = popValue ? parseFloat(popValue.replace(/\u2212/g, '-').replace(/[^0-9.+-]/g, '')) : NaN;
+  if (population && popValue && Number.isFinite(popRate) && popRate !== 0) {
     (popRate > 0 ? s : t).push({
       claim: popRate > 0
-        ? `The area's resident population grew by ${population.value} a year.`
-        : `The area's resident population fell by ${population.value.replace(/^[-−]/, '')} a year.`,
+        ? `The area's resident population grew by ${popValue} a year.`
+        : `The area's resident population fell by ${popValue.replace(/^[-\u2212]/, '')} a year.`,
       basis: `${citeRow(population)}. Population is a driver of housing demand, not a measure of it, and this `
         + 'describes the years measured rather than a forecast.',
     });

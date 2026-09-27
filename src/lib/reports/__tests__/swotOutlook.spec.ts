@@ -132,6 +132,19 @@ describe('the resident population, by its sign alone', () => {
     const swot = buildSwot(readStrategyRecord(ROW, { market: withPopulation('-0.4%'), price: PRICE, carriesModelling: false }));
     expect(swot.threats.map((x) => x.claim)).toContain('The area\'s resident population fell by 0.4% a year.');
   });
+
+  it('reads a typographic minus as a decline, never as growth', () => {
+    const swot = buildSwot(readStrategyRecord(ROW, { market: withPopulation('\u22120.4%'), price: PRICE, carriesModelling: false }));
+    expect(swot.strengths.some((x) => /population/.test(x.claim))).toBe(false);
+    expect(swot.threats.map((x) => x.claim)).toContain('The area\'s resident population fell by 0.4% a year.');
+  });
+
+  it('files nothing where the row holds no value', () => {
+    const market = withPopulation('1%');
+    (market.rows[0] as { value: string | null }).value = null;
+    const swot = buildSwot(readStrategyRecord(ROW, { market, price: PRICE, carriesModelling: false }));
+    expect([...swot.strengths, ...swot.threats].some((x) => /population/.test(x.claim))).toBe(false);
+  });
 });
 
 describe('the forks read the same projects off the stored row', () => {
