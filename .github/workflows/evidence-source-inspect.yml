@@ -24,6 +24,7 @@ on:
           - market
           - infrastructure
           - hazard
+          - live-bundle
 
 permissions:
   contents: read
@@ -33,6 +34,40 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # Which build the published site is serving, asserted by effect: a
+      # publish reported "pending" is not a publish that landed, and the seed
+      # that depends on it may not be applied before it has. Fetches the live
+      # index and every script it names, and counts strings only a given
+      # commit's bundle carries. Read-only; holds no secret.
+      - name: Read the published frontend bundle
+        if: inputs.target == 'live-bundle'
+        shell: bash
+        run: |
+          set -u
+          base=https://npc-property-dashbord.lovable.app
+          mkdir -p live && cd live
+          curl -sS -L -m 60 -o index.html -w 'index %{http_code} %{size_download}\n' "$base/"
+          grep -o 'src="/[^"]*\.js"\|href="/[^"]*\.js"' index.html | sed -E 's/^(src|href)="//; s/"$//' | sort -u > entry.txt
+          cat entry.txt
+          seen=entry.txt; : > all.txt
+          while [ -s "$seen" ]; do
+            : > next.txt
+            while read -r path; do
+              grep -qxF "$path" all.txt && continue
+              echo "$path" >> all.txt
+              f="chunk_$(echo "$path" | tr '/' '_')"
+              curl -sS -L -m 60 -o "$f" "$base$path" || continue
+              grep -o '"/assets/[^"]*\.js"\|"\./[^"]*\.js"\|assets/[A-Za-z0-9_.-]*\.js' "$f" | tr -d '"' | sed -E 's#^\./#/assets/#; s#^assets/#/assets/#' | sort -u >> next.txt || true
+            done < "$seen"
+            sort -u next.txt | grep -vxF -f all.txt > queue.txt || true
+            seen=queue.txt
+            [ "$(wc -l < all.txt)" -gt 800 ] && break
+          done
+          echo "scripts read: $(wc -l < all.txt)"
+          for s in "What each dimension rested on" "features are set out under" "Set out in full under" "This report reads the property and its locality"; do
+            n=$( { cat chunk_* 2>/dev/null || true; } | { grep -o "$s" || true; } | wc -l)
+            echo "fingerprint [$s]: $n"
+          done
       # The infrastructure pipeline's publishers: pages, registers and geocodes.
       # See the script's header. Read-only, and the market steps below are skipped.
       # Bushfire and flood mapping: what each hazard layer covers and answers
