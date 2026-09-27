@@ -746,7 +746,7 @@ describe('the generator pins the evidence it used to trim away, and moves the sy
   it('pins the attributes on record, so a searched room count is never "the supplied property records" (pp.3-4)', () => {
     // One composition, drawn in the base prompt and in the pin.
     expect(generator).toContain('const recordedAttributesBlock = `| Property Characteristic | Value |');
-    expect(generator).toContain("'# The property — every physical attribute on record',\n      recordedAttributesBlock,");
+    expect(generator).toContain("pinGroup('attributes', '# The property — every physical attribute on record'),\n      recordedAttributesBlock,");
     expect(generator).toContain('${recordedAttributesBlock}');
     // The prohibition keeps its permitted form beside it.
     expect(generator).toContain('An attribute you find in a listing or any other search is not a record');
