@@ -165,6 +165,15 @@ jobs:
       - name: Edge Function specs (vitest)
         run: npx vitest run --config vitest.functions.config.ts
 
+      # The portal contracts are `node --test` suites, and `package.json` has
+      # named them since they were written while no workflow ever ran them.
+      # Five of the partner-agreement assertions had gone stale when they were
+      # first run, each naming a guard by a spelling the code had since
+      # changed, so a contract nobody runs asserts nothing about today.
+      # They read files and nothing else, so they need no install.
+      - name: Portal contract suites (node --test)
+        run: npm run test:cross-portal-contracts
+
       # The Workflow Playground's step catalog is derived from the same registry,
       # and its templates reference catalog ids by hand — both rot silently when an
       # integration or an operation is renamed. Ordered here for the same reason as
