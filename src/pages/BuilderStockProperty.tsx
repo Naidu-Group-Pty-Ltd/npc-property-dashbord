@@ -148,7 +148,9 @@ export default function BuilderStockProperty() {
   const delisted = (item.lifecycle_status ?? 'active') !== 'active';
   const selectable = !delisted && SELECTABLE_AVAILABILITY.has(availability);
   const estate = item.development_name || item.project_name;
-  const synced = when(item.last_seen_at);
+  // `updated_at` is stamped by every revision the mirror applies;
+  // `last_seen_at` only ever records when the property first arrived.
+  const synced = when(item.updated_at ?? item.last_seen_at);
   const figure = (value: number | null | undefined) =>
     value === null || value === undefined ? null : String(value);
 
