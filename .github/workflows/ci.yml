@@ -144,8 +144,16 @@ jobs:
       # red from the WP-28 shim without anything reporting it.
       #
       # Every gate in the `security` job reads source. These run it.
+      #
+      # `src/security` is the older half of the same idea: 57 authorization
+      # contracts, cited as evidence by the AML baseline report, which no
+      # workflow had ever run. Five had gone stale by 28 Sep 2026, and three of
+      # those asserted lines that could not execute: a merge on 30 Jul 2026
+      # (cea3d88) deleted the names they used, so the Solicitor Portal's
+      # notifications and conflict search threw on every call while their specs
+      # matched the source.
       - name: Security invariant suites (WP-29)
-        run: npx vitest run src/lib/security
+        run: npx vitest run src/lib/security src/security
 
       # The specs for the migration tooling itself ran in no workflow: the
       # applied-body manifest, the drift reporter, the withdrawals manifest and
@@ -170,9 +178,13 @@ jobs:
       # Five of the partner-agreement assertions had gone stale when they were
       # first run, each naming a guard by a spelling the code had since
       # changed, so a contract nobody runs asserts nothing about today.
+      # The Solicitor Portal's 133 were never run either, and three had gone
+      # stale the same way when they first were.
       # They read files and nothing else, so they need no install.
       - name: Portal contract suites (node --test)
-        run: npm run test:cross-portal-contracts
+        run: |
+          npm run test:cross-portal-contracts
+          npm run test:solicitor-portal
 
       # The Workflow Playground's step catalog is derived from the same registry,
       # and its templates reference catalog ids by hand — both rot silently when an
