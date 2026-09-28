@@ -2978,6 +2978,10 @@ derives the tables from them. Three rules bite.
 - **The projection is one landscape page.** That was measured over all 50
   designs and a 24-month build. A change to the matrix's rows or row height has
   to be re-measured in WeasyPrint, not assumed.
+- **Value, debt and equity is one portrait page** (§11). Both charts share one
+  year axis (`columnGeometry`), and the value axis steps on round figures. A
+  change to either chart's height, or to what the section holds, has to be
+  re-measured in WeasyPrint.
 
 ## A build planned on land-only is costed as the new build it becomes (28 Sep 2026)
 Read §10 of [`CASH_FLOW.md`](./docs/reports/CASH_FLOW.md) before touching
@@ -3696,6 +3700,24 @@ keep the ratio the originals were chosen on — roughly three times the largest
 legitimate input — and are DERIVED from the declared budget, not measured
 against the corpus, because one 91,340-character observation is not a
 distribution.
+
+## The Borrowing Capacity Snapshot shows its working
+Read §16 of [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md)
+before touching `buildLedger`, `basis.pure.ts`, `advice.pure.ts`, `incomeLabel`
+or the Snapshot's sections. Two production Snapshots were read page by page on
+28 Sep 2026. On one, the working did not reach its own surplus. On the other,
+$0, 0.0x and "pay down your debts" were printed to a client with no income and
+no debt. Three rules bite.
+
+- **The working foots.** Tax and negative property cash flow are the lines
+  that were missing. After-tax income is read from the engine's own string and
+  never recomputed. A record that cannot foot states its figures and does not
+  pretend they add up.
+- **No income is said, not assessed.** DTI and stress are null. A ratio over
+  zero income is undefined, not 0.0x.
+- **The engine's words are translated on the way out.** Every string it pushes
+  has a wording, and a test reads its source for new ones. Advice the record
+  contradicts is dropped. The engine's own strings and rules are unchanged.
 
 ## A template dresses nine report types, and never pages them
 Read [`TEMPLATE_PARITY.md`](./docs/reports/TEMPLATE_PARITY.md) before touching
@@ -4450,6 +4472,50 @@ them, and is the only render route that can call a model. **Market Intelligence*
 is the one whose page budget is fitted block by block against real renders rather
 than summed, the one that clips a section and says so on the page, and the only
 one that writes a PDF a scheduled email later attaches.
+
+## The Intelligence Hub exports an Intelligence Hub Summary
+Read §13 of [`QA.md`](./docs/reports/QA.md) before touching
+`MessageReportEditor`, `ConversationReportEditor`, `ChooseTemplateButton` or
+`_shared/reports/reportQa/documentIdentity.pure.ts`. The owner chose a template
+and received the legacy layout, because the dialog had two PDF buttons and only
+"Typeset PDF" read the choice. Three rules bite.
+
+- **The choice and the act are separate controls.** "Choose template" only
+  chooses. Export PDF is the typeset route in that choice, after the edits are
+  stored, and a failed store stops the export.
+- **One name, and the topic.** Every Hub download is an "Intelligence Hub
+  Summary". It is titled and named by what it covers: the answer's own heading,
+  else the conversation's title, else the question.
+- **An answer is a memo.** Its sections run on rather than each opening a page,
+  and its title is on the cover once, not also as the first section.
+
+## Both comparisons export like the Hub
+Read §13 of [`COMPARISON.md`](./docs/reports/COMPARISON.md) and of
+[`CASH_FLOW_COMPARISON.md`](./docs/reports/CASH_FLOW_COMPARISON.md) before
+touching `ComparisonDownloadButton`, the comparison surfaces in
+`CashFlowAnalysisModal`, `ChooseTemplateButton` or
+`_shared/reports/readableFileName.pure.ts`. Three rules bite.
+
+- **"Choose template" sits beside Export PDF.** The Cash Flow Comparison
+  borrows the Cash Flow's choice, and its button says so.
+- **A filename is readable, and a storage key is not the filename.** A file is
+  named `<Document> - <topic> - 28 Sep 2026.pdf`, where the topic is what the
+  document covers: the properties compared, or an answer's heading. The key is
+  `storageSafeFileName` of it.
+- **A memo runs on** (`RUN_ON_CHAPTER_CLASS`), and a comparison's short tables
+  are kept whole.
+
+**Market timing and competitive advantages are stored now** (§14 of
+`COMPARISON.md`, migration `20261228100000`). Read it before touching
+`supplementaryColumnsFor`, `SUPPLEMENTARY_COLUMNS` or the comparison insert.
+The model was always asked for both, and the writer dropped them from every
+intact comparison. Two rules bite.
+
+- **The AI is not touched.** The prompt, the schema and `STORABLE_SECTIONS` are
+  unchanged. The producer stores the answer it already had.
+- **They are written by a separate update, never the insert.** A deployment
+  the migration has not reached refuses the update and still saves the
+  comparison.
 
 ## Partner agreements — TEMPLATES ONLY
 The platform no longer runs the formation of a partner referral/commission

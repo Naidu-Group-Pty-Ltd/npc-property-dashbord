@@ -178,11 +178,11 @@ last survives least.
   `recommendations` have the same shape and the writer maps either into the same
   column. Treating them as one key recovers it on two more rows and stops
   `missing` reporting a section the result is holding.
-- **`marketTiming` and `competitiveAdvantages` have no column to live in.** The
-  writer that destructures a successful response into seven columns discards
-  them, so they exist **only on the damaged rows**. A salvaged document carries
-  more of the analysis than an intact one. That inversion is real and the
-  document renders them where they exist.
+- **`marketTiming` and `competitiveAdvantages` had no column to live in.** The
+  writer that destructures a successful response into seven columns discarded
+  them, so they existed **only on the damaged rows**. A salvaged document
+  carried more of the analysis than an intact one. That inversion was real for
+  every row written before 28 Sep 2026; §14 gives both a column.
 
 ### Placeholders, not omission — a departure from the Portfolio precedent
 
@@ -248,8 +248,8 @@ accepts 2 to 5 properties.
 | 6 | Risk | `chapter` | `riskComparison` or risk levels |
 | 7 | Before you commit | `chapter` | `redFlags` |
 | 8 | Who each property suits | `chapter` | `investorMatches` — **never rendered by the legacy (F5)** |
-| 9 | What sets each apart | `chapter` | `competitiveAdvantages` — salvaged records only |
-| 10 | Timing and holding | `chapter` | `marketTiming` — salvaged records only |
+| 9 | What sets each apart | `chapter` | `competitiveAdvantages` — stored since §14; salvaged records only before it |
+| 10 | Timing and holding | `chapter` | `marketTiming`, exit strategies included — stored since §14; salvaged records only before it |
 | 11 | What we recommend | `chapter` | `recommendations` |
 | 12 | On what basis | `chapter` | always — the settings from F12 |
 | — | Contact & disclaimer | `closing` | always |
@@ -650,3 +650,94 @@ parse failure it returns a 500 rather than storing a row. Its fence regex has th
 same flaw, and it cannot bite — a response short enough to be fenced whole is
 matched, and one that was cut off would not parse either way. The legacy PDF path
 (§8) stays as it was, for the reasons recorded there.
+
+## 13 · Choose template, Export PDF, and a comparison that reads as one document (28 Sep 2026)
+
+This applies the Intelligence Hub treatment (`QA.md` §13) to both comparisons.
+The owner asked for it for "the investment reports for the Compass and the cash
+flow analysis specifically".
+
+**The controls.**
+- The split button reads **Export PDF**. It used to read "Download comparison".
+- **Choose template** (`ChooseTemplateButton`) sits beside it as its own
+  button, where it had been the foot of the caret menu. The card's single-icon
+  menu keeps it in the menu, because a card footer has room for one icon.
+- The typeset route has always honoured the choice as a design
+  (`resolveRequestedDesign`, report type `comparison`). What was missing was
+  the choice on the surface beside the act.
+
+**The name.**
+- Filename: `Property Comparison - <the properties> - 28 Sep 2026.pdf`, through
+  `readableFileName.pure.ts`. It used to be
+  `Property_Comparison_3_Properties_<date>_<REF8>.pdf`.
+- Cover title: every stored title was the producer's all-caps
+  `INVESTMENT COMPARISON ANALYSIS - 3 PROPERTIES, NSW, WA`, printed under an
+  eyebrow that already said the same. The cover now names the properties
+  (`comparisonCoverTitle`). A title somebody wrote is kept.
+- The reference stays on the cover foot. The storage key stays URL-safe.
+
+**The pages.** Measured on a three-property comparison through WeasyPrint 69.0
+over the 50 designs and the standard layout: 17 sheets became 13–15.
+- **Sections run on** (`RUN_ON_CHAPTER_CLASS`, the shared primitive the Hub
+  memo now uses too). A page a section left half of them part empty.
+- **The category matrix is portrait**, headed by street names in equal
+  columns. It opened a landscape sheet of its own "for consistency" with the
+  Portfolio, and held one table and two-thirds white space.
+- **Tables are kept whole.** The ranking table broke after its first row.
+
+**Not changed.** The AI-written legacy report is untouched. It is still the
+"Download (legacy layout)" button beside Export PDF, and the menu's second item.
+
+**Found and not fixed.** The producer asks the model for `marketTiming` and
+`competitiveAdvantages` and stores neither: the structured-columns insert has
+no column for them. Adding columns is a migration for the owner to approve.
+(Approved the same day and done: §14.)
+
+## 14 · Market timing and competitive advantages are stored (28 Sep 2026)
+
+The owner approved the migration §13 left open ("that is going to be a
+requirement based on providing a complete QA report"), on one condition: the AI
+generation "is not to be amended at all", and its answer is to be carried into
+the new template.
+
+**What was lost.** The prompt has asked for ten sections since it was written.
+The writer put eight of them into columns and discarded `marketTiming` and
+`competitiveAdvantages` on every comparison whose answer parsed whole. The
+answer was generated and paid for every time. So an intact comparison printed
+two sections fewer than a damaged one (§3). Inside `marketTiming`,
+`exitStrategies` was also asked for and printed by no surface at all, the
+damaged rows included.
+
+**What changed.**
+- **Two nullable jsonb columns.** Migration `20261228100000` adds
+  `market_timing` and `competitive_advantages`, with no default, no backfill
+  and no constraint, as the seven sibling columns have none. A row written
+  before it holds nothing there and prints as it did. Those sections were never
+  stored, so there is nothing to recover and nothing is invented.
+- **The producer stores the answer it already has.** The prompt, the schema,
+  the model and the retry ladder are unchanged. `STORABLE_SECTIONS`, which
+  decides whether an answer is complete, still names eight: making these two
+  required would change when the model is asked again.
+- **A separate write, never the insert.** `supplementaryColumnsFor` decides the
+  values. They are written by an update after the row exists, and a refusal is
+  logged rather than raised. Until the migration reaches a deployment,
+  PostgREST refuses the update (`PGRST204`) and the comparison is saved without
+  the two sections, as it always was. Folding them into the insert would have
+  lost the whole row to that refusal. The raw path leaves them NULL, as it
+  leaves the seven, because the raw text carries them for salvage.
+- **Read on the columns path, never deciding the shape.**
+  `SUPPLEMENTARY_COLUMNS` is separate from `STRUCTURED_COLUMNS`, so a salvaged
+  row is never mistaken for an intact one.
+- **The exit strategies print.** "Timing and holding" now ends with *Exit
+  strategies*, one paragraph a property in the model's own words. The template
+  projection publishes them as `comparison.timing.exits`.
+- **Every reader selects `*`** (the render route, the template adapter, the
+  History loader). The viewer's `analysisFromComparisonRow` now keeps the
+  advantages as well. `get-investment-reports`' library projection names its
+  columns and does not render either section, so it is left alone. Naming a
+  column there before the migration applied would fail the whole list.
+
+**Order.** Either order is safe. After merge, `apply-migration.yml` applies
+the file from `main`. The next comparison generated after both are live prints
+both sections. Comparisons generated before that stay as they were until they
+are run again.
