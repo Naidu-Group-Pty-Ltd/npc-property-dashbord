@@ -63,6 +63,15 @@ import {
   isMissingRankingRelation, type MirrorSource,
 } from '../_shared/builderStock/mirrorAvailability.pure.ts';
 
+/**
+ * The Clients module, by the key it is REGISTERED under (migration
+ * `20260128022619`, route `/clients`) — the key `_shared/permissions.ts` maps
+ * the `clients` table to. This door used to ask for `clients`, which no
+ * deployment registers, and `requireModulePermission` denies an unregistered
+ * module to everyone but a superadmin: no grant could open activation.
+ */
+const CLIENTS_MODULE = 'client_management';
+
 const FEATURE_FLAG_KEY = 'builder_stock_marketplace';
 const IMAGE_URL_TTL_SECONDS = 300;
 
@@ -382,7 +391,7 @@ Deno.serve(async (req) => {
       const item = await loadReadableItem(cleanText(body.stock_item_id, 64));
       if (!item) return json({ error: 'Property not found' }, 404);
       const [record] = await decorate(supabase, [item]);
-      const clientsView = await requireModulePermission(supabase, actor, 'clients', 'can_view');
+      const clientsView = await requireModulePermission(supabase, actor, CLIENTS_MODULE, 'can_view');
       const detail = await readPropertyDetail(supabase, item, { includeClients: clientsView.ok });
       return json({ success: true, record, ...detail });
     }
@@ -505,7 +514,7 @@ Deno.serve(async (req) => {
       // The picker for "select for a client". Gated on the CLIENTS module, not
       // on listings — a user who may see the marketplace is not thereby
       // entitled to a directory of clients. Two columns and no more.
-      const clientsView = await requireModulePermission(supabase, actor, 'clients', 'can_view');
+      const clientsView = await requireModulePermission(supabase, actor, CLIENTS_MODULE, 'can_view');
       if (!clientsView.ok) {
         return createForbiddenResponse(clientsView.error || 'Client access required', corsHeaders);
       }
@@ -532,7 +541,7 @@ Deno.serve(async (req) => {
       // Command Centre's `internal_notes`. `listings.can_view` alone was
       // enough to reach all three, which let a user with Marketplace access
       // but no Clients access read both.
-      const clientsView = await requireModulePermission(supabase, actor, 'clients', 'can_view');
+      const clientsView = await requireModulePermission(supabase, actor, CLIENTS_MODULE, 'can_view');
       if (!clientsView.ok) {
         return createForbiddenResponse(clientsView.error || 'Client access required', corsHeaders);
       }
@@ -826,7 +835,7 @@ Deno.serve(async (req) => {
     // =====================================================================
 
     if (operation === 'select_for_client') {
-      const clientsEdit = await requireModulePermission(supabase, actor, 'clients', 'can_edit');
+      const clientsEdit = await requireModulePermission(supabase, actor, CLIENTS_MODULE, 'can_edit');
       if (!clientsEdit.ok) {
         return createForbiddenResponse(
           clientsEdit.error || 'Client edit access required', corsHeaders);
@@ -901,7 +910,7 @@ Deno.serve(async (req) => {
     }
 
     if (operation === 'set_selection_status') {
-      const clientsEdit = await requireModulePermission(supabase, actor, 'clients', 'can_edit');
+      const clientsEdit = await requireModulePermission(supabase, actor, CLIENTS_MODULE, 'can_edit');
       if (!clientsEdit.ok) {
         return createForbiddenResponse(
           clientsEdit.error || 'Client edit access required', corsHeaders);

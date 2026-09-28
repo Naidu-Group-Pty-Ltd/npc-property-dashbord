@@ -76,7 +76,7 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 export default function BuilderStockProperty() {
   const { stockItemId = '' } = useParams<{ stockItemId: string }>();
   const { toast } = useToast();
-  const { canEdit: canEditClients } = useModulePermissions('clients');
+  const { canEdit: canEditClients } = useModulePermissions('client_management');
   const [activating, setActivating] = useState(false);
   const query = useMarketplaceStockItem(stockItemId);
   const detail = query.data ?? null;
