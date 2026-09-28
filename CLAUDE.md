@@ -2940,6 +2940,61 @@ index, because it carried what survived attribution rather than what was
 searched. Nothing is loaded, no migration is requested, and a source scan
 asserts the probe names no table, client or credential.
 
+## Property Risk scores from a condition record (28 Sep 2026)
+Read §0 of [`RISK_METHOD_RECOMMENDATION.md`](./docs/reports/RISK_METHOD_RECOMMENDATION.md)
+before touching `conditionRecord*.ts`, `riskEvidenceConnection.pure.ts`,
+`CONVERSIONS`, `CONDITION_METHOD_ACTIVATION`, the `planning`/`condition` inputs
+of `scoreForProduction`, the condition ops on `manage-investment-reports` or
+`ConditionEvidencePanel`. Risk needs observations in two independent
+categories. The planning registers answer the SITE category on every
+generation (`siteConstraintSeverity`). Only a condition document can answer the
+BUILDING category, and it is recorded on the report page. The owner approved
+both conversions on 28 Sep 2026. Three rules bite.
+
+- **Either category alone scores nothing.** Absent a record, Risk is excluded
+  exactly as before, and a stored grade is never re-graded: a record moves the
+  grade on the next generation only.
+- **A held document is checked against the store, never taken on the caller's
+  word.** The upload is only ever a path issued for THIS report
+  (`isConditionDocumentPathFor`), in the private `listing-images` bucket under
+  `condition-documents/`. That folder is deliberately not one of
+  `reportStorageFolders`, because evidence about a property outlives the report
+  it was filed against. A transcription is evidence and never an observation.
+- **The panel and the grade choose the same record.** Both call
+  `bestReadingForSubject`, and the subject is read from the report row, never
+  from the request.
+
+## The 10 Year Cash Flow follows the legacy process, on one page (28 Sep 2026)
+Read §9 of [`CASH_FLOW.md`](./docs/reports/CASH_FLOW.md) before touching
+`_shared/reports/cashFlow/{constructionSchedule,expenditure,inputSummary}.pure.ts`,
+the projection matrix in `render.pure.ts`, `toWireInputs` or the construction
+schedule in `CashFlowAnalysisModal`. The schedule, the upfront/overall tables and
+the Input Summary are ONE implementation that the screen, the jsPDF export and
+the typeset document all read. The browser sends the inputs, and the server
+derives the tables from them. Three rules bite.
+
+- **Only a new build with a stated build contract is staged.**
+- **A total is the sum of its printed rows.**
+- **The projection is one landscape page.** That was measured over all 50
+  designs and a 24-month build. A change to the matrix's rows or row height has
+  to be re-measured in WeasyPrint, not assumed.
+
+## A build planned on land-only is costed as the new build it becomes (28 Sep 2026)
+Read §10 of [`CASH_FLOW.md`](./docs/reports/CASH_FLOW.md) before touching
+`_shared/reports/cashFlow/plannedBuild.pure.ts`, `CashFlowPlannedBuildPanel` or
+the land-only branch of `CashFlowAnalysisModal`. A land-only report carries one
+switch in the Cash Flow Analysis: "going ahead with a build". `withPlannedBuild`
+re-reads the case as the new build it becomes and adds no second method.
+Three rules bite.
+
+- **No build price, no build.** Every other report is returned as the same
+  object.
+- **Its figures live under their own keys (`plannedBuild*`), never
+  `buildPrice`.** The investment report prints a stored build price whatever
+  the build type.
+- **The loan is re-sized to land plus build at the case's LVR, and duty stays
+  the land's.**
+
 ## The 291 Stone Mason Drive audit (QA-291SM)
 Read [`docs/reports/QA_291SM_REMEDIATION_TRACKER.md`](./docs/reports/QA_291SM_REMEDIATION_TRACKER.md)
 before touching the standard (pdf-lib) presentation, the fork's section
