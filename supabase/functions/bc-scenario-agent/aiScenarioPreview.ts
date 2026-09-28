@@ -536,7 +536,7 @@ export function validateAIScenarios(
       // the broker sees inline that the model overshot a guardrail.
       const clampIssues: typeof issues = [];
       if (dtiGuard.note) {
-        clampIssues.push({ deltaId: 'dti-cap', deltaType: 'dti_cap_change', severity: 'warn', message: dtiGuard.note });
+        clampIssues.push({ deltaId: 'dti-cap', deltaType: 'dti_cap_change', severity: 'warning', message: dtiGuard.note });
       }
       const a = scenario.adjustments || ({} as AIAdjustments);
       if (typeof a.incomeGrowthPercent === 'number' && a.incomeGrowthPercent > 25) {
