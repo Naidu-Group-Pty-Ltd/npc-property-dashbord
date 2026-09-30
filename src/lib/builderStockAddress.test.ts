@@ -351,6 +351,27 @@ describe('parseBuilderAddressLine — a list that separates its fields with a do
   });
 });
 
+describe('parseBuilderAddressLine — the address field of a dot-separated list', () => {
+  it('reads the first field unless a later one opens with the lot', () => {
+    expect(parseBuilderAddressLine('Bravo 217 · Lot 52 Tweed Heads')).toMatchObject({
+      lotNumber: '52', suburb: 'Tweed Heads', designName: 'Bravo 217',
+    });
+    expect(parseBuilderAddressLine('Lot 52 Tweed Heads · Bravo 217 · Best Price')).toMatchObject({
+      lotNumber: '52', suburb: 'Tweed Heads', designName: 'Bravo 217',
+    });
+  });
+
+  it('never takes a design or a tag for the address on a weaker signal', () => {
+    // A four-digit design number is not a postcode, and `Act Now` is not the ACT.
+    expect(parseBuilderAddressLine('Tweed Heads · Aura 1780')).toMatchObject({
+      suburb: 'Tweed Heads', designName: 'Aura 1780',
+    });
+    expect(parseBuilderAddressLine('Tweed Heads · Bravo 217 · Act Now')).toMatchObject({
+      suburb: 'Tweed Heads', designName: 'Bravo 217',
+    });
+  });
+});
+
 describe('stockItemTitle — a list that separates its fields with a dot', () => {
   const row = {
     unit_number: null, lot_number: null, development_name: 'Sandpiper Estate Tweed Heads South NSW',
