@@ -1,4 +1,4 @@
-import { describesConfigurationOnly, type BuilderStockItem } from '@/lib/builderStock';
+import { describesConfigurationOnly, stockItemSuburb, type BuilderStockItem } from '@/lib/builderStock';
 import {
   builderStockAddress, parseBuilderAddressLine, splitAddressFields,
 } from '../../supabase/functions/_shared/builderStockAddress.pure';
@@ -104,7 +104,7 @@ export function builderStockTitle(item: BuilderStockItem): string {
   if (development && unit) return `${development} — ${unit}`;
   if (development) return development;
   if (unit) return unit;
-  return splitAddressFields(item.address_line).address || item.suburb || 'Builder stock';
+  return splitAddressFields(item.address_line).address || stockItemSuburb(item.suburb) || 'Builder stock';
 }
 
 const trimmed = (value: string | null | undefined): string | undefined => {
@@ -128,7 +128,7 @@ export function builderStockToMapListing(item: BuilderStockItem): PropertyListin
     id: builderStockMapId(item.id),
     title,
     price: typeof item.price === 'number' && item.price > 0 ? item.price : null,
-    location: trimmed(item.suburb) ?? null,
+    location: stockItemSuburb(item.suburb),
     bedrooms: item.bedrooms ?? null,
     bathrooms: item.bathrooms ?? null,
     propertyType: trimmed(item.property_type) ?? null,
@@ -154,7 +154,7 @@ export function builderStockToMapListing(item: BuilderStockItem): PropertyListin
     // design and tags a list writes after it, which no geocoder can place.
     address: trimmed(composed.street) ?? trimmed(splitAddressFields(item.address_line).address),
     addressPrecision: composed.precision,
-    suburb: trimmed(composed.parsed.suburb) ?? trimmed(item.suburb),
+    suburb: trimmed(composed.parsed.suburb) ?? stockItemSuburb(item.suburb) ?? undefined,
     state: trimmed(composed.parsed.state) ?? trimmed(item.state),
     // 93 of 124 rows carry a postcode inside the text and 2 have it in the
     // column. The postcode is what stops `Donnybrook` resolving to WA.

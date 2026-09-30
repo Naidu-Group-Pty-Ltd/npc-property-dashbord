@@ -705,9 +705,26 @@ export function stockItemTitle(item: Pick<BuilderStockItem,
     || 'Unnamed property';
 }
 
+/**
+ * The suburb, as a place.
+ *
+ * A Notion list titles each row `<address> · <design> [· <tag>]`, and until
+ * 30 Sep 2026 the network stored everything after the address as the suburb —
+ * `Tweed Heads · Bravo 217 · Best Price` on every row of the live list — and
+ * this Command Centre mirrors what the network stores. The network reads the
+ * list's own fields now and a "Read again" corrects the rows; this is the
+ * read-path half, so a card never prints the tail meanwhile, nor from any row
+ * that carries one later. No suburb contains a spaced dot, so the first field
+ * is the place.
+ */
+export function stockItemSuburb(suburb: string | null | undefined): string | null {
+  const place = (suburb ?? '').split(/\s+[\u00b7\u2022]\s+/)[0].trim();
+  return place || null;
+}
+
 export function stockItemLocality(item: Pick<BuilderStockItem,
   'suburb' | 'state' | 'postcode'>): string {
-  return [item.suburb, item.state, item.postcode].filter(Boolean).join(' ');
+  return [stockItemSuburb(item.suburb), item.state, item.postcode].filter(Boolean).join(' ');
 }
 
 /**

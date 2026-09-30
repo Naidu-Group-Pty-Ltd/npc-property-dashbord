@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { stockItemTitle } from './builderStock';
+import { stockItemLocality, stockItemSuburb, stockItemTitle } from './builderStock';
 import {
   builderStockAddress,
   parseBuilderAddressLine,
@@ -367,5 +367,22 @@ describe('stockItemTitle — a list that separates its fields with a dot', () =>
     expect(stockItemTitle({
       ...row, address_line: 'Lot 36 - Tringa Street, Sandpiper Estate, Tweed Heads South NSW 2486 [Stradbroke 180]',
     })).toBe('Lot 36, Tringa Street · Stradbroke 180');
+  });
+});
+
+describe('stockItemLocality — a suburb the old parse stored with the list’s fields in it', () => {
+  it('prints the place, before the network re-reads the list', () => {
+    // Verbatim from the 19 live rows mirrored on 30 Sep 2026.
+    expect(stockItemLocality({ suburb: 'Tweed Heads · Bravo 217 · Best Price', state: 'NSW', postcode: null }))
+      .toBe('Tweed Heads NSW');
+    expect(stockItemLocality({ suburb: 'Kalkallo · 3 Bed', state: 'VIC', postcode: null })).toBe('Kalkallo VIC');
+    expect(stockItemSuburb('Clyde North · Suri 28 Display Home')).toBe('Clyde North');
+  });
+
+  it('leaves every real suburb exactly as stored', () => {
+    for (const suburb of ['Tweed Heads South', 'ARMSTRONG CREEK', 'Wyndhamvale', 'Clyde·North']) {
+      expect(stockItemSuburb(suburb)).toBe(suburb);
+    }
+    expect(stockItemSuburb(null)).toBeNull();
   });
 });

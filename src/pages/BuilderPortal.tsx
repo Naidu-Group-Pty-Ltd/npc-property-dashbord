@@ -8,6 +8,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { BuilderConversationThread } from '@/components/listings/BuilderStockConversation';
 import { StockPicture } from '@/components/stock/StockPicture';
 import { imageById } from '@/lib/builderStockGallery';
+import { stockItemSuburb } from '@/lib/builderStock';
 import { useNotificationsOptional } from '@/contexts/NotificationsContext';
 import { useBuilderStockMarketplaceFlag } from '@/hooks/useBuilderStockMarketplaceFlag';
 import { cn } from '@/lib/utils';
@@ -156,7 +157,7 @@ function ActivatedProperties() {
 }
 
 function ActivationRow({ row }: { row: ActivatedPropertyRow }) {
-  const place = [row.lot_number ? `Lot ${row.lot_number}` : null, row.address, row.suburb].filter(Boolean).join(', ');
+  const place = [row.lot_number ? `Lot ${row.lot_number}` : null, row.address, stockItemSuburb(row.suburb)].filter(Boolean).join(', ');
   const website = row.builder_website && /^https?:\/\//i.test(row.builder_website) ? row.builder_website : null;
   return (
     <Card role="article" aria-label={place || 'Activated property'}>
