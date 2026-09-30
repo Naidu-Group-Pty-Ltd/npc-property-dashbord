@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { format } from 'date-fns';
+import { reportGeneratedAt } from '@/lib/reports/investment/reportGeneratedAt.pure';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import type { PixelPerfectPDFGeneratorHandle } from '@/components/reports/PixelPerfectPDFGenerator';
 import { InvestmentReportEditor } from '@/components/reports/InvestmentReportEditor';
@@ -24,6 +25,7 @@ import { logActivityDirect } from '@/hooks/useActivityLogger';
 import { deliverInvestmentPdf, publishInvestmentPdf } from '@/lib/reports/investment/deliverInvestmentPdf';
 import { readReportAudience, type ReportAudience } from '@/lib/reports/investment/audienceContent.pure';
 import { InvestmentReportFamilyNotice } from '@/components/reports/report-view/InvestmentReportFamilyNotice';
+import { ConditionEvidencePanel } from '@/components/reports/report-view/ConditionEvidencePanel';
 import { fetchReportFamily, type ReportFamily } from '@/lib/reports/subReports';
 import { toast } from 'sonner';
 import {
@@ -226,7 +228,7 @@ export default function InvestmentReportView() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `investment-report-${report.property_address.replace(/[^a-zA-Z0-9]/g, '-')}-${format(new Date(report.created_at), 'yyyy-MM-dd')}.txt`;
+    a.download = `investment-report-${report.property_address.replace(/[^a-zA-Z0-9]/g, '-')}-${format(new Date(reportGeneratedAt(report)?.at ?? report.created_at), 'yyyy-MM-dd')}.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -256,6 +258,7 @@ export default function InvestmentReportView() {
     <div className="flex-1 flex flex-col h-full overflow-hidden">
       <InvestmentReportCommandHeader
         report={report}
+        family={family}
         clientInfo={clientInfo}
         isClientReport={isClientReport}
         onBack={() => (fromCashFlowAnalysis ? navigateBackToCashFlowAnalysis(navigate, location) : navigate(-1))}
@@ -331,6 +334,13 @@ export default function InvestmentReportView() {
               <InvestmentReportCoverageNote
                 dataSources={report.data_sources}
                 validationFlags={report.validation_flags}
+              />
+
+              {/* Filed against the Compass a variant came from: the Compass is
+                  the generation that scores Property Risk. */}
+              <ConditionEvidencePanel
+                reportId={report.derived_from_report_id || report.parent_report_id || report.id}
+                propertyAddress={report.property_address}
               />
 
               {hasOverrides && (

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerDescription } from '@/components/ui/drawer';
 import { Button } from '@/components/ui/button';
+import { plannedBuildRequested } from '@/lib/reports/cashFlow/plannedBuild.pure';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -174,6 +175,11 @@ export function ManualDataOverrideModal({ report, isOpen, onClose, onSave }: Man
   // a house-and-land package before they can pick a default dutiable value.
   const currentBuildType = overrides.buildType || report?.manual_overrides?.buildType || 'existing_property';
   const isNewBuild = currentBuildType === 'new_build';
+  // A land-only report whose cash flow has a build planned on it (switched on
+  // in the Cash Flow Analysis) stages that build with the same settings a new
+  // build does, so its stage percentages are offered here too.
+  const stagesConstruction = isNewBuild
+    || (currentBuildType === 'land_only' && plannedBuildRequested(overrides));
 
   const stampDutyPurchasePrice = useMemo(() => {
     const price = overrides.purchasePrice
@@ -512,6 +518,29 @@ export function ManualDataOverrideModal({ report, isOpen, onClose, onSave }: Man
       originalValue: report?.financial_calculations?.buildSizeSqm || null,
       overrideValue: report?.manual_overrides?.buildSizeSqm || null,
       suffix: 'm²'
+    },
+    // The generator already reads these three from `manual_overrides`, and
+    // nothing else can supply them for a property entered by hand — so a
+    // report on one printed its configuration without them, and the prose
+    // borrowed a listing portal's figures and called them the property's
+    // records. Recording them here is the route the product already has.
+    {
+      key: 'bedrooms',
+      label: 'Bedrooms',
+      originalValue: report?.financial_calculations?.propertySpecs?.bedrooms ?? null,
+      overrideValue: report?.manual_overrides?.bedrooms ?? null
+    },
+    {
+      key: 'bathrooms',
+      label: 'Bathrooms',
+      originalValue: report?.financial_calculations?.propertySpecs?.bathrooms ?? null,
+      overrideValue: report?.manual_overrides?.bathrooms ?? null
+    },
+    {
+      key: 'yearBuilt',
+      label: 'Year Built',
+      originalValue: report?.financial_calculations?.propertySpecs?.yearBuilt ?? null,
+      overrideValue: report?.manual_overrides?.yearBuilt ?? null
     }
   ];
 
@@ -621,7 +650,7 @@ export function ManualDataOverrideModal({ report, isOpen, onClose, onSave }: Man
   ];
 
   // Construction stage percentages (only for new builds - Cash Flow Tab)
-  const constructionStageFields: OverrideField[] = isNewBuild ? [
+  const constructionStageFields: OverrideField[] = stagesConstruction ? [
     {
       key: 'stageDepositPercent',
       label: 'Deposit Stage',
@@ -1765,7 +1794,7 @@ export function ManualDataOverrideModal({ report, isOpen, onClose, onSave }: Man
                 </div>
 
                 {/* Construction Stage Percentages - Only for New Builds */}
-                {isNewBuild && constructionStageFields.length > 0 && (
+                {stagesConstruction && constructionStageFields.length > 0 && (
                   <>
                     <Separator className="my-6" />
                     <div className="space-y-4">

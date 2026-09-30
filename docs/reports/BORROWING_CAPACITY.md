@@ -990,3 +990,375 @@ a family contributes five variants and an operator picks whichever they like, so
 the reference variant passing means nothing on its own. The eyebrow was measured
 in Chromium across the ten families with a name 24 characters longer than the
 longest in production: one line, 8.3pt tall, 6pt clear of the heading beneath it.
+
+## 16. Two production documents, read page by page (28 Sep 2026)
+
+The owner sent two Snapshots issued that day and asked for every chink found and
+the flow made premium. One client had **no income recorded**; the other was
+**limited by the DTI with a healthy surplus**. No fixture had either shape, so
+`__tests__/fixtures/productionShapes.ts` now carries both. It keeps
+production's keys, engine strings and address cut, with invented figures.
+Everything below was read off the two PDFs and traced to a cause before it was
+changed.
+
+**What was wrong.**
+
+- **The working did not add up.** "How the capacity is built" printed income,
+  living expenses, commitments and a surplus, and the lines did not reach the
+  surplus: $192,378 of income less $2,511 and $2,800 a month, beside a surplus
+  of $4,791. Two of the engine's own steps were missing.
+  - **Tax.** The surplus is built from after-tax income, which the row stores
+    only inside an assumption string ("After-Tax Income Used —
+    $137,462.8/yr").
+  - **Negative property cash flow.** The engine adds it to living expenses
+    (`totalLivingExpenses = livingExpenses + negativePropertyCashFlows`) and
+    stores only the base figure.
+- **A ratio nobody could check.** 10.7x printed beside one $455,000 mortgage.
+  The engine's DTI counts the loans on properties held too, which the
+  liabilities table never lists.
+- **"Limited" with no reason**, in red, beside a positive surplus and a loan
+  inside the limit. The engine rates red when the surplus is nil or the DTI is
+  past its threshold. With a positive surplus, the DTI is the reason.
+- **An assessment of nothing.** With no income the engine still returns $0,
+  0.0x and a band. The document presented them as a finding:
+  - "Stress tested $0";
+  - an income table holding only "Total $0 $0";
+  - advice to "pay down high-interest debts" to a client with none.
+- **The machine room on the page.** Seventeen engine assumption strings were
+  printed verbatim, for example:
+  - "After-Tax of SHADED (assessable) income";
+  - "DTI Denominator (APS 220)";
+  - "$192,378.24/yr";
+  - "$1000/mo (zeroed below)" on a bank-mode assessment, where no floor
+    applied.
+  
+  The buffer, rate and term printed twice, a table apart.
+- **Advice as the engine wrote it.**
+  - "Limited borrowing capacity - focus on strengthening financial position":
+    an ASCII hyphen, and a restatement of the band above it.
+  - "Consider accelerating portfolio growth while rates are favorable": a claim
+    about the market the record does not hold.
+- **"Positive Cash Flow (37 Fairview Street Gunnedah, 2...)".** The engine
+  cuts the address to thirty characters and appends "..." whether or not it
+  cut anything.
+- **Eight pages for a two-page answer.** Every section opened a page. One page
+  held only a liabilities total, another only a "Worth knowing" callout, and a
+  third opened with a single row of a table torn from the page before.
+
+**What it does now.**
+
+- **A working that foots** (`buildLedger`). All lines are monthly:
+  1. assessed income;
+  2. less tax;
+  3. after-tax income;
+  4. less living expenses;
+  5. less commitments;
+  6. less property costs not covered by rent (in conservative mode, "the
+     conservative policy's adjustments");
+  7. the surplus;
+  8. the capacity, labelled with the rate and term it was repaid at.
+  
+  After-tax income is **read** from the engine's own string
+  (`afterTaxIncomeFrom`) and never recomputed against today's tax table. Where
+  it was never recorded, or the difference runs the wrong way, the table falls
+  back to the figures the record holds, and does not claim they add up.
+- **The ratio with its working** (`DebtToIncome`). The ratio, the APS 220
+  income it divides by, and the existing debt derived back from both. That
+  debt is rounded to $10,000 and said "about", because the ratio is stored to
+  two decimals. Where the debt clearly exceeds the listed liabilities, the note
+  says it includes the loans on properties held. The narrative says when the
+  ratio is what limited the band.
+- **No income, said once.**
+  - The narrative, the income callout and a single piece of advice ("Record the
+    household's income and recalculate") replace the presentation of $0.
+  - DTI and stress are `null`: a ratio over zero income is undefined, not 0.0x.
+- **The basis, curated and moved last** (`basis.pure.ts`, "On what basis").
+  - Every engine key has a reading and a rule for when it applies. Money is
+    rounded and grouped by hand (no ICU).
+  - A figure the document states elsewhere is not repeated.
+  - An unknown key prints title-cased rather than being lost.
+- **Advice in the report's words** (`advice.pure.ts`). Every engine string has
+  a wording, and advice the record contradicts is dropped:
+  - debt advice needs consumer debt, because a mortgage is not "high-interest
+    debt";
+  - with no income, nothing but recording it applies.
+  
+  `advice.spec.ts` reads the engine's source and fails on any `push` it does
+  not know. The engine's strings are unchanged: they also feed the calculator
+  screen.
+- **The flow.**
+  - Sections run on (`RUN_ON_CHAPTER_CLASS`).
+  - The chart and its sentence are one block, as are short tables and each
+    callout (`KEEP_TOGETHER_CLASS`).
+  - The headroom bars moved to the answer and replaced the utilisation bullet,
+    whose three shaded bands carried no labels.
+  - The KPI foot reads "At 10.50%: $405,510", where it read "Stress tested".
+- **The label.** `incomeLabel` reads "Property cash flow — 37 Fairview Street
+  Gunnedah". It cuts back to the last comma only when the engine's ellipsis and
+  exactly thirty characters show that it cut. From now on the engine writes the
+  whole address, with no ellipsis. `startsWith('Positive Cash Flow')`, the one
+  reader of the label, is unaffected.
+
+**Measured.** Through WeasyPrint 69.0 over the standard design and all fifty
+catalogue designs: no near-empty page and no overflowing text on any of the
+three cases.
+
+| Case | Pages |
+| --- | --- |
+| DTI-limited | 7 (6 in one of the 51 designs) |
+| No income | 6 (5 in one of the 51 designs) |
+| Full fixture | 10 (was 11), with the working and the basis added |
+
+**Not changed, and why.**
+
+- **The engine's rules, and what it stores.** Every figure and decision is
+  its own.
+- **Assessments made before 14 Aug 2026 carry no stored audit trail or
+  explanation (F12).** The two documents reviewed were such assessments, which
+  is why neither had "How this was calculated". Recalculating one produces
+  both pages.
+- **"Primary Pea Body"** on the second document is the income source's name as
+  it was typed into the record, most likely a transcription of "PAYG". It is
+  data, and the document prints it as recorded; the remedy is to correct the
+  income source.
+
+## 17. The Strategy Rationale Brief, typeset in the chosen template (28 Sep 2026)
+
+The What-If tab's **Download PDF** (Borrowing Capacity → What-If → Strategy
+Rationale) drew the brief in the browser with jsPDF
+(`StrategyRationalePDF.ts`). A chosen template could reach it only as a
+palette (`drawnDesignFor('strategy_rationale')`). The owner's instruction for
+moving it was exact: the content "is predominantly just a transition of that
+information into the new template structure". Nothing is added and nothing is
+reworded.
+
+- **One statement of what the brief prints.** `strategyRationale.pure.ts` turns
+  the engine's report and the panel's context into the strings the jsPDF brief
+  prints, string for string: the KPI boxes and their feet, the section titles
+  with their counts, the empty-scenario lines, the severity and capacity
+  labels, "Cash-flow:", the capital flow, the valuation lines and the
+  cross-collateral method. It runs in the browser, because the scenario is
+  being modelled there and is stored nowhere. `strategyRationale.spec.ts` reads
+  the generator's source for its literals, and reproduces the Samuel Lavis
+  baseline brief of 28 Sep 2026 line for line.
+- **The route is the Snapshot's.** `render-borrowing-capacity-pdf` draws a
+  second document when asked (`document: 'strategy_rationale'`):
+  - The brief's words arrive in the request. `readStrategyRationale` keeps only
+    the composer's shape, bounds every string, and refuses a brief with no
+    headline.
+  - Everything else is the Snapshot's: the same auth and client check, the
+    client's name read from the record, the same brand snapshot, the design
+    chosen for Borrowing Capacity, the same bucket and the same ledger. The
+    ledger row carries no assessment, and the brief's file name tells the two
+    apart.
+  - A body naming no document is the Snapshot, exactly as before. A document
+    the route does not draw is refused.
+- **It is one memo.** The brief is a single chapter whose parts are subheads,
+  each kept with its opening block. Drawn as chapters, a baseline scenario put
+  "No levers applied" under a 30pt heading and ran a page longer than the jsPDF
+  brief. Measured in WeasyPrint over the standard design and all 50 catalogue
+  designs, with no overflow and no stub page:
+  - the baseline brief is 3 pages in every design;
+  - a four-lever brief with capital flow, a valuation and a pool is 5 or 6.
+- **The echo is required.** The route answers `document`, and the browser
+  saves the typeset file only when it says `strategy_rationale`: a deployment
+  older than this ignores the field and draws a Snapshot. Either that answer or
+  an absent route falls back to the jsPDF brief, and the person is told.
+- **Both layouts stay.** "Download PDF" is the typeset brief. The caret beside
+  it offers "Download (legacy layout)", and "Choose template" sets the
+  Borrowing Capacity choice the brief is drawn in. The file keeps its name,
+  `Strategy_Rationale_<Name>_<yyyy-MM-dd>.pdf`, dated in the adviser's own time
+  zone, as is the "Generated" line.
+
+## 18. The Strategy Advisor's reasoning travels with its scenario (28 Sep 2026)
+
+The What-If tab's Strategy Advisor proposes three scenarios for the client's
+own position, each with a paragraph of client-specific reasoning, an execution
+risk, the evidence a lender will ask for and the levers it considered and set
+aside. Its system prompt tells it to write that reasoning "as if it will be
+quoted directly into a finance handoff (because it will)". Nothing quoted it.
+"Apply Scenario" moved the card's levers into the modeller, and the Strategy
+Rationale then described those levers lever by lever while saying nothing of
+why this client should use them. The explanation stayed on the card.
+
+Two faults sat in front of that. For a while the advisor answered nothing at
+all: its request was addressed through a build-time variable no build sets, so
+it went to the web app's own host and came back as the app's HTML under a 200.
+Nothing parsed, and the prompt sat unanswered. Market Updates Q&A and the
+source-feed copy button had the same fault, and all three now read the one
+resolved project URL (`integrations/supabase/env.ts`). And the rationale had no
+field to carry the reasoning in.
+
+**The address fix exposed a second fault behind the first.** Once the request
+reached `bc-scenario-agent`, the function refused both of the owner's
+attempts (28 Sep 2026, 15:21 and 15:22 UTC) with 401 "Authentication
+required". The advisor opened its own fetch with credentials omitted and the
+access-token Bearer alone. That Bearer is the carrier a browser can no longer
+reliably hold (`secureInvoke.ts`), while `verifyAuth` reads the session from
+the HttpOnly cookie. The function was already wrapped in `withRequestOrigin`,
+which answers the exact origin with credentials, so the cookie was all it
+needed. The advisor now opens its stream through `openSecureStream`, the
+transport `streamSecureFunction` uses: the cookie, the Bearer, and one refresh
+and retry on an auth refusal. It still reads its own OpenAI-style deltas.
+`bcScenarioAgentStream.test.ts` forbids a fetch of its own in the component.
+
+Now, applying a card carries its reasoning with its levers:
+
+- **One composer.** `composeAdvisorSection` (`strategyRationale.pure.ts`) words
+  the section once. The panel, its "Copy brief" text, the typeset brief, the
+  jsPDF brief, the typeset Snapshot and the jsPDF Snapshot all print what it
+  returns, so they cannot word it differently.
+- **Where it sits.** In the brief it comes under the capacity figures and
+  before "What we propose & why". It is the WHY of the whole scenario; the
+  levers below it are the engine's account of each part.
+- **The model's own estimate is not carried.** A card's `estimatedImpact` is
+  the model's guess at the uplift, and the brief already prints the engine's
+  figure. Two capacity figures for one scenario is how a finance team comes to
+  ask which one to believe.
+- **It says who wrote it, always.** Every copy carries "Written by the Strategy
+  Advisor (AI) for this client's position. Every figure elsewhere in this brief
+  is the calculation engine's own." The server's read restores that line
+  whatever the request sent.
+- **It follows the levers.** Once an apply has settled, the modeller takes a
+  signature of the levers. The settle matters because effects normalise the
+  levers for a render or two afterwards. If the broker moves a lever after
+  that, the section says the reasoning describes the scenario as the advisor
+  proposed it. Reset clears it. Loading a saved scenario does not bring it
+  back into the modeller, because a load restores the calculator inputs and
+  not the card's lever set.
+- **It is saved with the scenario.** `advisorRationale` rides inside the
+  preset's payload (a JSONB column, so no migration). It reaches every
+  scenario saved, applied to the calculator or sent to the Snapshot, and the
+  Snapshot's scenario pages print it under that scenario's name.
+- **Without an advisor, nothing changes.** A scenario built by hand prints
+  exactly what it printed before. That is pinned by comparing the rendered
+  brief with and without the field.
+
+`strategyRationaleAdvisor.spec.ts` carries the rules.
+
+## 19. The Strategy Advisor says what it is doing (28 Sep 2026)
+
+A request to the advisor takes 20–90 seconds. It makes one model call, makes
+a second when the borrowing engine rejects enough of the first set, and checks
+every scenario against the engine. For all of that the chat drew one spinning
+circle, so a broker could not tell a slow answer from a stalled one.
+
+The advisor now reports each stage on the stream it already sends, as
+`data: {"progress": {stage, detail, mode}}`:
+
+1. **Reading** the client's position: capacity today and the constraint that
+   limits it. The prompt uses the same classification, `bindingConstraintOf`,
+   and keeps its own wording for each constraint.
+2. **Drafting**, aimed at the purchase price where one was detected. A question
+   about the cards already on screen is `mode: 'answer'` and reads "Writing
+   the answer".
+3. **Engine check** of the drafted scenarios.
+4. **Revising**, only when the engine flagged two or more scenarios and there
+   is budget for a second call.
+5. **Finishing**, set by the browser as the answer arrives and the cards are
+   re-checked against the live calculator.
+
+The bubble (`AdvisorProgressBubble`) draws:
+
+- the stage headline;
+- the server's detail line;
+- the time since sending;
+- the steps, with the done ones ticked;
+- while the model works, one line at a time from the brief, prefixed
+  **In the brief**.
+
+The words live in `_shared/advisorProgress.pure.ts`, which the server and the
+browser both read. Three rules bite.
+
+- **A stage is reported only when it is reached.** The clock ticks; the
+  headline changes only on a report.
+- **The rotating line is a fact the browser sent, never a thought.** Nothing
+  says what the model is weighing at a given second, so the line reads
+  "Money Me, $10,000 balance, $862/mo", never "Considering paying out Money
+  Me". A test refuses verbs of deliberation in it.
+- **Either end may be older.** An older browser reads only `error` and
+  `choices`, so it passes over the event. A newer browser moves itself to
+  "reading" when the stream opens, and to "drafting" if an older server
+  reports nothing within 2.5 s. The stage never moves backwards.
+
+Past 40 seconds, the bubble says a full set can take up to a minute and a
+half. A revision says it adds up to 45 seconds. Both figures are the
+function's own budgets (`FIRST_CALL_TIMEOUT_MS`, `REVISION_TIMEOUT_MS`).
+
+## 20. Why every advisor scenario read as a loss, and what the brief says now (28 Sep 2026)
+
+Masline Nyawo's What-If Strategy Rationale and Borrowing Capacity Snapshot were
+read line by line. All three advisor scenarios read as losses of $300k–$590k,
+for three separate reasons, each fixed at its cause.
+
+**1. The Calculator assessed her living costs at $0.** On every calculation for
+her, `calculate-borrowing-capacity` logged
+`HEM=$3360, Declared=$0, Base=$0 (declared)`. The Calculator sends the living
+costs its chosen method produces as an explicit override. The server then
+stamped the saved assessment `expense_method: 'declared'`, whatever had been
+chosen. The modal restored that stamp as if the adviser had chosen Declared,
+and a client with no declared expenses on file is $0 on Declared. The next save
+stamped it again, so it never corrected itself.
+
+The scenario engine floors living costs at HEM, as lenders do, and landed on
+the Snapshot's $856,932. The Calculator said $1,258,615. The difference is
+exactly $3,360 a month repaid at 9.44% over 30 years. Every scenario was
+measured against the inflated base.
+
+`_shared/borrowingCapacityExpenseMethod.pure.ts` holds the rule:
+- The browser sends the method it chose.
+- The server records it in `assumptions.expenseMethod`, beside the lender
+  settings already restored from there.
+- The `expense_method` column records what was applied: `hem`, `declared` or
+  `declared_higher`.
+- Only a recorded choice is restored. A row without one opens on the default,
+  the higher of HEM or declared.
+
+An older browser sends no choice, and the column then says what it always did.
+
+**2. The advisor switched a DTI cap ON to "clear the DTI constraint".**
+`dtiCapOverride` turns the cap on at the stated multiple. For a client the
+Calculator assesses with no cap, "10x non-bank" added a ceiling and cut
+capacity to exactly 10.00x on two of the three cards.
+`_shared/advisorDtiOverride.pure.ts` withholds a proposal that would tighten
+the assessment:
+- It does so on the server before the engine measures the scenario, and again
+  in the browser for a card kept from an earlier session.
+- It keeps the lender the proposal named, because re-shading income to that
+  lender's policy is a separate lever.
+- The card says why the cap was not applied.
+
+The prompt now tells the model not to propose the lever where no cap is
+enforced.
+
+**3. Capacity and purchase power were printed side by side with no reading.**
+A scenario that releases equity lowers capacity, because the released equity
+is new debt the lender services, and raises purchase power. The brief now says
+so under the figures (`rationaleReadingNote`), wherever capacity falls and
+purchase power is reported. The equity sentence is added only where equity is
+released.
+
+The brief also sets the choice beside the alternatives. The agent carries
+every card from the same answer with the one applied, and the advisor section
+lists them with the engine's figures:
+- capacity and purchase power;
+- whether each clears the target or falls short, and by how much;
+- the advisor's risk rating;
+- which option was applied.
+
+It also quotes the advisor's own guardrails ("DTI cap of 10x not applied…")
+under *What the calculation engine flagged*. The engine's working figures
+(`Honest DTI 10.60× … Numerator $…`) stay on the card. All of it goes through
+`composeAdvisorSection`, so the panel, both briefs and both Snapshots say it
+the same way.
+
+**The jsPDF brief** printed every `→` as `!’`, because the built-in font carries
+WinAnsi only (`src/lib/pdf/standardFontText.ts` now guards the brief and the
+legacy Snapshot). It also printed "2 securityies" and cut an address to
+"Innisfa"; lever labels now name a property by its whole street line. And the
+brief wrapped a lever's text to full width under its CAUTION chip, so the two
+overlapped.
+
+Measured: Masline's brief on 29 Sep was the jsPDF fallback. The browser's
+preflight to `render-borrowing-capacity-pdf` answered 200 and no POST
+followed. The Snapshot's call two minutes later reached the function.

@@ -5,6 +5,9 @@ import jsPDF from 'jspdf';
 import { logActivityDirect } from '@/hooks/useActivityLogger';
 import { fetchGlobalReportSettings } from '@/hooks/useGlobalReportSettings';
 import { drawJsPDFDisclaimerPage } from '@/utils/pdfDisclaimerPage';
+import { issuerClosingPage, issuerLine, loadLegacyDocumentBrand, rgbObject } from '@/lib/reports/legacyDocumentBrand';
+import { drawLegacyIssuerCover } from '@/lib/reports/legacyIssuerCover';
+import { issuerContactDetails } from '@/lib/reports/issuerIdentity.pure';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -52,7 +55,23 @@ import {
   describeMissingSections,
 } from '@/lib/reports/cashFlowComparison/analysisRequest.pure';
 import { CashFlowComparisonDownloadButton } from '@/components/cash-flow/modal/CashFlowComparisonDownloadButton';
-import { toWireProjection } from '@/lib/reports/cashFlow/toWireProjection';
+import { ChooseTemplateButton } from '@/components/reports/ChooseTemplateButton';
+import { toWireInputs, toWireProjection } from '@/lib/reports/cashFlow/toWireProjection';
+import {
+  buildConstructionSchedule,
+  scheduleDuration,
+  stageMonthsFor,
+  stagePercentsFrom,
+} from '@/lib/reports/cashFlow/constructionSchedule.pure';
+import { acquisitionExpenditure } from '@/lib/reports/cashFlow/expenditure.pure';
+import {
+  PLANNED_BUILD_KEYS,
+  PLANNED_BUILD_OVERRIDE,
+  plannedBuildFigures,
+  plannedBuildRequested,
+  withPlannedBuild,
+} from '@/lib/reports/cashFlow/plannedBuild.pure';
+import { CashFlowPlannedBuildPanel, type PlannedBuildDraft } from '@/components/cash-flow/modal/CashFlowPlannedBuildPanel';
 import { matchStoredScenario } from '@/lib/reports/cashFlow/storedSeriesMatch';
 import {
   saveTemplateDocument,
@@ -60,6 +79,7 @@ import {
   tryTemplateDocument,
 } from '@/lib/reportTemplate/templateDocument';
 import { cashFlowFinalKey } from '@/lib/reports/cashFlow/finalDocumentKey';
+import { isTemplateDeliveryHeld } from '../../../supabase/functions/_shared/reports/templateParity.pure.ts';
 import { SendToClientModal } from '@/components/reports/SendToClientModal';
 import { ArrowLeft, Calculator, Download, TrendingUp, DollarSign, Percent, Home, Save, RotateCcw, BarChart3, Image, GitCompare, X, FileText, Target, Zap, Building, Award, Printer, ChevronDown, ChevronRight, Send, Search, Check } from 'lucide-react';
 import { ComposedChart, LineChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
@@ -415,9 +435,57 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     5: 7, // Practical Completion
   });
 
+  // A land-only report carries one switch here: "we are going ahead and
+  // building on it". The draft is what the adviser has typed; it drives the
+  // analysis live and is written to the report only on Save, like every other
+  // edit in this workspace.
+  const isLandOnly = report?.manual_overrides?.buildType === 'land_only';
+  const [plannedBuildDraft, setPlannedBuildDraft] = useState<PlannedBuildDraft>({
+    enabled: false, buildPrice: '', durationMonths: '', weeklyRent: '',
+  });
+  const plannedBuildOverrides = useMemo(() => {
+    if (!isLandOnly) return null;
+    const n = (v: string) => { const x = Number(v); return Number.isFinite(x) && x > 0 ? x : null; };
+    return {
+      [PLANNED_BUILD_OVERRIDE]: plannedBuildDraft.enabled,
+      [PLANNED_BUILD_KEYS.price]: n(plannedBuildDraft.buildPrice),
+      [PLANNED_BUILD_KEYS.durationMonths]: n(plannedBuildDraft.durationMonths),
+      [PLANNED_BUILD_KEYS.weeklyRent]: n(plannedBuildDraft.weeklyRent),
+    };
+  }, [isLandOnly, plannedBuildDraft]);
+  const handlePlannedBuildChange = useCallback((next: PlannedBuildDraft) => {
+    setPlannedBuildDraft(next);
+    setHasChanges(true);
+  }, []);
+
+  // The case as the cash flow reads it. A land-only purchase with a build
+  // planned on it is costed as the new build it becomes — land plus the build
+  // contract, staged by the same schedule every new build uses
+  // (`plannedBuild.pure.ts`). Every other report is the same object, so
+  // nothing downstream recomputes. Saving still writes to `report`.
+  const cashFlowReport = useMemo(() => {
+    if (!report) return report;
+    if (!plannedBuildOverrides) return report;
+    return withPlannedBuild({
+      ...report,
+      manual_overrides: { ...(report.manual_overrides || {}), ...plannedBuildOverrides },
+    });
+  }, [report, plannedBuildOverrides]);
+  const plannedFigures = useMemo(() => {
+    if (!report || !plannedBuildOverrides) return null;
+    return plannedBuildFigures({
+      ...report,
+      manual_overrides: { ...(report.manual_overrides || {}), ...plannedBuildOverrides },
+    });
+  }, [report, plannedBuildOverrides]);
+  /** A land-only report the cash flow is costing as the build planned on it. */
+  const isPlannedBuild = isLandOnly && plannedFigures !== null;
+
   // Get build type from report (defaults to 'existing_property')
-  const buildType = report?.manual_overrides?.buildType || 'existing_property';
+  const buildType = cashFlowReport?.manual_overrides?.buildType || 'existing_property';
   const isNewBuild = buildType === 'new_build';
+  /** How the case is named on the screen and in the export. */
+  const buildCaseLabel = isPlannedBuild ? 'Land + Planned Build' : isNewBuild ? 'New Build' : 'Existing Property';
 
   // Comparison chart colors for up to 5 properties
   /**
@@ -486,6 +554,16 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       
       // Load land tax exclusion setting
       setExcludeLandTaxFromCashFlow(report.manual_overrides?.excludeLandTaxFromCashFlow || false);
+
+      // Load the land-only report's planned build, if one was saved.
+      const mo = report.manual_overrides || {};
+      const asText = (v: unknown) => (typeof v === 'number' && v > 0 ? String(v) : typeof v === 'string' ? v : '');
+      setPlannedBuildDraft({
+        enabled: plannedBuildRequested(mo),
+        buildPrice: asText(mo[PLANNED_BUILD_KEYS.price] ?? mo.buildPrice),
+        durationMonths: asText(mo[PLANNED_BUILD_KEYS.durationMonths]),
+        weeklyRent: asText(mo[PLANNED_BUILD_KEYS.weeklyRent]),
+      });
     }
   }, [report, isOpen]);
 
@@ -732,7 +810,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
    */
   const allComparisonProjections = useMemo(() => {
     return comparisonReports.map(compReport => {
-      const compBase = readBaseFinancials(compReport, new Date().getFullYear());
+      const compBase = readBaseFinancials(withPlannedBuild(compReport), new Date().getFullYear());
       const mo = compReport.manual_overrides || {};
 
       // A generated depreciation schedule is authoritative for a peer too, so
@@ -786,8 +864,8 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
    * passed in.
    */
   const baseFinancialData = useMemo(
-    () => (report ? readBaseFinancials(report, new Date().getFullYear()) : null),
-    [report],
+    () => (cashFlowReport ? readBaseFinancials(cashFlowReport, new Date().getFullYear()) : null),
+    [cashFlowReport],
   );
 
   // Generate the 10-year loan schedule. `buildLoanSchedule` is shared with the
@@ -860,6 +938,14 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         ...existingOverrides,
         cashFlowYearlyOverrides: yearlyOverrides,
         excludeLandTaxFromCashFlow: excludeLandTaxFromCashFlow,
+        // A land-only report's planned build, and — while one is planned —
+        // how its stages are timed, so the schedule reopens as it was left.
+        // Written once the switch has been used; a land-only report nobody
+        // planned a build on keeps the overrides it had.
+        ...(plannedBuildOverrides && (plannedBuildDraft.enabled || PLANNED_BUILD_OVERRIDE in existingOverrides)
+          ? plannedBuildOverrides
+          : {}),
+        ...(isLandOnly && plannedBuildDraft.enabled ? { schedulePreset, customStageMonths } : {}),
       };
 
       const { data: updateResult, error } = await invokeSecureFunction('manage-investment-reports', {
@@ -938,223 +1024,24 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     );
   }, [baseFinancialData, yearlyOverrides, loanProjections, excludeLandTaxFromCashFlow]);
 
-  // Construction Progress Payment Schedule calculation
-  interface ConstructionStage {
-    stage: string;
-    description: string;
-    percentage: number;
-    buildAmount: number;
-    cumulativeDrawn: number;
-    landInterest: number;
-    buildInterest: number;
-    totalMonthlyInterest: number;
-    month: number;
-  }
-
+  // Construction Progress Payment Schedule — `constructionSchedule.pure.ts`,
+  // the one implementation the typeset document computes its schedule with.
+  // A build figure exists only where the record states one or a land price
+  // lets it be derived; a purchase price is not construction expenditure
+  // (QA-13), so a schedule cannot be staged over a figure nobody recorded.
   const constructionProgressSchedule = useMemo(() => {
     if (!baseFinancialData) return null;
-
-    // A build figure exists only where the record states one or a land price
-    // lets it be derived; a purchase price is not construction expenditure
-    // (QA-13), so a schedule cannot be staged over a figure nobody recorded.
     const split = landBuildSplit(baseFinancialData);
     if (split.buildPrice === null) return null;
-    const landPrice = split.landPrice ?? 0;
-    const buildPrice = split.buildPrice;
-    const interestRate = baseFinancialData.interestRate / 100; // Annual rate
-    const durationMonths = Math.min(baseFinancialData.constructionDurationMonths || 7, 24);
-
-    // Land interest calculation: Land Cost × Interest Rate / 12
-    // This calculates monthly interest on the full land value
-    const monthlyLandInterest = landPrice * interestRate / 12;
-
-    // Get custom stage percentages from manual overrides or use defaults
-    const stagePercentages = {
-      deposit: (report?.manual_overrides?.stageDepositPercent as number) ?? 5,
-      slab: (report?.manual_overrides?.stageSlabPercent as number) ?? 15,
-      frame: (report?.manual_overrides?.stageFramePercent as number) ?? 20,
-      lockup: (report?.manual_overrides?.stageLockupPercent as number) ?? 25,
-      fixing: (report?.manual_overrides?.stageFixingPercent as number) ?? 20,
-      completion: (report?.manual_overrides?.stageCompletionPercent as number) ?? 15,
-    };
-
-    // Build stages - use custom percentages or defaults
-    const baseStages = [
-      { stage: 'Deposit', description: 'Paid from your funds (not from lender)', percentage: stagePercentages.deposit },
-      { stage: 'Slab/Base Stage', description: 'Foundation, slab, ground works', percentage: stagePercentages.slab },
-      { stage: 'Frame Stage', description: 'Wall frames, roof trusses, structural frame', percentage: stagePercentages.frame },
-      { stage: 'Lock-up Stage', description: 'External walls, windows, doors (can "lock up")', percentage: stagePercentages.lockup },
-      { stage: 'Fixing Stage', description: 'Internal linings, plaster, cabinets, fittings', percentage: stagePercentages.fixing },
-      { stage: 'Practical Completion', description: 'Final works, painting, finishes', percentage: stagePercentages.completion },
-    ];
-
-    // Determine stage months based on preset
-    const getStageMonths = (): number[] => {
-      if (schedulePreset === 'rapid') {
-        // Rapid: stages at months 2-7 (fixed)
-        return [2, 3, 4, 5, 6, 7];
-      } else if (schedulePreset === 'even') {
-        // Even distribution: spread 6 stages across (durationMonths - 1) months
-        // Month 1 is always land interest, so stages start at month 2
-        const availableMonths = durationMonths - 1; // Exclude month 1
-        const numStages = baseStages.length;
-        const months: number[] = [];
-        
-        for (let i = 0; i < numStages; i++) {
-          // Distribute evenly: first stage at month 2, last stage at durationMonths
-          const month = Math.round(2 + (i * (availableMonths - 1)) / Math.max(1, numStages - 1));
-          months.push(Math.min(month, durationMonths));
-        }
-        return months;
-      } else {
-        // Custom: use customStageMonths state
-        return baseStages.map((_, index) => customStageMonths[index] || (index + 2));
-      }
-    };
-
-    const stageMonths = getStageMonths();
-
-    // Create a map of month -> array of stage data for that month (supports multiple stages per month)
-    const monthToStages: { [month: number]: Array<{ stage: typeof baseStages[0]; index: number }> } = {};
-    stageMonths.forEach((month, index) => {
-      if (!monthToStages[month]) {
-        monthToStages[month] = [];
-      }
-      monthToStages[month].push({ stage: baseStages[index], index });
-    });
-
-    let cumulativeDrawn = 0;
-    let totalBuildInterest = 0;
-    let totalCombinedRepayment = monthlyLandInterest; // Start with first month land interest
-
-    // Land Interest Charge row (month 1)
-    const landInterestRow: ConstructionStage = {
-      stage: 'Land Interest Charge',
-      description: '',
-      percentage: 0,
-      buildAmount: landPrice,
-      cumulativeDrawn: 0,
-      landInterest: Math.round(monthlyLandInterest * 100) / 100,
-      buildInterest: 0,
-      totalMonthlyInterest: Math.round(monthlyLandInterest * 100) / 100,
-      month: 1,
-    };
-
-    const stageResults: ConstructionStage[] = [landInterestRow];
-
-    // Build rows for months 2 through durationMonths
-    for (let month = 2; month <= durationMonths; month++) {
-      const stagesThisMonth = monthToStages[month] || [];
-      
-      if (stagesThisMonth.length > 0) {
-        // This month has one or more stage payments - add a row for each stage
-        stagesThisMonth.forEach((stageData) => {
-          const s = stageData.stage;
-          const buildAmount = (buildPrice * s.percentage) / 100;
-          
-          // For Deposit stage, no build interest is charged
-          // For other stages: Build Interest = (Cumulative Stage Pricing up to and including this stage) × Interest Rate ÷ 12
-          const isDeposit = s.stage === 'Deposit';
-          
-          // Add this stage to cumulative drawn
-          cumulativeDrawn += buildAmount;
-          
-          // Calculate build interest based on the formula:
-          // - Deposit: No interest (0)
-          // - Slab/Base: (Slab pricing) × Interest Rate ÷ 12
-          // - Frame: (Slab + Frame pricing) × Interest Rate ÷ 12
-          // - Lock-up: (Slab + Frame + Lock-up pricing) × Interest Rate ÷ 12
-          // - Fixing: (Slab + Frame + Lock-up + Fixing pricing) × Interest Rate ÷ 12
-          // - Practical Completion: (All stage pricings) × Interest Rate ÷ 12
-          // Note: "cumulativeDrawn" at this point includes all stages up to and including current
-          // But for interest calc, we exclude the deposit amount
-          const depositAmount = (buildPrice * stagePercentages.deposit) / 100;
-          const cumulativeForInterest = isDeposit ? 0 : (cumulativeDrawn - depositAmount);
-          const buildInterest = isDeposit ? 0 : (cumulativeForInterest * interestRate / 12);
-          
-          const combinedRepayment = monthlyLandInterest + buildInterest;
-          
-          totalBuildInterest += buildInterest;
-          totalCombinedRepayment += combinedRepayment;
-
-          stageResults.push({
-            stage: s.stage,
-            description: s.description,
-            percentage: s.percentage,
-            buildAmount: Math.round(buildAmount * 100) / 100,
-            cumulativeDrawn: Math.round(cumulativeDrawn * 100) / 100,
-            landInterest: Math.round(monthlyLandInterest * 100) / 100,
-            buildInterest: Math.round(buildInterest * 100) / 100,
-            totalMonthlyInterest: Math.round(combinedRepayment * 100) / 100,
-            month: month,
-          });
-        });
-      } else {
-        // No stage this month - interest-only row
-        // Use cumulative drawn excluding deposit for interest calculation
-        const depositAmount = (buildPrice * stagePercentages.deposit) / 100;
-        const cumulativeForInterest = Math.max(0, cumulativeDrawn - depositAmount);
-        const buildInterest = cumulativeForInterest * interestRate / 12;
-        const combinedRepayment = monthlyLandInterest + buildInterest;
-        
-        totalBuildInterest += buildInterest;
-        totalCombinedRepayment += combinedRepayment;
-
-        stageResults.push({
-          stage: '',
-          description: '',
-          percentage: 0,
-          buildAmount: 0,
-          cumulativeDrawn: Math.round(cumulativeDrawn * 100) / 100,
-          landInterest: Math.round(monthlyLandInterest * 100) / 100,
-          buildInterest: Math.round(buildInterest * 100) / 100,
-          totalMonthlyInterest: Math.round(combinedRepayment * 100) / 100,
-          month: month,
-        });
-      }
-    }
-
-    // Upfront costs
-    const tenPercentLand = landPrice * 0.10;
-    const fivePercentBuild = buildPrice * 0.05;
-    const stampDuty = baseFinancialData.stampDuty || 0;
-    const solicitorFees = baseFinancialData.solicitorFees || 0;
-    const agentFee = baseFinancialData.agentFee || 0;
-    const lmiAmount = baseFinancialData.lmiAmount || 0;
-    const totalUpfrontCost = tenPercentLand + fivePercentBuild + stampDuty + solicitorFees + agentFee + lmiAmount;
-
-    // Total interest during construction
-    // IMPORTANT: Sum the already-rounded per-row values so the footer total
-    // matches what users see when adding the visible monthly column.
-    const totalLandInterestRounded = stageResults.reduce((sum, r) => sum + (r.landInterest || 0), 0);
-    const totalBuildInterestRounded = stageResults.reduce((sum, r) => sum + (r.buildInterest || 0), 0);
-    const totalCombinedRepaymentRounded = stageResults.reduce((sum, r) => sum + (r.totalMonthlyInterest || 0), 0);
-    const stagedProgressInterest = Math.round((totalLandInterestRounded + totalBuildInterestRounded) * 100) / 100;
-
-    return {
-      landPrice,
-      buildPrice,
-      totalProject: landPrice + buildPrice,
+    const durationMonths = scheduleDuration(baseFinancialData.constructionDurationMonths);
+    return buildConstructionSchedule({
+      landPrice: split.landPrice ?? 0,
+      buildPrice: split.buildPrice,
       interestRate: baseFinancialData.interestRate,
       durationMonths,
-      stages: stageResults,
-      monthlyLandInterest: Math.round(monthlyLandInterest * 100) / 100,
-      totals: {
-        landInterest: Math.round(totalLandInterestRounded * 100) / 100,
-        buildInterest: Math.round(totalBuildInterestRounded * 100) / 100,
-        totalInterest: stagedProgressInterest,
-        totalCombinedRepayment: Math.round(totalCombinedRepaymentRounded * 100) / 100,
-      },
-      upfrontCosts: {
-        tenPercentLand,
-        fivePercentBuild,
-        stampDuty,
-        solicitorFees,
-        agentFee,
-        totalUpfrontCost,
-      },
-      grandTotal: Math.round((totalUpfrontCost + stagedProgressInterest) * 100) / 100,
-    };
+      stagePercents: stagePercentsFrom(report?.manual_overrides),
+      stageMonths: stageMonthsFor(schedulePreset, durationMonths, customStageMonths),
+    });
   }, [baseFinancialData, report?.manual_overrides, schedulePreset, customStageMonths]);
 
 
@@ -1175,7 +1062,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
 
   const allComparisonMetrics = useMemo(() => {
     return allComparisonProjections.map(({ report: compReport, projections: compProjs }) => {
-      const compBase = readBaseFinancials(compReport, new Date().getFullYear());
+      const compBase = readBaseFinancials(withPlannedBuild(compReport), new Date().getFullYear());
       const read = deriveInvestmentMetrics(compProjs, compBase);
       let metrics: InvestmentMetrics | null = null;
       let unavailable: MetricsUnavailable | null = null;
@@ -1226,7 +1113,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     return {
       ...entry,
       ...seriesStyleAt(index + 1),
-      inputs: readBaseFinancials(entry.report, new Date().getFullYear()),
+      inputs: readBaseFinancials(withPlannedBuild(entry.report), new Date().getFullYear()),
     };
   }, [detailPropertyId, report, allComparisonMetrics, seriesStyleAt]);
 
@@ -2264,6 +2151,15 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       const templateConfig = await loadActiveCashFlowTemplate();
       console.log(`📋 Using Cash Flow template: ${templateConfig.name}`);
 
+      // Whose template this document is printed in: NPC's artwork on the prime,
+      // exactly as it has always been drawn, and the issuer's own on every clone
+      // (`legacyDocumentBrand.ts`). The content is the same either way; on the
+      // prime nothing below is read.
+      const legacyBrand = await loadLegacyDocumentBrand(
+        async () => (await fetchGlobalReportSettings())?.contactDetails?.company_name,
+      );
+      const issuerFamily = legacyBrand.artwork === 'issuer' ? legacyBrand.family : null;
+
       const pdf = new jsPDF('p', 'mm', 'a4'); // Portrait orientation for better fit
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
@@ -2276,7 +2172,17 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       // Use the configured cover template image as background
       const goldColor = { r: 201, g: 165, b: 90 }; // #c9a55a
       
-      try {
+      if (legacyBrand.artwork === 'issuer') {
+        drawLegacyIssuerCover(pdf, {
+          issuerName: legacyBrand.issuer.name,
+          mark: legacyBrand.mark,
+          documentTitle: '10-Year Cash Flow Analysis',
+          subject: report.property_address.replace(/[_\s]?Copy[_\s]?\d*$/i, '').trim(),
+          // A tagline the clone configured is its own; the default is the house's.
+          standfirst: issuerLine(templateConfig.tagline),
+          family: legacyBrand.family,
+        });
+      } else try {
         // Add cover template image as full page background
         const coverImageUrl = '/templates/npc-cashflow-cover.jpg';
         pdf.addImage(coverImageUrl, 'JPEG', 0, 0, pageWidth, pageHeight);
@@ -2308,14 +2214,19 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       // Add new page for content
       pdf.addPage();
 
-      // Brand colors (gold primary)
-      const primaryColor = { r: 202, g: 138, b: 4 }; // Gold #ca8a04
+      // Brand colors (gold primary). On a clone each role takes the issuer's
+      // brand family: its brand for rules and bars, a legible ink of it for
+      // type, its deep shade where slate carried white type, its wash for the
+      // cream grounds. The greys and the negative red are shared.
+      const primaryColor = issuerFamily ? rgbObject(issuerFamily.accent) : { r: 202, g: 138, b: 4 }; // Gold #ca8a04
+      const primaryInk = issuerFamily ? rgbObject(issuerFamily.accentInk) : primaryColor;
       const darkText = { r: 30, g: 30, b: 30 };
       const grayText = { r: 100, g: 100, b: 100 };
       const lightGray = { r: 248, g: 248, b: 248 };
       const mediumGray = { r: 220, g: 220, b: 220 }; // Slightly darker for better contrast
-      const tableHeaderBg = { r: 45, g: 55, b: 72 }; // Slate gray
-      const sectionBg = { r: 254, g: 249, b: 235 }; // Warmer cream #fef9eb
+      const tableHeaderBg = issuerFamily ? rgbObject(issuerFamily.deep) : { r: 45, g: 55, b: 72 }; // Slate gray
+      const sectionBg = issuerFamily ? rgbObject(issuerFamily.wash) : { r: 254, g: 249, b: 235 }; // Warmer cream #fef9eb
+      const insightInk = issuerFamily ? rgbObject(issuerFamily.bodyInk) : { r: 80, g: 70, b: 50 };
       const negativeRed = { r: 185, g: 28, b: 28 }; // Darker red for negatives #B91C1C
 
       // The export menu's own chart switches decide which charts the legacy
@@ -2558,51 +2469,22 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         const _agentFee = baseFinancialData.agentFee || 0;
         const _lmiAmount = baseFinancialData.lmiAmount || 0;
 
-        let upfrontRows: { label: string; value: number }[] = [];
-        let overallExtraRows: { label: string; value: number }[] = [];
-        let totalUpfront = 0;
-        let totalOverall = 0;
-
-        if (isNewBuild && constructionProgressSchedule) {
-          const landDeposit = constructionProgressSchedule.upfrontCosts.tenPercentLand;
-          const buildDeposit = constructionProgressSchedule.upfrontCosts.fivePercentBuild;
-          const constructionProgressTotal = constructionProgressSchedule.buildPrice;
-          const stagedInterest = constructionProgressSchedule.totals.totalCombinedRepayment;
-          upfrontRows = [
-            { label: '10% Land Deposit', value: landDeposit },
-            { label: '5% Build Contract Deposit', value: buildDeposit },
-            { label: 'Stamp Duty', value: _stampDuty },
-            { label: 'Solicitor / Conveyancer Cost', value: _solicitorFees },
-            { label: `Construction Progress Payment Interest (${constructionProgressSchedule.durationMonths} months)`, value: stagedInterest },
-            ...(_lmiAmount > 0 ? [{ label: 'LMI (Lenders Mortgage Insurance)', value: _lmiAmount }] : []),
-          ];
-          totalUpfront = landDeposit + buildDeposit + _stampDuty + _solicitorFees + stagedInterest + _lmiAmount;
-          overallExtraRows = [
-            { label: 'Purchase Price (Land)', value: constructionProgressSchedule.landPrice },
-            { label: 'Stamp Duty', value: _stampDuty },
-            { label: 'Solicitor / Conveyancer Cost', value: _solicitorFees },
-            { label: 'Build Price', value: constructionProgressTotal },
-            { label: `Construction Progress Payment Interest (${constructionProgressSchedule.durationMonths} months)`, value: stagedInterest },
-          ];
-          totalOverall = constructionProgressSchedule.landPrice + _stampDuty + _solicitorFees + constructionProgressTotal + stagedInterest;
-        } else {
-          upfrontRows = [
-            { label: `Deposit (${_depositPct}% — from your funds)`, value: _depositValue },
-            { label: 'Stamp Duty', value: _stampDuty },
-            { label: 'Solicitor / Conveyancer Cost', value: _solicitorFees },
-            ...(_inspectionFees > 0 ? [{ label: 'Building & Pest Inspections', value: _inspectionFees }] : []),
-            { label: 'Agent Fee', value: _agentFee },
-            ...(_lmiAmount > 0 ? [{ label: 'LMI (Lenders Mortgage Insurance)', value: _lmiAmount }] : []),
-          ];
-          totalUpfront = _depositValue + _stampDuty + _solicitorFees + _inspectionFees + _agentFee + _lmiAmount;
-          overallExtraRows = [
-            { label: 'Purchase Price', value: _purchasePrice },
-            { label: 'Stamp Duty', value: _stampDuty },
-            { label: 'Solicitor / Conveyancer Cost', value: _solicitorFees },
-            { label: 'Agent Fee', value: _agentFee },
-          ];
-          totalOverall = _purchasePrice + _stampDuty + _solicitorFees + _agentFee;
-        }
+        // One statement of both tables (`expenditure.pure.ts`) — the typeset document
+        // and the on-screen analysis compute them with the same module.
+        const _expenditure = acquisitionExpenditure({
+          purchasePrice: _purchasePrice,
+          deposit: _depositValue,
+          stampDuty: _stampDuty,
+          solicitorFees: _solicitorFees,
+          inspectionFees: _inspectionFees,
+          agentFee: _agentFee,
+          lmiAmount: _lmiAmount,
+          schedule: isNewBuild ? constructionProgressSchedule : null,
+        });
+        const upfrontRows = _expenditure.upfront.rows.map((r) => ({ label: r.label, value: r.amount }));
+        const overallExtraRows = _expenditure.overall.rows.map((r) => ({ label: r.label, value: r.amount }));
+        const totalUpfront = _expenditure.upfront.total;
+        const totalOverall = _expenditure.overall.total;
 
         const brkTableWidth = pageWidth - margin * 2;
         const brkColLabel = brkTableWidth * 0.65;
@@ -2816,7 +2698,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
           pdf.rect(margin, yPos - 3.5, pageWidth - margin * 2, sectionRowHeight, 'F');
           pdf.setFont('helvetica', 'bold');
           pdf.setFontSize(6.5);
-          pdf.setTextColor(primaryColor.r, primaryColor.g, primaryColor.b);
+          pdf.setTextColor(primaryInk.r, primaryInk.g, primaryInk.b);
           pdf.text(sectionName, margin + 3, yPos + 0.5);
           tableRowCount = 0;
           yPos += sectionRowHeight;
@@ -2963,12 +2845,12 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       // Section title
       pdf.setFontSize(10);
       pdf.setFont('helvetica', 'bold');
-      pdf.setTextColor(45, 55, 72); // Dark slate text
+      pdf.setTextColor(tableHeaderBg.r, tableHeaderBg.g, tableHeaderBg.b); // Dark slate text
       pdf.text('10-Year Investment Summary', margin, yPos);
       yPos += 6;
 
       // Card styling - dark blue background with white text
-      const darkBlue = { r: 45, g: 55, b: 72 }; // #2d3748 - dark slate blue
+      const darkBlue = tableHeaderBg; // #2d3748 - dark slate blue
       const summaryContentWidth = pageWidth - margin * 2;
       const summaryCardGap = 3;
       const summaryCardWidth = (summaryContentWidth - (summaryCardGap * 3)) / 4;
@@ -3013,14 +2895,14 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         const boxHeight = lines.length * 3.5 + insightPadding * 2;
         
         // Subtle background with left accent
-        pdf.setFillColor(254, 249, 235); // warm cream
+        pdf.setFillColor(sectionBg.r, sectionBg.g, sectionBg.b); // warm cream
         pdf.roundedRect(xPos, yPos, boxWidth, boxHeight, 1.5, 1.5, 'F');
         pdf.setFillColor(primaryColor.r, primaryColor.g, primaryColor.b);
         pdf.rect(xPos, yPos + 1, 2, boxHeight - 2, 'F');
         
         pdf.setFontSize(6.5);
         pdf.setFont('helvetica', 'italic');
-        pdf.setTextColor(80, 70, 50);
+        pdf.setTextColor(insightInk.r, insightInk.g, insightInk.b);
         pdf.text(lines, xPos + insightPadding + 2, yPos + insightPadding + 2);
         
         yPos += boxHeight + 4;
@@ -3265,7 +3147,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         yPos = 0;
         
         // Professional header bar
-        pdf.setFillColor(45, 55, 72); // Dark slate
+        pdf.setFillColor(tableHeaderBg.r, tableHeaderBg.g, tableHeaderBg.b); // Dark slate
         pdf.rect(0, 0, pageWidth, 14, 'F');
         pdf.setFillColor(primaryColor.r, primaryColor.g, primaryColor.b);
         pdf.rect(0, 14, pageWidth, 1.5, 'F'); // Gold accent line
@@ -3413,7 +3295,27 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
 
       // ========== CONTACT / DISCLAIMER PAGE (Last Page) ==========
       const globalSettings = await fetchGlobalReportSettings();
-      drawJsPDFDisclaimerPage(pdf, globalSettings.contactDetails, globalSettings.disclaimer);
+      if (legacyBrand.artwork === 'issuer') {
+        const closing = issuerClosingPage(legacyBrand, globalSettings);
+        drawJsPDFDisclaimerPage(pdf, closing.contact, closing.disclaimer, closing.palette);
+      } else {
+        drawJsPDFDisclaimerPage(pdf, globalSettings.contactDetails, globalSettings.disclaimer);
+      }
+
+      // The running foot's disclaimer and contact line. On a clone they are the
+      // issuer's: wording or an address that names the house gives way to the
+      // default wording and to the issuer's own contact details, and a line
+      // with nothing to say is not drawn.
+      let footerDisclaimer = templateConfig.disclaimer;
+      let footerContact: string | null = `${templateConfig.contactEmail}  •  ${templateConfig.website}`;
+      if (legacyBrand.artwork === 'issuer') {
+        const own = issuerContactDetails(globalSettings.contactDetails, legacyBrand.issuer, legacyBrand.deployment);
+        footerDisclaimer = issuerLine(templateConfig.disclaimer, defaultCashFlowConfig.disclaimer) ?? '';
+        footerContact = [
+          issuerLine(templateConfig.contactEmail, own.email),
+          issuerLine(templateConfig.website, own.website),
+        ].filter(Boolean).join('  •  ') || null;
+      }
 
       // ========== FOOTER (on content pages only, skip cover and contact pages) ==========
       const totalPages = pdf.getNumberOfPages();
@@ -3438,7 +3340,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
           pdf.setFontSize(6.5);
           pdf.setFont('helvetica', 'italic');
           pdf.setTextColor(grayText.r, grayText.g, grayText.b);
-          const disclaimerLinesFooter = pdf.splitTextToSize(templateConfig.disclaimer, pageWidth - margin * 2.5);
+          const disclaimerLinesFooter = pdf.splitTextToSize(footerDisclaimer, pageWidth - margin * 2.5);
           pdf.text(disclaimerLinesFooter, pageWidth / 2, contentMaxY + 8, { align: 'center' });
         }
 
@@ -3447,7 +3349,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         pdf.setFontSize(7);
         pdf.setFont('helvetica', 'normal');
         pdf.setTextColor(darkText.r, darkText.g, darkText.b);
-        pdf.text(`${templateConfig.contactEmail}  •  ${templateConfig.website}`, pageWidth / 2, pageHeight - 6, { align: 'center' });
+        if (footerContact) pdf.text(footerContact, pageWidth / 2, pageHeight - 6, { align: 'center' });
         
         // Page number (content pages start from 1, excluding cover)
         const contentPageNum = i - 1; // Exclude cover page from count
@@ -3509,7 +3411,10 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
   type ReviewedProjection = {
     wire: ReturnType<typeof toWireProjection>;
     storedScenario: ReturnType<typeof matchStoredScenario>;
+    /** The template drawn through its own pages — only once this report type is released. */
     selectedTemplateId: string | null;
+    /** The template this report's own pages are drawn in the design of, while it is held. */
+    designTemplateId: string | null;
     key: string;
   };
   type ProducedCashFlowDocument = {
@@ -3546,27 +3451,48 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
           : ['Depreciation is excluded from this projection at the adviser\'s direction.']),
         ...evidenceBasisNotes(baseFinancialData),
       ],
+      // Every input the projection ran on, and how a new build's contract is
+      // staged — the server lays out the Input Summary and computes the
+      // schedule and the expenditure tables from these with the modules this
+      // modal draws, so the document and the screen cannot disagree.
+      inputs: toWireInputs(baseFinancialData, {
+        isNewBuild,
+        plannedBuild: isPlannedBuild,
+        overrides: report.manual_overrides,
+        schedulePreset,
+        customStageMonths,
+        showConstructionSchedule: includeConstructionScheduleInExport,
+      }),
     });
     // When the series on screen IS a stored scenario the document may honestly
     // say "Moderate"; otherwise it says "Adviser-reviewed" — never a scenario
     // label the series does not satisfy.
     const storedScenario = matchStoredScenario(wire, report);
-    // Read ONCE, here, so the key this document is filed under and the template
-    // the route renders are the same reading (`selectedTemplateId` below).
-    const selectedTemplateId = await selectedTemplateFor('cashflow');
+    // Read ONCE, here, so the key this document is filed under and the design
+    // the route draws are the same reading. While this report type is held
+    // (`templateParity.pure.ts`) the choice is worn as the standard document's
+    // DESIGN (`designTemplateId`, `standardDesign.ts`); once released it would
+    // be drawn through the template's own pages (`selectedTemplateId`). The
+    // same template drawn the two ways is two documents, so the key says which,
+    // and a document made while held is never served as the templated one.
+    const chosen = await selectedTemplateFor('cashflow');
+    const held = isTemplateDeliveryHeld('cashflow');
+    const selectedTemplateId = held ? null : chosen;
+    const designTemplateId = held ? chosen : null;
     return {
       wire,
       storedScenario,
       selectedTemplateId,
-      key: cashFlowFinalKey({ wire, scenario: storedScenario, selectedTemplateId }),
+      designTemplateId,
+      key: cashFlowFinalKey({ wire, scenario: storedScenario, selectedTemplateId, designTemplateId }),
     };
-  }, [report, baseFinancialData, projections]);
+  }, [report, baseFinancialData, projections, isNewBuild, isPlannedBuild, schedulePreset, customStageMonths, includeConstructionScheduleInExport]);
 
   const produceFinalCashFlowDocument = useCallback(async (
     reviewed: ReviewedProjection,
   ): Promise<ProducedCashFlowDocument> => {
     if (!report) throw new Error('This report could not be resolved. Close the analysis and reopen it.');
-    const { wire, storedScenario, selectedTemplateId, key } = reviewed;
+    const { wire, storedScenario, selectedTemplateId, designTemplateId, key } = reviewed;
 
     // ALWAYS the series on screen, never a re-read. The payload used to be
     // sent only when the screen and the store disagreed, which left the
@@ -3598,7 +3524,12 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     // them — a download saves them, a send points the portal at them.
     let legacyBlob: Blob | null = null;
     const result = await requestCashFlowPdf(
-      { reportId: report.id, projection: wire },
+      {
+        reportId: report.id,
+        projection: wire,
+        // The same reading the key was made from — never a second one.
+        design: designTemplateId ? { templateId: designTemplateId } : null,
+      },
       async () => {
         const blob = await exportSingleReportPDF({ returnBlob: true });
         if (!blob || !(blob instanceof Blob)) return null;
@@ -3611,10 +3542,18 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       },
     );
 
+    // A document the design did not reach IS the standard document, and is
+    // filed as one. Filed under the key that names the design, the next Send
+    // would hand it over as though the design had been applied; filed under
+    // its own key, the next attempt asks the route again.
+    const filedKey = designTemplateId && result.design !== 'applied'
+      ? cashFlowFinalKey({ wire, scenario: storedScenario, selectedTemplateId, designTemplateId: null })
+      : key;
+
     if (result.source === 'legacy') {
       if (!legacyBlob) throw new Error('The PDF renderer produced no document.');
       return {
-        key, source: 'legacy', blob: legacyBlob, fileName: result.fileName,
+        key: filedKey, source: 'legacy', blob: legacyBlob, fileName: result.fileName,
         storagePath: null, brandGaps: [], pageCount: null,
       };
     }
@@ -3623,7 +3562,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     const res = await fetch(result.url);
     if (!res.ok) throw new Error(`Download failed (${res.status})`);
     return {
-      key, source: 'route', blob: await res.blob(), fileName: result.fileName,
+      key: filedKey, source: 'route', blob: await res.blob(), fileName: result.fileName,
       storagePath: result.storagePath, brandGaps: result.brandGaps, pageCount: result.pageCount,
     };
   }, [report, exportSingleReportPDF]);
@@ -3882,7 +3821,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         ${includeInputsSummaryInExport ? `
         <!-- Summary -->
         <div class="summary" style="margin-bottom: 24px;">
-          <h3 style="margin-bottom: 4px; text-align: center; font-size: 16px; font-weight: bold; border-bottom: 2px solid #ccc; padding-bottom: 6px;">${isNewBuild ? 'New Build' : 'Existing Property'}</h3>
+          <h3 style="margin-bottom: 4px; text-align: center; font-size: 16px; font-weight: bold; border-bottom: 2px solid #ccc; padding-bottom: 6px;">${buildCaseLabel}</h3>
           <h4 style="margin-bottom: 12px; text-align: center; font-size: 14px; font-weight: bold; letter-spacing: 1px;">SUMMARY</h4>
           <table style="margin-bottom: 0; font-size: 11px;">
             <tbody>
@@ -3917,50 +3856,22 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
             const inspectionFees = baseFinancialData.inspectionFees || 0;
             const agentFee = baseFinancialData.agentFee || 0;
             const lmiAmount = baseFinancialData.lmiAmount || 0;
-            let upfrontRows: { label: string; value: number }[] = [];
-            let overallExtraRows: { label: string; value: number }[] = [];
-            let totalUpfront = 0;
-            let totalOverall = 0;
-            if (isNewBuild && constructionProgressSchedule) {
-              const landDeposit = constructionProgressSchedule.upfrontCosts.tenPercentLand;
-              const buildDeposit = constructionProgressSchedule.upfrontCosts.fivePercentBuild;
-              const constructionProgressTotal = constructionProgressSchedule.buildPrice;
-              const stagedInterest = constructionProgressSchedule.totals.totalCombinedRepayment;
-              upfrontRows = [
-                { label: '10% Land Deposit', value: landDeposit },
-                { label: '5% Build Contract Deposit', value: buildDeposit },
-                { label: 'Stamp Duty', value: stampDuty },
-                { label: 'Solicitor / Conveyancer Cost', value: solicitorFees },
-                { label: `Construction Progress Payment Interest (${constructionProgressSchedule.durationMonths} months)`, value: stagedInterest },
-                ...(lmiAmount > 0 ? [{ label: 'LMI (Lenders Mortgage Insurance)', value: lmiAmount }] : []),
-              ];
-              totalUpfront = landDeposit + buildDeposit + stampDuty + solicitorFees + stagedInterest + lmiAmount;
-              overallExtraRows = [
-                { label: 'Purchase Price (Land)', value: constructionProgressSchedule.landPrice },
-                { label: 'Stamp Duty', value: stampDuty },
-                { label: 'Solicitor / Conveyancer Cost', value: solicitorFees },
-                { label: 'Build Price', value: constructionProgressTotal },
-                { label: `Construction Progress Payment Interest (${constructionProgressSchedule.durationMonths} months)`, value: stagedInterest },
-              ];
-              totalOverall = constructionProgressSchedule.landPrice + stampDuty + solicitorFees + constructionProgressTotal + stagedInterest;
-            } else {
-              upfrontRows = [
-                { label: `Deposit (${depositPct}% — from your funds)`, value: depositValue },
-                { label: 'Stamp Duty', value: stampDuty },
-                { label: 'Solicitor / Conveyancer Cost', value: solicitorFees },
-                ...(inspectionFees > 0 ? [{ label: 'Building & Pest Inspections', value: inspectionFees }] : []),
-                { label: 'Agent Fee', value: agentFee },
-                ...(lmiAmount > 0 ? [{ label: 'LMI (Lenders Mortgage Insurance)', value: lmiAmount }] : []),
-              ];
-              totalUpfront = depositValue + stampDuty + solicitorFees + inspectionFees + agentFee + lmiAmount;
-              overallExtraRows = [
-                { label: 'Purchase Price', value: baseFinancialData.purchasePrice },
-                { label: 'Stamp Duty', value: stampDuty },
-                { label: 'Solicitor / Conveyancer Cost', value: solicitorFees },
-                { label: 'Agent Fee', value: agentFee },
-              ];
-              totalOverall = baseFinancialData.purchasePrice + stampDuty + solicitorFees + agentFee;
-            }
+            // One statement of both tables (`expenditure.pure.ts`) — the typeset document
+            // and the on-screen analysis compute them with the same module.
+            const _expenditure = acquisitionExpenditure({
+              purchasePrice: baseFinancialData.purchasePrice,
+              deposit: depositValue,
+              stampDuty: stampDuty,
+              solicitorFees: solicitorFees,
+              inspectionFees: inspectionFees,
+              agentFee: agentFee,
+              lmiAmount: lmiAmount,
+              schedule: isNewBuild ? constructionProgressSchedule : null,
+            });
+            const upfrontRows = _expenditure.upfront.rows.map((r) => ({ label: r.label, value: r.amount }));
+            const overallExtraRows = _expenditure.overall.rows.map((r) => ({ label: r.label, value: r.amount }));
+            const totalUpfront = _expenditure.upfront.total;
+            const totalOverall = _expenditure.overall.total;
             const rowsHtml = (rows: { label: string; value: number }[]) => rows.map(r =>
               `<tr><td style="font-weight: 500;">${r.label}</td><td style="text-align: right;">${formatCurrency(r.value)}</td></tr>`
             ).join('');
@@ -4204,7 +4115,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
 
     printWindow.document.write(html);
     printWindow.document.close();
-  }, [report, baseFinancialData, projections, includeInputsSummaryInExport, includeConstructionScheduleInExport, constructionProgressSchedule, isNewBuild, toast]);
+  }, [report, baseFinancialData, projections, includeInputsSummaryInExport, includeConstructionScheduleInExport, constructionProgressSchedule, isNewBuild, buildCaseLabel, toast]);
 
   if (!report || !baseFinancialData) return null;
 
@@ -4221,6 +4132,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
             backLabel={backLabel}
             propertyAddress={report.property_address}
             isNewBuild={isNewBuild}
+            caseLabel={buildCaseLabel}
             hasChanges={hasChanges}
             hasOverrides={Object.keys(yearlyOverrides).length > 0}
             isSaving={isSaving}
@@ -5067,6 +4979,13 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                           and prints eight metric rows. They are different
                           documents and both are worth having.
                         */}
+                        {/* The choice, then the act (`ChooseTemplateButton`): the
+                            comparison is drawn in the Cash Flow's template. */}
+                        <ChooseTemplateButton
+                          reportType="cashflow"
+                          formatLabel="10 Year Cash Flow"
+                          note="Comparisons use the Cash Flow's template."
+                        />
                         <CashFlowComparisonDownloadButton
                           build={buildWireComparison}
                           unavailableReason={comparisonUnavailableReason}
@@ -5078,7 +4997,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                           className="gap-2 text-muted-foreground"
                         >
                           <FileText className="h-4 w-4" />
-                          Export PDF (legacy layout)
+                          Legacy layout
                         </Button>
                         <FlattenPdfIconButton
                           getPdfBlob={async () => {
@@ -5400,10 +5319,14 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                               the three that carries both the prose and the
                               figures it was written from.
                             */}
+                            <ChooseTemplateButton
+                              reportType="cashflow"
+                              formatLabel="10 Year Cash Flow"
+                              note="Comparisons use the Cash Flow's template."
+                            />
                             <CashFlowComparisonDownloadButton
                               build={buildWireComparison}
                               unavailableReason={comparisonUnavailableReason}
-                              label="Typeset"
                             />
                             <Button
                               size="sm"
@@ -5412,7 +5335,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                               className="gap-1 text-muted-foreground"
                             >
                               <Download className="h-3 w-3" />
-                              Export PDF (legacy layout)
+                              Legacy layout
                             </Button>
                             <FlattenPdfIconButton
                               getPdfBlob={async () => {
@@ -5618,7 +5541,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                     <CardTitle className="text-base flex items-center justify-between">
                       <span className="flex items-center gap-2">
                         {inputsSummaryOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                        {isNewBuild ? 'New Build' : 'Existing Property'} - SUMMARY
+                        {buildCaseLabel} - SUMMARY
                       </span>
                       <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                         <label className="flex items-center gap-2 text-xs font-normal text-muted-foreground cursor-pointer">
@@ -5786,50 +5709,22 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       const agentFee = baseFinancialData.agentFee || 0;
                       const lmiAmount = baseFinancialData.lmiAmount || 0;
 
-                      let upfrontRows: { label: string; value: number }[] = [];
-                      let overallExtraRows: { label: string; value: number }[] = [];
-                      let totalUpfront = 0;
-                      let totalOverall = 0;
-
-                      if (isNewBuild && constructionProgressSchedule) {
-                        const landDeposit = constructionProgressSchedule.upfrontCosts.tenPercentLand;
-                        const buildDeposit = constructionProgressSchedule.upfrontCosts.fivePercentBuild;
-                        const constructionProgressTotal = constructionProgressSchedule.buildPrice;
-                        const stagedInterest = constructionProgressSchedule.totals.totalCombinedRepayment;
-                        upfrontRows = [
-                          { label: '10% Land Deposit', value: landDeposit },
-                          { label: '5% Build Contract Deposit', value: buildDeposit },
-                          { label: 'Stamp Duty', value: stampDuty },
-                          { label: 'Solicitor / Conveyancer Cost', value: solicitorFees },
-                          { label: `Construction Progress Payment Interest (${constructionProgressSchedule.durationMonths} months)`, value: stagedInterest },
-                          ...(lmiAmount > 0 ? [{ label: 'LMI (Lenders Mortgage Insurance)', value: lmiAmount }] : []),
-                        ];
-                        totalUpfront = landDeposit + buildDeposit + stampDuty + solicitorFees + stagedInterest + lmiAmount;
-                        overallExtraRows = [
-                          { label: 'Purchase Price (Land)', value: constructionProgressSchedule.landPrice },
-                          { label: 'Stamp Duty', value: stampDuty },
-                          { label: 'Solicitor / Conveyancer Cost', value: solicitorFees },
-                          { label: 'Build Price', value: constructionProgressTotal },
-                          { label: `Construction Progress Payment Interest (${constructionProgressSchedule.durationMonths} months)`, value: stagedInterest },
-                        ];
-                        totalOverall = constructionProgressSchedule.landPrice + stampDuty + solicitorFees + constructionProgressTotal + stagedInterest;
-                      } else {
-                        upfrontRows = [
-                          { label: `Deposit (${depositPct}% — from your funds)`, value: depositValue },
-                          { label: 'Stamp Duty', value: stampDuty },
-                          { label: 'Solicitor / Conveyancer Cost', value: solicitorFees },
-                          { label: 'Agent Fee', value: agentFee },
-                          ...(lmiAmount > 0 ? [{ label: 'LMI (Lenders Mortgage Insurance)', value: lmiAmount }] : []),
-                        ];
-                        totalUpfront = depositValue + stampDuty + solicitorFees + agentFee + lmiAmount;
-                        overallExtraRows = [
-                          { label: 'Purchase Price', value: baseFinancialData.purchasePrice },
-                          { label: 'Stamp Duty', value: stampDuty },
-                          { label: 'Solicitor / Conveyancer Cost', value: solicitorFees },
-                          { label: 'Agent Fee', value: agentFee },
-                        ];
-                        totalOverall = baseFinancialData.purchasePrice + stampDuty + solicitorFees + agentFee;
-                      }
+                      // One statement of both tables (`expenditure.pure.ts`) — the typeset document
+                      // and the on-screen analysis compute them with the same module.
+                      const _expenditure = acquisitionExpenditure({
+                        purchasePrice: baseFinancialData.purchasePrice,
+                        deposit: depositValue,
+                        stampDuty: stampDuty,
+                        solicitorFees: solicitorFees,
+                        inspectionFees: (baseFinancialData.inspectionFees || 0),
+                        agentFee: agentFee,
+                        lmiAmount: lmiAmount,
+                        schedule: isNewBuild ? constructionProgressSchedule : null,
+                      });
+                      const upfrontRows = _expenditure.upfront.rows.map((r) => ({ label: r.label, value: r.amount }));
+                      const overallExtraRows = _expenditure.overall.rows.map((r) => ({ label: r.label, value: r.amount }));
+                      const totalUpfront = _expenditure.upfront.total;
+                      const totalOverall = _expenditure.overall.total;
 
                       return (
                         <>
@@ -5879,6 +5774,14 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                 </CollapsibleContent>
               </Card>
             </Collapsible>
+            )}
+
+            {isLandOnly && (
+              <CashFlowPlannedBuildPanel
+                draft={plannedBuildDraft}
+                onChange={handlePlannedBuildChange}
+                figures={plannedFigures}
+              />
             )}
 
             <CashFlowConstructionPanel active={isNewBuild && !!constructionProgressSchedule && constructionProgressSchedule.buildPrice > 0}>

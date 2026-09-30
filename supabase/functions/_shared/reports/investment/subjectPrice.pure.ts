@@ -113,8 +113,10 @@ export function describeSubjectPrice(input: SubjectPriceInput): SubjectPrice {
       basis: 'accepted_input',
       value: accepted,
       label: 'Purchase price this analysis is modelled on',
-      provenance: 'recorded by the adviser for this assessment — it is the figure every '
-        + 'projection, the loan and the lending ratio in the Financial Analysis Report are built on',
+      // No document is named: the same row prints in the Compass and in the
+      // Financial Analysis itself, where naming it reads as another report.
+      provenance: 'recorded by the adviser for this assessment — the figure every projection, '
+        + 'the loan and the lending ratio are built on',
     };
   }
   const listed = positive(input.listingPrice);
@@ -166,7 +168,7 @@ export function subjectPriceRules(price: SubjectPrice): string {
     '2. Do NOT state a second price. No price guide, marketed range, "listed at", "on the market for", '
     + 'estimated value or recent sale price other than the figure above — not from a listing portal, a news '
     + 'page, a live web search or your own knowledge. If you believe a different figure is advertised, that '
-    + 'belief is not a retrieval and does not go in the report.',
+    + 'belief is not a source and does not go in the report.',
     '3. You MAY compare this price with a median the market evidence table carries, and it is useful to do so '
     + '\u2014 but only that one, and only carrying its own limitations: name the publisher, the geography, the '
     + 'dwelling split and the period beside the comparison, because a suburb median of all houses is not a '

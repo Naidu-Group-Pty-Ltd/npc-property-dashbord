@@ -19,6 +19,8 @@
  *    is one honest line plus the no-invention instruction.
  */
 import { CLIMATE_WEB_SEARCH_RULE } from './registerAuthority.pure.ts';
+import { elsewhereOnly, inHomeSection } from './adviserVoice.pure.ts';
+import { hazardTableRows, type HazardReading } from '../planning/hazardReadings.pure.ts';
 
 interface Numericish { [key: string]: unknown }
 
@@ -61,7 +63,7 @@ export function climateProfileBlock(input: ClimatePromptInput): string {
     evap !== null ? `| Annual pan evaporation (${normalPeriod} normal) | ${fmt(evap)} mm | ${src} |` : null,
   ].filter((r): r is string => r !== null);
 
-  const parts = [`**Climate profile (measured at the property's grid cell):**\n\n| Metric | Value | Source |\n|---|---|---|\n${rows.join('\n')}`];
+  const parts = [`**Climate profile (SILO climate data for the property's location):**\n\n| Metric | Value | Source |\n|---|---|---|\n${rows.join('\n')}`];
 
   const recent = c['recent'] as Numericish | null | undefined;
   const recentRain = num(recent?.['rainfallMm']);
@@ -80,32 +82,60 @@ export function climateProfileBlock(input: ClimatePromptInput): string {
   return parts.join('\n\n');
 }
 
-export function hazardBlock(input: ClimatePromptInput): string {
+/**
+ * The natural-hazard table.
+ *
+ * The hazard maps the planning service read AT THE PROPERTY come first, one
+ * row per hazard they answered, in `hazardReadings`' words. The older risk
+ * service is asked without the property's coordinate and so answers "Unknown"
+ * by construction, which is why the 37 Bolin Street Environment section drew
+ * no hazard table and wrote "a specific flood or bushfire risk level has not
+ * been established" beside a planning register that had checked both maps.
+ * Its row is used only for a hazard no planning map answered.
+ */
+export function hazardBlock(input: ClimatePromptInput, hazards: readonly HazardReading[] = []): string {
   const r = input.riskAssessment;
+  const answered = new Set(hazards.filter((h) => h.state !== 'not_checked').map((h) => h.family));
+  const mapRows = hazardTableRows(hazards);
   const rows: string[] = [];
-  const hazard = (key: string, label: string) => {
+  const hazard = (key: string, label: string, family: 'flood' | 'bushfire') => {
+    if (answered.has(family)) return;
     const h = r?.[key] as Numericish | undefined;
     const level = str(h?.['level']);
     if (!level || level.toLowerCase() === 'unknown') return;
     const description = str(h?.['description']) ?? '';
     rows.push(`| ${label} | ${level} | ${description} |`);
   };
-  hazard('floodRisk', 'Flooding');
-  hazard('bushfireRisk', 'Bushfire');
-  if (rows.length === 0) return '';
-  return `**Assessed hazards (from the risk services' own readings):**\n\n| Hazard | Assessment | Detail |\n|---|---|---|\n${rows.join('\n')}`;
+  hazard('floodRisk', 'Flooding', 'flood');
+  hazard('bushfireRisk', 'Bushfire', 'bushfire');
+  const parts: string[] = [];
+  if (mapRows.length) {
+    parts.push(
+      `**Natural hazard maps checked at the property:**\n\n| Hazard | What the map shows | Map |\n|---|---|---|\n${mapRows.join('\n')}`,
+      ...hazards.filter((h) => h.state !== 'not_checked').map((h) => h.sentence),
+    );
+  }
+  if (rows.length) {
+    parts.push(`**Assessed hazards (from the hazard assessments held for this report):**\n\n| Hazard | Assessment | Detail |\n|---|---|---|\n${rows.join('\n')}`);
+  }
+  return parts.join('\n\n');
 }
 
-export function climateStatBlocks(input: ClimatePromptInput): string {
-  const parts = [climateProfileBlock(input), hazardBlock(input)].filter((b) => b !== '');
+export function climateStatBlocks(input: ClimatePromptInput, hazards: readonly HazardReading[] = []): string {
+  const parts = [climateProfileBlock(input), hazardBlock(input, hazards)].filter((b) => b !== '');
 
   if (parts.length === 0) {
-    return 'No measured climate or hazard reading is available for this property. State that plainly in one sentence; do NOT print a climate table, name a climate zone, or rate any hazard. '
+    return `No measured climate or hazard reading is held for this property. ${inHomeSection('environment')} `
+      + `say so once. ${elsewhereOnly('environment')} Anywhere in the report, do NOT print a climate table, `
+      + 'name a climate zone, or rate any hazard. '
       + CLIMATE_WEB_SEARCH_RULE;
   }
 
   parts.push(
-    'Discuss only the measured figures above, with their stated windows and sources. Do NOT name a climate zone classification, rate a hazard that does not appear in the table (storms, cyclones and heatwaves are unmeasured here), or assert trends the windows above cannot support. Where flood or bushfire is absent, direct verification to AFRIP and the state fire authority without asserting a level.',
+    'Discuss only the measured figures above, with their stated windows and sources. Do NOT name a climate zone classification, rate a hazard that does not appear in the table (storms, cyclones and heatwaves are unmeasured here), or assert trends the windows above cannot support. '
+      + (hazards.some((h) => h.state !== 'not_checked')
+        ? 'State bushfire and flood exactly as the hazard map table and the sentence under it give them — what the map showed, and what settles it for the lot — and never as a rating, a clearance or a reassurance.'
+        : 'Where flood or bushfire is absent, direct verification to AFRIP and the state fire authority without asserting a level.'),
     CLIMATE_WEB_SEARCH_RULE,
   );
   return parts.join('\n\n');

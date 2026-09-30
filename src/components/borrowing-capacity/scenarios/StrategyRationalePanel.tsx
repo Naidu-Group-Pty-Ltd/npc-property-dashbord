@@ -36,8 +36,26 @@ import {
   FileDown,
   Loader2,
   Wallet,
+  ChevronDown,
+  Bot,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { ChooseTemplateButton } from '@/components/reports/ChooseTemplateButton';
+import { requestStrategyRationale } from '@/lib/reports/borrowingCapacity/deliverStrategyRationale';
+import {
+  ADVISOR_OPTIONS_NOTE,
+  advisorOptionLine,
+  composeAdvisorSection,
+  rationaleReadingNote,
+  type RationaleAdvisorInput,
+  type RationaleAdvisorSection,
+} from '@/lib/reports/borrowingCapacity/strategyRationale.pure';
 import type { RationaleReport, RationaleSeverity, RationaleCapitalFlowEntry } from '@/utils/strategyRationaleEngine';
 import { generateStrategyRationalePDF, type RationalePDFContext } from './StrategyRationalePDF';
 
@@ -48,6 +66,30 @@ interface StrategyRationalePanelProps {
   /** Context required to render a finance-ready PDF brief. When omitted the
    *  PDF download button is hidden (e.g. preview surfaces without client info). */
   pdfContext?: RationalePDFContext;
+  /**
+   * The client the brief is about. With it, "Download PDF" is typeset by the
+   * Borrowing Capacity route in the template chosen for Borrowing Capacity
+   * (BORROWING_CAPACITY.md §17); without it, the jsPDF brief is the only one.
+   */
+  clientId?: string;
+  /**
+   * The Strategy Advisor's reasoning for the card whose levers are live. It is
+   * shown here, copied with the brief and printed in both PDFs; absent for a
+   * scenario built by hand, and the panel is then exactly as it was.
+   */
+  advisor?: RationaleAdvisorInput | null;
+}
+
+/** Hand a blob to the browser as a saved file. */
+function saveBlob(blob: Blob, fileName: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
 
 // Map severity → semantic-token-aware Tailwind classes (no raw colors)
@@ -74,6 +116,12 @@ const SEVERITY_CLASSES: Record<RationaleSeverity, { badge: string; ring: string;
   },
 };
 
+const ADVISOR_RISK_BADGE: Record<'low' | 'medium' | 'high', string> = {
+  low: 'bg-success/10 text-success border-success/30',
+  medium: 'bg-brand-500/10 text-brand-700 border-brand-500/30 dark:text-brand-400',
+  high: 'bg-destructive/10 text-destructive border-destructive/30',
+};
+
 const OWNER_LABEL: Record<'broker' | 'finance' | 'client', string> = {
   broker: 'Broker',
   finance: 'Finance',
@@ -86,7 +134,12 @@ const OWNER_BADGE: Record<'broker' | 'finance' | 'client', string> = {
   client: 'bg-accent/10 text-accent border-accent/30 dark:text-accent',
 };
 
-function buildPlainTextBrief(report: RationaleReport, fmt: (n: number) => string): string {
+function buildPlainTextBrief(
+  report: RationaleReport,
+  fmt: (n: number) => string,
+  advisor: RationaleAdvisorSection | null,
+  readingNote: string | null = null,
+): string {
   const lines: string[] = [];
   lines.push('STRATEGY RATIONALE — Borrowing Capacity Scenario');
   lines.push('━'.repeat(60));
@@ -96,7 +149,48 @@ function buildPlainTextBrief(report: RationaleReport, fmt: (n: number) => string
     lines.push('');
     lines.push(report.subHeadline);
   }
+  if (readingNote) {
+    lines.push('');
+    lines.push(readingNote);
+  }
   lines.push('');
+  if (advisor) {
+    lines.push(advisor.title.toUpperCase());
+    lines.push('─'.repeat(60));
+    lines.push(advisor.scenarioLine);
+    lines.push('');
+    advisor.paragraphs.forEach((para) => {
+      lines.push(para);
+      lines.push('');
+    });
+    if (advisor.riskLine) {
+      lines.push(advisor.riskLine);
+      lines.push('');
+    }
+    if (advisor.evidence.length) {
+      lines.push(advisor.evidenceTitle);
+      advisor.evidence.forEach((e) => lines.push(`• ${e}`));
+      lines.push('');
+    }
+    if (advisor.rejected.length) {
+      lines.push(advisor.rejectedTitle);
+      advisor.rejected.forEach((r) => lines.push(`• ${r}`));
+      lines.push('');
+    }
+    if (advisor.cautions.length) {
+      lines.push(advisor.cautionsTitle);
+      advisor.cautions.forEach((c) => lines.push(`• ${c}`));
+      lines.push('');
+    }
+    if (advisor.options.length) {
+      lines.push(advisor.optionsTitle);
+      advisor.options.forEach((o) => lines.push(`• ${advisorOptionLine(o)}`));
+      lines.push(ADVISOR_OPTIONS_NOTE);
+      lines.push('');
+    }
+    advisor.notes.forEach((n) => lines.push(n));
+    lines.push('');
+  }
   lines.push('WHAT WE PROPOSE & WHY');
   lines.push('─'.repeat(60));
   if (report.bullets.length === 0) {
@@ -156,10 +250,15 @@ function buildPlainTextBrief(report: RationaleReport, fmt: (n: number) => string
   return lines.join('\n');
 }
 
-export function StrategyRationalePanel({ report, formatCurrency, pdfContext }: StrategyRationalePanelProps) {
+export function StrategyRationalePanel({ report, formatCurrency, pdfContext, clientId, advisor }: StrategyRationalePanelProps) {
   const [copied, setCopied] = useState(false);
   const [downloading, setDownloading] = useState(false);
-  const briefText = useMemo(() => buildPlainTextBrief(report, formatCurrency), [report, formatCurrency]);
+  const advisorSection = useMemo(() => composeAdvisorSection(advisor), [advisor]);
+  const readingNote = useMemo(() => (pdfContext ? rationaleReadingNote(pdfContext) : null), [pdfContext]);
+  const briefText = useMemo(
+    () => buildPlainTextBrief(report, formatCurrency, advisorSection, readingNote),
+    [report, formatCurrency, advisorSection, readingNote],
+  );
 
   const handleCopy = async () => {
     try {
@@ -172,25 +271,39 @@ export function StrategyRationalePanel({ report, formatCurrency, pdfContext }: S
     }
   };
 
-  const handleDownloadPDF = async () => {
-    if (!pdfContext) return;
+  /**
+   * The brief as a file. `typeset` asks the route for it in the chosen
+   * template, falling back to the jsPDF brief only where the route cannot draw
+   * it; `legacy` is a person choosing the layout this brief has always had.
+   * The words are the same either way (`strategyRationale.pure.ts`).
+   */
+  const produceBrief = async (which: 'typeset' | 'legacy') => {
+    const context = { ...pdfContext!, advisor: advisor ?? null };
+    const legacy = () => generateStrategyRationalePDF(report, context);
+    if (which === 'legacy' || !clientId) return { ...(await legacy()), source: 'legacy' as const };
+    return requestStrategyRationale(
+      { clientId, clientName: pdfContext!.clientName, report, context },
+      legacy,
+    );
+  };
+
+  const handleDownloadPDF = async (which: 'typeset' | 'legacy' = 'typeset') => {
+    if (!pdfContext || downloading) return;
     setDownloading(true);
     const toastId = 'rationale-pdf';
     toast.loading('Generating Strategy Rationale PDF…', { id: toastId });
     try {
-      const { blob, fileName } = await generateStrategyRationalePDF(report, pdfContext);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      toast.success('Strategy Rationale PDF downloaded', { id: toastId });
+      const { blob, fileName, source } = await produceBrief(which);
+      saveBlob(blob, fileName);
+      toast.success(
+        which === 'typeset' && clientId && source === 'legacy'
+          ? 'Strategy Rationale PDF downloaded in the legacy layout — the typeset brief is not available on this deployment yet'
+          : 'Strategy Rationale PDF downloaded',
+        { id: toastId },
+      );
     } catch (e) {
       console.error('Rationale PDF generation failed', e);
-      toast.error('Could not generate PDF — see console', { id: toastId });
+      toast.error(e instanceof Error ? e.message : 'Could not generate PDF', { id: toastId });
     } finally {
       setDownloading(false);
     }
@@ -236,27 +349,63 @@ export function StrategyRationalePanel({ report, formatCurrency, pdfContext }: S
             </Button>
             {pdfContext && (
               <>
-                <Button
-                  type="button"
-                  variant="default"
-                  size="sm"
-                  onClick={handleDownloadPDF}
-                  disabled={downloading}
-                >
-                  {downloading ? (
-                    <>
-                      <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                      Generating…
-                    </>
-                  ) : (
-                    <>
-                      <FileDown className="h-3.5 w-3.5 mr-1.5" />
-                      Download PDF
-                    </>
+                {clientId && (
+                  <ChooseTemplateButton
+                    reportType="borrowing_capacity"
+                    formatLabel="Borrowing Capacity"
+                    note="The Strategy Rationale uses the Borrowing Capacity's template."
+                    disabled={downloading}
+                  />
+                )}
+                <div className="inline-flex items-stretch">
+                  <Button
+                    type="button"
+                    variant="default"
+                    size="sm"
+                    onClick={() => handleDownloadPDF('typeset')}
+                    disabled={downloading}
+                    className={clientId ? 'rounded-r-none' : undefined}
+                  >
+                    {downloading ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                        Generating…
+                      </>
+                    ) : (
+                      <>
+                        <FileDown className="h-3.5 w-3.5 mr-1.5" />
+                        Download PDF
+                      </>
+                    )}
+                  </Button>
+                  {clientId && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="default"
+                          size="sm"
+                          disabled={downloading}
+                          className="rounded-l-none border-l border-primary-foreground/20 px-1.5"
+                          aria-label="More download options"
+                        >
+                          <ChevronDown className="h-3.5 w-3.5" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-64">
+                        <DropdownMenuItem onClick={() => handleDownloadPDF('legacy')} className="cursor-pointer">
+                          <FileDown className="mr-2 h-4 w-4 text-muted-foreground" />
+                          <div className="flex flex-col">
+                            <span>Download (legacy layout)</span>
+                            <span className="text-xs text-muted-foreground">The layout this brief has always used</span>
+                          </div>
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   )}
-                </Button>
+                </div>
                 <FlattenPdfIconButton
-                  getPdfBlob={async () => (await generateStrategyRationalePDF(report, pdfContext!)).blob}
+                  getPdfBlob={async () => (await produceBrief('typeset')).blob}
                   filename={`strategy-rationale.pdf`}
                   disabled={downloading}
                 />
@@ -273,7 +422,99 @@ export function StrategyRationalePanel({ report, formatCurrency, pdfContext }: S
           {report.subHeadline && (
             <p className="text-xs text-muted-foreground leading-relaxed">{report.subHeadline}</p>
           )}
+          {readingNote && (
+            <p className="text-xs text-muted-foreground leading-relaxed border-l-2 border-l-primary pl-2">
+              {readingNote}
+            </p>
+          )}
         </div>
+
+        {/* ── Strategy Advisor: why this scenario ──────────────────── */}
+        {advisorSection && (
+          <section className="space-y-2" aria-label={advisorSection.title}>
+            <div className="flex items-center gap-2 flex-wrap">
+              <Bot className="h-4 w-4 text-primary" />
+              <h4 className="text-sm font-semibold">{advisorSection.title}</h4>
+              {advisorSection.risk && (
+                <Badge variant="outline" className={`text-[10px] ${ADVISOR_RISK_BADGE[advisorSection.risk]}`}>
+                  {advisorSection.riskLine}
+                </Badge>
+              )}
+            </div>
+            <div className="rounded-md border border-l-2 border-l-primary bg-muted/30 p-3 space-y-2">
+              <p className="text-xs font-medium">{advisorSection.scenarioLine}</p>
+              {advisorSection.paragraphs.map((para, i) => (
+                <p key={i} className="text-xs text-muted-foreground leading-relaxed">{para}</p>
+              ))}
+              {advisorSection.evidence.length > 0 && (
+                <div className="pt-1">
+                  <p className="text-[11px] font-semibold">{advisorSection.evidenceTitle}</p>
+                  <ul className="mt-1 space-y-1 list-disc pl-4">
+                    {advisorSection.evidence.map((e, i) => (
+                      <li key={i} className="text-[11px] text-muted-foreground leading-relaxed">{e}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {advisorSection.rejected.length > 0 && (
+                <div className="pt-1">
+                  <p className="text-[11px] font-semibold">{advisorSection.rejectedTitle}</p>
+                  <ul className="mt-1 space-y-1 list-disc pl-4">
+                    {advisorSection.rejected.map((r, i) => (
+                      <li key={i} className="text-[11px] text-muted-foreground leading-relaxed">{r}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {advisorSection.cautions.length > 0 && (
+                <div className="pt-1">
+                  <p className="text-[11px] font-semibold">{advisorSection.cautionsTitle}</p>
+                  <ul className="mt-1 space-y-1 list-disc pl-4">
+                    {advisorSection.cautions.map((c, i) => (
+                      <li key={i} className="text-[11px] text-muted-foreground leading-relaxed">{c}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {advisorSection.options.length > 0 && (
+                <div className="pt-1">
+                  <p className="text-[11px] font-semibold">{advisorSection.optionsTitle}</p>
+                  <div className="mt-1 overflow-x-auto">
+                    <table className="w-full text-[11px]">
+                      <thead>
+                        <tr className="text-muted-foreground">
+                          <th scope="col" className="text-left font-medium py-1 pr-2">Option</th>
+                          <th scope="col" className="text-right font-medium py-1 px-2">Capacity</th>
+                          <th scope="col" className="text-right font-medium py-1 px-2">Purchase power</th>
+                          <th scope="col" className="text-right font-medium py-1 px-2">Target</th>
+                          <th scope="col" className="text-right font-medium py-1 pl-2">Risk</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {advisorSection.options.map((o, i) => (
+                          <tr key={i} className={`border-t ${o.applied ? 'font-semibold' : 'text-muted-foreground'}`}>
+                            <td className="py-1 pr-2">
+                              {o.name}
+                              {o.applied && <span className="ml-1 font-normal text-primary">(applied)</span>}
+                            </td>
+                            <td className="text-right py-1 px-2 tabular-nums">{o.capacity}</td>
+                            <td className="text-right py-1 px-2 tabular-nums">{o.purchasePower}</td>
+                            <td className="text-right py-1 px-2">{o.target}</td>
+                            <td className="text-right py-1 pl-2">{o.risk}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="mt-1 text-[10px] italic text-muted-foreground">{ADVISOR_OPTIONS_NOTE}</p>
+                </div>
+              )}
+              {advisorSection.notes.map((n, i) => (
+                <p key={i} className="text-[10px] italic text-muted-foreground leading-relaxed">{n}</p>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* ── What & Why ──────────────────────────────────────────── */}
         <section className="space-y-2">

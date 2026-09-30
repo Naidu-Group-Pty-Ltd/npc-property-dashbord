@@ -278,6 +278,21 @@ Three rules bite.
 A deploy is a person's dispatch, at ≈ A$19–24 a month. The planning page
 prints G-NAF's attribution wherever its point came from the register.
 
+**A remembered street answer is put to the register once.** The first
+production run through it (25 Sep 2026) placed Schofields and Blacktown by
+G-NAF and left `60 Lawley Street, Spalding` on OpenStreetMap's remembered
+street point: the cache re-asks only answers coarser than a street, so G-NAF,
+which holds the address, was never asked. Rule 4 in
+`geocodeChainPolicy.pure.ts` asks the register alone, where the ask names a
+number and the operator's order names it. Its address point replaces the
+street, "nothing finer" re-dates the street for an hour, and an outage of ours
+leaves it standing. A stored enrichment on a street point is placed again when
+a generation starts (`streetPointIsStale`: nothing written yet, and not placed
+by this generation in the last hour) and never mid-generation. A reused planning
+answer is kept only while it was read at this run's point
+(`planningAnswerFitsPoint`) — compared by point, never by clock, because the
+stored packet is re-stamped every invocation. §19 of the geocoding doc.
+
 **The address a pin and a card are built from is COMPOSED, never inherited.**
 Read [`ADDRESS_COMPOSITION.md`](./docs/listings/ADDRESS_COMPOSITION.md) before
 touching `_shared/listingAddress.pure.ts`,
@@ -443,6 +458,28 @@ comment naming a catcher Mission Control never wrote. So before concluding a
 deployment is missing something, check whether the thing is present anywhere:
 a feature absent on every deployment is unbuilt, not unprovisioned.
 
+## What the prime keeps for itself
+Read [`docs/operations/PRIME_ONLY_FEATURES.md`](./docs/operations/PRIME_ONLY_FEATURES.md)
+before touching `scripts/lib/primeOnlyFeatures.mjs`, the GoHighLevel account
+migration (its 28 functions, three `_shared/` modules, page and components),
+the `integrations/ghl-migration` route in `src/App.tsx`, or a clone's copy of
+`App.tsx`. The migration was built here after a security breach, to move the
+house's own data between two GoHighLevel accounts, and the owner decided on
+27 Sep 2026 that **no clone receives it**. Mission Control withholds it by
+class (`src/server/primeOnlyFeatures.pure.ts` there, a literal at each end like
+`BACKEND_DEPLOYED_BY`), while its schema, its migrations and the empty
+`ghl-marketing-dump` bucket travel, because a withheld migration is a ledger
+hole. Three rules bite. **Nothing a clone receives reaches into it**: no import
+of any of its files and no invocation of its functions by name, both refused
+by `primeOnlyFeatures.spec.ts`, because a clone's build breaks or its call
+answers 404 while the prime, which holds the feature, sees neither. **The one
+permitted reference is `import.meta.glob`**, which answers an empty record for
+a missing file, so `App.tsx` finds the page that way and draws the route only
+where it exists. And **a clone's `App.tsx` is reconciled by hand**: Mission
+Control cascades it as `manual_reconcile`, so a clone keeps the earlier static
+import until its removal pull request, and the spec is lenient on a clone about
+anything the clone still holds.
+
 ## A migration that has already run must not change here
 Read [`docs/security/APPLIED_MIGRATION_BODIES.md`](./docs/security/APPLIED_MIGRATION_BODIES.md)
 before touching `scripts/security/appliedBodyIdentity.mjs`,
@@ -501,6 +538,22 @@ preflight normally; every wrong conclusion in this area came from reading a 200
 Management API instead. And **a config-only edit used to deploy nothing**,
 because the changed-function list was built from `supabase/functions/**` paths
 alone — which is how a declaration and production came to disagree at all.
+
+## The Template Builder's broker and the tables no module covers
+Read [`docs/security/TEMPLATE_BROKER_TABLES.md`](./docs/security/TEMPLATE_BROKER_TABLES.md)
+before adding a table to `manage-templates` or touching
+`_shared/templateBrokerTablePolicy.pure.ts`. The broker runs on the service
+role, and a table its permission map did not name was checked for nothing but a
+signed-in caller. So until 26 Sep 2026 any staff login could read every user's
+password hash and second-factor secret, set its own role to superadmin, and
+read or overwrite plain-text integration credentials. Three rules now hold it.
+
+- **Staff accounts are read-only here**, through the directory's own columns.
+  A field list, filter or ordering naming anything else is refused, not
+  trimmed.
+- **A credential table belongs to the module whose screens use it.**
+- **The list of ungated tables is frozen in the spec**, so a new table cannot
+  join it silently.
 
 ## Step-up authentication blocks what nobody can unblock
 Read [`docs/security/STEP_UP_ENFORCEMENT.md`](./docs/security/STEP_UP_ENFORCEMENT.md)
@@ -2111,8 +2164,8 @@ area's general character is not a retrieval either). **An evidence note
 describes the RETRIEVAL, never the conclusion beside it.** And **the two
 absences are different sentences**: `none_at_point` is a register asked here
 that holds nothing here, the other four are ways of never having asked, so
-`RegisterReading` carries the distinction and the page prints "Searched,
-nothing found." or "Not searched." The same gap existed one level down —
+`RegisterReading` carries the distinction and the page prints "Checked —
+nothing recorded." or "Not covered by this report." The same gap existed one level down —
 `planningFactBlocks` rule 4 closed the STATEMENT ("never write that no overlay
 applies") and the model obeyed it, then rated `Environmental nuisance | Low`
 from the same absence one row later. Three things had to be CHECKED rather than
@@ -2517,6 +2570,32 @@ the thing it prohibits, so the guard is written as ASSERTED forms — a sentence
 forbidding a rating is the guarantee working, and rewording it to satisfy a
 regex would delete the guarantee to keep the guard.
 
+**The national investment programme IS a feed, and it is read at every
+coordinate.** Read §10 of
+[`NATIONAL_PIPELINE_EVIDENCE.md`](./docs/reports/NATIONAL_PIPELINE_EVIDENCE.md)
+before touching `_shared/planning/nationalInvestmentProgramme.pure.ts`,
+`strategyOutlook.pure.ts` or the `outlook` on `StrategyRecord`. The Priority
+List is still not one; the Australian Government's own iPAMS register is
+(61,762 + 1,134 + 59 features, CC BY, keyless, answered at five report
+addresses in four states), so `planning-data-service` asks it within 15 km for
+every jurisdiction and the infrastructure chapter names each major project
+with the Department's status word, its ESTIMATED cost beside the federal share
+(never the whole as federal money), and its expected end verbatim in a
+ten-year horizon table titled *as the publishers date it*. Three rules bite.
+**An expected date is not a completion, and an unpublished date is not
+stated**: the owner remembered Rouse Hill Hospital opening in 2027, and no
+page Health Infrastructure publishes says so, so the register row states its
+status and stages and says no opening date is published — while the Tallawong
+high school's *"On track to open Day 1 Term 1 2027"* IS published and is
+carried verbatim. **A development application is never an opportunity**: the
+SWOT files published projects under Opportunities, each disowning any effect
+on value, rent or demand, and an applicant's stated cost never reaches a
+quadrant. And **the SWOT reads what the chapter prints** — the Compass said
+"none identified" beside a chapter naming a $910m hospital, so the Compass,
+the Financial and the Due Diligence SWOTs all read the same two registers now,
+and the Financial SWOT is the record's composer rather than the scorer's four
+free-text lists.
+
 **Forward demand is a different claim from measured growth, and the premise
 was wrong.** Read
 [`FORWARD_DEMAND_EVIDENCE.md`](./docs/reports/FORWARD_DEMAND_EVIDENCE.md)
@@ -2723,7 +2802,8 @@ go missing. The **Australian Capital Territory** did: its zone IS read, so it
 never looked unserved, while its overlay registers have no branch at all, so
 the page fell through to the generic sentence naming neither the territory nor
 the remedy. `OVERLAY_COVERAGE` declares all eight (`state_layers_read` for
-NSW/VIC/TAS, `partial` for QLD, `not_read` for WA/SA/NT/ACT) and the invariant
+NSW/VIC/TAS, `partial` for QLD, WA and — since its bushfire prone area is read —
+the ACT, `not_read` for SA/NT) and the invariant
 is asserted both ways — anything not read in full owes a note, and anything
 read in full must not carry one, because a false limitation teaches a reader to
 discount the true ones. It **decides something**: `overlayCoverage` rides
@@ -2757,6 +2837,31 @@ but a cached `c5` row at a South Australian coordinate withholds the zone the
 layer now answers — the shape did not widen, its content did. Whether the
 PRODUCTION egress reaches `dpti.geohub.sa.gov.au` is unmeasured until the first
 South Australian report after deploy; CI reached it.
+
+**Bushfire and flood read the hazard MAPS, and a map's silence is a finding
+only where the map is the designation.** Read §16 of
+[`PLANNING_CONTROLS_IN_THE_REPORT.md`](./docs/reports/PLANNING_CONTROLS_IN_THE_REPORT.md)
+before touching `_shared/planning/hazardReadings.pure.ts`, `HAZARD_DESIGNATION`,
+the `Mapped`/`Not mapped` words in `RISK_EXPOSURE_LEVELS` or `climateStatBlocks`.
+The 37 Bolin Street suite printed both hazards "Not assessed" beside a
+planning register that had asked the NSW hazard maps at the lot and been told
+nothing was mapped. The Environment section read only `risk-assessment-service`,
+which is called without a coordinate and answers `Unknown` by construction.
+Three rules bite.
+
+- **A statewide statutory designation that shows nothing over a lot says the
+  lot is not designated** ("Not mapped", Verified). Measured from CI, that
+  holds for NSW's RFS-certified Bush Fire Prone Land, WA's OBRM-026, and — now
+  read — Victoria's gazetted bushfire prone area and the ACT's 2026 one.
+- **A partial map says nothing where it did not reach.** NSW's flood planning
+  map carries ten councils, so its silence stays "Not assessed", with the
+  reason in words.
+- **The designation counts only where ITS register answered.** Victoria's BMO
+  asks "bushfire" too, and its silence is not the gazetted map's.
+
+The Victorian axis order was settled against known points in three spellings,
+because a wrong axis reads "not designated" everywhere. `PLANNING_ANSWER_VERSION`
+is `c9`.
 
 **Every state has a reading now, and two of them come through the
 archive** (§10 of the same doc). Victoria's suburb series and South
@@ -2835,6 +2940,65 @@ index, because it carried what survived attribution rather than what was
 searched. Nothing is loaded, no migration is requested, and a source scan
 asserts the probe names no table, client or credential.
 
+## Property Risk scores from a condition record (28 Sep 2026)
+Read §0 of [`RISK_METHOD_RECOMMENDATION.md`](./docs/reports/RISK_METHOD_RECOMMENDATION.md)
+before touching `conditionRecord*.ts`, `riskEvidenceConnection.pure.ts`,
+`CONVERSIONS`, `CONDITION_METHOD_ACTIVATION`, the `planning`/`condition` inputs
+of `scoreForProduction`, the condition ops on `manage-investment-reports` or
+`ConditionEvidencePanel`. Risk needs observations in two independent
+categories. The planning registers answer the SITE category on every
+generation (`siteConstraintSeverity`). Only a condition document can answer the
+BUILDING category, and it is recorded on the report page. The owner approved
+both conversions on 28 Sep 2026. Three rules bite.
+
+- **Either category alone scores nothing.** Absent a record, Risk is excluded
+  exactly as before, and a stored grade is never re-graded: a record moves the
+  grade on the next generation only.
+- **A held document is checked against the store, never taken on the caller's
+  word.** The upload is only ever a path issued for THIS report
+  (`isConditionDocumentPathFor`), in the private `listing-images` bucket under
+  `condition-documents/`. That folder is deliberately not one of
+  `reportStorageFolders`, because evidence about a property outlives the report
+  it was filed against. A transcription is evidence and never an observation.
+- **The panel and the grade choose the same record.** Both call
+  `bestReadingForSubject`, and the subject is read from the report row, never
+  from the request.
+
+## The 10 Year Cash Flow follows the legacy process, on one page (28 Sep 2026)
+Read §9 of [`CASH_FLOW.md`](./docs/reports/CASH_FLOW.md) before touching
+`_shared/reports/cashFlow/{constructionSchedule,expenditure,inputSummary}.pure.ts`,
+the projection matrix in `render.pure.ts`, `toWireInputs` or the construction
+schedule in `CashFlowAnalysisModal`. The schedule, the upfront/overall tables and
+the Input Summary are ONE implementation that the screen, the jsPDF export and
+the typeset document all read. The browser sends the inputs, and the server
+derives the tables from them. Three rules bite.
+
+- **Only a new build with a stated build contract is staged.**
+- **A total is the sum of its printed rows.**
+- **The projection is one landscape page.** That was measured over all 50
+  designs and a 24-month build. A change to the matrix's rows or row height has
+  to be re-measured in WeasyPrint, not assumed.
+- **Value, debt and equity is one portrait page** (§11). Both charts share one
+  year axis (`columnGeometry`), and the value axis steps on round figures. A
+  change to either chart's height, or to what the section holds, has to be
+  re-measured in WeasyPrint.
+
+## A build planned on land-only is costed as the new build it becomes (28 Sep 2026)
+Read §10 of [`CASH_FLOW.md`](./docs/reports/CASH_FLOW.md) before touching
+`_shared/reports/cashFlow/plannedBuild.pure.ts`, `CashFlowPlannedBuildPanel` or
+the land-only branch of `CashFlowAnalysisModal`. A land-only report carries one
+switch in the Cash Flow Analysis: "going ahead with a build". `withPlannedBuild`
+re-reads the case as the new build it becomes and adds no second method.
+Three rules bite.
+
+- **No build price, no build.** Every other report is returned as the same
+  object.
+- **Its figures live under their own keys (`plannedBuild*`), never
+  `buildPrice`.** The investment report prints a stored build price whatever
+  the build type.
+- **The loan is re-sized to land plus build at the case's LVR, and duty stays
+  the land's.**
+
 ## The 291 Stone Mason Drive audit (QA-291SM)
 Read [`docs/reports/QA_291SM_REMEDIATION_TRACKER.md`](./docs/reports/QA_291SM_REMEDIATION_TRACKER.md)
 before touching the standard (pdf-lib) presentation, the fork's section
@@ -2871,6 +3035,286 @@ the scoring policy, and the Generated Reports card showed that D as the
 property's grade — the child restates the parent's decision, a variant score
 never stands for the property while a composite exists, and the literal `N/A`
 the scoring service stores is a placeholder no surface draws.
+
+## The 60 Lawley Street rectification (25 Sep 2026)
+Read [`LAWLEY_RECTIFICATION.md`](./docs/reports/LAWLEY_RECTIFICATION.md)
+before touching `verdictWatchPoints`, `mergeBlocksIntoSections`,
+`composeGradeMethodology`, `scaffoldingLabels.pure.ts`, `serviceNote.pure.ts`,
+`numericControlSpecs` or the WA branch of `planning-data-service`. Twenty-four
+defects on one delivered Compass, each traced to a cause before it was
+repaired, and the score did not move: the same frozen input scores identically
+on both revisions, pinned by `lawleyRectification.spec.ts`. Four rules bite.
+**A licence is read per RESOURCE, never per jurisdiction** — WA's scheme data
+is restricted and its bush fire map is CC BY 4.0, and treating the state as one
+licence left a WA report with no bushfire reading at all. **Evidence closes the
+chapter it is evidence for**, so the recommendation stays the last assessment.
+**A comparison with one side left is not drawn, and neither is its caption.**
+And **our words never reach the page as labels** — a registry id or a phrase of
+the prompt is described to the model and scrubbed on read.
+
+## A report speaks as the adviser, and makes one recommendation
+Read [`ADVISER_VOICE.md`](./docs/reports/ADVISER_VOICE.md) before touching
+`_shared/reports/adviserVoice.pure.ts`, `printedVerdict.pure.ts`,
+`recommendationContract`, `readerNote`, the register headings in
+`registerTables.pure.ts`, or any sentence a composer hands the writer or the
+page. The regenerated Lawley Compass said "register" 110 times, "retrieved"
+38, "this platform" 11 and "Not searched." six times — every sentence true,
+none of them about the property — and printed **STRONG BUY** on its cover
+beside **"Proceed with caution"** in its verdict. Two causes. **The words were
+ours**: the verbatim blocks, the section purposes and even the contract's
+worked example of an *honest* sentence spoke the machine room's vocabulary,
+and a writer copies what it is handed. **The repetition was an instruction**: a
+"say that" rule pinned into every section call is obeyed in every section, so
+one absence was explained five times. Four rules bite. **The machine room
+never reaches the page** — `PLATFORM_VOCABULARY` is narrow on purpose (a
+relocatable home is "loaded onto a truck", Queensland has "coordinated
+projects"), because a warning that fires on ordinary English teaches an
+operator to ignore it; and `adviserVoice.spec.ts` reads the string literals of
+every composer, because a fixture reaches only the branches it was written
+for. **A limitation is explained once, in the section that owns its subject**
+(`DISCLOSURE_HOMES`, `inHomeSection`, `elsewhereOnly`); a prohibition still
+binds every section, since it costs no words. **The two absences are one pair
+of constants** (`REGISTER_CHECKED_EMPTY`, `REGISTER_NOT_COVERED`), because two
+spellings of one distinction on two pages read as two meanings, and a service
+note is translated on the way OUT (`readerNote`) rather than rewritten at the
+source, which reaches cached answers too. And **the document makes one
+recommendation**: both verdict sections open with the label the cover prints.
+Prose is never scrubbed — `platform-vocabulary` is a QA warning. One thing the
+rewrite found is worth knowing before renaming anything: **a header row is a
+KEY** — `REGISTER_TABLE_HEADERS` dedupes a reproduced register by its whole
+header row, so both spellings are listed and a spec reads every header the
+composers draw (the corrector's `PERMITTED_ABSENCE_RE` was the same key and
+went stale the same way). **The four derived documents follow the route they
+are made by**: the fork (Financial Analysis, Due Diligence) makes no model call
+and copies its parent's prose, so its composed chapters are held to the same
+literal scan and a stale Compass is regenerated before it is derived; the
+condenser (Briefing, Snapshot) rewrites, and `documentRules` gives its tiers
+nothing, so its system message carries `condensedVoiceRules()` and
+`condensedRecommendationContract()` — appended AFTER the template, which the
+database can override.
+
+## A report carries the property's own photographs, and never the wrong ones
+Read [`PROPERTY_PHOTOGRAPHS.md`](./docs/reports/PROPERTY_PHOTOGRAPHS.md) before
+touching `_shared/reportPhotographs.pure.ts`,
+`_shared/listingPagePhotographs.pure.ts`, the `photographs` option on
+`get-investment-reports`, the `capture_report` or `capture_brochure_photograph`
+ops on `listing-images`, `urlExtractPhotographs.ts`,
+`brochurePhotographs*.ts`, `adapters/reportPhotographs.ts`,
+`floorPlanPage`, `investmentPdfPictures.ts` or a `property.images` /
+`property.floorPlans` binding.
+
+**Hero Image Studio's placements never reached the document a client
+receives.** Only the standard presentation reads them, it draws them on a
+figures page after the body, and only with a switch that is off by default.
+Five Compass masters were built to bind `property.images.N` (Atelier, Atelier
+Plate and Grand Folio on the cover; plates in those three, Frontispiece and
+Elevation). Nothing filled that binding, while the image library held every
+listing-sourced report's photographs. The Investment adapter fills it now,
+through the report broker, and inlines each photograph as a `data:` URI,
+because the renderer may fetch nothing.
+
+Three rules bite:
+
+- **A report filters where a gallery demotes.** Every photo slot is designed
+  to print nothing when empty, so a missing photograph costs nothing, while
+  the wrong one puts somebody else's house on a client's cover. A report takes
+  only what the server has seen to be a photograph, never one another listing
+  also holds, and nothing at all when the reuse reading fails.
+- **A photograph never costs the document.** Every failure drops that one
+  photograph.
+- **A cover takes the photograph only where nothing moves** (seed v21,
+  `withCoverPhotograph`, §7 of the same doc):
+  - The 16 field covers take it behind the whole sheet.
+  - The 18 banded covers take it inside the band. The title grows upward by
+    as many lines as the address needs, so no photograph goes between them.
+  - The 11 paper covers are left as drawn: dark type on a photograph is a
+    different cover, and Monograph is photo-free by design.
+
+  The photograph sits under **two** passes of the field colour's scrim, where
+  the photographic covers use one: over a white facade one pass leaves these
+  covers' small type at 3.48:1, below the 7:1 print floor, and two passes give
+  7.89:1. Without a photograph each cover draws exactly what it drew before,
+  and nothing fills the space. It is composed in code. The Claude Design
+  catalogue shows it too, since the owner added the photograph cover pages and
+  the floor-plan pages there on 26 Sep 2026; `source.json` is unchanged, so the
+  generator still composes it rather than reading it from the catalogue.
+
+**A URL-extract report carries the listing's own photographs** (the owner's
+decision, 25 Sep 2026; §6 of the same doc). The extraction names them: on
+realestate.com.au, the gallery in the page's own data, attributed by the
+listing id so the "similar properties" beside it are never taken. Anywhere
+else it names nothing: a page's `og:image` is what the page wants shared, not
+a statement of which property a picture shows, and was removed as a fallback.
+The report asks `listing-images` to keep them under the report, never in
+`listing_images`.
+
+**And every photograph is of the report's own address and property, on both
+paths** (the owner's rule; rule 4 in §3): never a picture chosen to fill a
+slot. `photographsAreOfReportAddress` holds the report's address as it reads
+NOW against the address the photographs belong to: the listing's composed
+address, or the address the extraction read, recorded in `capture.json`. The
+comparison is `isSameProperty`, and anything it cannot verify takes nothing.
+
+Three more rules bite. **The browser's
+minute is not the deadline**: the server writes down what was asked
+(`capture.json`, beside the photographs), answers, and does the work after
+answering, and a capture the host left unfinished is finished by the next
+document drawn, which waits at most 45 s and never fails for it. **Only the
+author starts a capture; anyone who may read the report may finish one**, and
+a finish continues exactly what the record says. **A photograph's name carries
+its place in the listing's gallery**, and a capture is not final while a place
+ahead of the sixth kept one is undecided, so a lead photograph whose host
+failed the first time still becomes the cover.
+
+**A report made from a PDF brochure carries the brochure's own pictures**
+(the owner, 25 Sep 2026; §8 of the same doc). Read §8 before touching
+`src/lib/reports/brochurePhotographs*.ts`, `BrochurePhotographsPicker`,
+`useBrochurePhotographs` or `op: 'capture_brochure_photograph'`. The browser
+reads the brochure with pdf.js beside the parse, the server's own vision
+module judges each picture on the same 64-pixel square, the adviser ticks
+what goes in, and the ticks are filed once the report row exists — with the
+page held while they are in flight (`fileWhilePageHeld`), because the pictures
+exist nowhere else and a close used to lose them behind an announcement that
+said the adviser could go. Three
+rules bite. **Only a page that names this property can offer a picture**:
+the owner's example names its lot on page 1 beside the facade render, and
+its pages 5 and 6 are another estate and four homes built elsewhere, which
+nothing in the pixels tells apart. **A page's words are its runs joined by
+position, never by a space** (`joinPageText`): the same brochure prints
+`L` · `ot` · `1` · `629` as separate runs, and a space-join made its lot
+unreadable. And **a lot is an address only against the same lot**
+(`brochurePhotographsAreOfReportAddress`): `isSameProperty` refuses a
+lot-only address, which is a new build's only address, so the brochure's
+form requires one lot on both sides and everything either side states to
+agree. **Its words reach the report too** (§8 of
+[`WHITE_LABEL_DOCUMENTS.md`](./docs/reports/WHITE_LABEL_DOCUMENTS.md)): the
+form sent `data.pdfContent`, a field `parse-property-pdf` has never returned,
+so every report made from an uploaded PDF was written as though the document
+had no words in it. The browser reads the text layer now — the FRONT of the
+document (a brochure ends on the builder's other estates), 8,000 characters
+cut at a paragraph, nothing from a scan — and the generator bounds it from the
+front as well (`uploadedDocumentText.pure.ts`).
+
+**A floor plan is never a photograph** (the owner, 25 Sep 2026; §9 of the
+same doc). Every photo slot crops to fill its frame, and a cropped plan is a
+plan with a room missing. So a plan has its own binding
+(`property.floorPlans`), its own folder (`<report>/plans/`, kept only on the
+server's own `floorplan` verdict, at most two), and its own sheet in all fifty
+Investment masters (seed v22, `floorPlanPage`): drawn whole, never rotated,
+after the contents and before the verdict, each sheet conditional on its plan.
+The rule that makes it safe: **without a plan every master draws byte for
+byte what it drew before**, pinned by rendering all fifty with and without the
+sheets. The sheet takes no running head, because a head names a part and a new
+part would renumber every later page. A URL-extract report takes the listing's
+own plans the same way: realestate.com.au's `media.floorplans`, attributed by
+the listing id, kept by the same capture as its photographs in a list the
+record settles apart, and an asset the page lists as a plan is never offered
+as a photograph.
+
+**The standard presentation draws them too** (§10). A report left on no
+template used to carry no photograph and no plan whichever route found them.
+It reads them with the adapter's own reader, only once the template route has
+declined, and puts the lead photograph in the field below the brand cover's
+lockup and each plan on a sheet after the contents. **Measure the page you
+draw on, never assume it**: `npc_template.pdf`'s MediaBox is
+[0 7.83 595.5 850.08], and a band placed against a 0–842 page left the
+ornament's tip showing above the photograph.
+
+**That brand cover is NPC's artwork, and it opens NPC's document on NPC's
+deployment and nothing else** (`standardCover.pure.ts`, "Whose cover it is" in
+§10). Until 25 Sep 2026 every clone's standard document opened on NAIDU
+PROPERTY CONSULTING SERVICES, and the file named `NPC Services` as its author.
+Every other issuer now gets a cover drawn for it (`investmentPdfCover.ts`): its
+name, its knockout mark, the photograph where the artwork puts one. The issuer
+comes from the same `resolveReportIssuer` the closing page uses, so the first
+and last pages cannot name two businesses; an unbranded clone issues as Aurixa
+Systems. Two rules bite. **The prime is recognised by its backend, never by a
+name**: a clone seeded from the prime's settings holds NPC's name in its rows.
+And **covering the artwork is not removing it**: another issuer's document
+starts from an empty PDF and copies only the content page, because NPC's name
+drawn over is still in the file for a search or a screen reader. The prime's
+own document is pixel-identical to what it was.
+
+The resale section also draws the published price history
+(`priceHistoryChart`, §6 of `MARKET_FIGURES_IN_THE_REPORT.md`): the latest
+quarter of each of ten years, from the record, or nothing.
+
+## A clone's documents are its own
+Read [`WHITE_LABEL_DOCUMENTS.md`](./docs/reports/WHITE_LABEL_DOCUMENTS.md)
+before touching `issuerIdentity.pure.ts`, `legacyDocumentBrand.ts`,
+`legacyIssuerCover.ts`, `brandFamily.pure.ts`, `buildReportBrandSnapshot`,
+`issuerDisclaimerSetting`, `organisationProjection.pure.ts` or any PDF
+generator that draws a cover, a closing page or a contact block. The older
+documents — Borrowing Capacity, Strategy Rationale, the Cash Flow export,
+Portfolio, Formara, Market Intelligence, the Overview snapshot and the Q&A
+editors — drew NPC's cover artwork, name, tagline, contact details and
+disclaimer on every deployment. The owner's rule (26 Sep 2026): **the house's
+identity is a legacy the prime keeps and a clone never sees; content and
+delivery are the same everywhere, and only the template changes.**
+
+Three rules bite. **The deployment decides, never a name**:
+`isPrimeDeployment()` / `deploymentKind(SUPABASE_URL)`, both failing closed,
+because a clone seeded from the prime holds NPC's name in its rows. On the
+prime nothing is read that was not read before, which is why every loader
+takes the settings read as a thunk; the prime's four jsPDF documents were
+compared object by object with the code before this and are identical.
+**A row that is the house's is withheld whole** (`isHouseContactRow`): a phone
+number, an office address and an ABN name nobody, so no reading of the value
+can recognise them, and the first seeded render printed NPC's landline, office
+and ABN under "Aurixa Systems". A document that says less is recoverable; one
+that prints another business's ABN is not. And **one brand colour is a family,
+never a substitute**: `resolveBrandFamily` grows it into the roles a drawn
+document needs (an accent, its 7:1 ink, a deep shade of its own hue for
+headings, washes, a hairline), because poured into the navy's place a light
+brand makes every heading unreadable. No colour means Aurixa's gold on
+obsidian, and the semantic reds and greens stay the palette's, so a tenant
+cannot make risk green. Portfolio's and Formara's gold ramp grows from that same
+colour on a clone (`highlightColourFor`), so one document never carries two.
+
+**The writer works for the issuer, and where that is the platform it works for
+nobody** (`writerFirm.pure.ts`, §9 of the same doc). Every report persona read
+Report Settings, so a clone seeded from the prime's row was written by a model
+told it worked for NPC, and Market Intelligence printed the name in the
+document ("How `<company>` Would Approach This"). Load it through
+`loadReportWriterIdentity()`, never `getBrandConfig().companyName`: on the prime
+it is the same name, byte for byte; on a clone it is the clone's own business;
+and where a clone has named nobody `firm` is `null` and the persona drops its
+"for `<company>`" clause, because the platform's own disclaimer on that page
+says Aurixa prepared none of it and is nobody's buyer's agent. A
+`{{brand_name}}` template is resolved with `brand_name: null` to take the firm
+out (`withoutFirmToken`), never filled with Aurixa's name.
+
+**A continuation is sent no document, so the first invocation keeps it**
+(`reportDocumentContext.pure.ts`; `INVESTMENT_REPORT_RESUME.md` §14). The
+brochure's or listing's words used to reach the first batch of sections only.
+The composed context is kept at `listing-images/report-sources/<reportId>/document.json`,
+read back by any invocation handed none, used only for the same report at the
+same address, and composed from the kept fields alone, so every section states
+the document the way the first did.
+
+**The tools and the labels speak for the workspace, not the house** (§12–§13
+of the same doc). The email copilot, dashboard assistant and user guide read
+Report Settings. Market Updates Q&A and the finance copilot named NPC as a
+literal. On every clone, the portals told a solicitor to "Contact NPC",
+signed staff messages "NPC Command Centre", and listed staff in authenticator
+apps under "NPC Property Dashboard".
+
+- **Server side:** call `loadWorkspaceIdentity({ readPrimeName })` (rules in
+  `workspaceIdentity.pure.ts`).
+  On the prime it returns the words each site always had. On a clone it returns
+  the clone's Report Settings name, then its Branding page name, then
+  `MISSION_CONTROL_AGENCY_NAME`, or nobody — never NPC, "Property Consulting" or
+  Aurixa.
+- **Frontend:** a label that names the house is `houseLabel(prime, clone)`, with
+  the prime's words verbatim first. `houseLabelsGuard.spec.ts` fails on any
+  literal naming the house that is neither a first argument nor recorded with a
+  reason, and on any clone wording that names a business.
+
+**Deleting a report removes what it kept** (§14). Its photographs, plans and
+kept document go with the row, and never its rendered PDF, which a client portal
+may hold. Only the ids the delete statement returned are touched, only inside
+those reports' own folders, and never at the cost of the delete. A status-wide
+`bulkDelete` is an administrator's act now.
 
 ## A premium document, and the eighteen per cent that was bold
 
@@ -3256,6 +3700,128 @@ keep the ratio the originals were chosen on — roughly three times the largest
 legitimate input — and are DERIVED from the declared budget, not measured
 against the corpus, because one 91,340-character observation is not a
 distribution.
+
+## The Borrowing Capacity Snapshot shows its working
+Read §16 of [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md)
+before touching `buildLedger`, `basis.pure.ts`, `advice.pure.ts`, `incomeLabel`
+or the Snapshot's sections. Two production Snapshots were read page by page on
+28 Sep 2026. On one, the working did not reach its own surplus. On the other,
+$0, 0.0x and "pay down your debts" were printed to a client with no income and
+no debt. Three rules bite.
+
+- **The working foots.** Tax and negative property cash flow are the lines
+  that were missing. After-tax income is read from the engine's own string and
+  never recomputed. A record that cannot foot states its figures and does not
+  pretend they add up.
+- **No income is said, not assessed.** DTI and stress are null. A ratio over
+  zero income is undefined, not 0.0x.
+- **The engine's words are translated on the way out.** Every string it pushes
+  has a wording, and a test reads its source for new ones. Advice the record
+  contradicts is dropped. The engine's own strings and rules are unchanged.
+
+## The Strategy Rationale Brief is the Snapshot route's second document
+Read §17 of [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md)
+before touching `strategyRationale*.pure.ts`, `deliverStrategyRationale.ts` or
+the `document` field on `render-borrowing-capacity-pdf`. The What-If brief is
+typeset in the template chosen for Borrowing Capacity. Its words are the jsPDF
+brief's, unchanged. Three rules bite.
+
+- **The words are composed once, in the browser.** The scenario is stored
+  nowhere, so the server reads the brief back against the composer's shape and
+  draws it; it recomputes nothing. A test holds the composer to the jsPDF
+  generator's literals.
+- **No `document` means the Snapshot.** An unknown one is refused.
+- **The browser requires the echo.** An older deployment draws a Snapshot, so
+  without `document: 'strategy_rationale'` in the answer the brief falls back
+  to jsPDF and says so.
+
+## The Strategy Advisor's reasoning travels with its scenario
+Read §18 of [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md)
+before touching `composeAdvisorSection`, `advisorRationale.pure.ts` or
+`advisorRationale` on a scenario preset. Applying an advisor card used to move
+its levers and leave its client-specific reasoning on the card. Three rules
+bite.
+
+- **One composer.** Every surface that prints the reasoning (panel, both
+  briefs, both Snapshots) takes the words `composeAdvisorSection` returns.
+- **The engine's figures only.** The card's `estimatedImpact` is not carried,
+  and every copy says the advisor (AI) wrote the reasoning. The server restores
+  that line whatever the request sent.
+- **It follows the levers.** A lever moved after the apply has settled marks
+  the reasoning as describing the scenario as proposed. Reset clears it.
+
+## The Strategy Advisor says what it is doing
+Read §19 of [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md)
+before touching `_shared/advisorProgress.pure.ts`, `AdvisorProgressBubble` or
+the `progress` events in `bc-scenario-agent`. A request takes 20–90 s, and the
+chat used to draw one spinning circle. Three rules bite.
+
+- **A stage is reported only when it is reached.** Only the clock ticks.
+- **The rotating line is a fact from the brief, never a thought** about what
+  the model is weighing.
+- **Either end may be older**, and the stage never moves backwards.
+
+## The Calculator's living costs, and the advisor's DTI cap
+Read §20 of [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md)
+before touching `_shared/borrowingCapacityExpenseMethod.pure.ts`,
+`_shared/advisorDtiOverride.pure.ts`, `rationaleReadingNote`, the advisor's
+options in `composeAdvisorSection`, or `src/lib/pdf/standardFontText.ts`.
+Three rules bite.
+
+- **Only a recorded expense-method choice is restored.** The column read
+  'declared' on every saved assessment, and restoring it assessed a client with
+  no declared expenses at $0 a month.
+- **The advisor may relax a DTI cap, never impose one.** A tightening proposal
+  is withheld before the engine measures it, and the card says why.
+- **jsPDF's built-in font prints WinAnsi only.** An arrow printed as `!’` on
+  every lever label.
+
+## A template dresses nine report types, and never pages them
+Read [`TEMPLATE_PARITY.md`](./docs/reports/TEMPLATE_PARITY.md) before touching
+`templateParity.pure.ts`, `templateDesign*.pure.ts`, `templateDesignRead.ts`,
+`standardDesign.ts`, `drawnDesign.pure.ts`, `drawnDocumentDesign.ts` or a
+master for any report type but Investment. On 26 Sep 2026 none of the nine
+non-Investment report types printed the same information through a template
+as through its standard document, because a master's page sequence is a second
+statement of what a report says, and two statements drift. The owner's rule is
+that a template changes how a document LOOKS and nothing else. So for those
+nine a chosen template supplies only a **design**: its typefaces, colourway,
+cover ground and table rules. The report's own route draws every page in it.
+
+Three rules bite.
+
+- **The body is the standard body, proved.** `templateDesignParity.spec.ts`
+  holds every held report type's `<body>` byte for byte under 141 designs. The
+  design sheet may restyle a word and never add, hide, reorder or re-case one,
+  so it may not use `display: none`, `content`, `text-transform` or
+  `visibility`. And **identical markup is not an identical page**: under a
+  byte-identical body, 31 of the 50 designs clipped the C&I Capacity report's
+  widest table. So the design sheet also clips nothing (`fitRules`), pinned for
+  every design.
+- **A design never costs the document.** A row the Template Builder would not
+  list, or the chooser would not offer, is refused. So is an unusable colour,
+  or a face the container lacks. The route draws the standard document and says
+  what it drew (`DesignEcho`). A route that answers nothing about a design it
+  was sent is said out loud too.
+- **Nine browser documents wear the choice** made for the report type they come
+  from (`DRAWN_DOCUMENTS`), and each must ask for it by its own key.
+  `drawnDocumentDesign.spec.ts` fails on a register entry nothing reads,
+  because the chooser promises the design to every one it names.
+
+The lender packet's cover sheet is deliberately not in the register: it is
+drawn in the partner's session, which cannot read the adviser's choice. With
+nothing chosen, every document draws exactly what it drew before, compared
+object by object.
+
+The same work removed the quantitative market report's fabrications:
+
+- "$0" and "0.0%" read from fields the pipeline stopped writing;
+- "Agency 1…5" and ten fixed Perth suburbs at invented prices;
+- a week of activity from `Math.random()`.
+
+The pipeline's own four mislabelled charts are left out while it stays at
+`REPORT_VERSION` 1 (`quantitativeCharts.ts`), and fixing them at source is
+an owner decision recorded in the same doc.
 
 ## Generated reports / PDFs
 **Read [`docs/reports/COVERAGE.md`](./docs/reports/COVERAGE.md) before anything
@@ -3847,6 +4413,11 @@ whose conditional is false left a third of a page white between a heading and
 the recommendation under it; `closeDroppedBlocks` moves the column under a
 dropped block up to where it began, refuses whenever anything drawn sits in
 that band or beside the column, and never moves furniture or an editor page.
+**A dropped layer is not a hole**: a block whose declared box reaches past the
+block below it was drawn under that block (a photograph beneath a cover's
+type), and closing it lifted the three photographic covers with no photograph
+to the page's top edge — measured over all 543 templates, that rule changes
+those three covers and nothing else.
 And **a chart label fits the drawing it belongs to** — `fitLines` wraps a
 label into the units it may use and the drawing grows for the lines, because
 a gauge caption, a donut legend, a timeline stop and a pictograph title were
@@ -3958,6 +4529,50 @@ them, and is the only render route that can call a model. **Market Intelligence*
 is the one whose page budget is fitted block by block against real renders rather
 than summed, the one that clips a section and says so on the page, and the only
 one that writes a PDF a scheduled email later attaches.
+
+## The Intelligence Hub exports an Intelligence Hub Summary
+Read §13 of [`QA.md`](./docs/reports/QA.md) before touching
+`MessageReportEditor`, `ConversationReportEditor`, `ChooseTemplateButton` or
+`_shared/reports/reportQa/documentIdentity.pure.ts`. The owner chose a template
+and received the legacy layout, because the dialog had two PDF buttons and only
+"Typeset PDF" read the choice. Three rules bite.
+
+- **The choice and the act are separate controls.** "Choose template" only
+  chooses. Export PDF is the typeset route in that choice, after the edits are
+  stored, and a failed store stops the export.
+- **One name, and the topic.** Every Hub download is an "Intelligence Hub
+  Summary". It is titled and named by what it covers: the answer's own heading,
+  else the conversation's title, else the question.
+- **An answer is a memo.** Its sections run on rather than each opening a page,
+  and its title is on the cover once, not also as the first section.
+
+## Both comparisons export like the Hub
+Read §13 of [`COMPARISON.md`](./docs/reports/COMPARISON.md) and of
+[`CASH_FLOW_COMPARISON.md`](./docs/reports/CASH_FLOW_COMPARISON.md) before
+touching `ComparisonDownloadButton`, the comparison surfaces in
+`CashFlowAnalysisModal`, `ChooseTemplateButton` or
+`_shared/reports/readableFileName.pure.ts`. Three rules bite.
+
+- **"Choose template" sits beside Export PDF.** The Cash Flow Comparison
+  borrows the Cash Flow's choice, and its button says so.
+- **A filename is readable, and a storage key is not the filename.** A file is
+  named `<Document> - <topic> - 28 Sep 2026.pdf`, where the topic is what the
+  document covers: the properties compared, or an answer's heading. The key is
+  `storageSafeFileName` of it.
+- **A memo runs on** (`RUN_ON_CHAPTER_CLASS`), and a comparison's short tables
+  are kept whole.
+
+**Market timing and competitive advantages are stored now** (§14 of
+`COMPARISON.md`, migration `20261228100000`). Read it before touching
+`supplementaryColumnsFor`, `SUPPLEMENTARY_COLUMNS` or the comparison insert.
+The model was always asked for both, and the writer dropped them from every
+intact comparison. Two rules bite.
+
+- **The AI is not touched.** The prompt, the schema and `STORABLE_SECTIONS` are
+  unchanged. The producer stores the answer it already had.
+- **They are written by a separate update, never the insert.** A deployment
+  the migration has not reached refuses the update and still saves the
+  comparison.
 
 ## Partner agreements — TEMPLATES ONLY
 The platform no longer runs the formation of a partner referral/commission
@@ -4086,6 +4701,43 @@ flat with zero headings. The stage's hard constraint is that it adds meaning and
 moves nothing: pixel identity at 300 DPI is asserted before and after, and the
 `margin:0` reset and the `<span>` inside a heading are both there for measured
 reasons the doc records.
+
+## A template changes how a document looks and nothing else
+Read [`TEMPLATE_PARITY.md`](./docs/reports/TEMPLATE_PARITY.md) before touching
+`_shared/reports/templateParity.pure.ts`, the first gate in
+`tryTemplateDocument`, `org.tagline`, or any non-Investment adapter, projection
+or master. The owner's rule (26 Sep 2026): for every report type other than the
+five Investment tiers, a templated document carries exactly the information
+its standard document carries. Measured the same day, **none of the nine
+did**. Q&A printed the first answer whichever was chosen, and the Cash Flow
+printed after-tax figures under "No tax position is modelled". Every test that
+existed checked wiring (published paths, no unresolved binding), and no test
+had ever rendered one record through both paths and compared them. The
+section above, *A template dresses nine report types, and never pages them*,
+is how the nine are drawn now.
+
+Three rules bite.
+
+- **Released means proven.** `TEMPLATE_RELEASED_REPORT_TYPES` is `investment`
+  alone. Every other report type is drawn by its own route and never through
+  a template's pages, whatever was chosen, and the register fails closed on an
+  unknown spelling. A report type is released only when its parity check
+  passes on every master and the owner has read a sample, and never by a
+  surface deciding for itself.
+- **Held means held from the pages, never from the choice.** The choice is
+  honoured on every document as its design, and the chooser says so before
+  anything is chosen (`TEMPLATE_DESIGN_NOTICE`). The Cash Flow finalisation
+  key names which of the two a document is, a template's pages or a design
+  over the standard pages, so neither can be served for the other.
+- **The house's words are the prime's.** All 500 masters set the house's
+  tagline as a literal under every clone's name. They bind `org.tagline` since
+  seed v23, which only the prime publishes. The browser publishes it, so the
+  frontend that does must be live before seed v23 is applied, or the prime's
+  covers lose the line in between. The seed cannot reach a customised master
+  or a clone the cascade never carries it to, so `routeReportThroughTemplate`
+  re-applies it where every templated document is drawn
+  (`houseTaglineGuard.pure.ts`). On a clone, a value that IS the tagline is
+  bound as v23 binds it, and the prime's template is never touched.
 
 ## The template converter
 An existing template can be brought *onto* the design system rather than into the

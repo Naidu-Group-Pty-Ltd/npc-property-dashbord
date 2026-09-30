@@ -102,7 +102,11 @@ describe('the legacy 38-page template is gone from the live prompt', () => {
 
   it('injects the contract from the shared module rather than restating it', () => {
     expect(source()).toContain("import { compassDocumentContract } from '../_shared/reports/investment/compassDocumentContract.pure.ts'");
-    expect(propertyPrompt()).toContain('${compassDocumentContract(_brandPp.companyName)}');
+    // The firm is the writer identity's (`writerFirm.pure.ts`): on the prime the
+    // name Report Settings always gave it, on a clone the clone's own business,
+    // and none at all where a clone has named nobody — which the contract
+    // itself reads as "your adviser" (pinned below).
+    expect(propertyPrompt()).toContain("${compassDocumentContract(_writerPp.firm ?? '')}");
   });
 });
 
@@ -121,7 +125,7 @@ describe('the evidence pack is what the report may state', () => {
       'regionalTrendBlocks(',
       'macroEconomicBlock(enhancedData)',
       'demographicsStatBlocks(enhancedData)',
-      'climateStatBlocks(enhancedData)',
+      'climateStatBlocks(enhancedData, hazardReadings(planningFacts))',
       'crimeStatBlocks(enhancedData)',
       'reconcileNearestSchool(',
       'reconcileSchoolDistances(',
@@ -139,7 +143,7 @@ describe('the evidence pack is what the report may state', () => {
   it('states an absent register as a fact about the CHECK', () => {
     // The rule every absence in this product answers to. A category nobody
     // reached must never read as a category with nothing in it.
-    expect(p).toMatch(/No school register reading was retrieved/);
+    expect(p).toMatch(/Schools near this property were not assessed for this report/);
     // The amenity and transport absences moved into `amenityFactBlocks.pure.ts`
     // with the blocks themselves, and are asserted there by EXECUTION against
     // the shape `location-intelligence-service` publishes — which is stronger
@@ -182,7 +186,7 @@ describe('the contract itself', () => {
 
   it('says what depth is, because the legacy answer was length', () => {
     expect(COMPASS_DOCUMENT_CONTRACT).toMatch(/Depth is not length/);
-    expect(COMPASS_DOCUMENT_CONTRACT).toMatch(/A retrieved fact they could not easily get themselves/);
+    expect(COMPASS_DOCUMENT_CONTRACT).toMatch(/A confirmed fact they could not easily get themselves/);
   });
 
   it('shows the invented paragraph beside the evidenced one', () => {

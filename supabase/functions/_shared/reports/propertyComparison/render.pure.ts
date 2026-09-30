@@ -22,7 +22,6 @@ import {
   closeChapter,
   escapeHtml,
   openChapter,
-  renderBandedMatrix,
   renderCallout,
   renderChapterHeader,
   renderCompanyPage,
@@ -46,6 +45,10 @@ import type { CompanyBlock, CompanyDisclaimer } from '../../reportDesign/company
 import { contentsEntriesFor, REPORT_ARCHETYPES } from '../../reportDesign/structure.pure.ts';
 import type { ReportBrandSnapshot } from '../../reportDesign/snapshot.pure.ts';
 import { resolveSnapshotBrand } from '../../reportDesign/documentBrand.pure.ts';
+import {
+  withDesignOptions,
+  type ReportTemplateDesign,
+} from '../../reportDesign/templateDesign.pure.ts';
 import { formatMeasure } from '../../reportDesign/measure.pure.ts';
 
 import type {
@@ -233,6 +236,42 @@ function truncationCallout(cf: PropertyComparison): string {
 }
 
 /**
+ * The category matrix on the page the section is already on.
+ *
+ * It opened a landscape page of its own "for consistency" with the Portfolio's
+ * holdings matrix, which is a different table: two to five properties and ten
+ * categories fit the portrait measure comfortably, and a landscape sheet in the
+ * middle of the comparison held one table and two-thirds white space. Measured
+ * over the 50 designs at five properties: every column fits. The property
+ * columns share the width equally, so the tick for the second property is not
+ * squeezed between two wide neighbours.
+ */
+function portraitMatrix(
+  rowLabel: string,
+  columns: string[],
+  rows: Array<{ label: string; values: string[] }>,
+  opts: { caption?: string } = {},
+): string {
+  const table = renderDataTable(
+    [
+      { key: 'label', label: rowLabel, align: 'left' },
+      ...columns.map((c, i) => ({ key: `p${i}`, label: c, align: 'right' as const })),
+    ],
+    rows.map((r) => {
+      const row: Record<string, string> = { label: r.label };
+      r.values.forEach((v, i) => { row[`p${i}`] = v; });
+      return row;
+    }),
+    { caption: opts.caption },
+  );
+  // Equal property columns: the category takes what a label needs and the
+  // properties split the rest.
+  const share = Math.floor(64 / Math.max(columns.length, 1));
+  const cols = `<colgroup><col style="width:36%">${columns.map(() => `<col style="width:${share}%">`).join('')}</colgroup>`;
+  return table.replace('<table class="data">', `<table class="data">${cols}`);
+}
+
+/**
  * The scorecard — every category, and which property took it.
  *
  * Landscape, and the reason is consistency rather than geometry. With two to five
@@ -258,7 +297,9 @@ function scorecardSection(cf: PropertyComparison, palette: ResolvedReportPalette
     { caption: 'The properties, numbered as they appear overleaf' },
   );
 
-  const columns = cf.properties.map((prop) => String(prop.number));
+  // Headed by the street, with the number the key above gives it, so a reader
+  // does not have to look up which property "2" is.
+  const columns = cf.properties.map((prop) => `${prop.number}. ${prop.shortAddress || `Property ${prop.number}`}`);
   // Positive axes only. A tick in this matrix means "won this category", and
   // `highestRisk` names the property that came off worst — ticking it asserts
   // the opposite of what it means. It keeps its own row in the risk section,
@@ -279,7 +320,7 @@ function scorecardSection(cf: PropertyComparison, palette: ResolvedReportPalette
 
   const undecided = positive.filter((w) => !w.property).length;
   const matrix = rows.length
-    ? renderBandedMatrix('Category', columns, rows, {
+    ? portraitMatrix('Category', columns, rows, {
       caption: 'A tick marks the property the analysis named on that category. '
         + (undecided
           ? `${undecided} ${undecided === 1 ? 'category' : 'categories'} named no property and `
@@ -377,7 +418,7 @@ function matchesSection(cf: PropertyComparison): string {
     .join('');
 }
 
-/** What sets each apart. Salvaged records only — see `payload.pure.ts`. */
+/** What sets each apart. Stored since 28 Sep 2026, salvaged before — see `payload.pure.ts`. */
 function advantagesSection(cf: PropertyComparison): string {
   return cf.advantages
     .map((a) => subhead(a.property ? a.property.address : 'Across the comparison')
@@ -385,7 +426,13 @@ function advantagesSection(cf: PropertyComparison): string {
     .join('');
 }
 
-/** Which to buy first, and how long to hold each. Salvaged records only. */
+/**
+ * Which to buy first, how long to hold each, and how to leave it.
+ *
+ * The exit strategies are the analysis's own words, one paragraph a property:
+ * the producer has asked for them since its first prompt and no surface had
+ * printed them.
+ */
 function timingSection(cf: PropertyComparison): string {
   const t = cf.timing;
   if (!t) return '';
@@ -405,7 +452,13 @@ function timingSection(cf: PropertyComparison): string {
       .map((h) => subhead(h.property ? h.property.shortAddress : 'Across the comparison') + p(h.reason))
       .join('')
     : '';
-  return namedBlock('Buy first', t.buyFirst) + periods;
+  const exits = t.exitStrategies.length
+    ? subhead('Exit strategies')
+      + t.exitStrategies
+        .map((e) => `<p>${e.property ? `<strong>${escapeHtml(e.property.address)}</strong>. ` : ''}${escapeHtml(e.strategy)}</p>`)
+        .join('')
+    : '';
+  return namedBlock('Buy first', t.buyFirst) + periods + exits;
 }
 
 /** The pick, the runners-up, what to avoid, and the what-ifs. */
@@ -443,15 +496,17 @@ function planSection(cf: PropertyComparison): string {
  */
 function basisSection(cf: PropertyComparison): string {
   const b = cf.basis;
+  // A setting the record does not hold is omitted, never printed as a dash:
+  // "an absence is omitted, never worded" (RUNTIME_CONSOLIDATION.md §8).
   const rows: TableRow[] = [
-    { item: 'Compared on', value: formatReportDate(cf.meta.analysedOn) || EMPTY },
+    { item: 'Compared on', value: formatReportDate(cf.meta.analysedOn) },
     { item: 'Properties', value: String(cf.properties.length) },
-    { item: 'Time horizon', value: b.timeHorizon || EMPTY },
-    { item: 'Risk tolerance', value: b.riskTolerance || EMPTY },
-    { item: 'Investor profile', value: b.investorProfile || EMPTY },
-    { item: 'Depth', value: b.depth || EMPTY },
-    { item: 'Analysed by', value: b.model || EMPTY },
-  ];
+    { item: 'Time horizon', value: b.timeHorizon },
+    { item: 'Risk tolerance', value: b.riskTolerance },
+    { item: 'Investor profile', value: b.investorProfile },
+    { item: 'Depth', value: b.depth },
+    { item: 'Analysed by', value: b.model },
+  ].filter((r) => Boolean(r.value));
 
   const weights = b.weights.length
     ? renderDataTable(
@@ -564,7 +619,11 @@ export function renderComparisonBody(input: RenderComparisonInput): string {
       ? placeholderSection(section.placeholderFor)
       : SECTION_BODY[section.id]?.(cf, input.palette) ?? '';
     const number = String(index + 1).padStart(2, '0');
-    return openChapter(DOCUMENT_NAME, number, section.title)
+    // A comparison is ten short sections — most run to a table and a few
+    // paragraphs — and a page each printed seventeen sheets for three
+    // properties, half of them part empty. They run on under one another now,
+    // each keeping its numbered header and running head (`RUN_ON_CHAPTER_CLASS`).
+    return openChapter(DOCUMENT_NAME, number, section.title, 'body', { runOn: index > 0 })
       + renderChapterHeader({
         number,
         title: section.title,
@@ -582,6 +641,16 @@ export function renderComparisonBody(input: RenderComparisonInput): string {
 
   return cover + contents + body + closing;
 }
+
+/**
+ * A comparison's tables are short — one row per property, or one per category —
+ * and one split across a page reads as two tables. Measured on a three-property
+ * comparison: the ranking broke after its first row, leaving two rows alone at
+ * the head of the next page. A table longer than a page still breaks: `avoid`
+ * is a preference WeasyPrint gives up rather than overflow.
+ */
+const COMPARISON_CSS = `
+  .table-block { break-inside: avoid; }`;
 
 /**
  * The whole document, ready to POST to the render service.
@@ -604,7 +673,7 @@ export function renderComparisonDocument(input: RenderComparisonInput): string {
       palette: input.palette,
       options: input.options ?? null,
       masthead: input.masthead,
-    }),
+    }) + COMPARISON_CSS,
     bodyHtml: renderComparisonBody(input),
   });
 }
@@ -620,6 +689,13 @@ export interface RenderComparisonFromBrandInput {
   coverArtDataUri?: string | null;
   options?: Partial<ReportDesignOptions> | null;
   edition?: string | null;
+  /**
+   * A chosen template's design (`templateDesign.pure.ts`). Its palette, faces
+   * and page treatment replace the brand's palette; every word on every page is
+   * still this composer's. Absent, and the document is the standard one byte
+   * for byte.
+   */
+  design?: ReportTemplateDesign | null;
 }
 
 export interface ComparisonRenderResult {
@@ -640,13 +716,13 @@ export function renderComparisonFromBrand(
   return {
     html: renderComparisonDocument({
       comparison: input.comparison,
-      palette: brand.palette,
+      palette: input.design?.palette ?? brand.palette,
       company: brand.company,
       masthead: brand.masthead,
       lockup: brand.lockup,
       heroDataUri: brand.heroDataUri,
       confidentiality: brand.confidentiality,
-      options: input.options ?? null,
+      options: withDesignOptions(input.options, input.design),
       edition: input.edition ?? null,
     }),
     gaps: brand.gaps,

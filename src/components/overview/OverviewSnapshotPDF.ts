@@ -8,6 +8,9 @@
 import jsPDF from 'jspdf';
 import { fetchGlobalReportSettings } from '@/hooks/useGlobalReportSettings';
 import { drawJsPDFDisclaimerPage } from '@/utils/pdfDisclaimerPage';
+import { headingFaceFor, issuerClosingPage, loadLegacyDocumentBrand, rgbObject } from '@/lib/reports/legacyDocumentBrand';
+import { drawnDesignFor } from '@/lib/reports/drawnDocumentDesign';
+import { paintDesignCover } from '@/lib/reports/drawnCover';
 
 // ─── Design tokens ───────────────────────────────────────────────────────────
 const NAVY = { r: 13, g: 38, b: 77 };
@@ -90,7 +93,26 @@ export async function generateOverviewSnapshotPDF(data: OverviewSnapshotData): P
 
   // Fetch dynamic brand for footer/cover
   const brandSettings = await fetchGlobalReportSettings();
-  const brandName = (brandSettings?.contactDetails?.company_name || 'Property Consulting').trim();
+
+  // Whose template this report is printed in: NPC's navy and gold on the
+  // prime, exactly as it has always been drawn, and the issuer's own on every
+  // clone (`legacyDocumentBrand.ts`) — its name, its colours, its closing page —
+  // or, where the person chose a template for Market Intelligence, that
+  // template's design (`drawnDocumentDesign.ts`).
+  const design = await drawnDesignFor('overview_snapshot');
+  const legacyBrand = await loadLegacyDocumentBrand(brandSettings?.contactDetails?.company_name, undefined, design);
+  const issuerFamily = legacyBrand.artwork === 'issuer' ? legacyBrand.family : null;
+  const coverDesign = legacyBrand.artwork === 'issuer' ? legacyBrand.design ?? null : null;
+  const headingFace = headingFaceFor(legacyBrand);
+  const brandName = legacyBrand.artwork === 'issuer'
+    ? legacyBrand.issuer.name
+    : (brandSettings?.contactDetails?.company_name || 'Property Consulting').trim();
+  const P = {
+    coverField: issuerFamily ? rgbObject(issuerFamily.field) : NAVY,
+    coverAccent: issuerFamily ? rgbObject(issuerFamily.accentOnField) : GOLD,
+    navy: issuerFamily ? rgbObject(issuerFamily.deep) : NAVY,
+    gold: issuerFamily ? rgbObject(issuerFamily.accent) : GOLD,
+  };
 
   // ── Utilities ──
   const addPage = () => {
@@ -104,7 +126,7 @@ export async function generateOverviewSnapshotPDF(data: OverviewSnapshotData): P
 
   const drawFooter = () => {
     const fy = ph - 12;
-    doc.setDrawColor(GOLD.r, GOLD.g, GOLD.b);
+    doc.setDrawColor(P.gold.r, P.gold.g, P.gold.b);
     doc.setLineWidth(0.5);
     doc.line(margin, fy - 3, pw - margin, fy - 3);
     doc.setFontSize(7);
@@ -121,11 +143,11 @@ export async function generateOverviewSnapshotPDF(data: OverviewSnapshotData): P
   const drawSectionHeader = (title: string) => {
     checkBreak(18);
     // Gold accent bar
-    doc.setFillColor(GOLD.r, GOLD.g, GOLD.b);
+    doc.setFillColor(P.gold.r, P.gold.g, P.gold.b);
     doc.rect(margin, y - 1, 3, 10, 'F');
     doc.setFontSize(13);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(NAVY.r, NAVY.g, NAVY.b);
+    doc.setFont(headingFace, 'bold');
+    doc.setTextColor(P.navy.r, P.navy.g, P.navy.b);
     doc.text(title, margin + 7, y + 6);
     y += 16;
   };
@@ -136,7 +158,7 @@ export async function generateOverviewSnapshotPDF(data: OverviewSnapshotData): P
     doc.setFillColor(LIGHT_BG.r, LIGHT_BG.g, LIGHT_BG.b);
     doc.roundedRect(x, y, bw, bh, 2, 2, 'F');
     // Gold top border
-    doc.setFillColor(GOLD.r, GOLD.g, GOLD.b);
+    doc.setFillColor(P.gold.r, P.gold.g, P.gold.b);
     doc.rect(x, y, bw, 1.5, 'F');
     // Label
     doc.setFontSize(7);
@@ -144,7 +166,7 @@ export async function generateOverviewSnapshotPDF(data: OverviewSnapshotData): P
     doc.setTextColor(GRAY_TEXT.r, GRAY_TEXT.g, GRAY_TEXT.b);
     doc.text(label.toUpperCase(), x + 5, y + 10);
     // Value
-    const vc = highlight || NAVY;
+    const vc = highlight || P.navy;
     doc.setFontSize(14);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(vc.r, vc.g, vc.b);
@@ -156,30 +178,42 @@ export async function generateOverviewSnapshotPDF(data: OverviewSnapshotData): P
   // ═══════════════════════════════════════════════════════════════════════════
   addPage();
 
-  // Full navy background
-  doc.setFillColor(NAVY.r, NAVY.g, NAVY.b);
-  doc.rect(0, 0, pw, ph, 'F');
+  // The cover's ground and inks. Without a design they are what this cover has
+  // always drawn; with one, the design's ground decides them (`drawnCover.ts`) —
+  // a band ends under the filter lines, so the total and the name sit on paper.
+  const painted = coverDesign ? paintDesignCover(doc, coverDesign, { bandBottom: 185 }) : null;
+  const headInk = painted ? painted.head.ink : WHITE;
+  const headAccent = painted ? painted.head.accent : P.coverAccent;
+  const filterInk = painted ? painted.head.ink : { r: 200, g: 200, b: 200 };
+  const footAccent = painted ? painted.foot.accent : P.coverAccent;
+  const footMuted = painted ? painted.foot.muted : { r: 120, g: 120, b: 120 };
+
+  if (!painted) {
+    // Full navy background
+    doc.setFillColor(P.coverField.r, P.coverField.g, P.coverField.b);
+    doc.rect(0, 0, pw, ph, 'F');
+  }
 
   // Gold accent line
-  doc.setFillColor(GOLD.r, GOLD.g, GOLD.b);
+  doc.setFillColor(headAccent.r, headAccent.g, headAccent.b);
   doc.rect(margin, 70, 50, 2, 'F');
 
   // Title
   doc.setFontSize(32);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(WHITE.r, WHITE.g, WHITE.b);
+  doc.setFont(coverDesign ? coverDesign.faces.cover : 'helvetica', 'bold');
+  doc.setTextColor(headInk.r, headInk.g, headInk.b);
   doc.text('OVERVIEW', margin, 95);
   doc.text('SNAPSHOT', margin, 110);
 
   // Subtitle
   doc.setFontSize(14);
   doc.setFont('helvetica', 'normal');
-  doc.setTextColor(GOLD.r, GOLD.g, GOLD.b);
+  doc.setTextColor(headAccent.r, headAccent.g, headAccent.b);
   doc.text('Property Intake Dashboard Report', margin, 130);
 
   // Date & time
   doc.setFontSize(10);
-  doc.setTextColor(WHITE.r, WHITE.g, WHITE.b);
+  doc.setTextColor(headInk.r, headInk.g, headInk.b);
   doc.text(`Generated: ${fmtDate(now)} at ${fmtTime(now)}`, margin, 150);
 
   // Filter context
@@ -191,24 +225,24 @@ export async function generateOverviewSnapshotPDF(data: OverviewSnapshotData): P
   
   if (activeFilters.length > 0) {
     doc.setFontSize(9);
-    doc.setTextColor(GOLD.r, GOLD.g, GOLD.b);
+    doc.setTextColor(headAccent.r, headAccent.g, headAccent.b);
     doc.text('Active Filters:', margin, 165);
-    doc.setTextColor(200, 200, 200);
+    doc.setTextColor(filterInk.r, filterInk.g, filterInk.b);
     doc.text(activeFilters.join('  |  '), margin, 173);
   } else {
     doc.setFontSize(9);
-    doc.setTextColor(200, 200, 200);
+    doc.setTextColor(filterInk.r, filterInk.g, filterInk.b);
     doc.text('All listings — no filters applied', margin, 165);
   }
 
   // Total listings badge at bottom
   doc.setFontSize(11);
-  doc.setTextColor(GOLD.r, GOLD.g, GOLD.b);
+  doc.setTextColor(footAccent.r, footAccent.g, footAccent.b);
   doc.text(`Total Properties: ${data.totalListings.toLocaleString('en-AU')}`, margin, ph - 50);
 
   // Brand
   doc.setFontSize(9);
-  doc.setTextColor(120, 120, 120);
+  doc.setTextColor(footMuted.r, footMuted.g, footMuted.b);
   doc.text(brandName, margin, ph - 25);
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -260,7 +294,7 @@ export async function generateOverviewSnapshotPDF(data: OverviewSnapshotData): P
     doc.setFillColor(230, 230, 230);
     doc.roundedRect(barX, y + 1, barW, barH, 1, 1, 'F');
     const filled = Math.min((stat.value / Math.max(stat.total, 1)) * barW, barW);
-    doc.setFillColor(GOLD.r, GOLD.g, GOLD.b);
+    doc.setFillColor(P.gold.r, P.gold.g, P.gold.b);
     if (filled > 0) doc.roundedRect(barX, y + 1, filled, barH, 1, 1, 'F');
 
     y += 12;
@@ -276,7 +310,7 @@ export async function generateOverviewSnapshotPDF(data: OverviewSnapshotData): P
     const totalPropCount = data.propertyTypeData.reduce((s, d) => s + d.count, 0);
 
     // Table header
-    doc.setFillColor(NAVY.r, NAVY.g, NAVY.b);
+    doc.setFillColor(P.navy.r, P.navy.g, P.navy.b);
     doc.rect(margin, y, cw, 8, 'F');
     doc.setFontSize(8);
     doc.setFont('helvetica', 'bold');
@@ -312,7 +346,7 @@ export async function generateOverviewSnapshotPDF(data: OverviewSnapshotData): P
       doc.setFillColor(230, 230, 230);
       doc.roundedRect(miniBarX, y - 1, miniBarW, 3.5, 1, 1, 'F');
       const miniF = Math.min((item.count / totalPropCount) * miniBarW, miniBarW);
-      doc.setFillColor(GOLD.r, GOLD.g, GOLD.b);
+      doc.setFillColor(P.gold.r, P.gold.g, P.gold.b);
       if (miniF > 0) doc.roundedRect(miniBarX, y - 1, miniF, 3.5, 1, 1, 'F');
 
       y += 8;
@@ -330,7 +364,7 @@ export async function generateOverviewSnapshotPDF(data: OverviewSnapshotData): P
     const maxSuburbCount = data.suburbData[0]?.count || 1;
 
     // Table header
-    doc.setFillColor(NAVY.r, NAVY.g, NAVY.b);
+    doc.setFillColor(P.navy.r, P.navy.g, P.navy.b);
     doc.rect(margin, y, cw, 8, 'F');
     doc.setFontSize(8);
     doc.setFont('helvetica', 'bold');
@@ -365,7 +399,7 @@ export async function generateOverviewSnapshotPDF(data: OverviewSnapshotData): P
       doc.setFillColor(230, 230, 230);
       doc.roundedRect(barX, y - 1, barW, 3.5, 1, 1, 'F');
       const filled = Math.min((item.count / maxSuburbCount) * barW, barW);
-      doc.setFillColor(GOLD.r, GOLD.g, GOLD.b);
+      doc.setFillColor(P.gold.r, P.gold.g, P.gold.b);
       if (filled > 0) doc.roundedRect(barX, y - 1, filled, 3.5, 1, 1, 'F');
 
       y += 8;
@@ -379,7 +413,7 @@ export async function generateOverviewSnapshotPDF(data: OverviewSnapshotData): P
   if (data.agencyData.length > 0) {
     const maxAgencyCount = data.agencyData[0]?.count || 1;
 
-    doc.setFillColor(NAVY.r, NAVY.g, NAVY.b);
+    doc.setFillColor(P.navy.r, P.navy.g, P.navy.b);
     doc.rect(margin, y, cw, 8, 'F');
     doc.setFontSize(8);
     doc.setFont('helvetica', 'bold');
@@ -419,7 +453,7 @@ export async function generateOverviewSnapshotPDF(data: OverviewSnapshotData): P
       doc.setFillColor(230, 230, 230);
       doc.roundedRect(barX, y - 1, barW, 3.5, 1, 1, 'F');
       const filled = Math.min((item.count / maxAgencyCount) * barW, barW);
-      doc.setFillColor(GOLD.r, GOLD.g, GOLD.b);
+      doc.setFillColor(P.gold.r, P.gold.g, P.gold.b);
       if (filled > 0) doc.roundedRect(barX, y - 1, filled, 3.5, 1, 1, 'F');
 
       y += 8;
@@ -434,7 +468,7 @@ export async function generateOverviewSnapshotPDF(data: OverviewSnapshotData): P
     drawSectionHeader('Recent Listings');
 
     // Table header
-    doc.setFillColor(NAVY.r, NAVY.g, NAVY.b);
+    doc.setFillColor(P.navy.r, P.navy.g, P.navy.b);
     doc.rect(margin, y, cw, 8, 'F');
     doc.setFontSize(7);
     doc.setFont('helvetica', 'bold');
@@ -485,7 +519,12 @@ export async function generateOverviewSnapshotPDF(data: OverviewSnapshotData): P
   // ═══════════════════════════════════════════════════════════════════════════
   try {
     const settings = await fetchGlobalReportSettings();
-    drawJsPDFDisclaimerPage(doc, settings.contactDetails, settings.disclaimer);
+    if (legacyBrand.artwork === 'issuer') {
+      const closing = issuerClosingPage(legacyBrand, settings);
+      drawJsPDFDisclaimerPage(doc, closing.contact, closing.disclaimer, closing.palette);
+    } else {
+      drawJsPDFDisclaimerPage(doc, settings.contactDetails, settings.disclaimer);
+    }
   } catch (e) {
     console.warn('Could not load report settings for disclaimer page:', e);
   }

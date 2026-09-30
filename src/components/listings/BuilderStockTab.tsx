@@ -23,7 +23,9 @@ import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { cn } from '@/lib/utils';
 import { StockPicture } from '@/components/stock/StockPicture';
 import { readStockEmptyState } from '../../../supabase/functions/_shared/builderStock/mirrorAvailability.pure';
+import { Link } from 'react-router-dom';
 import {
+  builderStockPropertyPath,
   marketplaceStockImageUrl, useMarketplaceBuilderStock, useMarketplaceBuilders,
   useMarketplaceClientSearch, useSelectBuilderStockForClient,
 } from '@/lib/marketplaceBuilderStock';
@@ -33,7 +35,7 @@ import {
   SELECTABLE_AVAILABILITY, stockItemConfiguration, stockItemLocality,
   stockItemPrice, stockItemTitle, stockPlacementLabel,
   STOCK_AVAILABILITY_CLASSES, STOCK_AVAILABILITY_LABELS,
-  STOCK_IMAGE_STAGE_BADGES, STOCK_IMAGE_STAGE_LABELS, STOCK_SELECTION_STATUS_LABELS,
+  STOCK_IMAGE_STAGE_BADGES, STOCK_SELECTION_STATUS_LABELS,
   type BuilderStockImage, type BuilderStockItem, type StockAvailability,
 } from '@/lib/builderStock';
 
@@ -76,7 +78,7 @@ const SURFACE = 'min-w-0 rounded-[1.5rem] border border-border/60 bg-card/65 p-4
 
 export function BuilderStockTab() {
   const { toast } = useToast();
-  const { canEdit: canEditClients } = useModulePermissions('clients');
+  const { canEdit: canEditClients } = useModulePermissions('client_management');
 
   const [search, setSearch] = useState('');
   const [organisationId, setOrganisationId] = useState('all');
@@ -302,6 +304,9 @@ function StockCard({
   // Whole square metres on the card; the column keeps every digit it was given.
   const homeSize = homeSizeDisplay(item.building_size_sqm);
   const locality = stockItemLocality(item);
+  const title = stockItemTitle(item);
+  // Rounded and grouped the way the Builder Portal's schedule prints it.
+  const landSize = item.land_size_sqm ? Math.round(Number(item.land_size_sqm)) : null;
   const builder = item.builder_organisation;
   const availabilityStatus = item.availability_status as StockAvailability;
   const selection = item.selections?.[0] ?? null;
@@ -310,10 +315,34 @@ function StockCard({
 
   return (
     <Card className="flex flex-col overflow-hidden rounded-2xl border-border/70 bg-card/90 shadow-[0_10px_30px_rgba(15,23,42,0.06)] dark:border-white/10 dark:bg-background/80">
-      <StockCardImage image={image} />
+      {/*
+        The picture and the title open the property's own page. The picture's
+        link is a layer over it rather than a wrapper, because the picture can
+        carry its own "Source" link and an anchor may not hold an anchor; that
+        link and the badge sit above this layer. It is out of the tab order and
+        hidden from assistive technology, so a keyboard or a screen reader
+        meets ONE link per card, on the title.
+      */}
+      <div className="relative">
+        <StockCardImage image={image} alt={title} />
+        <Link
+          to={builderStockPropertyPath(item.id)}
+          tabIndex={-1}
+          aria-hidden="true"
+          className="absolute inset-0 z-10"
+        />
+      </div>
       <CardContent className="flex flex-1 flex-col gap-3 p-4">
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold">{stockItemTitle(item)}</p>
+          <Link
+            to={builderStockPropertyPath(item.id)}
+            /* Two lines, not one: the design is what tells two packages on
+               one lot apart, and it is the end of the title a single line
+               cuts off. */
+            className="line-clamp-2 text-sm font-semibold text-foreground hover:text-primary hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {title}
+          </Link>
           {locality ? <p className="truncate text-xs text-muted-foreground">{locality}</p> : null}
         </div>
 
@@ -359,7 +388,10 @@ function StockCard({
           {price ? <p className="font-semibold">{price}</p> : (
             <p className="text-muted-foreground">Price not stated</p>
           )}
-          {configuration ? (
+          {/* Sizes are not configuration: an industrial unit states a floor
+              area and no bedrooms, and hiding the row with the bedrooms took
+              its only figure off the card. */}
+          {configuration || homeSize !== null || landSize ? (
             <p className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
               {item.bedrooms !== null && item.bedrooms !== undefined ? (
                 <span className="inline-flex items-center gap-1"><Bed className="h-3.5 w-3.5" aria-hidden />{item.bedrooms}</span>
@@ -378,7 +410,7 @@ function StockCard({
                 are labelled now, and the title carries neither.
               */}
               {homeSize !== null ? <span>{homeSize} m² home</span> : null}
-              {item.land_size_sqm ? <span>{item.land_size_sqm} m² land</span> : null}
+              {landSize ? <span>{landSize.toLocaleString('en-AU')} m² land</span> : null}
             </p>
           ) : null}
         </div>
@@ -436,8 +468,10 @@ function StockCard({
  * web search or from Street View. That is the whole reason a fallback is
  * allowed to reach a card at all: it is shown as what it is.
  */
-function StockCardImage({ image }: {
+function StockCardImage({ image, alt }: {
   image: BuilderStockImage | null;
+  /** The property, not the pipeline stage the picture came through. */
+  alt: string;
 }) {
   const provenance = image ? stockImageProvenance(image) : null;
   const fallback = provenance === 'web_sourced' || provenance === 'street_view';
@@ -447,7 +481,7 @@ function StockCardImage({ image }: {
       image={image}
       resolveUrl={marketplaceStockImageUrl}
       className="border-b border-border/60"
-      alt={image ? STOCK_IMAGE_STAGE_LABELS[image.source_stage] : ''}
+      alt={image ? alt : ''}
       emptyLabel="No image found"
       emptyAction={(
         /*
@@ -493,7 +527,7 @@ function StockCardImage({ image }: {
   );
 }
 
-function ActivateBuilderDialog({
+export function ActivateBuilderDialog({
   item, onClose, onSelected,
 }: {
   item: BuilderStockItem | null;

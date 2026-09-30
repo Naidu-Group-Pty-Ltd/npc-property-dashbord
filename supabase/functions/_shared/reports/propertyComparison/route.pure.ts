@@ -10,6 +10,12 @@
  * row, so nothing about the contents is the caller's to choose — not the client's
  * name, not the ranking, not which sections appear.
  */
+import {
+  readTemplateDesignReference,
+  type DesignEcho,
+  type TemplateDesignReference,
+} from '../../reportDesign/templateDesign.pure.ts';
+import { joinPlaces, readableFileName, storageSafeFileName } from '../readableFileName.pure.ts';
 
 /** Only this is accepted from the caller; everything else is read server-side. */
 export interface ComparisonRenderRequest {
@@ -17,6 +23,12 @@ export interface ComparisonRenderRequest {
   comparisonId: string;
   /** `VOL. 2026 · ED. 08`. Cosmetic; the caller may supply it. */
   edition: string | null;
+  /**
+   * The design to draw the document in (`templateDesign.pure.ts`): a catalogue
+   * design or a template row, or null for the standard design. The words,
+   * figures and pages are the report's own whatever is named here.
+   */
+  design: TemplateDesignReference | null;
 }
 
 export type RequestParse =
@@ -33,29 +45,38 @@ export function parseRenderRequest(body: unknown): RequestParse {
   if (!UUID.test(comparisonId)) return { ok: false, error: 'comparisonId must be a uuid' };
 
   const edition = typeof b.edition === 'string' ? b.edition.trim().slice(0, 40) : '';
+  // A design is optional, and a malformed one is refused rather than ignored,
+  // so a caller that meant to ask for one is told it did not get it.
+  const design = readTemplateDesignReference(b.design);
+  if (design.ok === false) return { ok: false, error: design.error };
 
-  return { ok: true, request: { comparisonId, edition: edition || null } };
+  return { ok: true, request: { comparisonId, edition: edition || null, design: design.reference } };
 }
 
 /**
- * The filename.
+ * The filename: `Property Comparison - <the properties> - 28 Sep 2026.pdf`.
  *
- * A comparison has no single address to name a file after, and the date alone
- * does not separate two comparisons run on the same day — which is normal, since
- * re-running is how someone adjusts the weighting. So the row's own reference
- * goes in the name, and it is the same eight characters printed on the cover
- * foot: "which PDF is this?" is answerable from either end.
+ * It used to be `Property_Comparison_3_Properties_2026-09-28_5B1C0A3E.pdf` — a
+ * count and a hash, so two comparisons from one afternoon differed in eight
+ * characters nobody could read. A comparison's subject is the properties in it,
+ * so they are the topic (`readableFileName.pure.ts`). The reference is still
+ * printed on the cover foot, which is where "which PDF is this?" is answered,
+ * and two renders on one day still never collide in storage: the key carries a
+ * random segment.
  */
 export function comparisonFileName(
-  propertyCount: number,
+  shortAddresses: readonly string[],
   isoDate: string,
-  reference: string,
 ): string {
-  const date = /^\d{4}-\d{2}-\d{2}/.exec(isoDate)?.[0] ?? '';
-  const ref = (reference || '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase();
-  const n = Number.isFinite(propertyCount) && propertyCount > 0 ? propertyCount : 0;
-  return `Property_Comparison_${n}_Properties_${date}_${ref}.pdf`;
+  return readableFileName({
+    name: COMPARISON_FILE_NAME,
+    topic: joinPlaces(shortAddresses),
+    isoDate,
+  });
 }
+
+/** What the file calls the document. The cover's longer name is the archetype's. */
+export const COMPARISON_FILE_NAME = 'Property Comparison';
 
 /**
  * Where the file lands.
@@ -77,7 +98,9 @@ export function comparisonStoragePath(
   uniqueId: string,
 ): string {
   const day = /^\d{4}-\d{2}-\d{2}/.exec(isoDate)?.[0] ?? 'undated';
-  return `property-comparisons/${comparisonId}/typeset/${day}/${uniqueId}-${fileName}`;
+  // The readable name is what a person is handed; the key keeps to characters
+  // no URL encoder rewrites.
+  return `property-comparisons/${comparisonId}/typeset/${day}/${uniqueId}-${storageSafeFileName(fileName)}`;
 }
 
 /** How long a returned link lives. Long enough to email, short enough to expire. */
@@ -105,4 +128,10 @@ export interface ComparisonRenderResponse {
   /** 10 or 100, or null when nothing was scored. */
   scoreScale: number | null;
   durationMs: number;
+  /**
+   * The design the document was drawn in, or why the one asked for was not
+   * used — in that case the document is the standard design. Null when none
+   * was asked for.
+   */
+  design: DesignEcho | null;
 }

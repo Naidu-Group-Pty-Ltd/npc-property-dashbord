@@ -64,6 +64,17 @@
  * postal address, this module is the one place that changes.
  */
 
+import {
+  HOUSE_COVER_TAGLINE,
+  PLATFORM_DISCLAIMER,
+  WORKSPACE_DEFAULT_DISCLAIMER,
+  isHouseContactRow,
+  isHouseTradingName,
+  namesTheHouse,
+  resolveReportIssuer,
+  type IssuerDeployment,
+} from './reports/issuerIdentity.pure.ts';
+
 export interface OrganisationRowLike {
   company_name?: string | null;
   email_signature_phone?: string | null;
@@ -218,6 +229,48 @@ export function projectReportSettings(settings: ReportSettingsLike | null | unde
   return org;
 }
 
+/** The letterhead fields a clone's document may never fill with the house's details. */
+const CONTACT_KEYS = ['phone', 'email', 'website', 'address', 'abn'] as const;
+
+/**
+ * The letterhead a clone's document is issued under.
+ *
+ * A clone's rows can carry the house's values — a seeded copy, a restored
+ * backup — and a chosen template binds `org.*` on its cover and its closing
+ * page. So on a clone the name is the issuer the one resolver answers (the
+ * clone's own, or the platform's where it has named nobody, never the
+ * house's), a contact field that names the house is left out, and wording that
+ * names the house gives way to the issuer's default. On the prime this is
+ * never called: every field reads exactly as stored.
+ */
+function issueAsTheClone(
+  org: Record<string, unknown>,
+  row: OrganisationRowLike | null | undefined,
+  settings: ReportSettingsLike | null | undefined,
+  deployment: IssuerDeployment,
+): void {
+  const issuer = resolveReportIssuer(
+    { companyName: settings?.contact?.company_name, brandName: row?.company_name },
+    deployment,
+  );
+  org.name = issuer.name;
+  // A field comes from Report Settings where that row states it and from the
+  // white-label row's signature columns otherwise; a source that is the
+  // house's own row lends the house's line, office and ABN, which name nobody.
+  const fromSettings = projectReportSettings(settings);
+  const settingsIsHouse = isHouseContactRow(settings?.contact);
+  const rowIsHouse = isHouseTradingName(row?.company_name);
+  for (const key of CONTACT_KEYS) {
+    const houseSource = fromSettings[key] !== undefined ? settingsIsHouse : rowIsHouse;
+    if (houseSource || namesTheHouse(org[key])) delete org[key];
+  }
+  if (namesTheHouse(org.disclaimer)) {
+    org.disclaimer = normaliseParagraphs(
+      issuer.kind === 'platform' ? PLATFORM_DISCLAIMER : WORKSPACE_DEFAULT_DISCLAIMER,
+    );
+  }
+}
+
 /**
  * Merge the organisation into a binding-context `data` object.
  *
@@ -248,12 +301,27 @@ export function applyOrganisationProjection(
   row: OrganisationRowLike | null | undefined,
   marks?: BrandMarks | null,
   settings?: ReportSettingsLike | null,
+  deployment?: IssuerDeployment | null,
 ): Record<string, any> {
   // `contact_details` wins over the email-signature columns where both carry a
   // field. It is the row the Report Settings page writes for exactly this
   // purpose, whereas the signature columns are an email's footer that this
   // module borrows — see the note above on why they are read one at a time.
   const org = { ...projectOrganisation(row), ...projectReportSettings(settings) };
+  if (deployment && !deployment.prime) issueAsTheClone(org, row, settings, deployment);
+  /*
+   * The line under the wordmark on every catalogue master's cover.
+   *
+   * It was a literal in all 500 masters, so every clone's templated cover
+   * carried the house's own words under the clone's name. It is the house's
+   * tagline and nobody else's, and no settings row states a tagline of any
+   * other issuer's, so it is published on the prime alone: a clone's cover
+   * draws no tagline (a bound text block that resolves to nothing is not
+   * drawn), rather than a stranger's line or a generic one. With no deployment
+   * stated — the catalogue's own tooling — the masters read as they always
+   * did.
+   */
+  if (!deployment || deployment.prime) put(org, 'tagline', HOUSE_COVER_TAGLINE);
   /*
    * Published only when the bytes exist.
    *

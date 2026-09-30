@@ -26,6 +26,28 @@
  * the section opener, feet and page numbers) never moves and never counts.
  * In the editor nothing moves either: an author needs to see what they built.
  *
+ * A dropped LAYER is not a hole. A block whose declared box reaches past the
+ * first block below it was drawn under that block — the photograph beneath a
+ * cover's type, the scrim over it — so its absence leaves a bare ground and
+ * nothing to close. Measured 25 Sep 2026 on the three photographic Compass
+ * masters (Atelier, Atelier Plate, Grand Folio) with no photograph: closing
+ * it lifted every block on the cover by the distance to the first, the brand
+ * mark to the page's top edge and the standfirst over the title's last line.
+ * Over all 543 seeded templates, each drawn with full, photograph-less and
+ * empty data, the rule changes exactly those three covers and nothing else.
+ *
+ * A block may also SAY it is a layer (`layer: true`), and then its absence is
+ * never a hole either. The rule above reads a layer off its box, which works
+ * for a photograph under a cover's type because that box reaches past the
+ * type. It cannot see a plate that sits in an empty field BESIDE the flow: the
+ * cover photograph plate (`withCoverPhotograph`) is drawn between the head and
+ * a title positioned from the foot, is laid out once per title depth, and at
+ * most one of those copies draws. Every other copy is dropped, and read as a
+ * hole it lifted the title, the standfirst and the fact band up the sheet by
+ * the plate's height — measured 27 Sep 2026 on Chancery, where the standfirst
+ * landed on the title's second line. A plate is positioned, not flowed, and it
+ * says so.
+ *
  * And one hole is closed ONCE. Two dropped blocks with nothing drawn between
  * them are one hole, from the first's top to the first drawn follower, and
  * the first closes it — the second was carried up with the followers, to a
@@ -81,6 +103,15 @@ export function closeDroppedBlocks(
     const followers = drawn.filter((b) => yOf(b) > top + 0.5 && inColumn(b));
     if (!followers.length) continue;
     const first = Math.min(...followers.map(yOf));
+    // A dropped block whose declared box reaches past the first follower was
+    // drawn UNDER it, not above it — a photograph beneath a cover's type, the
+    // scrim over that photograph. Its absence leaves a bare ground, not a gap
+    // in the column, and closing it lifted the whole cover: on the three
+    // photographic masters with no photograph, the brand mark went to the
+    // page's top edge and the standfirst up over the title's last line.
+    if ((d.props as { layer?: unknown } | undefined)?.layer === true) continue;
+    const declaredHeight = Number((d.props as { height?: unknown } | undefined)?.height);
+    if (Number.isFinite(declaredHeight) && declaredHeight > 0 && top + declaredHeight > first + 0.5) continue;
     // Everything under the dropped block in its column moves with the
     // followers — the dropped blocks among them too, so a second hole lower
     // down is measured from where the column now stands.

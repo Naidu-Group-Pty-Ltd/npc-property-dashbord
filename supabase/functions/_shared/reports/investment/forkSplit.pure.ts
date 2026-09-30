@@ -39,6 +39,7 @@ import {
   type ComposedChapter,
 } from './financialChapters.pure.ts';
 import {
+  composeFinancialMarketPosition,
   composeStrategySections,
   type StrategyRecord,
   type StrategySection,
@@ -447,6 +448,28 @@ export interface ForkDocuments {
  * the recorded chapters are composed only when the Financial report is being
  * produced, because they are what replaces routed prose about the same money.
  */
+/**
+ * The lens line is said once: on the first section that carries it.
+ *
+ * Every lens-routed section used to open with it, so the 37 Bolin Street Due
+ * Diligence report printed the same two sentences under seven headings — a
+ * statement about the whole document, repeated as though each section needed
+ * telling. It is a property of the document, so it stands where the document
+ * first reads that way and nowhere after. Matched on the text itself, because
+ * an operator's `report_engine_config` overlay may reword it.
+ */
+export function lensOnce<T extends { ordinal: number; body: string }>(sections: T[], lens: string): T[] {
+  const line = lens.trim();
+  if (!line) return sections;
+  let seen = false;
+  return [...sections].sort((a, b) => a.ordinal - b.ordinal).map((s) => {
+    const body = s.body.trimStart();
+    if (!body.startsWith(line)) return s;
+    if (!seen) { seen = true; return s; }
+    return { ...s, body: body.slice(line.length).trimStart() };
+  });
+}
+
 export function composeForkDocuments(input: {
   registry: LoadedSplitRegistry;
   parentContent: string;
@@ -505,6 +528,18 @@ export function composeForkDocuments(input: {
       { id: 'exitStrategy', heading: finHeading(input.registry, 'Resale Liquidity') },
       { id: 'suitability', heading: finHeading(input.registry, 'Investor Suitability Profile') },
       { id: 'holdingStrategy', heading: finHeading(input.registry, 'Holding Strategy') },
+      /*
+       * The SWOT is the record's, not the scorer's four free-text lists.
+       *
+       * `composeFinancialChapters` printed `score.strengths` & co. under this
+       * heading — lists `buildSwot` refuses as quadrant entries because they
+       * name no figure — and on the 37 Bolin Street Financial report
+       * (27 Sep 2026) that was the thinnest section in the document, beside a
+       * modelling record carrying the yield, the weekly position, the lending
+       * ratio and the CGR assumption. The same composer the Compass uses,
+       * with the modelling on, replaces it.
+       */
+      { id: 'swot', heading: finHeading(input.registry, 'Financial SWOT') },
     ]).flatMap((section: StrategySection) => {
       const entry = input.registry.finSectionOrder.find((e) => e.heading === section.heading);
       // A heading the loaded order does not carry has no place to sort to, so
@@ -513,9 +548,22 @@ export function composeForkDocuments(input: {
     })
     : [];
 
+  // The market positioning is the record's too: the routed copy was the
+  // Compass's demand prose, the location case a third time over.
+  const marketHeading = finHeading(input.registry, 'Price, Rent & Yield');
+  const marketEntry = input.registry.finSectionOrder.find((e) => e.heading === marketHeading);
+  const marketPosition = input.composeFinancial && input.strategy && marketEntry
+    ? composeFinancialMarketPosition(input.strategy, marketHeading)
+    : null;
+  if (marketPosition && marketEntry) {
+    strategySections.push({ ordinal: marketEntry.ordinal, heading: marketHeading, markdown: marketPosition });
+  }
+  // A section composed from the strategy record replaces the chapter of the
+  // same heading, never sits beside it.
+  const strategyHeadings = new Set(strategySections.map((c) => c.heading));
   const mergedFinancial = mergeComposedChapters(
     routedFinancialSections,
-    [...composedChapters, ...strategySections],
+    [...composedChapters.filter((c) => !strategyHeadings.has(c.heading)), ...strategySections],
   );
 
   /*
@@ -593,6 +641,9 @@ export function composeForkDocuments(input: {
     : [];
 
   const mergedDueDiligence = mergeComposedChapters(dueDiligenceSections, dueDiligenceComposed);
+
+  mergedFinancial.sections = lensOnce(mergedFinancial.sections, input.registry.finLensPreamble);
+  mergedDueDiligence.sections = lensOnce(mergedDueDiligence.sections, input.registry.plddLensPreamble);
 
   const financial = finaliseVariantMarkdown(
     renderVariantMarkdown(input.registry, 'financial', input.propertyAddress, mergedFinancial.sections, generatedOn),

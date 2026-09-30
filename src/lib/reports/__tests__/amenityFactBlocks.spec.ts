@@ -55,8 +55,10 @@ const enrichment = (over: Record<string, unknown> = {}) => ({
 
 describe('the fields the record actually publishes', () => {
   it('asks for no supermarket count, because no supermarket lookup is taken', () => {
+    // Transit and schools are rows since 27 Sep 2026: their nearest place and
+    // its distance are measured and were reaching the grade and not the prose.
     expect(AMENITY_FIELDS.map((f) => f.key)).toEqual(
-      ['healthcare', 'shopping', 'recreation', 'restaurants'],
+      ['transit', 'schools', 'healthcare', 'shopping', 'recreation', 'restaurants'],
     );
     expect(JSON.stringify(AMENITY_FIELDS)).not.toMatch(/supermarket/i);
   });
@@ -84,7 +86,7 @@ describe('the fields the record actually publishes', () => {
 describe('a count names the register that produced it', () => {
   it('states one publisher once when one publisher answered everything', () => {
     const out = amenityFactBlocks(enrichment());
-    expect(out).toContain('Every count above was answered by the OpenStreetMap amenity register');
+    expect(out).toContain('Source: OpenStreetMap.');
     // Rule 2 — not a column repeating one value on every row.
     expect(out).not.toMatch(/\| *Source *\|/);
   });
@@ -93,13 +95,13 @@ describe('a count names the register that produced it', () => {
     const li = enrichment();
     (li.__acquisition.stages.amenitySources as Record<string, string>).shopping = 'google';
     const out = amenityFactBlocks(li);
-    expect(out).toContain('Google Places answered shopping');
-    expect(out).toContain('the OpenStreetMap amenity register');
+    expect(out).toContain('Google Places for shopping');
+    expect(out).toContain('OpenStreetMap for');
   });
 
   it('carries the register slice’s own currency', () => {
     expect(amenityFactBlocks(enrichment()))
-      .toContain('last loaded 18 Sep 2026');
+      .toContain('Current at 18 Sep 2026');
   });
 
   it('reports the OLDEST slice when they were loaded on different days', () => {
@@ -117,9 +119,9 @@ describe('a count names the register that produced it', () => {
       recreation: '2026-10-02T02:00:00.000Z',
     };
     const out = amenityFactBlocks(li);
-    expect(out).toContain('last loaded 18 Sep 2026');
-    expect(out).not.toContain('last loaded 01 Oct 2026');
-    expect(out).not.toContain('last loaded 02 Oct 2026');
+    expect(out).toContain('Current at 18 Sep 2026');
+    expect(out).not.toContain('Current at 01 Oct 2026');
+    expect(out).not.toContain('Current at 02 Oct 2026');
   });
 
   it('says nothing about a publisher when the stamp records none', () => {
@@ -132,13 +134,14 @@ describe('a count names the register that produced it', () => {
     const out = amenityFactBlocks(enrichment({
       lifestyle: { shoppingCenters: 3, parks: 11, nearestShopping: 'Lansell Square' },
     }));
-    expect(out).toContain('Not measured for this property: restaurants and cafés');
+    expect(out).toContain('Not assessed for this property:');
+    expect(out).toMatch(/Not assessed for this property:[^.]*restaurants and cafés/);
     expect(out).toContain('not as absent, not as adequate');
   });
 
   it('is one honest paragraph with a prohibition when nothing was measured', () => {
     const out = amenityFactBlocks({ healthcare: {}, lifestyle: {} });
-    expect(out).toContain('No amenity reading was retrieved');
+    expect(out).toContain('Nearby amenities were not assessed for this report');
     // Moved here from `compassDocumentContract.spec.ts`, which matched it in
     // the prompt's source. It is the same rule, executed rather than grepped.
     expect(out).toMatch(/do NOT describe[\s\S]{0,12}the area as well or poorly served/);
@@ -154,8 +157,8 @@ describe('a count names the register that produced it', () => {
 describe('the transport block', () => {
   it('states the verdict in the register’s own terms, as a fact about the feeds', () => {
     const out = transportFactBlocks(enrichment());
-    expect(out).toContain('outside every public-transport feed this platform has loaded');
-    expect(out).toContain('a fact about the FEEDS and not about the area');
+    expect(out).toContain('the published stop data used for this report does not cover this area');
+    expect(out).toContain('That is not a finding that there is no public transport here');
     expect(out).toContain('must not be called poorly served, car-dependent or isolated');
   });
 
@@ -176,19 +179,19 @@ describe('the transport block', () => {
     });
     const out = transportFactBlocks(li);
     expect(out).toContain('**Kangaroo Flat Railway Station**, 1.4 km straight-line');
-    expect(out).toContain('Boarding places within 1.6 km: **2**');
+    expect(out).toContain('Stops within 1.6 km: **2**');
     expect(out).toContain('Transport for NSW GTFS');
-    expect(out).toContain('Last loaded 01 Sep 2026');
+    expect(out).toContain('current at 01 Sep 2026');
   });
 
   it('states that mode and frequency are not measured', () => {
     expect(transportFactBlocks(enrichment()))
-      .toContain('Mode and service frequency are NOT measured');
+      .toContain('Routes, modes and service frequency are not assessed');
   });
 
   it('falls back to the prohibition when the block holds nothing at all', () => {
     const out = transportFactBlocks({ transport: {} });
-    expect(out).toContain('No public-transport reading was retrieved');
+    expect(out).toContain('Public transport near this property was not assessed for this report');
     expect(out).toContain('do NOT call the area well served or car-dependent');
     expect(out).toContain(TRANSPORT_WEB_SEARCH_RULE);
   });
@@ -229,7 +232,7 @@ describe('a commute names where it was measured to', () => {
       { measured: false, reason: 'daily_cap_reached', detail: 'The daily allowance was spent.' },
       {},
     );
-    expect(out).toContain('No commute time was measured.');
+    expect(out).toContain('No commute time was assessed.');
     expect(out).toContain('The daily allowance was spent.');
   });
 });
@@ -246,7 +249,7 @@ describe('the verdict map is total over the register\u2019s own vocabulary', () 
       nearestStation: 'Eaglehawk Railway Station', distanceToStation: 0.9,
       stopsWithinRadius: 4, verdict: 'stops_nearby',
     });
-    expect(transportFactBlocks(li)).toContain('they are not a measurement of service');
+    expect(transportFactBlocks(li)).toContain('they are not a measure of service');
   });
 });
 
@@ -263,5 +266,56 @@ describe('the small readers', () => {
     expect(stagesOf({})).toEqual({});
     expect(stagesOf(null)).toEqual({});
     expect(stagesOf('nonsense')).toEqual({});
+  });
+});
+
+describe('the measured distances reach the table (37 Bolin Street, 27 Sep 2026)', () => {
+  /** The shape the service writes, with the `amenities[]` rows the grade reads its distances from. */
+  const bolin = () => enrichment({
+    amenities: [
+      { category: 'Public Transport', count: 2, nearest: 'Tallawong Station', distance: 1.7, score: 40 },
+      { category: 'Schools', count: 10, nearest: 'Schofields Public School', distance: 0.9, score: 100 },
+      { category: 'Healthcare', count: 10, nearest: 'Rouse Hill Medical', distance: 2.2, score: 100 },
+      { category: 'Shopping', count: 4, nearest: 'Tallawong Village', distance: 1.6, score: 48 },
+      { category: 'Recreation', count: 10, nearest: 'Schofields Park', distance: 0.5, score: 80 },
+    ],
+    healthcare: { nearestHospital: 'Rouse Hill Medical', distanceToHospital: 2.2, facilitiesWithin5km: 10 },
+    schools: { nearestSchool: 'Schofields Public School', distanceToSchool: 0.9 },
+    lifestyle: {
+      shoppingCenters: 4, parks: 10, restaurants: 24,
+      nearestShopping: 'Tallawong Village', nearestPark: 'Schofields Park',
+    },
+  });
+
+  it('draws transit and schools, and every distance the grade prints', () => {
+    const out = amenityFactBlocks(bolin());
+    expect(out).toContain('| Transit stations | Tallawong Station | 1.7 km |');
+    expect(out).toContain('| Schools | Schofields Public School | 900 m |');
+    expect(out).toContain('| Shopping centres | Tallawong Village | 1.6 km |');
+    expect(out).toContain('| Parks and recreation | Schofields Park | 500 m |');
+    expect(out).toContain('| Healthcare facilities | Rouse Hill Medical | 2.2 km |');
+    // The instruction that the section may not fall back to "to be confirmed".
+    expect(out).toContain('never write that a distance is "to be confirmed"');
+  });
+
+  it('writes a count at the lookup cap as a floor, over the radius the provider actually searched', () => {
+    const out = amenityFactBlocks(bolin());
+    // Register: parks over 2 km, healthcare over 5 km.
+    expect(out).toContain('| 10 or more within 2 km |');
+    expect(out).toContain('| 10 or more within 5 km |');
+    expect(out).toContain('| 2 within 2 km |');
+    expect(out).not.toMatch(/Count within 5 km/);
+  });
+
+  it('never publishes the school count the Client-Safe Gate disowns', () => {
+    const row = amenityRows(bolin()).find((r) => r.key === 'schools');
+    expect(row?.count).toBeNull();
+    expect(amenityFactBlocks(bolin())).toContain('| Schools | Schofields Public School | 900 m | nearest only — not counted here |');
+  });
+
+  it('a category reached and found empty names no place and no distance', () => {
+    const li = bolin();
+    (li.amenities as Array<Record<string, unknown>>)[0] = { category: 'Public Transport', count: 0, nearest: null, distance: null };
+    expect(amenityFactBlocks(li)).toContain('| Transit stations | not named | not measured | none within 2 km |');
   });
 });

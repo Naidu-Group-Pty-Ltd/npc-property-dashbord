@@ -36,6 +36,8 @@ import {
   verifyAuth, createCorsHeaders, createUnauthorizedResponse, createForbiddenResponse,
 } from '../_shared/auth.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
+import { canAccessClient, clientScopeOf } from '../_shared/clientAccess.ts';
+import { builderNetworkEnabled } from '../_shared/builderNetwork.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { internalError } from '../_shared/errorResponse.ts';
 import { STOCK_IMAGE_BUCKET } from '../_shared/builderStock/fileTypes.pure.ts';
@@ -46,6 +48,12 @@ import {
   RANKED_ITEM_SELECT, STOCK_ITEM_SELECT, isSelectableAvailability, stockPagination,
 } from '../_shared/builderStock/projection.pure.ts';
 import { applyManualStatsToAll } from '../_shared/builderStock/manualStats.pure.ts';
+import { readPropertyDetail } from '../_shared/builderStock/propertyDetail.ts';
+import {
+  countUnreadAcknowledgementNotices, listActivatedProperties, listMyConversations, newBuilderMessages, listPropertyConversations,
+  markAcknowledgementNoticesRead, readParticipantConversation,
+} from '../_shared/builderStock/privateConversations.ts';
+import { agencyMessageRefusal, projectConversationMessages } from '../_shared/builderStock/agencyMessages.pure.ts';
 import {
   promotedOrganisations, splicePinsIntoPage, type RankedRow,
 } from '../_shared/builderStock/marketplaceOrder.pure.ts';
@@ -55,6 +63,15 @@ import {
 import {
   isMissingRankingRelation, type MirrorSource,
 } from '../_shared/builderStock/mirrorAvailability.pure.ts';
+
+/**
+ * The Clients module, by the key it is REGISTERED under (migration
+ * `20260128022619`, route `/clients`) — the key `_shared/permissions.ts` maps
+ * the `clients` table to. This door used to ask for `clients`, which no
+ * deployment registers, and `requireModulePermission` denies an unregistered
+ * module to everyone but a superadmin: no grant could open activation.
+ */
+const CLIENTS_MODULE = 'client_management';
 
 const FEATURE_FLAG_KEY = 'builder_stock_marketplace';
 const IMAGE_URL_TTL_SECONDS = 300;
@@ -78,6 +95,9 @@ async function builderStockEnabled(db: any): Promise<boolean> {
   return value === true || value === 'true'
     || (typeof value === 'object' && value !== null && (value as any).enabled === true);
 }
+
+/** How many invitation candidates one read asks for. */
+const INVITEE_PAGE = 500;
 
 Deno.serve(async (req) => {
   const corsHeaders = createCorsHeaders(req.headers.get('origin'));
@@ -145,6 +165,28 @@ Deno.serve(async (req) => {
         .eq('lifecycle_status', 'active')
         .maybeSingle();
       return data;
+    };
+
+    /**
+     * A property this deployment ever activated stays READABLE after the
+     * builder stops listing it: its page and its conversation are durable
+     * history. Everything else is active stock only, and every write still
+     * goes through `loadItem`.
+     */
+    const loadReadableItem = async (itemId: string) => {
+      if (!itemId) return null;
+      const { data } = await supabase
+        .from('builder_network_stock_items')
+        .select('*')
+        .eq('id', itemId)
+        .maybeSingle();
+      if (!data) return null;
+      if (data.lifecycle_status === 'active') return data;
+      const { count, error } = await supabase
+        .from('builder_stock_selections')
+        .select('id', { count: 'exact', head: true })
+        .eq('stock_item_id', data.id);
+      return !error && count ? data : null;
     };
 
     // =====================================================================
@@ -339,11 +381,23 @@ Deno.serve(async (req) => {
       });
     }
 
+    /**
+     * THE PROPERTY PAGE'S READ. The same decorated record a card is drawn
+     * from, and beside it the property's photographs and documents (from the
+     * media converger's tables) and its activation record. A client is named
+     * only to a reader the Clients module admits — the gate `list_selections`
+     * applies — and nothing here is composed by a model.
+     */
     if (operation === 'get_stock_item') {
-      const item = await loadItem(cleanText(body.stock_item_id, 64));
+      const item = await loadReadableItem(cleanText(body.stock_item_id, 64));
       if (!item) return json({ error: 'Property not found' }, 404);
       const [record] = await decorate(supabase, [item]);
-      return json({ success: true, record });
+      const clientsView = await requireModulePermission(supabase, actor, CLIENTS_MODULE, 'can_view');
+      // A client is named only where this reader may act for them — their own
+      // and assigned clients, a superadmin's every client (`clientScopeOf`).
+      const clientScope = clientsView.ok ? await clientScopeOf(supabase, actor) : null;
+      const detail = await readPropertyDetail(supabase, item, { includeClients: clientsView.ok, clientScope });
+      return json({ success: true, record, ...detail });
     }
 
     if (operation === 'list_builders') {
@@ -464,25 +518,45 @@ Deno.serve(async (req) => {
       // The picker for "select for a client". Gated on the CLIENTS module, not
       // on listings — a user who may see the marketplace is not thereby
       // entitled to a directory of clients. Two columns and no more.
-      const clientsView = await requireModulePermission(supabase, actor, 'clients', 'can_view');
+      const clientsView = await requireModulePermission(supabase, actor, CLIENTS_MODULE, 'can_view');
       if (!clientsView.ok) {
         return createForbiddenResponse(clientsView.error || 'Client access required', corsHeaders);
       }
+      // Only the clients this caller may act for, as `get-client-data` holds
+      // the same module: their own and assigned, or every client for a
+      // superadmin. One query per side of that rule, so no filter is composed
+      // from the caller's id.
+      const clientScope = await clientScopeOf(supabase, actor);
       const search = cleanText(body.search, 80);
-      let query = supabase
-        .from('clients')
-        .select('id, primary_first_name, primary_surname, primary_email')
-        .order('primary_surname', { ascending: true })
-        .limit(25);
-      if (search) {
-        const escaped = search.replace(/[%,()]/g, ' ');
-        query = query.or(
-          ['primary_first_name', 'primary_surname', 'primary_email']
-            .map((column) => `${column}.ilike.%${escaped}%`).join(','),
-        );
+      const searchQuery = (scope?: { column: string; userId: string }) => {
+        let query = supabase
+          .from('clients')
+          .select('id, primary_first_name, primary_surname, primary_email')
+          .order('primary_surname', { ascending: true })
+          .limit(25);
+        if (scope) query = query.eq(scope.column, scope.userId);
+        if (search) {
+          const escaped = search.replace(/[%,()]/g, ' ');
+          query = query.or(
+            ['primary_first_name', 'primary_surname', 'primary_email']
+              .map((column) => `${column}.ilike.%${escaped}%`).join(','),
+          );
+        }
+        return query;
+      };
+      if (!clientScope) {
+        const { data } = await searchQuery();
+        return json({ success: true, records: data ?? [] });
       }
-      const { data } = await query;
-      return json({ success: true, records: data ?? [] });
+      if (!actor.userId) return json({ success: true, records: [] });
+      const reads = await Promise.all(['created_by', 'assigned_team_user_id']
+        .map((column) => searchQuery({ column, userId: actor.userId as string })));
+      const byId = new Map<string, any>();
+      for (const read of reads) for (const row of read.data ?? []) byId.set(row.id, row);
+      const records = [...byId.values()]
+        .sort((a, b) => String(a.primary_surname ?? '').localeCompare(String(b.primary_surname ?? '')))
+        .slice(0, 25);
+      return json({ success: true, records });
     }
 
     if (operation === 'list_selections') {
@@ -491,7 +565,7 @@ Deno.serve(async (req) => {
       // Command Centre's `internal_notes`. `listings.can_view` alone was
       // enough to reach all three, which let a user with Marketplace access
       // but no Clients access read both.
-      const clientsView = await requireModulePermission(supabase, actor, 'clients', 'can_view');
+      const clientsView = await requireModulePermission(supabase, actor, CLIENTS_MODULE, 'can_view');
       if (!clientsView.ok) {
         return createForbiddenResponse(clientsView.error || 'Client access required', corsHeaders);
       }
@@ -500,17 +574,41 @@ Deno.serve(async (req) => {
       const clientId = cleanText(body.client_id, 64);
       const stockItemId = cleanText(body.stock_item_id, 64);
 
-      let query = supabase
-        .from('builder_stock_selections')
-        .select(COMMAND_SELECTION_SELECT, { count: 'exact' });
-      if (clientId) query = query.eq('client_id', clientId);
-      if (stockItemId) query = query.eq('stock_item_id', stockItemId);
-
-      const { data, count } = await query
-        .order('selected_at', { ascending: false })
-        .range(from, to);
-
-      const selections = data ?? [];
+      // Only activations for clients this caller may act for (`clientScopeOf`).
+      // A superadmin's list is paged by the database as before; a scoped list
+      // is read per client — a staff member's own clients are few — and paged
+      // here, so no request carries an unbounded list of ids.
+      const clientScope = await clientScopeOf(supabase, actor);
+      let selections: any[] = [];
+      let count = 0;
+      if (!clientScope) {
+        let query = supabase
+          .from('builder_stock_selections')
+          .select(COMMAND_SELECTION_SELECT, { count: 'exact' });
+        if (clientId) query = query.eq('client_id', clientId);
+        if (stockItemId) query = query.eq('stock_item_id', stockItemId);
+        const read = await query
+          .order('selected_at', { ascending: false })
+          .range(from, to);
+        selections = read.data ?? [];
+        count = read.count ?? 0;
+      } else {
+        const inScope = [...clientScope].filter((id) => !clientId || id === clientId);
+        const chunks: string[][] = [];
+        for (let at = 0; at < inScope.length; at += 100) chunks.push(inScope.slice(at, at + 100));
+        const reads = await Promise.all(chunks.map((chunk) => {
+          let query = supabase
+            .from('builder_stock_selections')
+            .select(COMMAND_SELECTION_SELECT)
+            .in('client_id', chunk);
+          if (stockItemId) query = query.eq('stock_item_id', stockItemId);
+          return query;
+        }));
+        const all = reads.flatMap((read: any) => read.data ?? [])
+          .sort((a: any, b: any) => String(b.selected_at).localeCompare(String(a.selected_at)));
+        count = all.length;
+        selections = all.slice(from, to + 1);
+      }
       const itemIds = Array.from(new Set(selections.map((row: any) => row.stock_item_id)));
       const clientIds = Array.from(new Set(selections.map((row: any) => row.client_id)));
       const organisationIds = Array.from(new Set(selections.map((row: any) => row.organisation_id)));
@@ -577,11 +675,215 @@ Deno.serve(async (req) => {
     }
 
     // =====================================================================
+    // The builder conversation — messages about an activated property,
+    // carried to the builder over the signed network. Read under the Listings
+    // gate every operation passes; writing needs Listings edit. The sender is
+    // the session's user; the property is a lookup key the SQL re-resolves.
+    // =====================================================================
+
+    const conversationRefusal = (error: { message?: string } | null) => {
+      const refusal = agencyMessageRefusal(String(error?.message ?? ''));
+      if (refusal) return json({ success: false, error: refusal.error, code: refusal.code }, refusal.status);
+      console.error('[builder-stock-marketplace] builder message failed', error?.message);
+      return json({ success: false, error: 'The message could not be saved. Try again shortly.' }, 503);
+    };
+    const uuidOf = (value: unknown): string | null => {
+      const text = cleanText(value, 64).toLowerCase();
+      return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(text) ? text : null;
+    };
+
+    // =====================================================================
+    // Builder conversations — one private conversation per activation
+    // (docs/builder-portal/52). Membership decides every read and write; the
+    // SQL is the authority and each operation names only a conversation (and,
+    // to invite, a colleague). The actor is always the session's user.
+    // =====================================================================
+    const notAParticipant = () => json({
+      success: false, code: 'not_a_participant', error: 'You are not in this conversation.',
+    }, 403);
+
+    if (operation === 'list_builder_portal_activations') {
+      // Taken BEFORE the read: marking read later reaches only what this list could show.
+      const asOf = new Date().toISOString();
+      const read = await listActivatedProperties(supabase, { viewerUserId: userId });
+      if (!read.ok) return json({ success: false, error: 'activations_could_not_be_read' }, 503);
+      return json({ success: true, activations: read.activations, as_of: asOf });
+    }
+
+    // The Builder Portal badge: the reader's own unread acknowledgements,
+    // counted here because the bell holds only its newest fifty.
+    if (operation === 'count_activation_acknowledgements') {
+      const read = await countUnreadAcknowledgementNotices(supabase, { viewerUserId: userId });
+      if (!read.ok) return json({ success: false, error: 'acknowledgements_could_not_be_counted' }, 503);
+      return json({ success: true, count: read.count });
+    }
+
+    if (operation === 'mark_activation_acknowledgements_read') {
+      const asOf = typeof body.as_of === 'string' ? body.as_of : '';
+      if (!Number.isFinite(Date.parse(asOf))) return json({ success: false, error: 'as_of_required' }, 400);
+      const done = await markAcknowledgementNoticesRead(supabase, { viewerUserId: userId, asOf });
+      if (!done.ok) return json({ success: false, error: 'acknowledgements_could_not_be_marked' }, 503);
+      return json({ success: true });
+    }
+
+    // The "new message from <builder>" popup: builder messages that arrived
+    // after the cursor, in the reader's own conversations. Read-only.
+    if (operation === 'list_new_builder_messages') {
+      const since = typeof body.since === 'string' && Number.isFinite(Date.parse(body.since)) ? body.since : null;
+      const read = await newBuilderMessages(supabase, { viewerUserId: userId, since });
+      if (!read.ok) return json({ success: false, error: 'messages_could_not_be_read' }, 503);
+      return json({ success: true, cursor: read.cursor, messages: read.messages });
+    }
+
+    if (operation === 'list_my_builder_conversations') {
+      const stockItemId = uuidOf(body.stock_item_id);
+      const read = stockItemId
+        ? await listPropertyConversations(supabase, { stockItemId, viewerUserId: userId })
+        : await listMyConversations(supabase, { viewerUserId: userId });
+      if (!read.ok) return json({ success: false, error: 'conversations_could_not_be_read' }, 503);
+      return json({ success: true, conversations: read.conversations });
+    }
+
+    if (operation === 'get_builder_conversation') {
+      const conversationId = uuidOf(body.conversation_id);
+      if (!conversationId) return json({ error: 'Conversation not found' }, 404);
+      // A history cursor, where one is asked for: the page before that message.
+      const read = await readParticipantConversation(supabase, {
+        conversationId, viewerUserId: userId, beforeMessageId: uuidOf(body.before_message_id),
+      });
+      if (!read.ok) {
+        if (read.reason === 'not_found') return json({ error: 'Conversation not found' }, 404);
+        if (read.reason === 'not_a_participant') return notAParticipant();
+        return json({ success: false, error: 'conversation_could_not_be_read' }, 503);
+      }
+      const listingsEdit = await requireModulePermission(supabase, actor, 'listings', 'can_edit');
+      const networkOn = await builderNetworkEnabled(supabase);
+      // Every gate the send, retry and invite functions enforce, so no button
+      // is offered that the server would refuse.
+      const canSend = read.open && listingsEdit.ok && networkOn;
+      const mine = read.participants.filter((p) => p.side === 'command_centre');
+      // Live is the database's rule for leaving: the conversation is open.
+      // Only then must someone on this side stay.
+      const live = read.open;
+      return json({
+        success: true,
+        conversation_id: read.conversation_id,
+        stock_item_id: read.stock_item_id,
+        address: read.address,
+        lot_number: read.lot_number,
+        builder_name: read.builder_name,
+        open: read.open,
+        closed_reason: read.closed_reason,
+        can_send: canSend,
+        can_invite: read.open && listingsEdit.ok && networkOn,
+        // A live conversation keeps someone on this side; a closed one can be
+        // left freely. The server decides again when asked.
+        can_leave: !live || mine.length > 1,
+        participants: read.participants,
+        messages: read.messages.map((message) => ({ ...message, can_retry: message.can_retry && canSend })),
+        has_earlier: read.has_earlier,
+        earlier_cursor: read.earlier_cursor,
+      });
+    }
+
+    if (operation === 'send_builder_message') {
+      const listingsEdit = await requireModulePermission(supabase, actor, 'listings', 'can_edit');
+      if (!listingsEdit.ok) {
+        return createForbiddenResponse(listingsEdit.error || 'Listing edit access required', corsHeaders);
+      }
+      const conversationId = uuidOf(body.conversation_id);
+      if (!conversationId) return json({ error: 'Conversation not found' }, 404);
+      const clientMessageId = uuidOf(body.client_message_id);
+      if (!clientMessageId) {
+        return json({ success: false, error: 'A message needs its own id.', code: 'invalid_message' }, 400);
+      }
+      const { data, error } = await supabase.rpc('builder_network_post_message', {
+        _conversation_id: conversationId,
+        _sender_user_id: userId,
+        _client_message_id: clientMessageId,
+        _body: String(body.body ?? '').slice(0, 8000),
+      });
+      if (error) return conversationRefusal(error);
+      const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
+      return json({ success: true, message: row ? projectConversationMessages([row], userId)[0] : null });
+    }
+
+    if (operation === 'retry_builder_message') {
+      const listingsEdit = await requireModulePermission(supabase, actor, 'listings', 'can_edit');
+      if (!listingsEdit.ok) {
+        return createForbiddenResponse(listingsEdit.error || 'Listing edit access required', corsHeaders);
+      }
+      const messageId = uuidOf(body.message_id);
+      if (!messageId) return json({ error: 'Message not found' }, 404);
+      const { data, error } = await supabase.rpc('builder_network_retry_message', {
+        _message_id: messageId,
+        _sender_user_id: userId,
+      });
+      if (error) return conversationRefusal(error);
+      const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
+      return json({ success: true, message: row ? projectConversationMessages([row], userId)[0] : null });
+    }
+
+    if (operation === 'list_builder_conversation_invitees') {
+      const conversationId = uuidOf(body.conversation_id);
+      if (!conversationId) return json({ error: 'Conversation not found' }, 404);
+      // Every eligible colleague, read a page at a time: a response ceiling
+      // must never make somebody uninvitable.
+      const invitees: Array<{ user_id: string; display_name: string }> = [];
+      for (let from = 0; ; from += INVITEE_PAGE) {
+        const { data, error } = await supabase.rpc('builder_network_invite_candidates', {
+          _conversation_id: conversationId,
+          _actor_user_id: userId,
+        }).range(from, from + INVITEE_PAGE - 1);
+        if (error) return conversationRefusal(error);
+        const page = (data ?? []) as Array<{ user_id: string; display_name: string }>;
+        invitees.push(...page.map((row) => ({ user_id: String(row.user_id), display_name: String(row.display_name) })));
+        if (page.length < INVITEE_PAGE) break;
+      }
+      return json({ success: true, invitees });
+    }
+
+    if (operation === 'invite_builder_conversation_participant') {
+      const listingsEdit = await requireModulePermission(supabase, actor, 'listings', 'can_edit');
+      if (!listingsEdit.ok) {
+        return createForbiddenResponse(listingsEdit.error || 'Listing edit access required', corsHeaders);
+      }
+      const conversationId = uuidOf(body.conversation_id);
+      const inviteeId = uuidOf(body.invitee_user_id);
+      if (!conversationId) return json({ error: 'Conversation not found' }, 404);
+      if (!inviteeId) {
+        return json({ success: false, code: 'invitee_not_eligible', error: 'That person cannot be added to this conversation.' }, 422);
+      }
+      // The invitee is a lookup key: whether they may join is decided by the
+      // database from this workspace's own rows.
+      const { data, error } = await supabase.rpc('builder_network_invite_participant', {
+        _conversation_id: conversationId,
+        _actor_user_id: userId,
+        _invitee_user_id: inviteeId,
+      });
+      if (error) return conversationRefusal(error);
+      return json({ success: true, result: String(data) });
+    }
+
+    if (operation === 'leave_builder_conversation') {
+      const conversationId = uuidOf(body.conversation_id);
+      if (!conversationId) return json({ error: 'Conversation not found' }, 404);
+      // Leaving names only the person leaving: there is no operation that
+      // removes somebody else.
+      const { data, error } = await supabase.rpc('builder_network_leave_conversation', {
+        _conversation_id: conversationId,
+        _actor_user_id: userId,
+      });
+      if (error) return conversationRefusal(error);
+      return json({ success: true, result: String(data) });
+    }
+
+    // =====================================================================
     // The selection — the write that activates the builder
     // =====================================================================
 
     if (operation === 'select_for_client') {
-      const clientsEdit = await requireModulePermission(supabase, actor, 'clients', 'can_edit');
+      const clientsEdit = await requireModulePermission(supabase, actor, CLIENTS_MODULE, 'can_edit');
       if (!clientsEdit.ok) {
         return createForbiddenResponse(
           clientsEdit.error || 'Client edit access required', corsHeaders);
@@ -604,6 +906,12 @@ Deno.serve(async (req) => {
         .eq('id', clientId)
         .maybeSingle();
       if (!client) return json({ error: 'Client not found' }, 404);
+      // And it must be a client this caller may act for — their own or
+      // assigned, or any for a superadmin. Not found rather than refused, so
+      // the door is not an oracle for which client ids exist.
+      if (!await canAccessClient(supabase, actor, client.id)) {
+        return json({ error: 'Client not found' }, 404);
+      }
 
       // A live selection already exists for this pair.
       const { data: existing } = await supabase
@@ -656,7 +964,7 @@ Deno.serve(async (req) => {
     }
 
     if (operation === 'set_selection_status') {
-      const clientsEdit = await requireModulePermission(supabase, actor, 'clients', 'can_edit');
+      const clientsEdit = await requireModulePermission(supabase, actor, CLIENTS_MODULE, 'can_edit');
       if (!clientsEdit.ok) {
         return createForbiddenResponse(
           clientsEdit.error || 'Client edit access required', corsHeaders);
@@ -670,10 +978,14 @@ Deno.serve(async (req) => {
       const selectionId = cleanText(body.selection_id, 64);
       const { data: selection } = await supabase
         .from('builder_stock_selections')
-        .select('id, status')
+        .select('id, status, client_id')
         .eq('id', selectionId)
         .maybeSingle();
       if (!selection) return json({ error: 'Selection not found' }, 404);
+      // Another agent's client's activation is not this caller's to change.
+      if (!await canAccessClient(supabase, actor, selection.client_id)) {
+        return json({ error: 'Selection not found' }, 404);
+      }
 
       const { data, error } = await supabase
         .from('builder_stock_selections')

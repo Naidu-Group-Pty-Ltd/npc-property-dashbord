@@ -1,11 +1,11 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
-  Bot, Send, ChevronDown, ChevronUp, Sparkles, Loader2,
+  Bot, Send, ChevronDown, ChevronUp, Sparkles,
   TrendingUp, CheckCircle2, Zap, Trash2,
 } from 'lucide-react';
 import { VoiceToTextButton } from '@/components/ui/VoiceToTextButton';
@@ -13,7 +13,19 @@ import ReactMarkdown from 'react-markdown';
 import type { BorrowingCapacityInput, BorrowingCapacityResult } from '@/utils/borrowingCapacityCalculations';
 import type { LiabilityItem, PropertyItem } from './StrategyScenarioModeling';
 import { toast } from 'sonner';
-import { resolveAuthBearer } from '@/lib/secureInvoke';
+import { openSecureStream } from '@/lib/streamSecureFunction';
+import { agentStreamRefusal, emptyAgentAnswerMessage } from './bcScenarioAgentStream.pure';
+import { AdvisorProgressBubble } from './AdvisorProgressBubble';
+import { withholdTighteningDtiOverride } from '@/lib/advisorDtiOverride.pure';
+import {
+  advanceProgress,
+  briefFacts,
+  initialProgress,
+  LOCAL_DRAFTING_AFTER_MS,
+  readProgressEvent,
+  type AdvisorProgressEvent,
+  type AdvisorProgressState,
+} from '@/lib/advisorProgress.pure';
 import { runScenarioWithInputs, type ScenarioContext } from '@/utils/scenarioDeltaEngine';
 import type { ScenarioDelta } from '@/utils/borrowingCapacityTypes';
 
@@ -105,6 +117,23 @@ export interface AIScenario {
   executionRisk?: 'low' | 'medium' | 'high';
   /** Phase J2: Concrete evidence the broker must collect before submission. */
   evidenceRequired?: string[];
+  /**
+   * Every card in the same answer, with its engine figures, carried with the
+   * card that is applied so the Strategy Rationale can set the choice beside
+   * the alternatives (`advisorRationale.pure.ts`).
+   */
+  advisorOptions?: AdvisorOptionFigures[];
+}
+
+export interface AdvisorOptionFigures {
+  name: string;
+  applied: boolean;
+  capacity?: number | null;
+  purchasePower?: number | null;
+  targetPrice?: number | null;
+  meetsTarget?: boolean | null;
+  shortfall?: number | null;
+  executionRisk?: 'low' | 'medium' | 'high' | null;
 }
 
 interface ChatMessage {
@@ -323,6 +352,8 @@ export function BCScenarioAgent({
   const [messages, setMessages] = useState<ChatMessage[]>(initialState?.messages ?? []);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  // What the advisor is doing while it works; null when it is not working.
+  const [progress, setProgress] = useState<AdvisorProgressState | null>(null);
   const [scenarios, setScenarios] = useState<AIScenario[]>(initialState?.scenarios ?? []);
   const [appliedIndex, setAppliedIndex] = useState<number | null>(initialState?.appliedIndex ?? null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -347,7 +378,28 @@ export function BCScenarioAgent({
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [messages, progress?.stage]);
+
+  // The figures the advisor is handed, one line each, for the progress bubble.
+  const progressFacts = useMemo(() => briefFacts({
+    capacity: baseResult?.borrowingCapacity,
+    monthlySurplus: baseResult?.monthlySurplus,
+    dtiRatio: baseResult?.dtiRatio,
+    liabilities,
+    properties,
+  }), [baseResult, liabilities, properties]);
+
+  // A DTI cap the advisor proposes may relax the assessment, never tighten it
+  // (`_shared/advisorDtiOverride.pure.ts`). The server withholds it already;
+  // this covers a card kept in the browser from before, so Apply cannot put
+  // a cap on a client the Calculator assesses without one.
+  const withholdTighteningDti = useCallback((scenario: AIScenario): AIScenario => {
+    const guard = withholdTighteningDtiOverride(scenario.adjustments, {
+      dtiCapEnabled: !!baseInputs?.dtiCapEnabled,
+      dtiCapLimit: Number(baseInputs?.dtiCapLimit || 6),
+    });
+    return guard.note ? { ...scenario, adjustments: guard.adjustments } : scenario;
+  }, [baseInputs]);
 
   const sendMessage = useCallback(async () => {
     const trimmed = input.trim();
@@ -358,62 +410,60 @@ export function BCScenarioAgent({
     setMessages(updatedMessages);
     setInput('');
     setIsLoading(true);
+    setProgress(initialProgress(Date.now()));
+    const advance = (event: AdvisorProgressEvent) =>
+      setProgress((p) => (p ? advanceProgress(p, event, Date.now()) : p));
+    // An older server reports no stages; this moves the bubble on anyway.
+    let localDrafting: ReturnType<typeof setTimeout> | null = null;
 
     try {
-      // WP-11B/C cookie-only: this endpoint uses wildcard CORS (no cookies),
-      // so it authenticates via the access-token JWT Bearer (verifyAuth JWT
-      // path). The raw session token is no longer read or sent.
+      // Opened through the one secure streaming transport (`openSecureStream`):
+      // the HttpOnly session cookie AND the access-token Bearer, with one
+      // refresh and one retry on an auth refusal.
       //
-      // Resolved rather than read: the access token lives in tab-scoped
-      // `sessionStorage`, so a second tab has a perfectly good session — its
-      // HttpOnly cookie — and no token to send with it. Reading storage
-      // directly sends the ANON key instead and the agent answers
-      // "Authentication required" to a signed-in person. Same defect, same
-      // fix, as the Report Q&A chat.
-      const { token: accessToken } = await resolveAuthBearer({ refreshIfMissing: true });
-
-      const resp = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/bc-scenario-agent`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${accessToken}`,
-          },
-          credentials: 'omit',
-          body: JSON.stringify({
-            messages: updatedMessages,
-            clientContext: {
-              baseInputs,
-              baseResult,
-              liabilities,
-              properties,
-              // Phase I1/I2 — propagate so the server preview re-shades and
-              // floors expenses identically to the client engine.
-              incomeComponents,
-              currentLenderProfileId,
-              hemBenchmark,
-            },
-            // Phase J1 — give the model an explicit memory of the prior run
-            // so refinement requests reference real numbers, not re-derived ones.
-            priorScenarios: scenarios.length > 0
-              ? scenarios.slice(0, 3).map(s => ({
-                  name: s.name,
-                  adjustments: s.adjustments,
-                  engineValidation: s.engineValidation,
-                  executionRisk: s.executionRisk,
-                }))
-              : undefined,
-          }),
-        }
-      );
-
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({ error: 'Request failed' }));
-        throw new Error(err.error || `HTTP ${resp.status}`);
-      }
+      // Two faults sat here, one behind the other. The address was built from
+      // the `VITE_SUPABASE_URL` build variable, which no build sets, so the request
+      // went to the app's own host and came back as its HTML shell (fixed by
+      // reading the resolved `SUPABASE_URL`). With that fixed, the request
+      // reached the function and was refused 401 "Authentication required":
+      // it was sent with credentials omitted and the Bearer alone, and
+      // `verifyAuth` reads the session from the cookie. Production logs show
+      // both of the owner's first requests after the address fix answered 401.
+      // `withRequestOrigin` already answers the exact origin with credentials,
+      // so the cookie is all the function needed.
+      const resp = await openSecureStream('bc-scenario-agent', {
+        messages: updatedMessages,
+        clientContext: {
+          baseInputs,
+          baseResult,
+          liabilities,
+          properties,
+          // Phase I1/I2 — propagate so the server preview re-shades and
+          // floors expenses identically to the client engine.
+          incomeComponents,
+          currentLenderProfileId,
+          hemBenchmark,
+        },
+        // Phase J1 — give the model an explicit memory of the prior run
+        // so refinement requests reference real numbers, not re-derived ones.
+        priorScenarios: scenarios.length > 0
+          ? scenarios.slice(0, 3).map(s => ({
+              name: s.name,
+              adjustments: s.adjustments,
+              engineValidation: s.engineValidation,
+              executionRisk: s.executionRisk,
+            }))
+          : undefined,
+      });
 
       if (!resp.body) throw new Error('No response body');
+      // A 200 that is not the agent's stream is not an answer: said out loud
+      // rather than read as an empty one.
+      const refusal = agentStreamRefusal(resp.headers.get('content-type'));
+      if (refusal) throw new Error(refusal);
+
+      advance({ stage: 'reading' });
+      localDrafting = setTimeout(() => advance({ stage: 'drafting' }), LOCAL_DRAFTING_AFTER_MS);
 
       // Stream SSE
       const reader = resp.body.getReader();
@@ -461,7 +511,16 @@ export function BCScenarioAgent({
               break;
             }
 
+            // A stage the server has reached (`_shared/advisorProgress.pure.ts`).
+            const reached = readProgressEvent(parsed);
+            if (reached) {
+              if (localDrafting) { clearTimeout(localDrafting); localDrafting = null; }
+              advance(reached);
+              continue;
+            }
+
             const delta = parsed.choices?.[0]?.delta;
+            if (delta?.content || delta?.tool_calls) advance({ stage: 'finishing' });
 
             // Text content
             if (delta?.content) {
@@ -489,6 +548,12 @@ export function BCScenarioAgent({
       // mirroring the pre-stream non-200 handling above.
       if (streamError) {
         throw new Error(streamError);
+      }
+
+      // A stream that carried no prose, no scenarios and no error is a
+      // non-answer. It used to end the turn in silence.
+      if (!assistantText.trim() && !(hasToolCall && toolCallArgs)) {
+        throw new Error(emptyAgentAnswerMessage());
       }
 
       // Parse tool call result for scenarios
@@ -523,7 +588,7 @@ export function BCScenarioAgent({
               hemBenchmark,
             };
             const locallyValidated = (parsed.scenarios as AIScenario[]).map((rawScenario) => {
-              const scenario = normalizeAIScenario(rawScenario);
+              const scenario = withholdTighteningDti(normalizeAIScenario(rawScenario));
               try {
                 const acq = scenario.adjustments?.acquisition;
                 const runCtx: ScenarioContext = acq
@@ -593,9 +658,11 @@ export function BCScenarioAgent({
       toast.error(err.message || 'Failed to get AI response');
       // Remove loading state but keep messages
     } finally {
+      if (localDrafting) clearTimeout(localDrafting);
+      setProgress(null);
       setIsLoading(false);
     }
-  }, [input, isLoading, messages, baseInputs, baseResult, liabilities, properties, scenarios, incomeComponents, currentLenderProfileId, hemBenchmark]);
+  }, [input, isLoading, messages, baseInputs, baseResult, liabilities, properties, scenarios, incomeComponents, currentLenderProfileId, hemBenchmark, withholdTighteningDti]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -605,13 +672,25 @@ export function BCScenarioAgent({
   };
 
   const handleApply = (scenario: AIScenario, index: number) => {
-    const safeScenario = normalizeAIScenario(scenario);
+    const safeScenario = withholdTighteningDti(normalizeAIScenario(scenario));
     try {
       setAppliedIndex(index);
       setScenarios(prev => prev.map((s, i) => i === index ? safeScenario : s));
+      // The other cards travel with the applied one, so the Strategy Rationale
+      // can set the choice beside the alternatives the advisor offered.
+      const advisorOptions: AdvisorOptionFigures[] = scenarios.map((s, i) => ({
+        name: s.name,
+        applied: i === index,
+        capacity: s.engineValidation?.borrowingCapacity ?? null,
+        purchasePower: s.engineValidation?.maxPurchasePrice ?? null,
+        targetPrice: s.engineValidation?.targetPurchasePrice ?? null,
+        meetsTarget: s.engineValidation?.meetsTarget ?? null,
+        shortfall: s.engineValidation?.shortfallToTarget ?? null,
+        executionRisk: s.executionRisk ?? null,
+      }));
       // Phase E (L1): callback may return engine-reconciled impact string —
       // update the badge so users see verified math, not just AI estimate.
-      const maybe = onApplyScenario(safeScenario) as unknown;
+      const maybe = onApplyScenario({ ...safeScenario, advisorOptions }) as unknown;
       Promise.resolve(maybe as Promise<string | void> | string | void).then((reconciled) => {
         if (typeof reconciled === 'string' && reconciled.length > 0) {
           setScenarios(prev => prev.map((s, i) => i === index ? { ...s, reconciledImpact: reconciled } : s));
@@ -727,12 +806,8 @@ export function BCScenarioAgent({
                 </div>
               ))}
 
-              {isLoading && (
-                <div className="flex justify-start">
-                  <div className="bg-muted rounded-lg px-3 py-2">
-                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                  </div>
-                </div>
+              {isLoading && progress && (
+                <AdvisorProgressBubble progress={progress} facts={progressFacts} />
               )}
             </div>
 

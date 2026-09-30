@@ -52,14 +52,17 @@ import {
 } from '../_shared/weasyprintClient.ts';
 import {
   buildReportBrandSnapshot,
+  issuerDisclaimerSetting,
   REPORT_SNAPSHOT_VERSION,
 } from '../_shared/reportDesign/snapshot.pure.ts';
+import { deploymentKind } from '../_shared/emailIdentity.pure.ts';
 import { inlineAsset } from '../_shared/reportDesign/assets.pure.ts';
 import { inlineBrandAssets } from '../_shared/reportDesign/fetchBrandAssets.ts';
 import { formatMeasure } from '../_shared/reportDesign/measure.pure.ts';
 
 import { buildCapacitySnapshot } from '../_shared/reports/commercialCapacity/normalise.pure.ts';
 import { renderCapacityFromBrand } from '../_shared/reports/commercialCapacity/render.pure.ts';
+import { resolveRequestedDesign } from '../_shared/reports/templateDesignRead.ts';
 import {
   ANALYSIS_SYSTEM_PROMPT,
   ANALYSIS_TOOL_SCHEMA,
@@ -602,7 +605,12 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       );
     }
 
+    // A clone never prints the house's name, contact details or wording,
+    // whatever its settings rows say; the prime reads them as stored
+    // (`issuerIdentity.pure.ts`).
+    const reportDeployment = { prime: deploymentKind(Deno.env.get('SUPABASE_URL')) === 'prime' };
     const { snapshot, skippedAssets } = buildReportBrandSnapshot({
+      deployment: reportDeployment,
       whitelabel: whitelabel
         ? {
             id: String(whitelabel.id ?? ''),
@@ -647,13 +655,25 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     // the pixels; reaching for it here is the defect this format avoids.
     const coverArt = inlineAsset(logoConfig.cover ?? null);
 
+    // The design the caller chose, if any. The words, figures and pages are
+    // the report's own whatever it names; a design that cannot be honoured is
+    // answered with the standard one and a sentence saying why, never with a
+    // failed document (`templateDesignRead.ts`).
+    const { design, echo: designEcho } = await resolveRequestedDesign(supabase, {
+      reference: request.design,
+      reportType: 'commercial_capacity',
+      actor: { userId, authMethod: auth.authMethod },
+      route: 'render-commercial-capacity-pdf',
+    });
+
     const { html, gaps } = renderCapacityFromBrand({
       payload,
       snapshot,
-      disclaimer: settings.disclaimer as never,
+      disclaimer: issuerDisclaimerSetting(settings.disclaimer, snapshot, reportDeployment) as never,
       coverArtDataUri: coverArt.ok ? coverArt.asset.dataUri : null,
       edition: request.edition,
       reference: String(assessment.reference ?? '').slice(0, 40) || null,
+      design,
     });
     learned.brand_gaps = gaps;
 
@@ -730,6 +750,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       hasAnalysis: Boolean(analysis),
       analysisNote,
       durationMs,
+      design: designEcho,
     };
     return json(response, 200, corsHeaders);
   } catch (e) {

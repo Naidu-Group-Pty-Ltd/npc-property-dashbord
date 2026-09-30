@@ -80,6 +80,8 @@ import { webSearchIsNotARetrieval } from '../registerAuthority.pure.ts';
 import { areaCentreDisclosure, enrichmentPointOf } from './enrichmentPoint.pure.ts';
 import type { TransportVerdict } from '../../transportReading.pure.ts';
 import { formatIsoDate } from '../reportDate.pure.ts';
+import { elsewhereOnly, inHomeSection } from '../adviserVoice.pure.ts';
+import { unratedRiskRow } from '../investment/riskRegister.pure.ts';
 
 export const AMENITY_WEB_SEARCH_RULE = webSearchIsNotARetrieval(
   'amenity',
@@ -87,12 +89,45 @@ export const AMENITY_WEB_SEARCH_RULE = webSearchIsNotARetrieval(
 );
 export const TRANSPORT_WEB_SEARCH_RULE = webSearchIsNotARetrieval(
   'public-transport',
-  'the stop register above',
+  'the stop data above',
 );
+
+/**
+ * What may be said about a bus route or a timetable this report did not read.
+ *
+ * The Compass for 60 Lawley Street, Spalding (25 Sep 2026) described route 852
+ * as running "five daily services, two weekday school-bus runs and three
+ * Saturday-morning services", from the City's locality profile. The
+ * operator's own current timetable (the PTA's GTFS, valid 22 Sep to 21 Dec
+ * 2026) runs it roughly hourly on weekdays. A profile is not a timetable, and
+ * this report reads neither, so the permitted form is the one a reader can
+ * act on: who publishes the timetable, and that it should be checked.
+ */
+export const TRANSPORT_TIMETABLE_RULE = 'A bus route, a stop or a timetable a live search finds is not a '
+  + 'source for this report either. You may say that the operator publishes routes or a timetable for the area and name '
+  + 'the operator, attributing it as the operator\'s published information. Do NOT state a frequency, a '
+  + 'number of services, a first or last service time or a walking time from any of it, and never take '
+  + 'service information from a council, community or locality profile — a profile is not a timetable and '
+  + 'goes out of date. Write instead that the current service pattern should be checked on the operator\'s '
+  + 'own timetable.';
+
+/** A reader's name for where a station count came from, and the radius that source searched. */
+const STATION_COUNT_SOURCE: Readonly<Record<string, { label: string; radiusKm: number; counts: string }>> = {
+  osm_amenity_register: {
+    label: 'OpenStreetMap',
+    radiusKm: 2,
+    counts: 'rail stations, halts, tram stops and transport interchanges — bus stops are not in it',
+  },
+  google_places: {
+    label: 'Google Places',
+    radiusKm: 5,
+    counts: 'places Google types as transit stations, which does not reliably include bus stops',
+  },
+};
 
 /** What a provider key means in a reader's words. */
 export const AMENITY_PROVIDER_LABEL: Readonly<Record<string, string>> = {
-  register: 'the OpenStreetMap amenity register held by this platform',
+  register: 'OpenStreetMap',
   google: 'Google Places',
 };
 
@@ -181,58 +216,140 @@ export function provenanceSentence(
     .sort();
   const oldest = registerDates.length ? stampDate(registerDates[0]) : null;
   const currency = oldest
-    ? ` The register slice this reading came from was last loaded ${oldest}.`
+    ? ` Current at ${oldest}.`
     : '';
 
   if (byProvider.size === 1) {
     const [label] = [...byProvider.keys()];
-    return `Every count above was answered by ${label}.${currency}`;
+    return `Source: ${label}.${currency}`;
   }
   const clauses = [...byProvider.entries()]
-    .map(([label, cats]) => `${label} answered ${cats.join(', ')}`);
-  return `${clauses.join('; ')}.${currency}`;
+    .map(([label, cats]) => `${label} for ${cats.join(', ')}`);
+  return `Sources: ${clauses.join('; ')}.${currency}`;
 }
 
 export interface AmenityRow {
   readonly key: string;
   readonly label: string;
-  readonly count: number;
+  /** How many the lookup found inside its radius, or null where it was not counted here. */
+  readonly count: number | null;
   readonly nearest: string | null;
+  /** Straight-line kilometres to `nearest`, as the lookup measured it. */
+  readonly distanceKm: number | null;
+  /** The radius the category was searched over, for the provider that answered it. */
+  readonly radiusKm: number | null;
 }
 
 /**
- * The four published amenity categories, in the order a reader meets them.
+ * The most results one lookup reports — both providers' own cap
+ * (`AMENITY_RESULT_CAP` in the register, the Google path's `slice(0, 10)`).
+ * A count AT the cap means "at least this many", and is written so.
+ */
+export const AMENITY_LOOKUP_CAP = 10;
+
+/**
+ * The radius each category was searched over, per provider.
+ *
+ * Stated per row because they differ: the register searches transit and parks
+ * over 2 km and schools over 3 km; the Google path searches parks over 2 km,
+ * schools over 3 km and everything else over 5 km. The table used to head
+ * every count "within 5 km" — true of three rows and false of the rest.
+ */
+export const AMENITY_RADIUS_KM: Readonly<Record<string, Readonly<Record<string, number>>>> = {
+  register: { transit: 2, schools: 3, healthcare: 5, shopping: 5, recreation: 2, restaurants: 5 },
+  google: { transit: 5, schools: 3, healthcare: 5, shopping: 5, recreation: 2, restaurants: 5 },
+};
+
+/**
+ * The published amenity categories, in the order a reader meets them.
  *
  * `supermarkets` is deliberately absent: `PLACES_CATEGORIES` holds six —
  * transit, schools, healthcare, shopping, recreation, restaurants — and no
  * supermarket lookup is taken anywhere. The old block asked for one, which is
  * a labelled row promising a figure the platform cannot produce.
+ *
+ * ## Why transit and schools are rows now, with distances
+ *
+ * The Compass for 37 Bolin Street, Tallawong (27 Sep 2026) printed, in its own
+ * grade basis, "nearest transit station 1.7 km away; nearest shopping 1.6 km
+ * away; nearest recreation 500 m away; nearest healthcare 2.2 km away" — and
+ * its Amenity & Access section printed "Distance to be confirmed" against the
+ * park, the town centre, the schools and the health services. The distances
+ * are measured by `location-intelligence-service` and stored on
+ * `amenities[].distance`, which is where the grade reads them; this table
+ * carried the counts and a name and no distance at all, and had no transit or
+ * school row. The measurement reached the score and not the section that
+ * describes it — this platform's recurring defect, one module along.
+ *
+ * `amenitiesCategory` is the row's name in `amenities[]`; `countPath` and
+ * `nearestPath` are the older, category-specific fields every stored record
+ * carries. `schools` publishes no count here: the Client-Safe Gate disowns the
+ * school COUNT for sitting at the lookup's cap, and a named school with its
+ * distance says more than "at least 10" does.
  */
 export const AMENITY_FIELDS: ReadonlyArray<{
-  key: string; label: string; countPath: [string, string]; nearestPath: [string, string] | null;
+  key: string;
+  label: string;
+  amenitiesCategory: string | null;
+  countPath: [string, string] | null;
+  nearestPath: [string, string] | null;
+  distancePath: [string, string] | null;
 }> = [
-  { key: 'healthcare', label: 'Healthcare facilities', countPath: ['healthcare', 'facilitiesWithin5km'], nearestPath: ['healthcare', 'nearestHospital'] },
-  { key: 'shopping', label: 'Shopping centres', countPath: ['lifestyle', 'shoppingCenters'], nearestPath: ['lifestyle', 'nearestShopping'] },
-  { key: 'recreation', label: 'Parks and recreation', countPath: ['lifestyle', 'parks'], nearestPath: ['lifestyle', 'nearestPark'] },
-  { key: 'restaurants', label: 'Restaurants and cafés', countPath: ['lifestyle', 'restaurants'], nearestPath: null },
+  { key: 'transit', label: 'Transit stations', amenitiesCategory: 'Public Transport', countPath: null, nearestPath: null, distancePath: null },
+  { key: 'schools', label: 'Schools', amenitiesCategory: 'Schools', countPath: null, nearestPath: ['schools', 'nearestSchool'], distancePath: ['schools', 'distanceToSchool'] },
+  { key: 'healthcare', label: 'Healthcare facilities', amenitiesCategory: 'Healthcare', countPath: ['healthcare', 'facilitiesWithin5km'], nearestPath: ['healthcare', 'nearestHospital'], distancePath: ['healthcare', 'distanceToHospital'] },
+  { key: 'shopping', label: 'Shopping centres', amenitiesCategory: 'Shopping', countPath: ['lifestyle', 'shoppingCenters'], nearestPath: ['lifestyle', 'nearestShopping'], distancePath: null },
+  { key: 'recreation', label: 'Parks and recreation', amenitiesCategory: 'Recreation', countPath: ['lifestyle', 'parks'], nearestPath: ['lifestyle', 'nearestPark'], distancePath: null },
+  { key: 'restaurants', label: 'Restaurants and cafés', amenitiesCategory: null, countPath: ['lifestyle', 'restaurants'], nearestPath: null, distancePath: null },
 ];
+
+/** The `amenities[]` row for a category, or null. */
+function amenitiesRow(o: Record<string, unknown>, category: string | null): Record<string, unknown> | null {
+  if (!category || !Array.isArray(o['amenities'])) return null;
+  return (o['amenities'] as unknown[]).map(rec).find((r) => r?.['category'] === category) ?? null;
+}
 
 /** The rows a stored enrichment can actually fill. */
 export function amenityRows(li: unknown): AmenityRow[] {
   const o = rec(li) ?? {};
+  const sources = rec(stagesOf(li)['amenitySources']) ?? {};
   const rows: AmenityRow[] = [];
   for (const f of AMENITY_FIELDS) {
-    const block = rec(o[f.countPath[0]]);
-    const count = num(block?.[f.countPath[1]]);
+    const listed = amenitiesRow(o, f.amenitiesCategory);
+    const at = (path: [string, string] | null) => (path ? rec(o[path[0]])?.[path[1]] : undefined);
     // `absent is never zero` — a failed category stores null, a reached and
     // empty one stores 0, and only a number is a measurement.
-    if (count === null) continue;
-    const nearest = f.nearestPath
-      ? text(rec(o[f.nearestPath[0]])?.[f.nearestPath[1]])
-      : null;
-    rows.push({ key: f.key, label: f.label, count, nearest });
+    const count = f.key === 'schools' ? null : (num(at(f.countPath)) ?? num(listed?.['count']));
+    const nearest = text(at(f.nearestPath)) ?? text(listed?.['nearest']);
+    const distanceKm = num(at(f.distancePath)) ?? num(listed?.['distance']);
+    const counted = f.key === 'schools' ? num(listed?.['count']) : count;
+    // A row needs a measurement: a count, or a named place with its distance.
+    if (counted === null && distanceKm === null) continue;
+    // A category the lookup reached and found empty has no nearest place.
+    const empty = counted === 0;
+    const provider = text(sources[f.key]);
+    rows.push({
+      key: f.key,
+      label: f.label,
+      count,
+      nearest: empty ? null : nearest,
+      distanceKm: empty ? null : distanceKm,
+      radiusKm: provider ? AMENITY_RADIUS_KM[provider]?.[f.key] ?? null : null,
+    });
   }
   return rows;
+}
+
+/** `1.7 km` or `500 m`, as the grade basis prints it. */
+export function distanceLabel(km: number): string {
+  return km < 1 ? `${Math.round(km * 1000)} m` : `${(Math.round(km * 10) / 10).toFixed(1)} km`;
+}
+
+function countCell(r: AmenityRow): string {
+  if (r.count === null) return 'nearest only — not counted here';
+  const within = r.radiusKm !== null ? ` within ${r.radiusKm} km` : ' within the search radius';
+  if (r.count === 0) return `none${within}`;
+  return r.count >= AMENITY_LOOKUP_CAP ? `${AMENITY_LOOKUP_CAP} or more${within}` : `${r.count}${within}`;
 }
 
 /** The block. Absent everywhere means one honest paragraph and a prohibition. */
@@ -244,17 +361,19 @@ export function amenityFactBlocks(li: unknown): string {
 
   if (rows.length === 0) {
     return list([
-      'No amenity reading was retrieved for this property. Say that amenity data was not '
-      + 'retrieved; do NOT state a count, a distance or a named facility, and do NOT describe '
-      + 'the area as well or poorly served.',
+      'Nearby amenities were not assessed for this report. '
+      + `${inHomeSection('amenity')} say so once and suggest the client checks the schools, shops and health `
+      + `services that matter to them. ${elsewhereOnly('amenity')} In every section: do NOT state a count, a `
+      + 'distance or a named facility, and do NOT describe the area as well or poorly served.',
       AMENITY_WEB_SEARCH_RULE,
     ]).join(' ');
   }
 
   const table = [
-    '| Category | Count within 5 km | Nearest on record |',
-    '|---|---|---|',
-    ...rows.map((r) => `| ${r.label} | ${r.count} | ${r.nearest ?? 'not named by the register'} |`),
+    '| Category | Nearest | Straight-line distance | Found nearby |',
+    '|---|---|---|---|',
+    ...rows.map((r) => `| ${r.label} | ${r.nearest ?? 'not named'} | `
+      + `${r.distanceKm !== null ? distanceLabel(r.distanceKm) : 'not measured'} | ${countCell(r)} |`),
   ].join('\n');
 
   const unmeasured = AMENITY_FIELDS
@@ -265,14 +384,19 @@ export function amenityFactBlocks(li: unknown): string {
     areaCentreDisclosure(enrichmentPointOf(li).precision),
     table,
     provenanceSentence(sources, rows.map((r) => r.key), loadedAt),
+    'These are measured readings: use them. Where this table names a place and a distance, state that '
+    + 'place and that distance — never write that a distance is "to be confirmed" when it is stated here. '
+    + 'Every distance is straight-line from the property, and a road or walking journey is longer, so say '
+    + '"straight-line" or "about" wherever you use one. A lookup reports at most '
+    + `${AMENITY_LOOKUP_CAP} places, so "${AMENITY_LOOKUP_CAP} or more" is a floor and must not be written as an exact count.`,
     'A count of zero here is a measurement and may be reported as one — a rural address with no '
     + 'hospital within five kilometres is a fact worth printing.',
     unmeasured.length
-      ? `Not measured for this property: ${unmeasured.join(', ')}. A category absent from the table `
-        + 'was not reached, and must not be described either way — not as absent, not as adequate.'
+      ? `Not assessed for this property: ${unmeasured.join(', ')}. A category absent from the table must `
+        + 'not be described either way — not as absent, not as adequate.'
       : null,
-    'Name the publisher wherever you use one of these counts. Do not convert them into a walkability '
-    + 'score, a rating, a ranking or an "excellent / limited" reading: the count is the measurement.',
+    'Name the publisher wherever you use one of these readings. Do not convert them into a walkability '
+    + 'score, a rating, a ranking or an "excellent / limited" reading: the reading is the measurement.',
     AMENITY_WEB_SEARCH_RULE,
   ]).join('\n\n');
 }
@@ -290,15 +414,15 @@ export function amenityFactBlocks(li: unknown): string {
  */
 export const TRANSPORT_VERDICT_SENTENCE: Readonly<Record<TransportVerdict, string>> = {
   stops_nearby:
-    'Boarding places were found within the search radius, from a loaded feed covering this '
-    + 'area. The count and the named stop are a real measurement of what is here — they are not '
-    + 'a measurement of service: no line, route, timetable or frequency was read.',
+    'Public transport stops were found within the search radius, from the operator\'s published stop '
+    + 'data for this area. The count and the named stop describe what is here — they are not a '
+    + 'measure of service: routes, timetables and frequency were not assessed.',
   none_within_radius:
-    'The property sits inside a loaded network and no boarding place was found within the search '
-    + 'radius. That is a real finding about this address and may be reported as one.',
+    'The property is within the area the operator\'s published stop data covers, and no stop was '
+    + 'found within the search radius. That is a finding about this address and may be reported as one.',
   outside_loaded_networks:
-    'This property lies outside every public-transport feed this platform has loaded. That is a '
-    + 'fact about the FEEDS and not about the area: it does not mean there is no public transport '
+    'Public transport stops near the property were not assessed: the published stop data used for '
+    + 'this report does not cover this area. That is not a finding that there is no public transport '
     + 'here, and the area must not be called poorly served, car-dependent or isolated on this basis.',
 };
 
@@ -328,45 +452,79 @@ export function transportFactBlocks(li: unknown): string {
 
   if (nearest !== null) {
     parts.push(
-      `Nearest boarding place on record: **${nearest}**`
+      `Nearest stop: **${nearest}**`
       + (nearestKm !== null ? `, ${nearestKm} km straight-line` : '')
       + '.',
     );
   }
   if (within !== null && radius !== null) {
-    parts.push(`Boarding places within ${Math.round(radius / 100) / 10} km: **${within}**.`);
+    parts.push(`Stops within ${Math.round(radius / 100) / 10} km: **${within}**.`);
   }
   const verdictSentence = verdict
     ? TRANSPORT_VERDICT_SENTENCE[verdict as TransportVerdict]
     : undefined;
   if (verdictSentence) parts.push(verdictSentence);
+  if (verdict === 'outside_loaded_networks') {
+    parts.push(unratedRiskRow('transport reliance', 'Not checked',
+      'the published stop data used for this report does not cover this area.'));
+  }
+
+  /*
+   * No operator feed covers the property, and the enrichment fell back to a
+   * station COUNT (`stationsWithin2km`, whatever radius its source searched).
+   * This block never read that field, so it told the model "no public-transport
+   * reading was retrieved" while the Location score used a count of zero — and
+   * the model went to a live search, found a bus route, and the report then
+   * said both that there was a bus stop on the street and that there was "no
+   * public transport within the searched radius". The count is stated here as
+   * what it is, with what it cannot see.
+   */
+  const stationCount = verdict ? null : num(t['stationsWithin2km']);
+  const stationSource = STATION_COUNT_SOURCE[text(t['source']) ?? ''];
+  if (stationCount !== null) {
+    parts.push(
+      `Transit stations within ${stationSource ? `${stationSource.radiusKm} km` : 'the search radius'}`
+      + `${stationSource ? ` (${stationSource.label})` : ''}: **${stationCount}**. `
+      + `This counts ${stationSource ? stationSource.counts : 'stations only, not bus stops'}, and it says nothing `
+      + 'about how often any service runs.',
+      'Bus stops, routes and timetables were not assessed for this property. A count of stations is not a '
+      + 'finding that the area has no public transport; the operator\'s published timetable shows the '
+      + `services that run near the property. ${inHomeSection('transport')} say this once, in those words or `
+      + `your own. ${elsewhereOnly('transport')}`,
+      unratedRiskRow('transport reliance', 'Unverified',
+        'a station count does not include bus stops, so it cannot say how the property is served.'),
+    );
+  }
 
   const commute = commuteSentence(o['commute'], stagesOf(li));
   if (commute) parts.push(commute);
 
   if (parts.length === 0) {
     return list([
-      'No public-transport reading was retrieved for this property. Say that transport data '
-      + 'was not retrieved; do NOT name a station, state a distance or a commute time, and do NOT '
-      + 'call the area well served or car-dependent. Car dependence is a finding that needs a '
-      + 'measurement like any other.',
+      'Public transport near this property was not assessed for this report. '
+      + `${inHomeSection('transport')} say so once and name where the client can check services (the `
+      + `operator\'s published timetable). ${elsewhereOnly('transport')} In every section: do NOT name a `
+      + 'station, state a distance or a commute time, and do NOT call the area well served or car-dependent. '
+      + 'Car dependence is a finding that needs a measurement like any other.',
+      unratedRiskRow('transport reliance', 'Not checked', 'no public transport reading is held for this property.'),
       TRANSPORT_WEB_SEARCH_RULE,
+      TRANSPORT_TIMETABLE_RULE,
     ]).join(' ');
   }
 
   const provenance = sources.length || feeds.length
-    ? `Source: ${(sources.length ? sources : feeds).join(', ')} — published GTFS stop files.`
-      + (loaded ? ` Last loaded ${loaded}.` : '')
-      + (feeds.length && sources.length ? ` Networks loaded: ${feeds.join(', ')}.` : '')
+    ? `Source: ${(sources.length ? sources : feeds).join(', ')} — the operator\'s published stop data (GTFS)`
+      + (loaded ? `, current at ${loaded}.` : '.')
     : null;
 
   return list([
     areaCentreDisclosure(enrichmentPointOf(li).precision),
     ...parts,
     provenance,
-    'Mode and service frequency are NOT measured: a stops file carries neither, so no line, no '
-    + 'route, no timetable and no "trains every N minutes" may be stated. Nothing above is a score.',
+    'Routes, modes and service frequency are not assessed: stop data carries none of them, so no line, '
+    + 'route, timetable or "trains every N minutes" may be stated. Nothing above is a score.',
     TRANSPORT_WEB_SEARCH_RULE,
+    TRANSPORT_TIMETABLE_RULE,
   ]).join('\n\n');
 }
 
@@ -380,7 +538,7 @@ export function commuteSentence(commute: unknown, stages: Record<string, unknown
 
   if (c['measured'] === false) {
     const detail = text(c['detail']);
-    return detail ? `No commute time was measured. ${detail}` : null;
+    return detail ? `No commute time was assessed. ${detail}` : null;
   }
 
   const minutes = num(c['durationMinutes']);
@@ -399,7 +557,23 @@ export function commuteSentence(commute: unknown, stages: Record<string, unknown
     km !== null ? `${Math.round(km * 10) / 10} km` : null,
   ]).join(' / ');
 
-  const base = `Measured driving commute to **${destination}**: ${measure}.`;
+  /*
+   * The mode is the reading's own, and so is what it is NOT. OSRM routes a
+   * car over the road network with no traffic at all, so its minutes are a
+   * free-flow drive and never a peak-hour commute — the Compass for 60 Lawley
+   * Street (25 Sep 2026) was right to print "without traffic" on one page and
+   * had nothing to stop it calling the same figure a commute on another. The
+   * Distance Matrix fallback answers `public_transit`, which this sentence
+   * used to call a drive as well.
+   */
+  const mode = text(c['mode']);
+  const base = mode === 'public_transit'
+    ? `Measured public-transport journey to **${destination}**: ${measure}, from a journey planner at the `
+      + 'time it was asked — not a peak-hour or guaranteed travel time.'
+    : mode === 'driving'
+      ? `Measured drive to **${destination}**: ${measure}, routed over the road network with no traffic — a `
+        + 'free-flow driving time, not a peak-hour commute.'
+      : `Measured journey to **${destination}**: ${measure}.`;
   if (own === 'no' || own === false) {
     return `${base} ${destination} is NOT this property's own urban centre — it is the state `
       + 'capital, and the centre this property actually belongs to is nearer. Report this figure '

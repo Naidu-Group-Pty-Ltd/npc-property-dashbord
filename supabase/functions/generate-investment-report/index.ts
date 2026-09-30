@@ -3,13 +3,14 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { logApiUsage } from '../_shared/logApiUsage.ts';
-import { getBrandConfig } from '../_shared/brand-config.ts';
 import { evidenceCautionLine, publishableGrade } from '../_shared/reports/investment/scoreSections.pure.ts';
 import { withReportMetering, resolveUserId, buildIdempotencyKey } from '../_shared/reportMetering.ts';
 import { insertTargetedNotification } from '../_shared/notify.ts';
 import { compassSections, financialSections, EDITORIAL_LABELS, type CompassSectionDefinition as CanonicalSectionDefinition } from '../_shared/compassSectionRegistry.ts';
 import {
   documentOutline,
+  issuedRecommendation,
+  recommendationContract,
   sectionContract,
   sectionRepairNote,
   sectionShapeShortfall,
@@ -36,9 +37,12 @@ import {
   type RegisterSearch,
   PUBLISHED_PROJECT_COVERAGE,
 } from '../_shared/planning/publishedProjectRegister.pure.ts';
+import { strategyOutlookProjects } from '../_shared/planning/strategyOutlook.pure.ts';
 import { withPlanningEvidence } from '../_shared/reports/location/planningEvidenceRecord.pure.ts';
 import { crimeStatBlocks } from '../_shared/reports/crimePromptBlocks.pure.ts';
 import { climateStatBlocks } from '../_shared/reports/climatePromptBlocks.pure.ts';
+import { hazardReadings } from '../_shared/planning/hazardReadings.pure.ts';
+import { pinForSection, pinGroup } from '../_shared/reports/sectionPin.pure.ts';
 import { amenityFactBlocks, transportFactBlocks } from '../_shared/reports/location/amenityFactBlocks.pure.ts';
 import { approvalsFactBlocks, summariseApprovals } from '../_shared/reports/market/approvalsFactBlocks.pure.ts';
 import { parseAddressText } from '../_shared/reports/market/addressGeography.pure.ts';
@@ -85,8 +89,11 @@ import {
   acquisitionStamp,
   inputRevisionOf,
   planReuse,
+  planningAnswerFitsPoint,
+  withdrawReuse,
   type AcquisitionSubject,
 } from '../_shared/reports/investment/acquisitionReuse.pure.ts';
+import { PLANNING_ANSWER_VERSION } from '../_shared/planning/planningAnswerVersion.pure.ts';
 import {
   coordinateProvenance,
   enrichmentCoordinate,
@@ -111,7 +118,7 @@ import {
   governedCategoryDirective,
   governedFaultToFlag,
 } from '../_shared/reports/contract/governedNarrativeAuthority.pure.ts';
-import { forwardDemandBlocks, regionalTrendBlocks } from '../_shared/reports/regionalPromptBlocks.pure.ts';
+import { forwardDemandBlocks, populationTrendPin, regionalTrendBlocks } from '../_shared/reports/regionalPromptBlocks.pure.ts';
 import { trustedStateForForwardDemand } from '../_shared/reports/market/openData/forwardDemand.pure.ts';
 import type { ProjectionState } from '../_shared/reports/market/openData/stateProjectionPublishers.pure.ts';
 import { runQAValidation } from '../_shared/compassQAValidator.ts';
@@ -139,13 +146,18 @@ import {
   describeSubjectPrice, subjectPriceLine, subjectPriceRules,
 } from '../_shared/reports/investment/subjectPrice.pure.ts';
 import {
+  composeGradeMethodology,
   composeStrategySections,
   readStrategyRecord,
   strategySectionRules,
 } from '../_shared/reports/investment/strategyPositions.pure.ts';
+import { restoreGradeMethodology } from '../_shared/reports/investment/gradeMethodologyOnRead.pure.ts';
+import { readConditionRecordsForReport } from '../_shared/reports/risk/conditionRecordRead.ts';
 import {
   headingSequence,
+  mergeBlocksIntoSections,
   placeBlocksByDeclaredOrder,
+  type MergeableBlock,
   type PlaceableBlock,
 } from '../_shared/reports/investment/documentPlacement.pure.ts';
 import { ENRICHMENT_STAMP } from '../_shared/reports/location/locationEnrichmentReuse.pure.ts';
@@ -156,8 +168,15 @@ import { readProjectionRegister } from '../_shared/reports/market/projectionRegi
 import { planningCouncilName } from '../_shared/reports/market/openData/projectionRegister.pure.ts';
 import type { SalesRegisterState } from '../_shared/reports/market/openData/salesRegister.pure.ts';
 import { describeLandArea } from '../_shared/reports/investment/landAreaScope.pure.ts';
+import {
+  INFRASTRUCTURE_REGISTER_HEADING,
+  INFRASTRUCTURE_REGISTER_SECTION,
+  PLANNING_REGISTER_HEADING,
+  PLANNING_REGISTER_SECTION,
+} from '../_shared/reports/investment/registerTables.pure.ts';
+import { DISCLOSURE_HOMES, elsewhereOnly, inHomeSection } from '../_shared/reports/adviserVoice.pure.ts';
 import { applyDisplayOverrides, buildAnnualCostOverrides, normalisePropertyType, toFiniteNumber } from '../_shared/reports/investment/overrides.pure.ts';
-import { composePropertySpecs } from '../_shared/reports/investment/propertyRecord.pure.ts';
+import { attributeTableYearBuilt, composePropertySpecs } from '../_shared/reports/investment/propertyRecord.pure.ts';
 import { reconcileNearestSchool, reconcileSchoolDistances } from '../_shared/reports/schoolDistance.pure.ts';
 import { reconcileFacts, factFindingToFlag } from '../_shared/reports/investment/factReconciliation.pure.ts';
 import { financeIdentityBreaches } from '../_shared/reports/metrics/propertyMetrics.pure.ts';
@@ -166,6 +185,19 @@ import {
   resolveRentalEvidence,
   statedYield,
 } from '../_shared/reports/investment/rentalEvidence.pure.ts';
+import { investmentReportMasthead } from '../_shared/reports/issuerIdentity.pure.ts';
+import { UPLOADED_DOCUMENT_MAX_BYTES } from '../_shared/reports/investment/uploadedDocumentText.pure.ts';
+import {
+  buildReportDocumentContext,
+  keptDocumentApplies,
+  type ReportDocumentContextInput,
+} from '../_shared/reports/investment/reportDocumentContext.pure.ts';
+import {
+  keepReportDocumentContext,
+  readReportDocumentContext,
+} from '../_shared/reports/investment/reportDocumentContextStore.ts';
+import { loadReportWriterIdentity } from '../_shared/reports/writerIdentity.ts';
+import { fillFirmToken, firmClause } from '../_shared/reports/writerFirm.pure.ts';
 const INTERNAL_EDGE_SECRET = (Deno.env.get('INTERNAL_EDGE_SECRET') || '').trim();
 
 // ============================================================================
@@ -1683,7 +1715,7 @@ VISUAL-FIRST RULES (CRITICAL):
 - Any "median grew from X to Y" / trend sentence MUST include either \`~~[…]~~\` inline or a \`::: stat\` callout nearby.
 - Any "subject vs suburb vs metro/state" comparison MUST use \`{{bars: Subject X, Suburb Y, Metro Z | title=…}}\`.
 - **A RATING YOU INVENTED MAY NOT BE DRAWN, IN ANY PRIMITIVE.** A 0-100 rating is a SCORE, and the only scores that exist are the ones supplied to you above — the Investment Score and the dimensions the engine actually scored. Do NOT mint a rating for appeal, suitability, confidence, affordability, land quality, certainty, risk, "focus", "emphasis" or any other attribute, and do NOT draw one as a \`{{gauge}}\`, a \`{{wheel}}\`, a \`{{bars}}\`, a \`{{heatmap}}\`, a \`{{radar}}\` or anything else. In particular: do NOT write \`max=100\` on a chart whose numbers you chose. Where no score was supplied, state the finding in WORDS and draw no chart of it. A number on a scale is read as a measurement however it is drawn, and the reader has no way to tell one you assigned from one that was calculated.
-- **AN ABSENCE MAY NOT BE RATED, IN ANY PRIMITIVE.** Where something was not assessed, not searched, not available or not held, it gets NO position on a scale — not the top of it, not the bottom of it, and never a convention that stands in for one. Do NOT write a legend such as \`Not assessed shown as 5\`, \`n/a = 0\` or \`unknown treated as 3\`: a number on a scale is read as a measurement, so an absence drawn at 5 is a reader being told this is a high risk. Leave the unmeasured item OUT of the chart and name it in the register or the prose, where \`Not assessed\` is a level in its own right. A chart that declares such a convention is withheld from the document in full, so the whole drawing is lost — including the items that were measured.
+- **AN ABSENCE MAY NOT BE RATED, IN ANY PRIMITIVE.** Where something was not assessed, not checked, not covered, not available or not held, it gets NO position on a scale — not the top of it, not the bottom of it, and never a convention that stands in for one. Do NOT write a legend such as \`Not assessed shown as 5\`, \`n/a = 0\` or \`unknown treated as 3\`: a number on a scale is read as a measurement, so an absence drawn at 5 is a reader being told this is a high risk. Leave the unmeasured item OUT of the chart and name it in the register or the prose, where \`Not assessed\` is a level in its own right. A chart that declares such a convention is withheld from the document in full, so the whole drawing is lost — including the items that were measured.
 - Any list of 3+ ranked metrics MUST be rendered as \`{{bars: …}}\` instead of a table — where the metrics are MEASURED quantities that came from the data supplied to you (distances, counts, prices, shares, times, rates), each carrying its own real unit. A list of qualities you are ranking yourself is not a set of metrics: write it as prose or as a table with the reasons in it.
 - Any "X of Y households / dwellings / buyers" stat MUST use \`{{pictograph: …}}\`.
 - Any composition / share-of-total (tenure mix, age bands, expense split, capital
@@ -1753,7 +1785,11 @@ function limitPromptContext(value: string, maxBytes: number, label: string, mode
   const originalBytes = byteLength(compacted);
   if (originalBytes <= maxBytes) return compacted;
 
-  const notice = `\n\n[${label} truncated from ${originalBytes.toLocaleString()} bytes to stay within Perplexity's ${PERPLEXITY_MESSAGE_HARD_LIMIT_BYTES / 1000}KB message limit. Prioritise extracted specifications and request fresh web research for missing details.]\n\n`;
+  // A figure trimmed from the record is not a figure to go and find: a web
+  // search is not a retrieval, and this notice used to send the model to one
+  // (the Environment section of 37 Bolin Street described BOCSAR's release
+  // from the web over a register that had answered).
+  const notice = `\n\n[${label} truncated from ${originalBytes.toLocaleString()} bytes to stay within Perplexity's ${PERPLEXITY_MESSAGE_HARD_LIMIT_BYTES / 1000}KB message limit. Use only the figures in front of you; where one this section needs is not here, leave it out rather than look for it.]\n\n`;
   const remaining = Math.max(0, maxBytes - byteLength(notice));
   let text: string;
   if (mode === 'head') {
@@ -1885,14 +1921,18 @@ ${sectionDef.id === 'section10' ? '10. MUST include the Investment Score Analysi
 - If a property is negatively geared, describe it honestly as "growth-focused with negative cashflow" — never as "balanced growth + income".
 - All time-sensitive economic data must include "as at [Month Year]".
 
-${EDITORIAL_PRIMITIVES_BLOCK}
+The visual shortcodes referred to above are defined in the system message.
 
 Generate the ${sectionDef.name} sections now:`;
   // Pinned context is never trimmed: its bytes come off the budget before the
   // base prompt is measured, and it is concatenated after the trim rather than
   // inside it. See the parameter's own note for what reached a client document
   // when this block was merely early in the base prompt.
-  const pinnedBlock = pinnedContext.trim() ? `\n\n---\n\n${pinnedContext.trim()}\n` : '';
+  // Only the registers this section's subject needs (`sectionPin.pure.ts`):
+  // handed all of them, the pin filled the budget and the evidence pack reached
+  // the model at about four per cent of its size.
+  const sectionPin = pinForSection(pinnedContext, sectionDef.registryId);
+  const pinnedBlock = sectionPin.trim() ? `\n\n---\n\n${sectionPin.trim()}\n` : '';
   const pinnedBytes = byteLength(pinnedBlock);
   const sectionInstructionBytes = byteLength(sectionInstructions);
   const basePromptBudget = Math.max(0, PERPLEXITY_SAFE_USER_MESSAGE_BYTES - sectionInstructionBytes - pinnedBytes - 2_000);
@@ -1942,12 +1982,23 @@ Generate the ${sectionDef.name} sections now:`;
     .join('\n\n---\n\n');
   const withSectionContract = (system: string): string =>
     sectionContractBlock ? `${system}\n\n---\n\n${sectionContractBlock}` : system;
+  /*
+   * The shortcode vocabulary travels in the SYSTEM message too, for the same
+   * reason the contract does. It is 13 KB of document rules that every section
+   * carried in its USER message, where every byte comes off the base prompt's
+   * budget — and on 25 Sep 2026 that budget was 16 KB of a 31.6 KB prompt on
+   * a WA run and 4 KB of 36 KB on a NSW one, so the evidence pack was cut to
+   * make room for a syntax reference. Moving it returns those bytes to the
+   * evidence; the model reads the same words either way. The compact prompt
+   * never carried it and still does not.
+   */
+  const editorialSystemBlock = `\n\n---\n\n${EDITORIAL_PRIMITIVES_BLOCK.trim()}`;
   const safeSystemMessage = withSectionContract(limitPromptContext(
     systemMessage,
-    Math.max(2_000, PERPLEXITY_SAFE_SYSTEM_MESSAGE_BYTES - byteLength(sectionContractBlock) - 200),
+    Math.max(2_000, PERPLEXITY_SAFE_SYSTEM_MESSAGE_BYTES - byteLength(sectionContractBlock) - byteLength(editorialSystemBlock) - 200),
     'System prompt',
     'head',
-  ));
+  ) + editorialSystemBlock);
   const emergencySectionPromptUnbounded = `Generate ONLY this investment report section for ${propertyAddress}: ${sectionDef.name}.
 
 Required headings:
@@ -2400,7 +2451,11 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     // UNIFIED DOCUMENT CONTENT: Accept both scrapedContent (URL scrape) AND pdfContent (PDF upload)
     // This ensures consistent content injection regardless of the input source
     const scrapedContent = propertyDetails?.scrapedContent || null;
-    const pdfContent = propertyDetails?.pdfContent || null;
+    // Text only: the form sends the document's words or nothing
+    // (`uploadedDocumentText.pure.ts`), and anything else is not a document.
+    const pdfContent = typeof propertyDetails?.pdfContent === 'string' && propertyDetails.pdfContent.trim()
+      ? propertyDetails.pdfContent
+      : null;
     const documentContent = scrapedContent || pdfContent || null; // Unified content variable
     
     const sourceUrl = propertyDetails?.sourceUrl || null;
@@ -3138,6 +3193,8 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             storedPacket: (priorRun?.data_packet ?? null) as Record<string, unknown> | null,
             subject: acquisitionSubject,
             nowMs: Date.now(),
+            // A planning answer read under another version is asked again.
+            planningAnswerVersion: PLANNING_ANSWER_VERSION,
           });
 
           if (Object.keys(plan.values).length > 0) {
@@ -3606,9 +3663,14 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         postcode,
         state,
       };
+      // What this generation has written decides whether a street point may
+      // stand: every section already written was measured from it, and a
+      // generation that has written nothing yet asks the geocoder again.
       const reuse = assessEnrichmentReuse(
         existingEnhancedFields.locationIntelligence,
         enrichmentSubject,
+        Date.now(),
+        { sectionsWritten: completedSectionIndices.length },
       );
       if (reuse.reuse) {
         locationEnrichmentReused = true;
@@ -4134,6 +4196,23 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         });
       }
 
+      // A planning answer adopted from an earlier invocation is a reading AT A
+      // POINT, and the point may have moved since: the enrichment above is
+      // placed again when a generation starts on a street point, and the
+      // geocoder now asks the address register about a remembered street.
+      // Where this run's point is not the one the answer was read at, the
+      // answer is dropped and asked again here — never kept, or the report
+      // would measure its amenities at one point and read its zone at another.
+      if (subjectCoordinate && reusePlan && alreadyHeld('planningData')
+          && !planningAnswerFitsPoint(enhancedData.planningData, subjectCoordinate)) {
+        console.log(
+          `♻️ The stored planning answer was read at a different point than this run's `
+          + `(${subjectCoordinate.precision} by ${subjectCoordinate.provider ?? 'unrecorded'}) — asking the registers again`,
+        );
+        enhancedData = { ...enhancedData, planningData: undefined };
+        reusePlan = withdrawReuse(reusePlan, 'planningData', 'point_changed');
+      }
+
       // ──────────────────────────────────────────────────────────────────
       // ONE WAVE, NOT FOUR QUEUES
       //
@@ -4233,7 +4312,15 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
                     precision: planningCoords!.precision,
                     source: planningCoords!.source,
                     provider: planningCoords!.provider,
+                    // So a later invocation can tell whether it is still
+                    // working from this point (`planningAnswerFitsPoint`).
+                    lat: planningCoords!.lat,
+                    lng: planningCoords!.lng,
                   },
+                  // …and under which answer version it was read, so a later
+                  // generation does not keep an answer an older service shaped
+                  // (`planningAnswerVersionOf`).
+                  answerVersion: PLANNING_ANSWER_VERSION,
                 },
               };
               console.log('✓ Planning data fetched:', { jurisdiction: planningBody.data.jurisdiction });
@@ -4633,6 +4720,10 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
           && typeof enhancedData.planningData?.parcel?.lga === 'string'
           ? enhancedData.planningData.parcel.lga.trim() || null
           : null,
+        trustedSa2: {
+          code: typeof subjectGeography?.sa2_code === 'string' ? subjectGeography.sa2_code : null,
+          name: typeof subjectGeography?.sa2_name === 'string' ? subjectGeography.sa2_name : null,
+        },
       });
       console.log(
         `[approvals] ${approvals.kind === 'series'
@@ -4676,6 +4767,19 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
 
       // Calculate investment score - property OR area scoring
       if (!isAreaReport && effectivePurchasePrice > 0) {
+        /*
+         * The building half of Property Risk: the condition records this
+         * property holds (`property_condition_records`), judged by the scoring
+         * service with `assessConditionRecord`. Read here because the service
+         * has no database handle of its own; an empty list, a table not yet
+         * applied or a failed read leaves the building question unanswered
+         * exactly as before, and never fails the report.
+         */
+        const conditionEvidence = await readConditionRecordsForReport(supabase, reportId);
+        console.log(
+          `🏠 Condition records: ${conditionEvidence.records.length}`
+          + (conditionEvidence.note ? ` (${conditionEvidence.note})` : ''),
+        );
         // Property-specific scoring
         try {
           console.log('📊 Investment scoring inputs (using effective values):');
@@ -4726,6 +4830,13 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               // Location's inputs may count. The service derives the
               // verification itself; nothing here asserts trust.
               locationSubject: enrichmentSubject,
+              // Property Risk (activated 28 Sep 2026): what the planning and
+              // hazard registers returned at this property, and the condition
+              // records it holds. The service judges both; nothing here
+              // asserts a score.
+              planningData: enhancedData.planningData ?? null,
+              conditionRecords: conditionEvidence.records,
+              conditionSubject: conditionEvidence.subject,
             })
           }, 'local', 'investment-scoring-service');
           
@@ -5070,6 +5181,10 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       cashRateTarget: (enhancedData as any)?.economics?.cashRateTarget ?? null,
       cashRateMonthlyAverage: null,
       capturedAt: new Date().toISOString(),
+      // The subject the enrichment was acquired for — `enrichmentSubject`'s
+      // own three fields, restated because that binding is not in scope here.
+      // A commute the stamp proves for it reaches the Transport section.
+      locationSubject: { address: formattedInput, postcode, state },
     });
     // Kept BEFORE the assignment below: `safeGeneration.enhancedData` is the
     // narrative input, and from here on `enhancedData.locationIntelligence` is
@@ -5081,6 +5196,9 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       `🛡️ Client-Safe Gate active (${safeGeneration.snapshot.assuranceVersion}) — `
       + `${removedForNarrative.length} disowned fact(s) withheld from the narrative`
       + (removedForNarrative.length ? `: ${removedForNarrative.map((r) => r.path).join(', ')}` : '')
+      + (safeGeneration.admitted.length
+        ? `; admitted on the acquisition stamp: ${safeGeneration.admitted.map((a) => a.path).join(', ')}`
+        : '')
       + `; demographics ${safeGeneration.demographicsKept ? 'retained' : 'withheld'}.`,
     );
 
@@ -6053,6 +6171,11 @@ Produce a comprehensive statewide investment analysis following the structure ab
         transport: transportCountReading(
           (measuredLocationIntelligence ?? enhancedData.locationIntelligence)?.transport,
         ),
+        // The public projects publishers named near the property — the same
+        // two readings the infrastructure chapter prints, so the SWOT cannot
+        // say "no opportunity identified" beside a chapter naming a hospital
+        // under construction four kilometres away (37 Bolin Street).
+        outlook: { projects: strategyOutlookProjects(infrastructure, nearbyPublishedProjects) },
       },
     );
     /*
@@ -6154,9 +6277,14 @@ Produce a comprehensive statewide investment analysis following the structure ab
       '1. **Name the publisher and its currency**, which the table beside you',
       '   already carries — "the NSW Planning Portal\'s Principal Planning',
       '   Layers, current at 7 August 2026" — or',
-      '2. **Name the report\'s own section**: these tables are reproduced in',
-      '   full at the end of this report under *Planning controls and',
-      '   development registers*.',
+      // The headings the page actually carries: each table closes the
+      // chapter it is the evidence for (`mergeBlocksIntoSections`), so a
+      // pointer to one section "at the end of this report" named a heading
+      // the document only has when that chapter is absent.
+      '2. **Name the heading it is set out under**: the planning controls close',
+      `   the ${DISCLOSURE_HOMES.planning.sectionName} chapter under *${PLANNING_REGISTER_HEADING}*,`,
+      `   and the development activity closes the ${DISCLOSURE_HOMES.infrastructure.sectionName}`,
+      `   chapter under *${INFRASTRUCTURE_REGISTER_HEADING}*.`,
       '',
       'The same rule covers every other source. A source is named in the',
       'sentence — "listed on realestate.com.au" — and never as a bracketed',
@@ -6164,11 +6292,81 @@ Produce a comprehensive statewide investment analysis following the structure ab
       'in prose, it has no source, and it does not belong in the report.',
     ].join('\n');
 
+    /*
+     * The physical attributes on record, and the rule that binds them — ONE
+     * composition for the base prompt and the pin.
+     *
+     * The rule already forbade a bedroom or bathroom count, a year built or a
+     * condition that is not in the table. It sat in the base prompt, which on
+     * 25 Sep 2026 was trimmed on every section call, and the pin carried
+     * neither: the 60 Lawley Street Compass then described the house as
+     * "recorded as a three-bedroom, one-bathroom House" with "a reported build
+     * year of 1979", attributed to "the supplied property records", while the
+     * record held none of the three (the first invocation logged
+     * `Beds: undefined` and `Baths: undefined`, and no stored override carries
+     * them). They came from a live search. The permitted form is stated beside
+     * the prohibition, because a prohibition alone is one a model routes
+     * around; an operator who records the rooms makes the table carry them.
+     */
+    const recordedAttributesBlock = `| Property Characteristic | Value |
+|------------------------|-------|
+${propertyTypeLabel ? `| Property Type | ${propertyTypeLabel} |` : ''}
+${[
+  // Each of these rows used to carry a placeholder the model was asked to
+  // expand: `'Estimated XXX-XXX m² (typical for suburb)'`,
+  // `'X (typical for property type)'`, `'X-X spaces'`, `'Estimated XXXX-XXXX'`
+  // and, for condition, the flat assertion `'Good to excellent'` about a
+  // property nobody had inspected. Measured across the corpus: 169 documents
+  // print an "Estimated N–N m²" land size and 201 assert
+  // `| Condition | Good to excellent |`. On three sampled reports the stated
+  // range is roughly DOUBLE the land size the operator had recorded, and the
+  // council rates, land tax and rent comparables are then reasoned from it —
+  // `38 Larcom Crescent` says ~500 m² throughout against a recorded 255.
+  [landAreaReading?.label ?? 'Land size', landAreaReading?.value ?? null],
+  ['Bedrooms', effectiveBeds || null],
+  ['Bathrooms', effectiveBaths || null],
+  ['Parking', mergedOverrides.carSpaces ?? propertyDetails?.carSpaces ?? null],
+  // An existing property's year may be filed under `constructionYear` (a
+  // listing extraction puts it there) and the stored spec reads it; a new
+  // build's construction year is the 10 Year Cash Flow's, and stays out.
+  ['Year Built', attributeTableYearBuilt({
+    buildType: effectiveBuildType,
+    overrides: mergedOverrides,
+    details: propertyDetails,
+    storedYearBuilt: propertySpecs.year_built,
+  })],
+  ['Condition', propertyDetails?.condition ?? null],
+].filter(([, v]) => v !== null && v !== undefined && v !== '')
+ .map(([k, v]) => `| ${k} | ${v} |`).join('\n')}
+${isStrataProperty && propertyTypeLabel ? `| Strata Type | ${propertyTypeLabel} within strata scheme |` : ''}
+${landAreaReading?.note ? `\n_${landAreaReading.note}_\n` : ''}
+
+The table above contains every physical attribute on record for this property.
+Do not add a row to it, and do not state a land size, floor area, bedroom or
+bathroom count, parking count, year built or condition that is not in it — not
+as an estimate, not as a range, and not as what is "typical for the suburb".
+Where a feature is absent you may say it is to be confirmed, and you may
+discuss the suburb's housing stock in general terms provided you do not
+attribute any of it to this property. Nobody has inspected this property, so
+no statement about its condition, its compliance or its maintenance history
+is available to you. Describe the property's features in your own sentences;
+do not reproduce this table under a heading of its own, and never call a
+feature a "recorded attribute".
+
+An attribute you find in a listing or any other search is not a record: never
+describe it as recorded, supplied or on record. Where the discussion needs one
+that is absent above, write that it is to be confirmed against the contract,
+the listing and the building inspection.
+`;
+
     const pinnedPlanningContext = [
-      '# Zoning & Planning Analysis — the controls retrieved for this property',
+      // The attributes on record ride the pin: see `recordedAttributesBlock`.
+      pinGroup('attributes', '# The property — every physical attribute on record'),
+      recordedAttributesBlock,
+      pinGroup('planning', '# Zoning & Planning Analysis — the planning controls for this property'),
       planningControlsTable,
       planningSectionRules,
-      '# Infrastructure & Development Outlook — what the registers answered',
+      pinGroup('infrastructure', '# Infrastructure & Development Outlook — what the published sources show'),
       infrastructureTable,
       infrastructureSectionRules,
       /*
@@ -6199,14 +6397,14 @@ Produce a comprehensive statewide investment analysis following the structure ab
        * The four absences are four different sentences and only the read
        * knows which one is true.
        */
-      approvalsFactBlocks(
+      pinGroup('approvals', approvalsFactBlocks(
         enhancedData.buildingApprovals?.kind === 'series'
           ? summariseApprovals(enhancedData.buildingApprovals.series)
           : null,
         enhancedData.buildingApprovals?.kind === 'absent'
           ? enhancedData.buildingApprovals.absence
           : 'not_loaded',
-      ),
+      )),
       /*
        * Forward demand rides the pin for the same reason: a held projection
        * is the AUTHORITY for every projected figure the report may state, and
@@ -6216,20 +6414,40 @@ Produce a comprehensive statewide investment analysis following the structure ab
        * sentence that may be written instead. One composer
        * (`forwardDemandBlocks`) for the section and the pin.
        */
-      '# Forward demand — the population projection this report holds',
+      pinGroup('forwardDemand', '# Forward demand — the population projection this report holds'),
       forwardDemandBlocks({
         state: trustedStateForForwardDemand(subjectGeography, abbreviateState),
         forwardDemandProjection: enhancedData.forwardDemandProjection ?? null,
       }),
+      /*
+       * The measured population trend and the transport reading ride the pin
+       * for the same reason, measured on 60 Lawley Street, Spalding (25 Sep
+       * 2026): every section logged `trimmed true`, the WA run kept about half
+       * of its base prompt and a NSW run in the same minute about a ninth, and
+       * both blocks sit in the trimmed middle. The document then stated one
+       * population figure three different ways, said "no public transport"
+       * two pages from a bus stop, and filled the transport chapter from a
+       * council profile. Each is the AUTHORITY for its figures; each block is
+       * a few hundred bytes. The same composers the base prompt uses, so the
+       * two copies cannot disagree.
+       */
+      ...(() => {
+        const population = populationTrendPin(enhancedData);
+        return population
+          ? [pinGroup('population', '# Population — the measured trend for the surrounding statistical area'), population]
+          : [];
+      })(),
+      pinGroup('transport', '# Getting about — the transport reading this report holds'),
+      transportFactBlocks(enhancedData.locationIntelligence),
       // Recorded from official publications rather than retrieved from a
       // register, and pinned for the same reason everything else here is:
       // it is the AUTHORITY for a set of figures and dates, and a rule that
       // survives while its evidence is trimmed is the §6 defect.
       ...(publishedProjectBlock
-        ? ['# Major public projects near this property — recorded from their publisher\'s own pages',
+        ? [pinGroup('publishedProjects', '# Major public projects near this property — recorded from their publisher\'s own pages'),
           publishedProjectBlock]
         : []),
-      publishedProjectSectionRules,
+      pinGroup('publishedProjects', publishedProjectSectionRules),
       // The market evidence rides the same pin, for the same reason: the base
       // prompt measured 92,129 bytes on 262 Pallas Street and every section
       // trimmed it to ~52,830, so anything that is the AUTHORITY for a figure
@@ -6237,14 +6455,24 @@ Produce a comprehensive statewide investment analysis following the structure ab
       // concatenated after the trim. A rule that survives while its evidence
       // is cut is the §6 defect, and it produced a report that named no source
       // because it had none to name.
-      '# Market Evidence — the figures retrieved for this market',
+      pinGroup('market', '# Market Evidence — the published figures for this market'),
       marketTable,
       marketSectionRules,
+      /*
+       * Recorded crime, the climate readings and the hazard maps, handed to the
+       * sections that state them (`sectionPin.pure.ts`). They were in the base
+       * prompt alone, and on 37 Bolin Street the base prompt reached the model
+       * at about four per cent of its size, so the Environment section wrote
+       * that no local crime total was held over a register that had answered.
+       */
+      pinGroup('environment', '# Environment — recorded crime, climate and the hazard maps'),
+      crimeStatBlocks(enhancedData),
+      climateStatBlocks(enhancedData, hazardReadings(planningFacts)),
       // The subject's own price rides the same pin as the market's figures,
       // for the same reason: it is the authority for a number, and an
       // authority that `limitPromptContext` can cut while its rule survives is
       // §6's defect.
-      subjectPriceSectionRules,
+      pinGroup('rules', subjectPriceSectionRules),
       /*
        * The strategy sections are composed and appended to the document, so
        * the model never writes them — but it does write the sections AROUND
@@ -6293,8 +6521,12 @@ Produce a comprehensive statewide investment analysis following the structure ab
     ].join('\n\n');
     console.log(`📌 Pinned planning/infrastructure/market context: ${pinnedPlanningContext.length} chars`);
 
-    const _brandPp = await getBrandConfig();
-    const propertyPrompt = `You are an expert Australian property investment analyst for ${_brandPp.companyName}.
+    // Who the writer works for (`writerFirm.pure.ts`): on the prime the name
+    // it has always been told; on a clone the business the document is issued
+    // under, never the house — and no business at all where that is the
+    // platform, whose disclaimer says it prepared none of this.
+    const _writerPp = await loadReportWriterIdentity();
+    const propertyPrompt = `You are an expert Australian property investment analyst${firmClause(_writerPp.firm, 'for')}.
 
 You write one section at a time. The section you are asked for, and its length,
 are set out at the end of this prompt; everything before that is the document's
@@ -6304,7 +6536,7 @@ contract and the evidence you may draw on.
 
 ${propertyTypeRule}
 
-${compassDocumentContract(_brandPp.companyName)}
+${compassDocumentContract(_writerPp.firm ?? '')}
 
 # ═══════════════════════════════════════════════════════════════════════
 # THE EVIDENCE PACK — everything this report is allowed to state
@@ -6324,40 +6556,7 @@ the property.
 
 **Address:** ${formattedInput}
 
-| Property Characteristic | Value |
-|------------------------|-------|
-${propertyTypeLabel ? `| Property Type | ${propertyTypeLabel} |` : ''}
-${[
-  // Each of these rows used to carry a placeholder the model was asked to
-  // expand: `'Estimated XXX-XXX m² (typical for suburb)'`,
-  // `'X (typical for property type)'`, `'X-X spaces'`, `'Estimated XXXX-XXXX'`
-  // and, for condition, the flat assertion `'Good to excellent'` about a
-  // property nobody had inspected. Measured across the corpus: 169 documents
-  // print an "Estimated N–N m²" land size and 201 assert
-  // `| Condition | Good to excellent |`. On three sampled reports the stated
-  // range is roughly DOUBLE the land size the operator had recorded, and the
-  // council rates, land tax and rent comparables are then reasoned from it —
-  // `38 Larcom Crescent` says ~500 m² throughout against a recorded 255.
-  [landAreaReading?.label ?? 'Land size', landAreaReading?.value ?? null],
-  ['Bedrooms', effectiveBeds || null],
-  ['Bathrooms', effectiveBaths || null],
-  ['Parking', mergedOverrides.carSpaces ?? propertyDetails?.carSpaces ?? null],
-  ['Year Built', mergedOverrides.yearBuilt ?? propertyDetails?.yearBuilt ?? null],
-  ['Condition', propertyDetails?.condition ?? null],
-].filter(([, v]) => v !== null && v !== undefined && v !== '')
- .map(([k, v]) => `| ${k} | ${v} |`).join('\n')}
-${isStrataProperty && propertyTypeLabel ? `| Strata Type | ${propertyTypeLabel} within strata scheme |` : ''}
-${landAreaReading?.note ? `\n_${landAreaReading.note}_\n` : ''}
-
-The table above contains every physical attribute on record for this property.
-Do not add a row to it, and do not state a land size, floor area, bedroom or
-bathroom count, parking count, year built or condition that is not in it — not
-as an estimate, not as a range, and not as what is "typical for the suburb".
-Where an attribute is absent you may say it is not recorded, and you may
-discuss the suburb's housing stock in general terms provided you do not
-attribute any of it to this property. Nobody has inspected this property, so
-no statement about its condition, its compliance or its maintenance history
-is available to you.
+${recordedAttributesBlock}
 
 ---
 
@@ -6413,12 +6612,13 @@ ${(() => {
   const list = top.length ? top : all;
   if (list.length) parts.push(`\n| School | Distance | Type |\n|---|---|---|\n${rows(list)}`);
   if (!parts.length) {
-    return 'No school register reading was retrieved for this property. Say that no school data '
-      + 'was retrieved; do NOT name a school, state a distance, a rating or a catchment, and do '
-      + 'NOT describe the area as well or poorly served by schools.';
+    return `Schools near this property were not assessed for this report. ${inHomeSection('amenity')} say `
+      + `once that the schools near the property were not assessed and that the state education department's `
+      + `school finder shows them; ${elsewhereOnly('amenity')} Do NOT name a school, state a distance, a rating `
+      + 'or a catchment, and do NOT describe the area as well or poorly served by schools.';
   }
   return `${parts.join('\n')}\n\nEvery school named in the report must be one of these, at the distance stated here. `
-    + 'A school rating is not retrieved and must not be stated.';
+    + 'No school rating is held for this report, and none may be stated.';
 })()}
 
 ---
@@ -6437,7 +6637,7 @@ ${transportFactBlocks(enhancedData.locationIntelligence)}
 
 ## Environment and climate
 
-${climateStatBlocks(enhancedData)}
+${climateStatBlocks(enhancedData, hazardReadings(planningFacts))}
 
 ---
 
@@ -6521,7 +6721,14 @@ Instead, focus EXCLUSIVELY on area-level analysis:
       console.log('✅ Area-level exclusion instructions injected for scope:', reportScope);
     }
     
-    // If document content is available (from URL scrape OR PDF upload), prepend it to the prompt for context
+    // The document's words (a URL scrape OR a PDF upload), for every section of
+    // this generation. Only the first invocation is handed them: a continuation
+    // sends `{ reportId, propertyAddress, continueFrom }` and nothing else. So the
+    // first keeps the context it composes, and an invocation handed no document
+    // of its own reads the kept copy (`reportDocumentContext.pure.ts`) — every
+    // section is then written from the same evidence, and a continuation's
+    // prompt states the document exactly as the first invocation's did.
+    let documentContext: ReportDocumentContextInput | null = null;
     if (documentContent) {
       const contentSourceLabel = fromPdfUpload ? 'PDF Document' : (sourceUrl || 'Property Listing');
       console.log(`📄 Injecting ${fromPdfUpload ? 'PDF' : 'scraped'} property listing content into prompt...`);
@@ -6560,6 +6767,48 @@ Instead, focus EXCLUSIVELY on area-level analysis:
         ? `\n\n**EXTRACTED PROPERTY SPECIFICATIONS:**\n${extractedDetailsSummary.join('\n')}\n`
         : '';
       
+      // An uploaded document is bounded from its FRONT and to less than a
+      // listing page: a brochure ends on the builder's other estates and other
+      // homes, which a head-and-tail cut would keep (`uploadedDocumentText.pure.ts`).
+      // A listing page is cut as it always was.
+      const boundedDocumentText = fromPdfUpload && !scrapedContent
+        ? limitPromptContext(String(documentContent), UPLOADED_DOCUMENT_MAX_BYTES, 'PDF listing content', 'head')
+        : limitPromptContext(
+          String(documentContent),
+          DOCUMENT_CONTEXT_MAX_BYTES,
+          `${fromPdfUpload ? 'PDF' : 'Scraped'} listing content`,
+          'head-tail'
+        );
+      documentContext = {
+        source: fromPdfUpload ? 'pdf' : 'listing',
+        sourceLabel: contentSourceLabel,
+        text: boundedDocumentText,
+        extractedDetails: extractedDetailsText,
+      };
+      if (reportId && supabaseClient) {
+        const kept = await keepReportDocumentContext(supabaseClient, buildReportDocumentContext({
+          ...documentContext,
+          reportId,
+          address: propertyAddress,
+          keptAt: new Date().toISOString(),
+        }));
+        console.log(`📄 Document context ${kept ? 'kept' : 'NOT kept'} for the rest of this generation`);
+      }
+    } else if (reportId && supabaseClient) {
+      const kept = await readReportDocumentContext(supabaseClient, reportId);
+      if (kept && keptDocumentApplies(kept, { reportId, address: propertyAddress })) {
+        documentContext = kept;
+        console.log(`📄 Document context read from the first invocation (${kept.source}, ${kept.text.length} characters)`);
+      } else if (kept) {
+        console.warn('📄 A kept document context names another address — not used');
+      }
+    }
+
+    if (documentContext) {
+      // Everything below reads the context and nothing else, so a continuation
+      // composes exactly what the first invocation composed.
+      const docFromPdf = documentContext.source === 'pdf';
+
       // Use different instructions based on content source
       /**
        * ONE list, and it defers to the record on the attributes the record
@@ -6623,8 +6872,8 @@ the asset.`;
        * and it is the same rule `claimSupportRules` states for the prose —
        * one rule, in the two places the model reads.
        */
-      const sourceLabel = fromPdfUpload ? 'PDF-UPLOADED LISTING' : 'URL-SCRAPED LISTING';
-      const sourceNoun = fromPdfUpload ? 'document' : 'listing';
+      const sourceLabel = docFromPdf ? 'PDF-UPLOADED LISTING' : 'URL-SCRAPED LISTING';
+      const sourceNoun = docFromPdf ? 'document' : 'listing';
       const sourceSpecificInstructions = `**CRITICAL INSTRUCTIONS FOR THIS ${sourceLabel}:**
 1. The above content came from the property ${sourceNoun}, and is the primary source for its DESCRIPTION, features and selling points
 2. ${RECORD_GOVERNS_PHYSICAL_ATTRIBUTES}
@@ -6633,20 +6882,17 @@ the asset.`;
 5. If a price is mentioned (guide, asking, or range), use it for financial calculations
 6. Renovations, improvements and unique characteristics the ${sourceNoun} names are carried the same way, under the same attribution, and a reader is told the property has not been inspected for this report
 7. Consider the property description when assessing investment potential
-8. Verify the suburb/postcode from the ${sourceNoun} for accurate location analysis${fromPdfUpload ? `
+8. Verify the suburb/postcode from the ${sourceNoun} for accurate location analysis${docFromPdf ? `
 9. For new builds: Use the land + build package price for total property value` : ''}`;
       
-      const limitedDocumentContent = limitPromptContext(
-        String(documentContent),
-        DOCUMENT_CONTEXT_MAX_BYTES,
-        `${fromPdfUpload ? 'PDF' : 'Scraped'} listing content`,
-        'head-tail'
-      );
+      const contentSourceLabel = documentContext.sourceLabel;
+      const limitedDocumentContent = documentContext.text;
+      const extractedDetailsText = documentContext.extractedDetails;
       const documentContextSection = `
 ---
 **PROPERTY LISTING DATA (SOURCE: ${contentSourceLabel})**
 
-The following is the available content ${fromPdfUpload ? 'extracted from the property listing PDF' : 'scraped from the property listing'}. Use it for the property's DESCRIPTION, features and the specific information the listing mentions — not for its physical attributes, which the specification table below governs. If this block was truncated, fill gaps from the record and fresh web research without inventing facts:
+The following is the available content ${docFromPdf ? 'extracted from the property listing PDF' : 'scraped from the property listing'}. Use it for the property's DESCRIPTION, features and the specific information the listing mentions — not for its physical attributes, which the specification table below governs. If this block was truncated, fill gaps from the record and fresh web research without inventing facts:
 
 ${limitedDocumentContent}
 ${extractedDetailsText}
@@ -6658,7 +6904,7 @@ ${sourceSpecificInstructions}
 
 `;
       prompt = documentContextSection + prompt;
-      console.log(`✓ ${fromPdfUpload ? 'PDF' : 'Scraped'} content injected with extracted details. New prompt length:`, prompt.length);
+      console.log(`✓ ${docFromPdf ? 'PDF' : 'Scraped'} content injected with extracted details. New prompt length:`, prompt.length);
     } else {
       console.log('ℹ️ No document content available - generating report from property address and web search only');
     }
@@ -7105,19 +7351,19 @@ ${limitedTemplateContext}
      */
     // ========== END RAG TEMPLATE CONTEXT INJECTION ==========
     
-    const _brandSys = await getBrandConfig();
-    const _brandName = _brandSys.companyName;
+    const _writerSys = await loadReportWriterIdentity();
+    const _atFirm = firmClause(_writerSys.firm, 'at');
     const areaSystemMessages: Record<string, string> = {
-      'suburb': `You are a trusted property investment advisor at ${_brandName} writing suburb-level analysis for clients who may not have a finance background. Lead with clear, plain-English insights and use supporting data selectively — never dump raw statistics without context. Explain what numbers mean in practical terms (e.g., "growing 40% faster than the metro average, which signals strong demand"). Use tables only for direct comparisons, not for listing single values. Every section should feel like advice from a knowledgeable friend, not an academic paper. Still be thorough and accurate — but prioritise readability and actionable takeaways.`,
-      'postcode': `You are a trusted property investment advisor at ${_brandName} writing postcode-zone analysis for clients who may not have a finance background. Compare suburbs within the zone using clear narrative language. Use comparison tables sparingly and only when they genuinely aid understanding. Lead each section with the key insight before supporting it with data. Explain implications in practical terms — what does this mean for an investor considering this area?`,
-      'statewide': `You are a trusted property investment advisor at ${_brandName} writing statewide macro analysis for clients who may not have a finance background. Provide a bird's-eye view of the state's property market in accessible, conversational language. Use data to support narrative points, not as the centrepiece. Focus on what matters to investors: where the opportunities are, what risks to watch, and how macro trends translate to real-world investment decisions.`,
+      'suburb': `You are a trusted property investment advisor${_atFirm} writing suburb-level analysis for clients who may not have a finance background. Lead with clear, plain-English insights and use supporting data selectively — never dump raw statistics without context. Explain what numbers mean in practical terms (e.g., "growing 40% faster than the metro average, which signals strong demand"). Use tables only for direct comparisons, not for listing single values. Every section should feel like advice from a knowledgeable friend, not an academic paper. Still be thorough and accurate — but prioritise readability and actionable takeaways.`,
+      'postcode': `You are a trusted property investment advisor${_atFirm} writing postcode-zone analysis for clients who may not have a finance background. Compare suburbs within the zone using clear narrative language. Use comparison tables sparingly and only when they genuinely aid understanding. Lead each section with the key insight before supporting it with data. Explain implications in practical terms — what does this mean for an investor considering this area?`,
+      'statewide': `You are a trusted property investment advisor${_atFirm} writing statewide macro analysis for clients who may not have a finance background. Provide a bird's-eye view of the state's property market in accessible, conversational language. Use data to support narrative points, not as the centrepiece. Focus on what matters to investors: where the opportunities are, what risks to watch, and how macro trends translate to real-world investment decisions.`,
     };
-    const systemMessageDefault = areaSystemMessages[reportScope] || `You are a trusted property investment advisor at ${_brandName} writing a premium client-facing report. Your reader is a potential property investor who may not have a finance or economics background.
+    const systemMessageDefault = areaSystemMessages[reportScope] || `You are a trusted property investment advisor${_atFirm} writing a premium client-facing report. Your reader is a potential property investor who may not have a finance or economics background.
 
 WRITING STYLE RULES:
 1. Lead every section with a clear, plain-English insight or takeaway BEFORE presenting any data
 2. Use a warm, professional, consultative tone — like a knowledgeable advisor speaking to a client
-3. State what a figure means in the sentence that introduces it. NEVER add a paragraph after a table or data point that explains it — no "What This Means", "Why this matters", "What to watch", "Key takeaway" or "NPC view", as a heading, a bold lead-in or a bare line
+3. State what a figure means in the sentence that introduces it. NEVER add a paragraph after a table or data point that explains it — no "What This Means", "Why this matters", "What to watch", "Key takeaway" or ${_writerSys.deployment.prime ? '"NPC view"' : '"Our view"'}, as a heading, a bold lead-in or a bare line
 4. Use tables ONLY for direct comparisons or financial breakdowns (max 5-6 rows). Never use a table when a well-written sentence would suffice
 5. Replace jargon with plain language or briefly define technical terms on first use (e.g., "gross rental yield — the annual rent as a percentage of the property price")
 6. Use contextual comparisons to make numbers meaningful (e.g., "This is 15% above the state average" rather than just stating the number)
@@ -7171,8 +7417,7 @@ This report should feel like a polished advisory document that inspires confiden
         : null;
       const rawValue = pick ? (typeof pick.value === 'string' ? pick.value : (pick.value?.text ?? pick.value?.value ?? null)) : null;
       if (rawValue && typeof rawValue === 'string' && rawValue.trim()) {
-        systemMessage = rawValue
-          .replace(/\{\{brand_name\}\}/g, _brandName)
+        systemMessage = fillFirmToken(rawValue, _writerSys.firm)
           .replace(/\{\{scope\}\}/g, reportScope || '');
         systemMessageOverrideScope = pickSource;
         console.log(`✏️  system prompt override from ${pickSource}`);
@@ -7185,7 +7430,7 @@ This report should feel like a polished advisory document that inspires confiden
     console.log('=== MULTI-SECTION REPORT GENERATION ===');
     console.log('Report scope:', reportScope);
     console.log('Base prompt length:', prompt.length);
-    console.log('Document content included:', !!documentContent);
+    console.log('Document content included:', !!documentContext, documentContext && !documentContent ? '(kept from the first invocation)' : '');
     console.log('Template context included:', !!templateContext);
     console.log('Content source:', contentSource);
     console.log('Continuation mode:', isContinuation);
@@ -7209,16 +7454,14 @@ This report should feel like a polished advisory document that inspires confiden
         combinedContent = combinedContent.trim() + '\n\n---\n\n';
       }
     } else {
-      // Fresh generation: Add report header
-      const reportHeader = `# ${_brandName.toUpperCase()}
-
-YOUR DEDICATED PROPERTY PARTNER
-
-# Investment Report: ${formattedInput}
-
----
-
-`;
+      // Fresh generation: Add report header. On the prime this is the block it
+      // has always written; on a clone it names the issuer and leaves out
+      // NPC's tagline (`investmentReportMasthead`).
+      const reportHeader = investmentReportMasthead(
+        _writerSys.issuerName,
+        formattedInput,
+        _writerSys.deployment,
+      );
       combinedContent = reportHeader;
     }
 
@@ -7454,8 +7697,24 @@ YOUR DEDICATED PROPERTY PARTNER
       ? Math.max(...completedSectionIndices) + 1
       : 0;
 
+    // ONE RECOMMENDATION. The verdict the cover and the verdict page will print
+    // is read here, from the score this invocation's sections are written from
+    // (after the evidence-basis decision above), by the rule the page reads it
+    // with — and handed to the two sections that state a recommendation, so the
+    // prose cannot issue a second one. 60 Lawley Street (25 Sep 2026) printed
+    // STRONG BUY on its cover and "Proceed with caution" in its text. See
+    // `recommendationContract` in `compassSectionContract.ts`.
+    const issuedRec = issuedRecommendation(enhancedData?.investmentScore);
+    if (issuedRec) console.log(`🧾 Recommendation the document issues: ${issuedRec.action}${issuedRec.grade ? ` (${issuedRec.grade})` : ''}`);
+
     for (let i = 0; i < filteredSections.length; i++) {
-      const sectionDef = filteredSections[i];
+      const baseSectionDef = filteredSections[i];
+      // The recommendation travels in the section's contract — the system
+      // message, never trimmed. Empty for every section but the two.
+      const recommendationRules = recommendationContract(baseSectionDef.registryId, issuedRec);
+      const sectionDef = recommendationRules
+        ? { ...baseSectionDef, contract: [baseSectionDef.contract, recommendationRules].filter(Boolean).join('\n\n') }
+        : baseSectionDef;
       const _chunkStart = Date.now();
 
       // CONTINUATION MODE: Skip already-completed sections
@@ -8314,36 +8573,73 @@ YOUR DEDICATED PROPERTY PARTNER
      * of evidence. Only the PLACEMENT changed.
      */
     const placeableBlocks: PlaceableBlock[] = [];
+    /*
+     * Evidence that belongs INSIDE a chapter the model wrote.
+     *
+     * The registers were one section of their own at order 89 — after the
+     * Final Recommendation. On the 60 Lawley Street Compass (25 Sep 2026)
+     * the planning chapter on page 10 pointed the reader to page 21, past the
+     * recommendation that rests on it. Each half now closes the chapter it is
+     * the evidence for: the controls close Zoning, Planning and Development
+     * Considerations, the project and development registers close
+     * Infrastructure and Growth Context. `mergeBlocksIntoSections` falls back
+     * to the old placement wherever that chapter is absent, so nothing is
+     * ever lost — and the grade's method goes to the appendix, where the
+     * owner's structure puts methodology.
+     */
+    const mergeableBlocks: MergeableBlock[] = [];
 
     if (!isAreaReport) {
-      let registerBlock = `## Planning controls and development registers\n\n`
-        + `### Planning controls retrieved for this property\n\n${planningControlsTable}\n\n`
-        + `### Infrastructure and development retrieved for this property\n\n${infrastructureTable}\n`;
-      // Appended verbatim for the reason the two tables above are: asking a
+      // Appended verbatim for the reason the tables always were: asking a
       // model to reproduce a table is how a table comes back paraphrased, and
       // every date and figure here is one an authority published.
+      const planningPart = `### ${PLANNING_REGISTER_HEADING}\n\n${planningControlsTable}\n`;
+      let infrastructurePart = `### ${INFRASTRUCTURE_REGISTER_HEADING}\n\n${infrastructureTable}\n`;
       if (publishedProjectBlock) {
-        registerBlock += `\n### Major public projects near this property\n\n`
+        infrastructurePart += `\n#### Major public projects near this property\n\n`
           + `${publishedProjectBlock}\n`
-          + `**What this register covers.** ${PUBLISHED_PROJECT_COVERAGE.join(' ')}\n`;
+          + `**What this list covers.** ${PUBLISHED_PROJECT_COVERAGE.join(' ')}\n`;
       }
       console.log(
         `📋 Composed retrieved planning + infrastructure evidence `
         + `(${planningControlsTable.length + infrastructureTable.length + publishedProjectBlock.length} chars)`,
       );
-      placeableBlocks.push({
-        heading: 'Planning controls and development registers',
-        markdown: registerBlock,
-        /*
-         * The registry declares no order for this one - it is retrieved
-         * evidence under a heading of its own rather than a section the
-         * registry owns - so the order is stated here. 89 puts it last
-         * among the content, immediately before `provenance` at 90:
-         * after the recommendation that rests on it, before the
-         * disclaimer that closes the document.
-         */
-        order: 89,
+      /*
+       * The fallback order is the old one: 89 puts a register with no chapter
+       * to close last among the content, immediately before `provenance` at
+       * 90 — after the recommendation that rests on it, before the disclaimer
+       * that closes the document.
+       */
+      mergeableBlocks.push({
+        into: 'planning',
+        markdown: planningPart,
+        fallback: {
+          heading: PLANNING_REGISTER_SECTION,
+          markdown: `## ${PLANNING_REGISTER_SECTION}\n\n${planningPart}`,
+          order: 89,
+        },
       });
+      mergeableBlocks.push({
+        into: 'infrastructure',
+        markdown: infrastructurePart,
+        fallback: {
+          heading: INFRASTRUCTURE_REGISTER_SECTION,
+          markdown: `## ${INFRASTRUCTURE_REGISTER_SECTION}\n\n${infrastructurePart}`,
+          order: 89,
+        },
+      });
+      const methodology = composeGradeMethodology(compassStrategyRecord);
+      if (methodology) {
+        mergeableBlocks.push({
+          into: 'provenance',
+          markdown: methodology,
+          fallback: {
+            heading: 'How this grade was reached',
+            markdown: methodology.replace(/^###\s+/, '## '),
+            order: 89,
+          },
+        });
+      }
     }
 
     /*
@@ -8379,6 +8675,33 @@ YOUR DEDICATED PROPERTY PARTNER
         `Placed ${placeableBlocks.length} composed block(s) by declared order `
         + `(${before} -> ${after.length} sections; closes on ${after[after.length - 1] ?? 'nothing'})`,
       );
+    }
+    // After the sections exist, so the SWOT and the other composed sections
+    // are already in place and a register never lands in front of them.
+    if (mergeableBlocks.length) {
+      const before = headingSequence(reportContent).length;
+      reportContent = mergeBlocksIntoSections(reportContent, mergeableBlocks, 'compass');
+      const after = headingSequence(reportContent);
+      console.log(
+        `Merged ${mergeableBlocks.length} evidence block(s) into their chapters `
+        + `(${before} -> ${after.length} sections; closes on ${after[after.length - 1] ?? 'nothing'})`,
+      );
+    }
+    /*
+     * The grade's method is the record's, whatever the document already held.
+     *
+     * `mergeBlocksIntoSections` skips a block whose heading is already present,
+     * so a section carrying "How this grade was reached" from anywhere else
+     * kept that copy and the composed one never landed. The stored document is
+     * written with the complete section the record composes, the same rule
+     * every reader applies on the way out (`gradeMethodologyOnRead.pure.ts`).
+     */
+    {
+      const method = restoreGradeMethodology(reportContent, enhancedData.investmentScore);
+      if (method.restored) {
+        reportContent = method.markdown;
+        console.log('Grade method restored from the record');
+      }
     }
 
 

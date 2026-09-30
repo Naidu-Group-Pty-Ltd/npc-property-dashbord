@@ -33,9 +33,11 @@
  * **Exposure and evidence are different questions and never one column.** A
  * level (`Low` / `Moderate` / `High` / `Not assessed`) describes the EXPOSURE;
  * an evidence reading (`Verified` / `Unverified` / `Conflicting` / `Not
- * searched`) describes the RETRIEVAL behind the row. Collapsing them is how a
+ * checked`) describes the CHECK behind the row. Collapsing them is how a
  * completed search came to read as a clear result, and a test asserts the two
- * vocabularies share no value.
+ * vocabularies share no value. (The last reading said `Not searched` until
+ * 26 Sep 2026 — the same absence in the machine room's word;
+ * `adviserVoice.pure.ts`.)
  *
  * **A register cell is a phrase, never a paragraph.** The explanation has a
  * place now, so a cell that carries one is a cell in the wrong container. The
@@ -67,7 +69,22 @@ export const RISK_DETAIL_PARTS = ['Finding', 'Evidence', 'Implication', 'Next ch
  * Exposure vocabulary. `Not assessed` is a level and never a reassurance —
  * §9 of `PLANNING_CONTROLS_IN_THE_REPORT.md` pays for that in full.
  */
-export const RISK_EXPOSURE_LEVELS = ['Low', 'Moderate', 'High', 'Not assessed'] as const;
+export const RISK_EXPOSURE_LEVELS = ['Low', 'Moderate', 'High', 'Not assessed', 'Mapped', 'Not mapped'] as const;
+
+/**
+ * The two hazard words, which say what a statutory map SHOWED rather than
+ * rating anything.
+ *
+ * "Not mapped" is permitted only for a hazard whose map is the complete
+ * statutory designation for the jurisdiction (`HAZARD_DESIGNATION` in
+ * `_shared/planning/hazardReadings.pure.ts`) — the NSW Bush Fire Prone Land
+ * map, certified by the RFS Commissioner under s. 146(2) of the EP&A Act, is
+ * the case that forced it: the 37 Bolin Street suite printed bushfire "Not
+ * assessed" beside a planning register that had checked that map at the lot.
+ * Neither word is a position on a scale, so like "Not assessed" neither draws
+ * a severity bar or a place on a chart.
+ */
+export const HAZARD_MAP_LEVELS = ['Mapped', 'Not mapped'] as const;
 
 /**
  * The level that is not a position.
@@ -81,7 +98,30 @@ export const RISK_EXPOSURE_LEVELS = ['Low', 'Moderate', 'High', 'Not assessed'] 
 export const NOT_ASSESSED = RISK_EXPOSURE_LEVELS[3];
 
 /** Evidence vocabulary. Shares no value with the exposure levels, by test. */
-export const RISK_EVIDENCE_READINGS = ['Verified', 'Unverified', 'Conflicting', 'Not searched'] as const;
+export const RISK_EVIDENCE_READINGS = ['Verified', 'Unverified', 'Conflicting', 'Not checked'] as const;
+export type RiskEvidenceReading = typeof RISK_EVIDENCE_READINGS[number];
+
+/**
+ * What the register's row for a subject IS, where this report holds no reading
+ * it may be rated from — handed over by the block that owns the subject.
+ *
+ * `riskRegisterInstruction` already says `Not assessed` is the level wherever
+ * the evidence is something this report did not confirm. The 60 Lawley Street
+ * Compass (25 Sep 2026) rated crime **High** from a council profile found by
+ * search, and called it "Verified", beside an Environment section that said —
+ * correctly — that no crime rating is stated; and it rated transport reliance
+ * **Moderate** from a places-directory count of zero stations, beside a
+ * Transport section that said the count must not be read as an absence. A
+ * general rule lost to a specific cue in front of the model. So the block that
+ * tells the sections what they may not say tells the register what its row
+ * reads, in the register's own two vocabularies — the permitted form beside
+ * the prohibition, which is what a model does not route around.
+ */
+export function unratedRiskRow(subject: string, evidence: RiskEvidenceReading, because: string): string {
+  return `In the Risk Dashboard's register the ${subject} row reads "${NOT_ASSESSED}" with evidence "${evidence}": `
+    + `${because} A row is rated only from a reading this report holds; a profile, report or page found by `
+    + 'search may be cited as context where the subject is discussed, and is never a rating and never "Verified".';
+}
 
 /**
  * The most words a register cell may carry.
@@ -238,13 +278,13 @@ export function riskRegisterInstruction(): string {
     `columns — ${cols} — written with pipes and a rule row, like this and not as a bullet list,`,
     'a heading line or a run of sentences:',
     `"| ${cols} |" then "| ${rule} |" then one row per risk, for example`,
-    '"| Bushfire | Not assessed | Not searched |".',
+    '"| Bushfire | Not assessed | Not checked |".',
     `Every register cell is a phrase, never a sentence and never a paragraph: keep each under`,
     `${RISK_REGISTER_CELL_MAX_WORDS} words, because the explanation belongs in the block rather`,
     'than in the grid.',
     // ── The detail blocks, shown rather than described ─────────────────────
     'Then a DETAIL BLOCK for each MATERIAL risk: a bolded risk name followed by four labelled',
-    `lines — ${RISK_DETAIL_PARTS.join(', ')} — stating what was found, which register or record`,
+    `lines — ${RISK_DETAIL_PARTS.join(', ')} — stating what was found, which source or record`,
     'it came from and when, what it means for this purchase, and what the reader should obtain',
     'or verify. For example: "**Bushfire**" then "- Finding: …" then "- Evidence: …" then',
     '"- Implication: …" then "- Next check: …".',
@@ -258,19 +298,22 @@ export function riskRegisterInstruction(): string {
     'cannot find.',
     // ── The two vocabularies ───────────────────────────────────────────────
     `EXPOSURE (${RISK_EXPOSURE_LEVELS.join(' / ')}) describes the risk.`,
+    `${HAZARD_MAP_LEVELS.map((l) => `"${l}"`).join(' and ')} are for a natural hazard alone and say what its`,
+    'statutory map showed at the property; use them only where the planning rules hand you that row, and never',
+    'as a rating or on a chart.',
     `EVIDENCE (${RISK_EVIDENCE_READINGS.join(' / ')}) states EVIDENCE HELD, never reassurance:`,
     '"Verified" only where a dated, parcel-level source is cited; "Unverified" while the required',
-    'check is still to be done; "Conflicting" where sources disagree (say which); "Not searched"',
-    'where no register was reached. It describes the RETRIEVAL behind the row and never the',
+    'check is still to be done; "Conflicting" where sources disagree (say which); "Not checked"',
+    'where no source was consulted. It describes the CHECK behind the row and never the',
     'conclusion drawn from it, so it may vouch for a layer reading and may not vouch for the',
     'rating beside it. They are two columns and must never be collapsed into one, and never',
     'write a chip against the LEVEL.',
     // ── The absence ────────────────────────────────────────────────────────
     `"${NOT_ASSESSED}" is the level wherever the evidence for that row is something this report`,
-    'did not retrieve — a register that was asked and returned nothing has measured the SEARCH,',
-    'not the area, and a register that publishes nothing for this jurisdiction was never asked at',
-    'all; neither can support Low, Minimal, Limited, Negligible or Favourable, and an inference',
-    "from the area's general character is not a retrieval either.",
+    'did not confirm — a published map that was checked and shows nothing describes the CHECK,',
+    'not the area, and a source that publishes nothing for this jurisdiction was never consulted',
+    'at all; neither can support Low, Minimal, Limited, Negligible or Favourable, and an inference',
+    "from the area's general character is not a check either.",
     `An exposure of "${NOT_ASSESSED}" belongs in the register and NEVER on a chart: a risk nobody`,
     'measured gets no position on a scale — not the top of it, not the bottom of it, and never a',
     'legend standing in for one, because a number on a scale is read as a measurement however it',

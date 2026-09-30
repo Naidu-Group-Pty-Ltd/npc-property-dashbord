@@ -71,6 +71,7 @@ import {
 import { findDocumentContradictions } from './reports/investment/documentConsistency.pure.ts';
 import { findFiguresWithoutABasis } from './reports/investment/evidenceClaims.pure.ts';
 import { promotePipedPseudoTables } from './reports/investment/pseudoTables.pure.ts';
+import { platformVocabularyCount, platformVocabularyIn } from './reports/adviserVoice.pure.ts';
 import {
   SECTION_REGISTRY as CANONICAL_SECTIONS,
   sectionIdForHeading,
@@ -98,6 +99,13 @@ const TABLE_PROMISE = /\b(?:table|matrix|grid|schedule)\s+(?:below|that follows|
 const PAIR_HEADING = /^(?:#{2,4}\s+|\*\*)?strengths?\s*(?:and|&)\s*(?:limitations?|weaknesses|considerations|watch[- ]?points)\b/i;
 /** The second half of that pair, as a sub-heading or a bold label. */
 const PAIR_SECOND_LABEL = /^(?:#{3,5}\s+|\*\*)?(?:limitations?|weaknesses|considerations|watch[- ]?points)\b\*{0,2}:?\s*$/i;
+/**
+ * The same label as a RUN-IN lead, with its content on the same line —
+ * `**Watch points:** single bathroom; 1979 construction`. It carries the
+ * second list, and reading only a label on a line of its own reported that
+ * list as missing on a section that had written it.
+ */
+const PAIR_SECOND_LEAD_IN = /^(?:[-*+]\s+)?(?:\*\*)?(?:limitations?|weaknesses|considerations|watch[- ]?points)\b\*{0,2}\s*:\s*\*{0,2}\s*\S/i;
 
 
 /**
@@ -585,10 +593,10 @@ export function runQAValidation(
     if (pairAt < 0) continue;
     const rest = lines.slice(pairAt + 1);
     const secondAt = rest.findIndex((l) => PAIR_SECOND_LABEL.test(l.trim()));
-    const secondHasContent = secondAt >= 0 && rest.slice(secondAt + 1).some((l) => {
+    const secondHasContent = (secondAt >= 0 && rest.slice(secondAt + 1).some((l) => {
       const t = l.trim();
       return t && !t.startsWith('#') && !PAIR_SECOND_LABEL.test(t);
-    });
+    })) || rest.some((l) => PAIR_SECOND_LEAD_IN.test(l.trim()));
     if (!secondHasContent) {
       findings.push({
         rule: 'unbalanced-pair',
@@ -718,8 +726,9 @@ export function runQAValidation(
       message: `${clearances.length} sentence${clearances.length === 1 ? '' : 's'} state that a hazard or `
         + 'planning control does NOT apply, on the authority of a listing portal or of neighbouring '
         + 'listings. A listing is not a planning authority, and a neighbouring parcel is not this one. '
-        + 'The only absence this report may repeat is a register that was asked and matched nothing, '
-        + 'stated as "Checked and not mapped at this coordinate" and naming the register.',
+        + 'The only absence this report may repeat is a published map that was checked and shows nothing '
+        + 'over the property, stated as the planning table states it ("Checked and not mapped at the '
+        + 'property") and naming the map.',
     });
   }
   if (portalCitations.length) {
@@ -807,6 +816,30 @@ export function runQAValidation(
         + `${cell.words} words (the register's cells hold ${RISK_REGISTER_CELL_MAX_WORDS}). A register `
         + 'is scanned, not read: put the finding, the evidence, what it means for this purchase and '
         + 'the next check in a detail block under the table, and leave a phrase in the cell.',
+    });
+  }
+
+  /*
+   * ── 17. The document describes how it was made ────────────────────────
+   *
+   * The 60 Lawley Street Compass (25 Sep 2026) said "register" 110 times,
+   * "retrieved" 38 times, "coordinate" 17 and "this platform" 11 — every
+   * sentence true, none of them about the property. The writer is told the
+   * adviser's voice (`adviserVoiceRules`) and the composed blocks are held to
+   * it by a spec; this is the measurement of what reached the page.
+   *
+   * REPORTED, never removed: a phrase cut out of a sentence leaves a sentence
+   * that no longer says what it said.
+   */
+  const machineRoom = platformVocabularyCount(markdown);
+  if (machineRoom > 0) {
+    findings.push({
+      rule: 'platform-vocabulary',
+      severity: 'warning',
+      message: `The document describes how it was produced ${machineRoom} time${machineRoom === 1 ? '' : 's'} `
+        + `(${platformVocabularyIn(markdown).map((p) => `"${p}"`).join(', ')}). A client document speaks as the `
+        + 'adviser, about the property: name a source by its publisher and product, and say how the client confirms '
+        + 'what could not be.',
     });
   }
 

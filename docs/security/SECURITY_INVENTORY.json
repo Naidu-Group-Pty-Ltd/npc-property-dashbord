@@ -498,6 +498,7 @@
     "permissions.ts": [
       "_shared/authz.ts",
       "airtable-proxy/index.ts",
+      "builder-stock-marketplace/index.ts",
       "create-advanced-client/index.ts",
       "estimate-commercial-caprate/index.ts",
       "get-call-recording/index.ts",
@@ -571,6 +572,7 @@
       "finance-portal-snoozes/index.ts",
       "google-fonts-catalog/index.ts",
       "google-places-autocomplete/index.ts",
+      "hero-image-studio/index.ts",
       "import-clients-from-ghl/index.ts",
       "market-news-archive-v2/index.ts",
       "market-qa-digest-runner/index.ts",

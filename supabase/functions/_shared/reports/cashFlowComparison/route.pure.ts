@@ -6,7 +6,13 @@
  * four reads, a render, an upload and two writes, none of which a unit test can
  * reach.
  */
+import {
+  readTemplateDesignReference,
+  type DesignEcho,
+  type TemplateDesignReference,
+} from '../../reportDesign/templateDesign.pure.ts';
 import { MAX_COMPARED_PROPERTIES, MIN_COMPARED_PROPERTIES } from './payload.pure.ts';
+import { joinPlaces, readableFileName, storageSafeFileName } from '../readableFileName.pure.ts';
 
 /** One property, as the caller sends it. */
 export interface ComparisonRequestProperty {
@@ -34,6 +40,12 @@ export interface ComparisonRenderRequest {
   analysis: unknown;
   /** `VOL. 2026 · ED. 08`. Cosmetic; the caller may supply it. */
   edition: string | null;
+  /**
+   * The design to draw the document in (`templateDesign.pure.ts`): a catalogue
+   * design or a template row, or null for the standard design. The words,
+   * figures and pages are the report's own whatever is named here.
+   */
+  design: TemplateDesignReference | null;
 }
 
 export type RequestParse =
@@ -98,6 +110,10 @@ export function parseRenderRequest(body: unknown): RequestParse {
     ? b.investorProfile.trim().slice(0, 40)
     : '';
   const edition = typeof b.edition === 'string' ? b.edition.trim().slice(0, 40) : '';
+  // A design is optional, and a malformed one is refused rather than ignored,
+  // so a caller that meant to ask for one is told it did not get it.
+  const design = readTemplateDesignReference(b.design);
+  if (design.ok === false) return { ok: false, error: design.error };
 
   return {
     ok: true,
@@ -109,32 +125,22 @@ export function parseRenderRequest(body: unknown): RequestParse {
       // not generate one. `toAnalysis` returns null for each.
       analysis: b.analysis ?? null,
       edition: edition || null,
+      design: design.reference,
     },
   };
 }
 
 /**
- * The filename.
+ * The filename: `Cash Flow Comparison - <the properties> - 28 Sep 2026.pdf`.
  *
- * There is no single address to name it after, and a date alone does not
- * separate two comparisons run on the same day — which is the normal case, since
- * the whole point of the screen is to try different peer sets. So the primary
- * report's reference is appended, and it is the same reference printed on the
- * cover foot, which makes "which PDF is this?" answerable from either end.
- *
- * **This diverges from the legacy filename**, which is
- * `cash-flow-comparison-5-properties-2026-08-02.pdf`
- * (`CashFlowAnalysisModal.tsx:1922`) — lowercase, hyphenated, no reference. That
- * generator is the only one in the suite producing that shape; every other
- * migrated format uses `Title_Case_With_Underscores`, and two files in a
- * client's downloads folder differing only in case is a support ticket. The
- * divergence is deliberate and recorded in the contract document.
+ * It was `Cash_Flow_Comparison_3_Properties_2026-09-28_1A2B3C4D.pdf` — a count
+ * and a hash, which says nothing about which comparison it is. The properties
+ * are the subject, so they are the topic (`readableFileName.pure.ts`); two
+ * renders on one day never collide in storage, because the key carries a random
+ * segment, and the reference is still on the cover foot.
  */
-export function comparisonFileName(propertyCount: number, isoDate: string, reference: string): string {
-  const date = /^\d{4}-\d{2}-\d{2}/.exec(isoDate)?.[0] ?? '';
-  const ref = (reference || '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 12);
-  const plural = propertyCount === 1 ? 'Property' : 'Properties';
-  return `Cash_Flow_Comparison_${propertyCount}_${plural}_${date}_${ref}.pdf`;
+export function comparisonFileName(shortAddresses: readonly string[], isoDate: string): string {
+  return readableFileName({ name: 'Cash Flow Comparison', topic: joinPlaces(shortAddresses), isoDate });
 }
 
 /** The first eight characters of the primary report's id, uppercased. */
@@ -158,7 +164,9 @@ export function comparisonStoragePath(
   uniqueId: string,
 ): string {
   const day = /^\d{4}-\d{2}-\d{2}/.exec(isoDate)?.[0] ?? 'undated';
-  return `cash-flow-comparison/${primaryReportId}/${day}/${uniqueId}-${fileName}`;
+  // The readable name is what a person is handed; the key keeps to characters
+  // no URL encoder rewrites.
+  return `cash-flow-comparison/${primaryReportId}/${day}/${uniqueId}-${storageSafeFileName(fileName)}`;
 }
 
 /** How long a returned link lives. Long enough to email, short enough to expire. */
@@ -180,4 +188,10 @@ export interface ComparisonRenderResponse {
   /** Which of the eight model sections did not arrive. Empty with no analysis. */
   missingSections: string[];
   durationMs: number;
+  /**
+   * The design the document was drawn in, or why the one asked for was not
+   * used — in that case the document is the standard design. Null when none
+   * was asked for.
+   */
+  design: DesignEcho | null;
 }

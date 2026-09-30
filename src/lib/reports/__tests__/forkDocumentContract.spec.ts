@@ -466,7 +466,12 @@ describe('the resale section, which was routed nowhere', () => {
      * companion note is for — and the Financial copy carries the projection.
      */
     expect(pldd).not.toMatch(/Modelled value|The modelled position/);
-    expect(pldd).toContain('Days on market, time to sell and buyer depth are not measured');
+    // The limit is stated about the registers read, not about the whole
+    // document — a Market Positioning chapter may quote a portal's own figure
+    // (60 Lawley Street, 25 Sep 2026) — and the Due Diligence copy no longer
+    // introduces a projection it does not carry.
+    expect(pldd).toContain('None of the sources checked for this report holds days on market, time to sell or buyer depth');
+    expect(pldd).not.toContain('What the position looks like at a future year');
     // The Financial report carries the projection itself.
     expect(docs.financial.markdown).toContain('Resale Liquidity & Exit Strategy');
     expect(docs.financial.markdown).toMatch(/Modelled value|accepted CGR assumption/);
@@ -556,5 +561,73 @@ describe('a fork may lose a heading; it may never lose a body', () => {
     const b = await compose({ strategy: strategyRecord() });
     expect(a.dueDiligence.markdown).toBe(b.dueDiligence.markdown);
     expect(a.financial.markdown).toBe(b.financial.markdown);
+  });
+});
+
+describe('the Financial SWOT is composed from the record, not the scorer’s free-text lists', () => {
+  it('replaces the chapter under the same heading, once', async () => {
+    const docs = await compose({
+      strategy: strategyRecord(),
+      financialScore: { totalScore: 61, strengths: ['Measured demand in this market is soft'] },
+    });
+    const md = docs.financial.markdown;
+    const heading = '## Financial SWOT: Returns, Risk & Holding Capacity';
+    expect(md.split(heading)).toHaveLength(2);
+    const swot = md.slice(md.indexOf(heading)).split(/\n## /)[0];
+    expect(swot).toContain('### What this rests on');
+    expect(swot).not.toContain('Measured demand in this market is soft');
+  });
+});
+
+describe('the Financial report opens on the money, not a third copy of the location case', () => {
+  const sectionOf = (md: string, heading: string) => {
+    const at = md.indexOf(`## ${heading}`);
+    return at < 0 ? '' : md.slice(at).split(/\n## /)[0];
+  };
+
+  it('writes the decision summary, the inputs and the rent chapter from the calculation', async () => {
+    const md = (await compose({ strategy: strategyRecord() })).financial.markdown;
+    const summary = sectionOf(md, 'Client Investment Decision Summary');
+    expect(summary).toContain('| The purchase in figures |');
+    expect(summary).not.toMatch(/Prose for/);
+    expect(sectionOf(md, 'Financial Input Snapshot')).toContain('| Input | Value used |');
+    const rent = sectionOf(md, 'Vacancy Risk, Tenant Income & Rent Sustainability');
+    expect(rent).toContain('| Rent and vacancy |');
+    expect(rent).not.toMatch(/Prose for/);
+  });
+
+  it('writes the market positioning from the record, with no verdict between price and median', async () => {
+    const md = (await compose({ strategy: strategyRecord() })).financial.markdown;
+    const market = sectionOf(md, 'Price, Rent & Yield Market Positioning');
+    expect(market).toContain('| Measure | Figure | Source |');
+    expect(market).not.toMatch(/Prose for/);
+    expect(market).not.toMatch(/\b(?:undervalued|overvalued|below the median|bargain)\b/i);
+  });
+
+  it('never sends the reader of the Financial Analysis Report to the Financial Analysis Report', async () => {
+    const md = (await compose({ strategy: strategyRecord() })).financial.markdown;
+    expect(md).not.toMatch(/Financial Analysis Report's own ledger/);
+  });
+});
+
+describe('the lens line is said once, as a statement about the document', () => {
+  it('opens the first lens section of the Due Diligence document and no other', async () => {
+    const out = await compose({ strategy: strategyRecord() });
+    const md = out.dueDiligence.markdown;
+    const lens = /This report reads the property and its locality/g;
+    expect((md.match(lens) ?? []).length).toBe(1);
+    expect(md).not.toMatch(/Reading this through a/);
+    expect(md).not.toMatch(/focus on liveability/);
+  });
+
+  it('keeps an operator\'s reworded lens once too', async () => {
+    const { lensOnce } = await import('../../../../supabase/functions/_shared/reports/investment/forkSplit.pure');
+    const lens = '_Custom lens._';
+    const out = lensOnce([
+      { ordinal: 4, body: `${lens}\n\nFour.` },
+      { ordinal: 3, body: `${lens}\n\nThree.` },
+      { ordinal: 5, body: 'Five.' },
+    ], lens);
+    expect(out.map((s) => s.body)).toEqual([`${lens}\n\nThree.`, 'Four.', 'Five.']);
   });
 });

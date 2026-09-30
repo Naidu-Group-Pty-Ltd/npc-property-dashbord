@@ -36,9 +36,9 @@
 import type { BrandLockupProps } from '../../reportDesign/primitives.pure.ts';
 import {
   closeChapter,
+  KEEP_TOGETHER_CLASS,
   escapeHtml,
   openChapter,
-  renderBandedMatrix,
   renderCallout,
   renderChapterHeader,
   renderCompanyPage,
@@ -60,6 +60,10 @@ import type { CompanyBlock, CompanyDisclaimer } from '../../reportDesign/company
 import { contentsEntriesFor, REPORT_ARCHETYPES } from '../../reportDesign/structure.pure.ts';
 import type { ReportBrandSnapshot } from '../../reportDesign/snapshot.pure.ts';
 import { resolveSnapshotBrand } from '../../reportDesign/documentBrand.pure.ts';
+import {
+  withDesignOptions,
+  type ReportTemplateDesign,
+} from '../../reportDesign/templateDesign.pure.ts';
 import type { Measure } from '../../reportDesign/measure.pure.ts';
 import { formatAmount, formatMeasure } from '../../reportDesign/measure.pure.ts';
 
@@ -75,6 +79,7 @@ import {
   rankedReturnChart,
 } from './charts.pure.ts';
 import { formatReportDate as formatPreparedOn } from '../reportDate.pure.ts';
+import { joinPlaces } from '../readableFileName.pure.ts';
 
 const ARCHETYPE = REPORT_ARCHETYPES['cash-flow-comparison'];
 
@@ -333,13 +338,17 @@ function entrySection(cf: CashFlowComparison): string {
     )
     : '';
 
-  return table + costBreakdown + renderSidenote(
+  const note = renderSidenote(
     'Why capital in matters more than price',
     p('Return on capital divides what a property makes by what the investor '
       + 'actually put in — deposit plus the costs of buying. Two properties at the '
       + 'same price can need very different amounts of cash to acquire, and the '
       + 'cheaper one to enter is not always the cheaper one to own.'),
   );
+  // The note is the section's last words and the next section opens the long
+  // edge, so on its own it turned a portrait page alone. Bound to the short
+  // table before it (`KEEP_TOGETHER_CLASS`), the two move together.
+  return table + `<div class="${KEEP_TOGETHER_CLASS}">${costBreakdown}${note}</div>`;
 }
 
 /** The year columns, shared by both matrices. Alignment is guaranteed upstream. */
@@ -379,13 +388,28 @@ function measureMatrix(
   // whose posture is equal peers would also read as "this is the answer". The
   // marker belongs on the column headers of the side-by-side tables, where it
   // cannot be mistaken for arithmetic.
-  return renderBandedMatrix(
-    rowLabel,
-    periodsOf(cf),
-    cf.properties.map((x) => ({ label: x.shortAddress, values: of(x) })),
-    { caption },
+  // The table only: the chapter that holds it opens on the landscape page
+  // (`LANDSCAPE_SECTIONS`), so both of a section's matrices share one sheet under
+  // their heading. Each used to open a landscape page of its own through
+  // `renderBandedMatrix`, which put a heading alone on a portrait page and then
+  // one three-row table per landscape sheet — four sheets for two sections.
+  const periods = periodsOf(cf);
+  return renderDataTable(
+    [
+      { key: 'label', label: rowLabel, align: 'left' },
+      ...periods.map((p, i) => ({ key: `p${i}`, label: p, align: 'right' as const })),
+    ],
+    cf.properties.map((x) => {
+      const row: Record<string, string> = { label: x.shortAddress };
+      of(x).forEach((v, i) => { row[`p${i}`] = v; });
+      return row;
+    }),
+    { caption, signedKeys: periods.map((_, i) => `p${i}`) },
   );
 }
+
+/** The sections whose tables are a year per column, and so open the long edge. */
+const LANDSCAPE_SECTIONS: ReadonlySet<string> = new Set(['cash-flow-matrix', 'position-matrix']);
 
 /** The cash-flow matrices: what each property costs or returns, year by year. */
 function cashFlowMatrixSection(cf: CashFlowComparison): string {
@@ -749,9 +773,16 @@ export interface RenderComparisonInput {
   confidentiality?: string | null;
 }
 
-/** The cover title: a count and the places, since there is no single subject. */
+/**
+ * The cover title: the properties, since they are the subject.
+ *
+ * It was "3 properties, 10 years" — a count and a term under an eyebrow that
+ * already says what kind of document this is. The street lines say which
+ * comparison it is; the term moves to the cover's meta.
+ */
 export function comparisonTitle(cf: CashFlowComparison): string {
-  return `${cf.properties.length} properties, ${cf.meta.termYears} years`;
+  return joinPlaces(cf.properties.map((x) => x.shortAddress), 3)
+    || `${cf.properties.length} properties, ${cf.meta.termYears} years`;
 }
 
 /** The body — cover, contents, sections, closing — without the stylesheet. */
@@ -765,6 +796,7 @@ export function renderComparisonBody(input: RenderComparisonInput): string {
     edition: input.edition ?? null,
     meta: [
       { label: 'Properties', value: cf.properties.map((x) => x.shortAddress).join(' · ') },
+      { label: 'Term', value: cf.meta.termYears ? `${cf.meta.termYears} years` : '' },
       { label: 'Investor profile', value: cf.meta.investorProfileLabel },
       { label: 'Prepared on', value: formatPreparedOn(cf.meta.preparedOn) },
       ...(cf.meta.clientName ? [{ label: 'Prepared for', value: cf.meta.clientName }] : []),
@@ -789,7 +821,17 @@ export function renderComparisonBody(input: RenderComparisonInput): string {
   const body = comparisonSections(cf).map((section, index) => {
     const inner = SECTION_BODY[section.id]?.(cf, input.palette) ?? '';
     const number = String(index + 1).padStart(2, '0');
-    return openChapter(DOCUMENT_NAME, number, section.title)
+    // Sections run on under one another (`RUN_ON_CHAPTER_CLASS`): twenty-two
+    // sheets for three properties was a page per section, several of them a
+    // heading or one callout. The year-by-year matrices open the long edge with
+    // their heading on it; the page change breaks there on its own.
+    return openChapter(
+      DOCUMENT_NAME,
+      number,
+      section.title,
+      LANDSCAPE_SECTIONS.has(section.id) ? 'landscape-table' : 'body',
+      { runOn: index > 0 },
+    )
       + renderChapterHeader({
         number,
         title: section.title,
@@ -807,6 +849,14 @@ export function renderComparisonBody(input: RenderComparisonInput): string {
 
   return cover + contents + body + closing;
 }
+
+/**
+ * A comparison's tables are short — one row per property — and one split across
+ * a page reads as two tables. A table longer than a page still breaks: `avoid`
+ * is a preference WeasyPrint gives up rather than overflow.
+ */
+const COMPARISON_CSS = `
+  .table-block { break-inside: avoid; }`;
 
 /**
  * The whole document, ready to POST to the render service.
@@ -829,7 +879,7 @@ export function renderComparisonDocument(input: RenderComparisonInput): string {
       palette: input.palette,
       options: input.options ?? null,
       masthead: input.masthead,
-    }),
+    }) + COMPARISON_CSS,
     bodyHtml: renderComparisonBody(input),
   });
 }
@@ -846,6 +896,13 @@ export interface RenderComparisonFromBrandInput {
   options?: Partial<ReportDesignOptions> | null;
   edition?: string | null;
   reference?: string | null;
+  /**
+   * A chosen template's design (`templateDesign.pure.ts`). Its palette, faces
+   * and page treatment replace the brand's palette; every word on every page is
+   * still this composer's. Absent, and the document is the standard one byte
+   * for byte.
+   */
+  design?: ReportTemplateDesign | null;
 }
 
 export interface ComparisonRenderResult {
@@ -866,13 +923,13 @@ export function renderComparisonFromBrand(
   return {
     html: renderComparisonDocument({
       comparison: input.comparison,
-      palette: brand.palette,
+      palette: input.design?.palette ?? brand.palette,
       company: brand.company,
       masthead: brand.masthead,
       lockup: brand.lockup,
       heroDataUri: brand.heroDataUri,
       confidentiality: brand.confidentiality,
-      options: input.options ?? null,
+      options: withDesignOptions(input.options, input.design),
       edition: input.edition ?? null,
       reference: input.reference ?? null,
     }),

@@ -75,8 +75,7 @@ describe('the line a reader and the model both see', () => {
   it('carries the figure and whose it is', () => {
     expect(subjectPriceLine(describeSubjectPrice(ANNABELLE)))
       .toBe('**Purchase price this analysis is modelled on:** $1,490,000 — recorded by the adviser for this '
-        + 'assessment — it is the figure every projection, the loan and the lending ratio in the Financial '
-        + 'Analysis Report are built on.');
+        + 'assessment — the figure every projection, the loan and the lending ratio are built on.');
   });
 
   it('says not recorded rather than printing a zero', () => {
@@ -97,7 +96,7 @@ describe('the rules stop a second price', () => {
       'estimated value', 'recent sale price']) {
       expect(rules, shape).toContain(shape);
     }
-    expect(rules).toMatch(/that\s+belief is not a retrieval/);
+    expect(rules).toMatch(/that\s+belief is not a source/);
   });
 
   it('permits a comparison against a SOURCED median, with its limitations', () => {

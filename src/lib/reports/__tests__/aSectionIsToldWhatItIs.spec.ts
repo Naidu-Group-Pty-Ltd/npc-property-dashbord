@@ -155,7 +155,12 @@ describe('what a section is told now', () => {
   it('keeps the rules the tier has and invents none for a tier that has none', () => {
     expect(rules).toMatch(/## HARD EXCLUSIONS \(Compass/);
     expect(rules).toMatch(/## CONSISTENCY CHECKS/);
-    expect(rules).toMatch(/\*\*Proceed\*\*, \*\*Proceed with caution\*\*, or \*\*Not suitable\*\*/);
+    // RENEGOTIATED 25 Sep 2026: the rule is ONE recommendation. The three
+    // adviser labels this line pinned moved to `recommendationContract`, which
+    // hands them to the two recommendation sections only where the page prints
+    // no verdict (`oneRecommendation.spec.ts`) — the 60 Lawley Street Compass
+    // printed STRONG BUY on its cover and "Proceed with caution" in its text.
+    expect(rules).toMatch(/## RECOMMENDATION FORMAT\nThe document makes ONE recommendation\./);
     expect(documentRules('financial-analysis')).toBe('');
   });
 
@@ -208,8 +213,12 @@ describe('the generator sends it where nothing can trim it', () => {
      * message over its 70,000-byte ceiling, and the final safety trim keeps
      * the TAIL — cutting the planning controls table at the head of the pin.
      */
+    // The pin is narrowed to the section's own groups (sectionPin.pure.ts),
+    // and nothing else is added to it.
+    const scopeLine = body.split('\n').find((l) => /const sectionPin = /.test(l)) ?? '';
+    expect(scopeLine).toMatch(/pinForSection\(pinnedContext, sectionDef\.registryId\)/);
     const pinLine = body.split('\n').find((l) => /const pinnedBlock = /.test(l)) ?? '';
-    expect(pinLine).toMatch(/pinnedContext\.trim\(\)/);
+    expect(pinLine).toMatch(/sectionPin\.trim\(\)/);
     expect(pinLine).not.toMatch(/contract|correction/);
   });
 

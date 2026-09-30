@@ -43,6 +43,7 @@ import { rentIsEstablished } from './rentalEvidence.pure.ts';
 import {
   composeScoreBreakdownSection,
   composeSwotSection,
+  composeVerdictSection,
 } from './scoreSections.pure.ts';
 
 export interface ComposedChapter {
@@ -100,6 +101,149 @@ const chapter = (
   return { ordinal, heading, markdown };
 };
 
+// ── Chapters 1, 2 and 7 — the Financial report's own opening ────────────────
+//
+// The 37 Bolin Street Financial Analysis (27 Sep 2026) opened on three
+// sections routed verbatim from the Compass: its executive summary under
+// "Client Investment Decision Summary", its property section under "Financial
+// Input Snapshot", and its whole demand chapter — population, Census,
+// employment, transport — under "Vacancy Risk, Tenant Income & Rent
+// Sustainability". The document named "Financial" therefore opened on the
+// location case three times, carried a population-projection table where its
+// inputs should have been, and ran four pages past its own band (26 against
+// 22; the fork's QA marked it not client-ready). The location case is the
+// Compass's and the Due Diligence report's; these three are written from the
+// calculation this report is about, and each one names where the location
+// evidence lives rather than restating it.
+
+/** The base case's last year, and the cash the position consumed to reach it. */
+function horizonPosition(fin: Record<string, unknown>) {
+  const moderate = Array.isArray(obj(fin.projections).moderate) ? (obj(fin.projections).moderate as unknown[]).map(obj) : [];
+  const last = moderate.length ? moderate[moderate.length - 1] : {};
+  const horizon = num(last.year);
+  const equity = num(last.equity);
+  const cumulative = num(last.cumulativeCashFlow);
+  const upfront = num(obj(fin.initialCosts).totalUpfront);
+  const committed = upfront !== undefined && cumulative !== undefined ? upfront + Math.max(0, -cumulative) : undefined;
+  const net = equity !== undefined && committed !== undefined ? equity - committed : undefined;
+  return { horizon, equity, committed, net };
+}
+
+const signedDelta = (value: number | undefined, base: number | undefined): string | undefined => {
+  if (value === undefined || base === undefined) return undefined;
+  const d = value - base;
+  return `${d < 0 ? '−' : '+'}${money(Math.abs(d))} a year`;
+};
+
+export const LOCATION_CASE_POINTER =
+  'The location case — the market, the planning controls, the infrastructure and the risks mapped over the land — '
+  + 'is set out in the Investment Compass and the Property & Location Due Diligence Report, and is not restated here.';
+
+function decisionSummary(fin: Record<string, unknown>, score: unknown): ComposedChapter | null {
+  const heading = 'Client Investment Decision Summary';
+  const metrics = obj(fin.keyMetrics);
+  const loan = obj(fin.loanDetails);
+  const initial = obj(fin.initialCosts);
+  const income = obj(fin.income);
+  const sens = obj(fin.sensitivityAnalysis);
+  const founded = rentIsEstablished(income);
+  const { horizon, net } = horizonPosition(fin);
+  const annualNet = num(metrics.annualNet);
+  const lvr = num(loan.lvr);
+
+  const position = twoCol(['The purchase in figures', 'Recorded value'], [
+    ['Purchase price', money(initial.propertyValue)],
+    ['Cash required to settle', money(initial.totalUpfront)],
+    [weeklyNetLabel(metrics, obj(fin.assumptions)), money(metrics.weeklyNet)],
+    ['Annual cash position (pre-tax)', money(annualNet)],
+    ['Gross yield / net yield', founded && pct(metrics.grossRentalYield) && pct(metrics.netRentalYield)
+      ? `${pct(metrics.grossRentalYield)} / ${pct(metrics.netRentalYield)}` : undefined],
+    ['Loan', money(loan.loanAmount) && lvr !== undefined && pct(loan.interestRate)
+      ? `${money(loan.loanAmount)} at ${pct(lvr)} of the price, ${pct(loan.interestRate)}` : undefined],
+    [horizon !== undefined ? `Base-case net position at year ${horizon}, before selling costs and tax` : 'Base-case net position, before selling costs and tax',
+      money(net)],
+  ]);
+
+  const rates = obj(sens.interestRateChanges);
+  const rents = obj(sens.rentChanges);
+  const movers = twoCol(['What moves it most', 'Effect on the annual cash position'], [
+    ['The interest rate one point higher', signedDelta(num(rates.plus1Percent), annualNet)],
+    ['The rent 10% lower', signedDelta(num(rents.minus10Percent), annualNet)],
+  ]);
+
+  const verdict = composeVerdictSection(score, heading);
+  const verdictBody = verdict ? verdict.split('\n').slice(2).join('\n').trim() : '';
+  const lead = [
+    verdictBody,
+    'What this purchase takes to buy and to hold, what it returns, and where the base case leaves it. Every figure '
+      + 'below comes from this report\'s calculation and is set out in full in the chapters that follow.',
+  ].filter(Boolean).join('\n\n');
+
+  const out = chapter(1, heading, lead, [position, movers]);
+  return out ? { ...out, markdown: `${out.markdown.trimEnd()}\n\n${LOCATION_CASE_POINTER}\n` } : null;
+}
+
+function inputSnapshot(fin: Record<string, unknown>): ComposedChapter | null {
+  const loan = obj(fin.loanDetails);
+  const initial = obj(fin.initialCosts);
+  const income = obj(fin.income);
+  const assumptions = obj(fin.assumptions);
+  const costs = obj(fin.annualCosts);
+  const price = num(initial.propertyValue);
+  const deposit = num(initial.deposit);
+  const lineTotal = operatingExpensesFrom(costs);
+  const weeks = num(assumptions.occupancyWeeks) ?? num(income.occupancyWeeks);
+  const rateSource = str(loan.rateSource);
+  const table = twoCol(['Input', 'Value used'], [
+    ['Purchase price', money(price)],
+    ['Deposit', money(deposit) && price ? `${money(deposit)} (${pct(Math.round((deposit! / price) * 1000) / 10)} of the price)` : money(deposit)],
+    ['Loan amount', money(loan.loanAmount)],
+    ['Interest rate', pct(loan.interestRate) && rateSource ? `${pct(loan.interestRate)} (${rateSource.toLowerCase()})` : pct(loan.interestRate)],
+    ['Loan structure', str(loan.structure)],
+    ['Weekly rent', money(income.weeklyRent)],
+    ['Occupancy', weeks !== undefined ? `${weeks} of 52 weeks let` : undefined],
+    ['Annual holding costs', lineTotal > 0 ? money(lineTotal) : undefined],
+    ['Capital growth (accepted assumption)', pct(assumptions.capitalGrowth) ? `${pct(assumptions.capitalGrowth)} a year` : undefined],
+  ]);
+  // A snapshot of one or two inputs repeats the chapter that states them;
+  // the section exists to put the modelling's inputs in one place.
+  if (table.length - 2 < 3) return null;
+  return chapter(2, 'Financial Input Snapshot',
+    'The inputs every figure in this report is calculated from. Each is an input recorded for this analysis — a '
+      + 'contract, a quote or a stated assumption — and changing one changes every table that follows.',
+    [table]);
+}
+
+function rentSustainability(fin: Record<string, unknown>): ComposedChapter | null {
+  const income = obj(fin.income);
+  const metrics = obj(fin.keyMetrics);
+  const assumptions = obj(fin.assumptions);
+  const sens = obj(fin.sensitivityAnalysis);
+  const rents = obj(sens.rentChanges);
+  if (!rentIsEstablished(income)) return null;
+  const weeklyRent = num(income.weeklyRent);
+  const weeks = num(assumptions.occupancyWeeks) ?? num(income.occupancyWeeks);
+  const annualNet = num(metrics.annualNet);
+  // The rent alone is chapter 5's row; this chapter is how the POSITION
+  // depends on it, so it needs the occupancy or a tested rent scenario.
+  if (weeks === undefined && num(rents.minus10Percent) === undefined && num(rents.plus10Percent) === undefined) return null;
+  const table = twoCol(['Rent and vacancy', 'Recorded value'], [
+    ['Weekly rent used', money(weeklyRent)],
+    ['Occupancy assumed', weeks !== undefined ? `${weeks} of 52 weeks let` : undefined],
+    ['Income lost for each week the property is untenanted', money(weeklyRent)],
+    ['Annual cash position with the rent 10% lower', num(rents.minus10Percent) !== undefined
+      ? `${money(rents.minus10Percent)} (${signedDelta(num(rents.minus10Percent), annualNet)})` : undefined],
+    ['Annual cash position with the rent 10% higher', num(rents.plus10Percent) !== undefined
+      ? `${money(rents.plus10Percent)} (${signedDelta(num(rents.plus10Percent), annualNet)})` : undefined],
+  ]);
+  return chapter(7, 'Vacancy Risk, Tenant Income & Rent Sustainability',
+    'How much of the position rests on the rent being paid every week. Vacancy here is the occupancy assumption '
+      + 'below, not a measured rate for this market; an untenanted week removes the rent and none of the costs. Who '
+      + 'rents in this area, and the population, household and income evidence behind that demand, are set out in '
+      + 'the Property & Location Due Diligence Report.',
+    [table]);
+}
+
 // ── Chapter 4 · Purchase Costs & Annual Holding Cost Breakdown ──────────────
 
 function purchaseAndHolding(fin: Record<string, unknown>): ComposedChapter | null {
@@ -136,7 +280,7 @@ function purchaseAndHolding(fin: Record<string, unknown>): ComposedChapter | nul
   ]);
 
   return chapter(4, 'Purchase Costs & Annual Holding Cost Breakdown',
-    'Acquisition and annual holding costs as recorded for this property.',
+    'The acquisition and annual holding costs of this purchase.',
     [acquisition, holding]);
 }
 
@@ -158,8 +302,8 @@ function rentalAndYield(fin: Record<string, unknown>): ComposedChapter | null {
 
   // A yield is the rent divided by the price. Where the record establishes no
   // rent, the rent rows above suppress themselves and these two must follow —
-  // otherwise the section reads "Recorded rental income and the yields it
-  // produces" over a table containing yields and no income, which is a return
+  // otherwise the section reads "The rental income used in this analysis, and
+  // the yields it produces" over a table containing yields and no income, which is a return
   // asserted on an income the record does not hold. One rule, asked here and
   // in the two other renderers that print a yield.
   const founded = rentIsEstablished(income);
@@ -177,7 +321,7 @@ function rentalAndYield(fin: Record<string, unknown>): ComposedChapter | null {
   ]);
 
   return chapter(5, 'Rental Assessment, Gross Yield & Net Yield',
-    'Recorded rental income and the yields it produces against the purchase price.',
+    'The rental income used in this analysis, and the yields it produces against the purchase price.',
     [table]);
 }
 
@@ -227,7 +371,7 @@ function loanStructure(fin: Record<string, unknown>): ComposedChapter | null {
   ]);
 
   return chapter(6, 'Loan Structure, Repayments & Cashflow Impact',
-    'The recorded lending structure behind the cashflow position.',
+    'The lending structure behind the cashflow position.',
     [table]);
 }
 
@@ -302,7 +446,7 @@ function sensitivity(fin: Record<string, unknown>): ComposedChapter | null {
   const rentTable = twoCol(['Scenario', 'Annual cashflow'], scenarioRows(rents, RENT_LABELS));
 
   return chapter(8, 'Sensitivity & Scenario Testing',
-    'How the recorded year-1 position moves as the interest rate and the rent move.',
+    'How the year-1 position moves as the interest rate and the rent move.',
     [position, rateTable, rentTable]);
 }
 
@@ -426,7 +570,7 @@ function projections(
   ]);
 
   return chapter(9, '10-Year Cashflow, Equity & Growth Projection',
-    'The recorded ten-year modelling, shown at years 1, 3, 5, 7 and 10.',
+    'The ten-year projection, shown at years 1, 3, 5, 7 and 10.',
     [...blocks, assumptionTable, bridge]);
 }
 
@@ -517,7 +661,7 @@ function financialRiskDashboard(fin: Record<string, unknown>): ComposedChapter |
   ]);
 
   const chapterOut = chapter(11, 'Financial Risk Dashboard',
-    'The financial exposures the recorded calculation states: the cash the investor must fund, how it moves under a rate or rent shock, and the debt structure behind it. Property and locality risks (crime, environmental, planning, condition) are assessed in the Property & Location Due Diligence Report and are not restated here.',
+    'The financial exposures in this analysis: the cash the investor must fund, how it moves under a rate or rent shock, and the debt structure behind it. Property and locality risks (crime, environmental, planning, condition) are assessed in the Property & Location Due Diligence Report and are not restated here.',
     [deficit, shocks, structure]);
   return chapterOut;
 }
@@ -536,6 +680,9 @@ export function composeFinancialChapters(
   const fin = obj(reconcileStoredFinancials(source.financialCalculations).fin);
 
   const chapters: Array<ComposedChapter | null> = [
+    decisionSummary(fin, source.investmentScore),
+    inputSnapshot(fin),
+    rentSustainability(fin),
     purchaseAndHolding(fin),
     rentalAndYield(fin),
     loanStructure(fin),
