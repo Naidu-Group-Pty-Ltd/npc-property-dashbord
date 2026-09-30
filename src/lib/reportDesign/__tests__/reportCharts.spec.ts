@@ -1019,3 +1019,20 @@ describe('renderBars gives a long label somewhere to go', () => {
     expect(svg).toContain('<rect x="192" y="44" width="476" height="12"');
   });
 });
+
+describe('the quadrant can be drawn shorter', () => {
+  const points = [{ x: 60, y: 5, label: 'A' }, { x: 80, y: 6, label: 'B' }, { x: 95, y: 4, label: 'C' }];
+  const heightOf = (svg: string) => Number(/viewBox="0 0 \d+ (\d+)"/.exec(svg)?.[1]);
+
+  it('keeps its square-ish default, and takes a shorter plot where a caller asks', () => {
+    // A figure cannot split, so its height is the hole it leaves wherever it
+    // does not fit (PORTFOLIO.md §10).
+    expect(heightOf(renderQuadrant(ctx, points, { title: 'Yield against leverage' }))).toBe(420);
+    expect(heightOf(renderQuadrant(ctx, points, { title: 'Yield against leverage', height: 330 }))).toBe(330);
+  });
+
+  it('never draws a plot too short for its four quadrants, or taller than the default', () => {
+    expect(heightOf(renderQuadrant(ctx, points, { height: 100 }))).toBe(260);
+    expect(heightOf(renderQuadrant(ctx, points, { height: 900 }))).toBe(420);
+  });
+});

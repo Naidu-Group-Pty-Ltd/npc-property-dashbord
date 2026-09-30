@@ -511,6 +511,14 @@ function chapterRules(
   /* A label past a label's length is set as the sentence it is
      (SUBHEAD_CLASS): the body face, sentence case, a subhead's weight —
      the same h4, the same colour, the same place in the outline. */
+  /* A memo section's own subheads (SECTION_SUBHEAD_CLASS): the h2 element,
+     so the outline keeps its level, at h3's size — one modular step below the
+     memo title above it rather than a point or two short of it. */
+  .memo h2.section-subhead {
+    font-size: ${pt(type.h3 * F.display)};
+    line-height: 1.25;
+    margin: ${pt(d.blockGapPt + 6)} 0 ${pt(d.paragraphGapPt + 1)};
+  }
   .memo h4.subhead {
     font-family: ${S.body};
     font-size: ${pt(type.body)};
@@ -1459,6 +1467,18 @@ ${(Object.entries(GRID_SPANS) as Array<[string, number]>)
     font-size: ${pt(type.caption)};
     color: ${palette.mutedInk};
   }
+  /* A short note under the list on the contents page's last sheet
+     (renderContentsPage's afterHtml) — the adviser's opening words on the
+     Portfolio Performance Review. Set apart from the list by space rather than
+     a rule, so it reads as the document's first words and not as a tenth
+     entry; kept on the sheet it starts on. */
+  .contents-after {
+    margin-top: ${pt(d.blockGapPt * 2 + 6)};
+    max-width: 150mm;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .contents-after p:last-child { margin-bottom: 0; }
   .contents .toc-page {
     width: 8%;
     text-align: right;

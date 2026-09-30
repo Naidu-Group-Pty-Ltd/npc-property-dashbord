@@ -4546,6 +4546,29 @@ and received the legacy layout, because the dialog had two PDF buttons and only
 - **An answer is a memo.** Its sections run on rather than each opening a page,
   and its title is on the cover once, not also as the first section.
 
+## The Portfolio Performance Review reads as one review
+Read §10 of [`PORTFOLIO.md`](./docs/reports/PORTFOLIO.md) before touching
+`_shared/reports/portfolio/*`, `reportDesign/tableKeeping.pure.ts`,
+`SECTION_SUBHEAD_CLASS` or `PortfolioReportDownloadButton`. The audit found
+nine sections each opening a page (24 sheets for four properties, one page 92%
+blank), a rented home printed as a fifth holding, cash lines that did not add
+up beside a home, and several figures the analysis had calculated but the
+document never printed. The sections now run on as memo sections. Three rules
+bite.
+
+- **Keeping a table is one module.** The Hub and the Portfolio both call
+  `tableKeeping.pure.ts`, and the Hub's defaults must not move. WeasyPrint 69
+  honours "no break after" a row group and not "no break inside" one, so each
+  lead row is a group of its own.
+- **A figure is printed only where it foots or is proven.** The expenses line
+  is printed only where rent less expenses is the net. "Today" appears beside
+  the projection only where the stored projection starts from the printed
+  totals, to the dollar. The rate-rise table is read only from the
+  calculator's stamped block.
+- **A rented home is not a holding.** It is out of every table, ranking and
+  chart, the holdings are renumbered, and one note says why. Only an action
+  repeated in the same words merges, never two sentences that merely agree.
+
 ## Both comparisons export like the Hub
 Read §13 of [`COMPARISON.md`](./docs/reports/COMPARISON.md) and of
 [`CASH_FLOW_COMPARISON.md`](./docs/reports/CASH_FLOW_COMPARISON.md) before

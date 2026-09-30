@@ -89,6 +89,21 @@ describe('renderCover', () => {
     expect(renderCover(base)).toContain('<em>Blackwater, QLD 4717</em>');
     expect(renderCover({ ...base, subtitle: null })).not.toContain('<em>');
   });
+
+  it('does not print the issuer’s name a second time as a lockup with no mark', () => {
+    // A tenant with no logo got its name at the head of the cover and again,
+    // twenty lines down, as a wordmark (PORTFOLIO.md §10).
+    const html = renderCover({ ...base, lockup: { wordmark: 'HARBOUR  capital' } });
+    expect(html).not.toContain('cover-lockup');
+    expect(html.match(/Harbour Capital/gi)).toHaveLength(1);
+  });
+
+  it('keeps a lockup that carries a mark, or names something else', () => {
+    const marked = renderCover({ ...base, lockup: { wordmark: 'Harbour Capital', markDataUri: 'data:image/png;base64,AAA' } });
+    expect(marked).toContain('cover-lockup');
+    const other = renderCover({ ...base, lockup: { wordmark: 'Harbour Capital Advisory' } });
+    expect(other).toContain('cover-lockup');
+  });
 });
 
 describe('renderBrandLockup', () => {
@@ -272,6 +287,16 @@ describe('the remaining primitives render their contract', () => {
     expect(renderGrid12([{ span: 7, html: 'a' }, { span: 5, html: 'b' }]))
       .toContain('class="col col-7"');
     expect(renderGrid12([])).toBe('');
+  });
+
+  it('sets a note under the list, on the last sheet only', () => {
+    const entries = Array.from({ length: 10 }, (_, i) => ({ number: String(i + 1), title: `Section ${i + 1}` }));
+    const html = renderContentsPage('Contents', entries, 5, '<p>About this review</p>');
+    const sheets = html.split('class="page-contents"').slice(1);
+    expect(sheets).toHaveLength(2);
+    expect(sheets[0]).not.toContain('contents-after');
+    expect(sheets[1]).toContain('<div class="contents-after"><p>About this review</p></div>');
+    expect(renderContentsPage('Contents', entries)).not.toContain('contents-after');
   });
 
   it('contents rows carry number, title, note and page', () => {

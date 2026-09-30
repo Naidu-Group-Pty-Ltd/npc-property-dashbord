@@ -1235,9 +1235,18 @@ export function renderQuadrant(
      */
     xMid?: number; yMid?: number;
     q1?: string; q2?: string; q3?: string; q4?: string;
+    /**
+     * The drawing's height in chart units (default 420, a square-ish plot).
+     *
+     * A figure cannot split across a page, so its height is the hole it leaves
+     * wherever it does not fit. The Portfolio Performance Review plots a
+     * handful of holdings and passes a shorter plot (PORTFOLIO.md §10).
+     */
+    height?: number;
   } = {},
 ): string {
-  const w = CHART_WIDTH.standard, h = 420;
+  const w = CHART_WIDTH.standard;
+  const h = Math.max(260, Math.min(420, Math.round(opts.height ?? 420)));
   const padT = opts.title ? 50 : 24, padB = 56, padL = 60, padR = 20;
   const plotW = w - padL - padR, plotH = h - padT - padB;
   const xMax = opts.xMax ?? Math.max(...points.map((p) => p.x), 10);
