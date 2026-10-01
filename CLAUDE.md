@@ -3816,6 +3816,30 @@ Three rules bite.
   brief imports the composer's constants rather than restating them, and the
   server reads an older browser's capitals as the word.
 
+## The Client Details record runs on, in the record's own words
+Read §12 of [`CLIENT_DETAILS.md`](./docs/reports/CLIENT_DETAILS.md) before
+touching `_shared/reports/clientDetails/*`, `reportDesign/portraitMatrix.pure.ts`,
+`recordHoldsFinancials`, `liabilityBasis`, `addressLine` or
+`ClientDetailsDownloadButton`. Every section opened a page, so a client with
+nothing financial recorded (742 of the 775) took five pages to give a name, and
+the record printed the database's words: `1984-03-17`, "Nab", "Internet phone", and the finance
+engine's own note `Est. P&I @ 9% / 5yr` as the basis of a figure. Three rules
+bite.
+
+- **One rule says whether a record holds any finances.** The summary, the
+  closing section and the template projection's `hasFinancials` all read
+  `recordHoldsFinancials`. An empty record has no summary, because the closing
+  section already says so, and a record without property draws no property
+  rows.
+- **Up to five holdings sit side by side on the section's own page.**
+  `portraitMatrix.pure.ts` is the Portfolio review's matrix, moved rather than
+  copied, and that review still renders byte for byte as before. Its heads are
+  the whole street (`streetLine`), because they wrap, and the matrix is kept
+  whole (`wholeUpToRows`).
+- **The choice sits beside the act.** "Choose template" comes before "Export
+  PDF", and the file is `Client Details - <client> - <date>.pdf` under a
+  URL-safe storage key.
+
 ## A template dresses nine report types, and never pages them
 Read [`TEMPLATE_PARITY.md`](./docs/reports/TEMPLATE_PARITY.md) before touching
 `templateParity.pure.ts`, `templateDesign*.pure.ts`, `templateDesignRead.ts`,

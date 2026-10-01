@@ -81,6 +81,14 @@ export interface KeepOptions {
    * there.
    */
   leadRows?: number;
+  /**
+   * Rows up to which a table is kept whole whatever its estimated height
+   * (default 3, below which no split leaves two rows on both sides). A matrix
+   * of figures is read across as one comparison: the Client Details portfolio
+   * matrix, eight lines, split six and two and turned its "Net per month" over
+   * to a page of its own (CLIENT_DETAILS.md §12).
+   */
+  wholeUpToRows?: number;
 }
 
 const cellText = (row: TableRow, key: string): string =>
@@ -149,7 +157,7 @@ export function groupTableRows(html: string, leadRows = 1): string {
  */
 export function keptTable(html: string, table: KeptTable, opts: KeepOptions = {}): string {
   if (!html) return html;
-  if (table.rows.length <= 3 || estimatedTableLines(table, opts) <= KEEP_WHOLE_TABLE_LINES) {
+  if (table.rows.length <= (opts.wholeUpToRows ?? 3) || estimatedTableLines(table, opts) <= KEEP_WHOLE_TABLE_LINES) {
     return html.replace(/^<div class="table-block">/, `<div class="table-block ${KEEP_TOGETHER_CLASS}">`);
   }
   return groupTableRows(html, opts.leadRows);

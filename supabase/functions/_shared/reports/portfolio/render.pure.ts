@@ -43,6 +43,7 @@ import {
 } from '../../reportDesign/primitives.pure.ts';
 import { buildReportCss } from '../../reportDesign/css.pure.ts';
 import { keptTable } from '../../reportDesign/tableKeeping.pure.ts';
+import { portraitMatrixCss, renderPortraitMatrix } from '../../reportDesign/portraitMatrix.pure.ts';
 import type { ResolvedReportPalette } from '../../reportDesign/roles.pure.ts';
 import type { ReportDesignOptions } from '../../reportDesign/options.pure.ts';
 import type { CompanyBlock, CompanyDisclaimer } from '../../reportDesign/companyBlock.pure.ts';
@@ -462,26 +463,15 @@ function portraitMatrix(
   lines: ReadonlyArray<{ label: string; values: string[]; total: boolean }>,
   caption: string,
 ): string {
-  const cols: TableColumn[] = [
-    { key: 'label', label: 'Line', align: 'left' },
-    ...holdings.map((h, i) => ({
-      key: `p${i}`,
-      label: `${h.number}. ${h.address.split(',')[0].trim() || `Property ${h.number}`}`,
-      align: 'right' as const,
-    })),
-  ];
-  const rows: TableRow[] = lines.map((l) => {
-    const row: TableRow = { label: l.label };
-    l.values.forEach((v, i) => { row[`p${i}`] = v; });
-    if (l.total) row.__total = true;
-    return row;
+  return renderPortraitMatrix({
+    lineLabel: 'Line',
+    headings: holdings.map((h) => `${h.number}. ${h.address.split(',')[0].trim() || `Property ${h.number}`}`),
+    lines,
+    caption,
+    className: HOLDINGS_MATRIX_CLASS,
+    labelWidthPct: 26,
+    keep: TABLE_KEEP,
   });
-  const html = table(cols, rows, { caption, signedKeys: holdings.map((_, i) => `p${i}`) });
-  // Equal property columns: the line's name takes what a label needs and the
-  // properties split the rest.
-  const share = (74 / Math.max(holdings.length, 1)).toFixed(2);
-  const colgroup = `<colgroup><col style="width:26%">${holdings.map(() => `<col style="width:${share}%">`).join('')}</colgroup>`;
-  return html.replace('<table class="data">', `<table class="data ${HOLDINGS_MATRIX_CLASS}">${colgroup}`);
 }
 
 /**
@@ -509,14 +499,7 @@ const ACTION_TABLE_CLASS = 'action-plan';
  * closing page. Set as the figures it holds, it is a third shorter and moves
  * whole far more often.
  */
-const PORTFOLIO_CSS = `
-  table.data.${HOLDINGS_MATRIX_CLASS} thead th.num { white-space: normal; vertical-align: bottom; }
-  table.data.${HOLDINGS_MATRIX_CLASS} td,
-  table.data.${HOLDINGS_MATRIX_CLASS} th[scope="row"] {
-    padding-top: 3.5pt;
-    padding-bottom: 3.5pt;
-    line-height: 1.3;
-  }
+const PORTFOLIO_CSS = portraitMatrixCss(HOLDINGS_MATRIX_CLASS) + `
   table.data.${ACTION_TABLE_CLASS} th[scope="row"] { white-space: nowrap; }`;
 
 function performanceSection(cf: PortfolioReview, palette: ResolvedReportPalette): string {

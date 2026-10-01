@@ -29,6 +29,7 @@
  * be wrong for most of them and the spine-versus-render assertion would either
  * fail constantly or be set so loose it asserted nothing.
  */
+import { PORTRAIT_MATRIX_MAX } from '../../reportDesign/portraitMatrix.pure.ts';
 import type { ReportArchetypeId, SpineEntry } from '../../reportDesign/structure.pure.ts';
 import { buildSpine, validateSpine } from '../../reportDesign/structure.pure.ts';
 import type { PortfolioReview } from './payload.pure.ts';
@@ -51,9 +52,11 @@ export const HOLDINGS_PER_PAGE = 18;
  * (COMPARISON.md §13): five columns fit the portrait measure in every design.
  * Every portfolio in the record has four properties or fewer, so the
  * landscape page a holdings matrix always opened — one table, a band of white,
- * columns headed "1 2 3 4" — was never needed by one of them.
+ * columns headed "1 2 3 4" — was never needed by one of them. The matrix and
+ * its limit are shared with the Client Details record now
+ * (`reportDesign/portraitMatrix.pure.ts`).
  */
-export const PORTRAIT_MATRIX_MAX = 5;
+export { PORTRAIT_MATRIX_MAX };
 
 /**
  * Properties that get their own prose commentary in the performance section.
