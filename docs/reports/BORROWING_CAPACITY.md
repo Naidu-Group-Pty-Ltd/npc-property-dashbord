@@ -1551,6 +1551,11 @@ Page counts after the audit:
 | DTI-limited client stored before 14 Aug | 6 | 6 in all 50 |
 | No income recorded | 5 | 5 in 46, 6 in 4 |
 
+CI renders the fixture without an advisor card in the render container and
+pins its page count (`ci.yml`, `render-container`): 10 before this audit, 8
+now, with the reason recorded beside the pin. Its bookmarks fell from fifteen
+to eleven, which is "How this was calculated" and its three steps.
+
 The emptiest no-income page is a point emptier than before while the count of
 part-empty pages fell. It is the same page in the four designs named below,
 now with one line fewer above its gap.
