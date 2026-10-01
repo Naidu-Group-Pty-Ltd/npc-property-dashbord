@@ -295,8 +295,14 @@ const BASIS_LABEL: Record<string, string> = {
 };
 
 export const ADVISOR_SECTION_TITLE = 'Strategy Advisor — why this scenario';
+/**
+ * Said under the advisor's reasoning wherever it is printed — the panel, both
+ * briefs and both Snapshots (§18). It named "this brief" until 1 Oct 2026, and
+ * so said "brief" inside every Borrowing Capacity Snapshot that carried an
+ * advisor's scenario (§21); it names no document now.
+ */
 export const ADVISOR_PROVENANCE_NOTE =
-  'Written by the Strategy Advisor (AI) for this client\'s position. Every figure elsewhere in this brief is the calculation engine\'s own.';
+  'Written by the Strategy Advisor (AI) for this client\'s position. Every other figure is the calculation engine\'s own.';
 export const ADVISOR_OPTIONS_NOTE =
   'Each option\'s figures are the calculation engine\'s, for the option as the advisor proposed it.';
 export const ADVISOR_CAUTIONS_TITLE = 'What the calculation engine flagged';
@@ -328,6 +334,15 @@ export function rationaleReadingNote(context: RationaleContextInput): string | n
 }
 
 export const ADVISOR_ADJUSTED_NOTE =
+  'The levers were changed after this scenario was applied, so this reasoning describes the scenario as the advisor proposed it; the figures shown are for the levers as they now stand.';
+
+/**
+ * The adjusted note as a browser published before 1 Oct 2026 sends it. The
+ * server keeps a note only when it is the composer's own (`readStrategyRationale`),
+ * so without this an open tab on the earlier build would lose the note until it
+ * reloaded; it is read as the current wording, never printed as sent.
+ */
+export const LEGACY_ADVISOR_ADJUSTED_NOTE =
   'The levers were changed after this scenario was applied, so this reasoning describes the scenario as the advisor proposed it; the figures in this brief are for the levers as they now stand.';
 
 /**
@@ -719,7 +734,10 @@ export function readStrategyRationale(raw: unknown): RationaleRead {
         // model must say so, and the request cannot talk it out of that.
         notes: [
           ADVISOR_PROVENANCE_NOTE,
-          ...list(advRaw.notes, 4, (t) => text(t, L.longText)).filter((n) => n === ADVISOR_ADJUSTED_NOTE),
+          ...(list(advRaw.notes, 4, (t) => text(t, L.longText))
+            .some((n) => n === ADVISOR_ADJUSTED_NOTE || n === LEGACY_ADVISOR_ADJUSTED_NOTE)
+            ? [ADVISOR_ADJUSTED_NOTE]
+            : []),
         ],
       }
     : null;

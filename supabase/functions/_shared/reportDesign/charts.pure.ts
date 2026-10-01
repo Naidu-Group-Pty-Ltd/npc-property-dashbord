@@ -1524,8 +1524,42 @@ export function renderDonut(
   const grown = stacked ? baseH : baseH + (titleLines.length - 1) * 20;
   const h = Math.max(grown, legendBottom);
   return `${svgOpen(w, h)}${title}${arcs}
-    ${text(ctx, w, { x: cx, y: cy + (stacked ? 6 : -2), pt: 'hero', fill: ctx.palette.ink, anchor: 'middle', stack: 'display', weight: 700, tabular: true }, svgEscape(centerVal))}
+    ${text(ctx, w, { x: cx, y: cy + (stacked ? 6 : -2), pt: donutFigurePt(ctx, w, centerVal, 2 * r - 12), fill: ctx.palette.ink, anchor: 'middle', stack: 'display', weight: 700, tabular: true }, svgEscape(centerVal))}
     ${centerSub}${legend}</svg>`;
+}
+
+/**
+ * The size the figure in a donut's hole is set at: `hero`, or the first step
+ * down at which it fits the hole.
+ *
+ * The hole is fixed in drawing units and the figure in points, so the same
+ * figure takes more of a smaller printed ring. Drawn at the compact width it
+ * is made for, a Borrowing Capacity Snapshot's "$171,400 pa" ran 22% past the
+ * hole and over the ring, where the ring's dark segment hid its first two
+ * characters (§21 of BORROWING_CAPACITY.md). Stepping down keeps the whole
+ * figure; a percentage, which is what most donuts carry, fits at `hero` and is
+ * set exactly as before. The advance is estimated as `fitLines` estimates —
+ * there is no measurement in a pure module — and on the wide side, with the
+ * narrow marks (separators, spaces) counted narrow in a proportional face and
+ * full in a monospaced one, so that a step is taken when it might be needed
+ * rather than missed when it is.
+ */
+export function donutFigurePt(
+  ctx: ChartContext,
+  vb: number,
+  figure: string,
+  holeUnits: number,
+): keyof typeof CHART_TEXT_PT {
+  // A monospaced display face sets every mark, separators included, at the
+  // full advance: one design family draws its figures that way, and on it the
+  // proportional estimate left "$171,400" touching the ring.
+  const mono = /mono/i.test(String((ctx.stack ?? PRINT_STACK).display ?? ''));
+  const ems = [...figure].reduce((sum, ch) =>
+    sum + (mono ? 0.6 : /[\s.,:;'’]/.test(ch) ? 0.28 : 0.55), 0);
+  const steps = ['hero', 'value', 'label'] as const;
+  const fits = (pt: (typeof steps)[number]) =>
+    ems * ptToUnits(CHART_TEXT_PT[pt] * fitOf(ctx, 'display'), vb, ctx.widthMm) <= holeUnits;
+  return steps.find(fits) ?? 'label';
 }
 
 export interface SeriesLine { label: string; values: readonly number[] }

@@ -26,6 +26,9 @@ import {
   MAX_WATERFALL_ITEMS,
   MAX_WHEEL_SCORES,
   DONUT_STACK_BELOW_MM,
+  CHART_TARGET_WIDTH_MM,
+  COMPACT_FIGURE_FRACTION,
+  donutFigurePt,
   chartContext,
   chartContextForSpan,
   chartFigure,
@@ -248,6 +251,35 @@ describe('a chart knows how wide it will print', () => {
   it('narrower spans are narrower, in order', () => {
     const widths = ([4, 5, 7, 8] as const).map((s) => chartContextForSpan(palette, s).widthMm);
     expect(widths).toEqual([...widths].sort((a, b) => a - b));
+  });
+
+  /**
+   * The figure in the hole is set in points and the hole is fixed in drawing
+   * units, so the same figure takes more of a smaller printed ring. Drawn at
+   * its compact width, the Snapshot's "$171,400 pa" ran 22% past the hole and
+   * the ring hid its first two characters (BORROWING_CAPACITY.md §21).
+   */
+  it('sets the figure in a donut\'s hole at a size that fits the hole', () => {
+    const full = chartContext(palette);
+    const compact = chartContext(palette, CHART_TARGET_WIDTH_MM * COMPACT_FIGURE_FRACTION);
+    const hole = 2 * 56 - 12;
+    // What most donuts carry is set exactly as before.
+    expect(donutFigurePt(full, CHART_WIDTH.compact, '62%', hole)).toBe('hero');
+    expect(donutFigurePt(compact, CHART_WIDTH.compact, '62%', hole)).toBe('hero');
+    // A long figure steps down rather than running over the ring.
+    expect(donutFigurePt(compact, CHART_WIDTH.compact, '$171,400 pa', hole)).not.toBe('hero');
+    // And the step it takes is one the estimate says fits.
+    for (const figure of ['$171,400', '$1,240,000', '$171,400 pa']) {
+      const pt = donutFigurePt(compact, CHART_WIDTH.compact, figure, hole);
+      const ems = [...figure].reduce((sum, ch) => sum + (/[\s.,:;'’]/.test(ch) ? 0.28 : 0.55), 0);
+      if (pt !== 'label') {
+        expect(ems * ptToUnits(CHART_TEXT_PT[pt], CHART_WIDTH.compact, compact.widthMm)).toBeLessThanOrEqual(hole);
+      }
+    }
+    // The drawing uses it: the long figure is not set at the hero size.
+    const svg = renderDonut(compact, [{ label: 'A', value: 3 }, { label: 'B', value: 2 }, { label: 'C', value: 1 }], { centerLabel: '$171,400 pa' });
+    const heroSize = ptToUnits(CHART_TEXT_PT.hero, CHART_WIDTH.compact, compact.widthMm);
+    expect(svg).not.toContain(`font-size="${heroSize}"`);
   });
 
   it('stacks the donut legend under the ring in a narrow column', () => {

@@ -3776,6 +3776,28 @@ Three rules bite.
 - **jsPDF's built-in font prints WinAnsi only.** An arrow printed as `!’` on
   every lever label.
 
+## The Borrowing Capacity Snapshot's tables foot, and its pages are used
+Read §21 of [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md)
+before touching the Snapshot's sections, its audit labels and polarities
+(`AUDIT_LABEL`, `auditRule`, `POLARITY`), `incomeItemsTotal`,
+`commitmentItemsTotal`, `proposedRentRow`, `capitalisedLmiRepayment`, the
+income donut or `donutFigurePt`. The calculator sends its own income and
+commitment totals, and the engine stores them beside a breakdown it reads from
+the client's records, so a Total row could print a figure its rows did not
+reach. Three rules bite.
+
+- **A total its rows do not reach is never printed as theirs.** A proposed
+  rent and a capitalised premium's repayment are lines, because the record
+  says what they were. Anything still between the lines and the totals prints
+  both, "Total of the lines above" and "Used in this assessment", with no
+  balancing line and no cause asserted.
+- **A shortfall is a cost.** `negative_cf_layered` stores it with `Math.abs`,
+  so a larger value is less capacity. Read as +1, every negatively geared
+  client was told the shortfall raised what they could borrow.
+- **A donut prints at its compact width, and its figure fits its hole.** The
+  hole is fixed in drawing units and the figure in points.
+  `donutFigurePt` steps a long figure down. A percentage is set as before.
+
 ## A template dresses nine report types, and never pages them
 Read [`TEMPLATE_PARITY.md`](./docs/reports/TEMPLATE_PARITY.md) before touching
 `templateParity.pure.ts`, `templateDesign*.pure.ts`, `templateDesignRead.ts`,
