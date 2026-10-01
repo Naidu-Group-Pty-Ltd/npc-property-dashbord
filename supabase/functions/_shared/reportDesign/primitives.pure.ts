@@ -479,12 +479,21 @@ export interface ChapterHeaderProps {
   dek?: string;
   /** Word printed before the number. Defaults to `Chapter`. */
   label?: string;
+  /**
+   * Leave the number line out. For a document of one section, where "SECTION
+   * 01" numbers nothing: the Strategy Rationale Brief (BORROWING_CAPACITY.md
+   * §22). Absent, the line is drawn exactly as before.
+   */
+  unnumbered?: boolean;
 }
 
 export function renderChapterHeader(p: ChapterHeaderProps): string {
+  const numberLine = p.unnumbered
+    ? ''
+    : `<div class="chapter-no">${escapeHtml((p.label ?? 'Chapter').toUpperCase())} ${escapeHtml(p.number)}</div>`;
   return `
       <header class="chapter-header">
-        <div class="chapter-no">${escapeHtml((p.label ?? 'Chapter').toUpperCase())} ${escapeHtml(p.number)}</div>
+        ${numberLine}
         <h1>${escapeHtml(p.title)}</h1>
         ${p.dek ? `<div class="chapter-dek">${escapeHtml(p.dek)}</div>` : ''}
       </header>`;

@@ -1583,3 +1583,110 @@ now with one line fewer above its gap.
   engine. No production assessment was read, because this work has no read
   access to that table. The document now states both totals wherever they
   differ, so a record that does not foot cannot print as one that does.
+
+## 22. The audit of the Strategy Rationale Brief (1 Oct 2026)
+
+The fourth audit of the owner's report programme: the What-If tab's Strategy
+Rationale Brief, its legacy layout, and the panel that exports it. Three briefs
+were drawn in WeasyPrint 69.0, in the standard design and all fifty catalogue
+designs, and read page by page:
+
+- the Samuel Lavis baseline brief of 28 Sep 2026 (`strategyRationale.spec.ts`);
+- a multi-lever brief with capital flow, a valuation and a pool (the spec's own);
+- an equity release applied from an advisor card, with the three options it
+  put forward and its guardrail: the shape of Masline Nyawo's brief (§20), with
+  invented figures.
+
+§17's rule still holds: the typeset brief and the jsPDF brief print the same
+words. Every word changed below changed in both, mostly through a constant the
+jsPDF brief now imports.
+
+**What was wrong.**
+
+- **Page one repeated the cover.** The chapter header said "Strategy
+  Rationale Brief" and "Borrowing Capacity Scenario — Finance Hand-off", the
+  cover's eyebrow and subtitle, under a "SECTION 01" that numbered the only
+  section. The running head said "Strategy Rationale Brief" on both sides of
+  every page.
+- **The subheads were a size above every other memo's.** They were bare `h2`s
+  at the design's full subhead size.
+- **A table moved whole with its heading.** A four-step sequence that did not
+  fit the space left moved whole to the next page, leaving a quarter of a page
+  white; on the advisor brief, 30 body pages were more than a quarter empty.
+- **A baseline brief said "no levers applied" four times on one page**: its
+  headline, then under "What we propose & why (0 levers)", "How the math
+  reconciles" and "Recommended execution sequence (0 steps)". The empty
+  sequence's line, "No execution steps required — baseline scenario.", called
+  any scenario with no steps a baseline, levers or not.
+- **Machine words and chip style in the body.**
+  - "How the math reconciles".
+  - "Cash-flow:" as a noun.
+  - "Desktop val" and "Comp sales".
+  - "Execution risk: MEDIUM", and "BROKER" in a table cell.
+  - "POOL OVERCOMMITTED — sinks were clamped to available pool.", a "Source →
+    sink" column, and "Routed" and "Residual".
+- **A tick where the legacy brief printed a word.** "Target $950,000 ✓": the
+  jsPDF brief's font has no ✓, and printed it as "met".
+- **The export.** The button said "Download PDF" where every other format says
+  "Export PDF". The file was `Strategy_Rationale_Samuel_Lavis_2026-09-28.pdf`,
+  and the flattened copy `strategy-rationale.pdf`.
+
+**What it does now.**
+
+- **It opens on its finding.** The engine's headline is the memo's title and
+  its sub-headline the standfirst, so the first thing under the running head is
+  what the scenario does.
+  - The header draws no number line (`renderChapterHeader({ unnumbered })`, a
+    new opt-in that leaves every other caller byte for byte as it was).
+  - The running head names the client, as the jsPDF brief's footer always has.
+  - The cover still names the document.
+- **Subheads are the memo's** (`SECTION_SUBHEAD_CLASS`), one step below that
+  title.
+- **Tables keep themselves** (`keptTable`), whole while short and by height
+  when not. A part whose first block is a table keeps its heading with the
+  table's first rows by the heading's own rule; it is no longer wrapped whole.
+- **A part with nothing in it is left out**, in both briefs. A baseline brief
+  is its finding, its figures and its caveats. `proposeEmpty` and
+  `sequenceEmpty` are still composed, because a server older than this draws
+  them.
+- **The report's words, in both briefs.**
+  - The constants: `RECONCILE_TITLE` ("How the maths reconciles"),
+    `POOL_OVERCOMMITTED_NOTE`, `BASIS_LABEL` ("Desktop valuation", "Comparable
+    sales") and `CAPITAL_FLOW_LABELS` (Available, Allocated, Unallocated).
+  - "Cash flow:".
+  - A target "Clears the $950,000 target" or "Short of the $950,000 target".
+  - A "Source → use" column.
+  - `RISK_LABEL` and `OWNER_LABEL` set a risk and an owner as words. The
+    server reads an older browser's capitals as the word, and the jsPDF brief
+    still draws its chips in capitals, uppercasing the word itself.
+  - The panel and the valuation picker use the same constants.
+- **The export.** "Export PDF" sits beside "Choose template". The typeset file
+  is `Strategy Rationale Brief - Samuel Lavis - 28 Sep 2026.pdf`
+  (`readableFileName`), and the flattened copy takes the same name. The jsPDF
+  brief keeps its own name, as the in-browser Snapshot does (§21): the name
+  says which layout a file is.
+
+**Measured**, standard design plus the fifty catalogue designs, every body page
+counted except each document's last:
+
+| Brief | Pages, before → after | Body pages more than a quarter empty | Emptiest body page |
+| --- | --- | --- | --- |
+| Equity release from an advisor card | 352 → 306 | 30 → 0 | 27% → 21% |
+| Four parts, capital flow, a valuation and a pool | 255 → 204 | 0 → 0 | 16% → 10% |
+| Baseline | 153 → 153 | — | — |
+
+The advisor brief is six pages in every design, where 46 drew seven. The
+multi-lever brief is four in every design, where all drew five. No table splits
+in any of them, nothing runs past its measure, and no running foot wraps.
+
+**Not changed, and why.**
+
+- **The engine's own sentences** (the headline, each lever's what and why, the
+  reconciliation, the steps) are the scenario engine's, and are printed as
+  written.
+- **The advisor's reasoning** is the model's, printed as it wrote it, under the
+  provenance note (§18).
+- **The severity labels** (POSITIVE, CAUTION, CRITICAL, INFO) stay in capitals.
+  They sit in a callout's label slot, which every design sets in capitals.
+- **The baseline brief's one body page is mostly white.** It holds what a
+  baseline has to say, and the next page is the closing page.

@@ -3798,6 +3798,24 @@ reach. Three rules bite.
   hole is fixed in drawing units and the figure in points.
   `donutFigurePt` steps a long figure down. A percentage is set as before.
 
+## The Strategy Rationale Brief opens on its finding
+Read §22 of [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md)
+before touching `strategyRationaleRender.pure.ts`, the brief's constants in
+`strategyRationale.pure.ts` (`RECONCILE_TITLE`, `BASIS_LABEL`, `RISK_LABEL`,
+`OWNER_LABEL`, `POOL_OVERCOMMITTED_NOTE`, `CAPITAL_FLOW_LABELS`) or the jsPDF
+brief. Its first page repeated the cover under a "SECTION 01" that numbered
+the only section, and a baseline brief said "no levers applied" four times.
+Three rules bite.
+
+- **The headline leads.** It is the memo's title, the header draws no number
+  line (`renderChapterHeader({ unnumbered })`), and the running head names the
+  client.
+- **A part with nothing in it is left out, in both briefs.** `proposeEmpty`
+  and `sequenceEmpty` are still composed, because an older server draws them.
+- **The two briefs say the same words because they share them.** The jsPDF
+  brief imports the composer's constants rather than restating them, and the
+  server reads an older browser's capitals as the word.
+
 ## A template dresses nine report types, and never pages them
 Read [`TEMPLATE_PARITY.md`](./docs/reports/TEMPLATE_PARITY.md) before touching
 `templateParity.pure.ts`, `templateDesign*.pure.ts`, `templateDesignRead.ts`,
