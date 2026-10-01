@@ -296,14 +296,23 @@ export function minifySvg(svg: string): string {
 
 export type AxisMode = 'money' | 'percent' | 'plain';
 
-/** Compact axis labels — `$1.2m`, `4.5%`, `12k`. */
+/**
+ * Compact axis labels — `$1.2m`, `-$50k`, `4.5%`, `12k`.
+ *
+ * Money carries its sign ahead of the currency, as every figure in the product
+ * does (`formatMeasure`): the Cash Flow Comparison's break-even chart printed
+ * `$-50k`, `$-99k` down its axis beside tables reading `-$198,521` (Audit 8,
+ * 1 Oct 2026).
+ */
 export function formatAxisValue(value: number, mode: AxisMode): string {
   if (mode === 'percent') return `${value.toFixed(Math.abs(value) < 10 ? 1 : 0)}%`;
   if (mode === 'money') {
     const abs = Math.abs(value);
-    if (abs >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}m`;
-    if (abs >= 1_000) return `$${(value / 1_000).toFixed(0)}k`;
-    return `$${value.toFixed(0)}`;
+    const body = abs >= 1_000_000
+      ? `${(abs / 1_000_000).toFixed(1)}m`
+      : abs >= 1_000 ? `${(abs / 1_000).toFixed(0)}k` : abs.toFixed(0);
+    // A value that rounds to nothing is not negative: `-0.4` is `$0`.
+    return `${value < 0 && Number(body.replace(/[mk]$/, '')) !== 0 ? '-' : ''}$${body}`;
   }
   return Math.abs(value) >= 1000 ? `${(value / 1000).toFixed(0)}k` : value.toFixed(0);
 }

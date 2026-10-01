@@ -55,6 +55,12 @@ import {
   classifyCashFlowAnalysis,
   describeMissingSections,
 } from '@/lib/reports/cashFlowComparison/analysisRequest.pure';
+import {
+  COMPARISON_ANALYSIS_QUALIFIER,
+  COMPARISON_LEGACY_QUALIFIER,
+  comparisonFileName,
+} from '@/lib/reports/cashFlowComparison/route.pure';
+import { shortAddress } from '@/lib/reports/cashFlowComparison/normalise.pure';
 import { CashFlowComparisonDownloadButton } from '@/components/cash-flow/modal/CashFlowComparisonDownloadButton';
 import { ChooseTemplateButton } from '@/components/reports/ChooseTemplateButton';
 import { toWireInputs, toWireProjection } from '@/lib/reports/cashFlow/toWireProjection';
@@ -281,6 +287,20 @@ const loadActiveCashFlowTemplate = async (): Promise<CashFlowTemplateConfig> => 
     return defaultCashFlowConfig;
   }
 };
+
+/**
+ * The compared properties' street lines, primary first: the typeset
+ * comparison's own topic (`shortAddress`), so every download of one comparison
+ * carries the same name and only its qualifier differs.
+ */
+function comparedPlaces(
+  primary: InvestmentReport | null | undefined,
+  others: readonly InvestmentReport[],
+): string[] {
+  return [primary?.property_address, ...others.map((r) => r.property_address)]
+    .filter((a): a is string => Boolean(a && a.trim()))
+    .map(shortAddress);
+}
 
 export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated, presentation = 'modal', backLabel = 'Back to Cash Flow Analysis' }: CashFlowAnalysisModalProps) {
   const isPagePresentation = presentation === 'page';
@@ -1677,7 +1697,11 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         return pdf.output('blob');
       }
 
-      pdf.save(`cash-flow-comparison-${comparisonReports.length + 1}-properties-${new Date().toISOString().split('T')[0]}.pdf`);
+      pdf.save(comparisonFileName(
+        comparedPlaces(report, comparisonReports),
+        new Date().toISOString(),
+        COMPARISON_LEGACY_QUALIFIER,
+      ));
 
       logActivityDirect({
         actionType: 'comparison_pdf_downloaded',
@@ -1901,7 +1925,11 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         return pdf.output('blob');
       }
 
-      pdf.save(`ai-cash-flow-analysis-${new Date().toISOString().split('T')[0]}.pdf`);
+      pdf.save(comparisonFileName(
+        comparedPlaces(report, comparisonReports),
+        new Date().toISOString(),
+        `${COMPARISON_ANALYSIS_QUALIFIER}, ${COMPARISON_LEGACY_QUALIFIER}`,
+      ));
 
       toast({
         title: "PDF Exported",
@@ -4164,7 +4192,9 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                 onExportPdf={exportSingleReportPDF}
                 onPrintView={openPrintView}
                 onSendToClient={() => setSendToClientOpen(true)}
-                filename={cashFlowFileName(report?.property_address || '', new Date().toISOString(), 'flattened')}
+                // The flattened copy is of the legacy layout (`onExportPdf`), and
+                // the flatten button adds "flattened" to whatever it is handed.
+                filename={cashFlowFileName(report?.property_address || '', new Date().toISOString(), 'legacy layout')}
               />
             )}
           />
@@ -5017,7 +5047,11 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                             if (!b) throw new Error('Failed to generate comparison PDF');
                             return b;
                           }}
-                          filename={`cash-flow-comparison-${comparisonReports.length + 1}-properties-${new Date().toISOString().split('T')[0]}.pdf`}
+                          filename={comparisonFileName(
+                            comparedPlaces(report, comparisonReports),
+                            new Date().toISOString(),
+                            COMPARISON_LEGACY_QUALIFIER,
+                          )}
                         />
                       </div>
                     </div>
@@ -5355,7 +5389,11 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                                 if (!b) throw new Error('Failed to generate AI analysis PDF');
                                 return b;
                               }}
-                              filename={`ai-cash-flow-analysis-${new Date().toISOString().split('T')[0]}.pdf`}
+                              filename={comparisonFileName(
+                                comparedPlaces(report, comparisonReports),
+                                new Date().toISOString(),
+                                `${COMPARISON_ANALYSIS_QUALIFIER}, ${COMPARISON_LEGACY_QUALIFIER}`,
+                              )}
                             />
                           </>
                         )}

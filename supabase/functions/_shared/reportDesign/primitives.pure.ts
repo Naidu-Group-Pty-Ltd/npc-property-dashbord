@@ -663,6 +663,30 @@ export interface DataTableOptions {
    * leading minus sign. Financial tables are the reason Category B exists.
    */
   signedKeys?: readonly string[];
+  /**
+   * Let a phrase in a figure column wrap (`PHRASE_CELL_CLASS`).
+   *
+   * A figure never wraps (`td.num` is set on one line), and a cell in a figure
+   * column that holds no figure at all — "Not within the term", "Principal and
+   * interest" — is held to the same rule only because it shares the column.
+   * Across five properties on a portrait page they ran the Cash Flow
+   * Comparison's last column past the sheet's edge, on 49 pages in 46 of 51
+   * designs (CASH_FLOW_COMPARISON.md §14). A cell with a digit in it is never a phrase, so "-$96 a week" still
+   * cannot break at its minus sign. Absent, the markup is what it always was.
+   */
+  wrapPhrases?: boolean;
+}
+
+/**
+ * The class a phrase in a figure column carries when its table asks for it
+ * (`DataTableOptions.wrapPhrases`): words and no digit, so it may wrap.
+ */
+export const PHRASE_CELL_CLASS = 'phrase';
+
+/** Words with no figure among them: at least two, and not one digit. */
+export function isPhrase(value: string): boolean {
+  const v = value.trim();
+  return /\S\s+\S/.test(v) && !/\d/.test(v) && /[A-Za-z]/.test(v);
 }
 
 /** `-1,234` / `($1,234)` → negative. Both conventions appear in the product. */
@@ -691,6 +715,7 @@ export function renderDataTable(
       const raw = typeof r[c.key] === 'string' ? r[c.key] as string : '';
       const classes: string[] = [];
       if (c.align === 'right') classes.push('num');
+      if (opts.wrapPhrases && c.align === 'right' && idx > 0 && isPhrase(raw)) classes.push(PHRASE_CELL_CLASS);
       if (signed.has(c.key) && signTone(raw) === 'negative') classes.push('neg');
       const cls = classes.length ? ` class="${classes.join(' ')}"` : '';
       // The first column is the row's label, so it is a header cell — that is

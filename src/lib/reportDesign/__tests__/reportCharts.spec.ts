@@ -422,7 +422,12 @@ describe('helpers', () => {
   it.each([
     [1_500_000, 'money', '$1.5m'],
     [12_400, 'money', '$12k'],
-    [-320, 'money', '$-320'],
+    // The sign ahead of the currency, as every figure in the product prints
+    // it. This case used to pin `$-320` — the defect, asserted (Audit 8).
+    [-320, 'money', '-$320'],
+    [-50_000, 'money', '-$50k'],
+    [-1_250_000, 'money', '-$1.3m'],
+    [-0.4, 'money', '$0'],
     // 4.55 is not representable in binary and rounds down; asserting the
     // arithmetic as it is rather than as it reads.
     [4.55, 'percent', '4.5%'],

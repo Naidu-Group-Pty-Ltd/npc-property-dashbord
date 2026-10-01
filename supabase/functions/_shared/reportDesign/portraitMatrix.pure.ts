@@ -9,11 +9,12 @@
  * where its section is, the property columns share the width equally, and each
  * is headed by its street.
  *
- * One implementation for the formats that draw holdings: the Portfolio
- * Performance Review, where it began and whose output it reproduces byte for
- * byte, and the Client Details record (CLIENT_DETAILS.md §12). The Property
- * Comparison keeps its own for now: its label column is wider, and it is
- * changed when that format is audited rather than as a side effect of this one.
+ * One implementation for the formats that draw properties side by side: the
+ * Portfolio Performance Review, where it began and whose output it reproduces
+ * byte for byte, the Client Details record (CLIENT_DETAILS.md §12), and both
+ * comparisons — the Property Comparison's scorecard, which carried a copy of
+ * its own until its audit, and every property-by-property table in the Cash
+ * Flow Comparison (COMPARISON.md §15, CASH_FLOW_COMPARISON.md §14).
  *
  * Pure: no I/O.
  */
@@ -43,6 +44,12 @@ export interface PortraitMatrixInput {
   labelWidthPct?: number;
   /** How the table keeps itself across a page (`tableKeeping.pure.ts`). */
   keep?: KeepOptions;
+  /**
+   * Let a phrase among the figures wrap (`DataTableOptions.wrapPhrases`): a
+   * comparison's "Not within the term" or "Principal and interest" in a fifth
+   * of the measure. Absent, the markup is exactly what it was.
+   */
+  wrapPhrases?: boolean;
 }
 
 export function renderPortraitMatrix(input: PortraitMatrixInput): string {
@@ -60,6 +67,7 @@ export function renderPortraitMatrix(input: PortraitMatrixInput): string {
     renderDataTable(cols, rows, {
       caption: input.caption,
       signedKeys: input.headings.map((_, i) => `p${i}`),
+      ...(input.wrapPhrases ? { wrapPhrases: true } : {}),
     }),
     { cols, rows },
     input.keep ?? {},

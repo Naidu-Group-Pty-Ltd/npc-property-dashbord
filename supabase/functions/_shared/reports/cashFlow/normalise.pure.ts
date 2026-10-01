@@ -42,6 +42,7 @@ import {
   type SchedulePreset,
 } from './constructionSchedule.pure.ts';
 import { acquisitionExpenditure } from './expenditure.pure.ts';
+import { truncateAtWord } from '../text.pure.ts';
 import { inputSummaryLines, type CashFlowInputs } from './inputSummary.pure.ts';
 
 /** Weeks in a year, as the modal's own projection uses. */
@@ -99,12 +100,7 @@ function text(value: unknown, max = 240): string {
 
 /** A note within `MAX_NOTE_CHARS` unchanged; past it, cut at a word with an ellipsis. */
 function noteText(value: unknown): string {
-  const t = typeof value === 'string' ? value.trim() : '';
-  if (t.length <= MAX_NOTE_CHARS) return t;
-  const cut = t.slice(0, MAX_NOTE_CHARS);
-  const space = cut.lastIndexOf(' ');
-  const kept = space > MAX_NOTE_CHARS / 2 ? cut.slice(0, space) : cut;
-  return `${kept.replace(/[\s,;:.\u2013\u2014-]+$/u, '')}\u2026`;
+  return typeof value === 'string' ? truncateAtWord(value, MAX_NOTE_CHARS) : '';
 }
 
 function record(value: unknown, where: string): Record<string, unknown> {

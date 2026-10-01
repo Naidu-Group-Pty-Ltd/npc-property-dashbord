@@ -25,8 +25,11 @@ import {
   renderGrid12,
   renderKpiStrip,
   renderPullQuote,
+  isPhrase,
+  PHRASE_CELL_CLASS,
 } from '../primitives.pure';
 import { resolveCompanyBlock } from '../companyBlock.pure';
+import { renderPortraitMatrix } from '../portraitMatrix.pure';
 
 const HOSTILE = '<script>alert("x")</script> & "quoted" \'apostrophe\'';
 
@@ -181,6 +184,46 @@ describe('tables', () => {
 
   it('renders nothing for an empty row set, rather than a headed empty table', () => {
     expect(renderDataTable(cols, [])).toBe('');
+  });
+
+  /**
+   * Audit 8. A figure never wraps, and a phrase in a figure column was held to
+   * the same rule only because it shared the column: "Not within the term"
+   * helped run the Cash Flow Comparison's last column past the sheet's edge,
+   * on 49 pages in 46 of 51 designs.
+   */
+  it('lets a phrase among the figures wrap when the table asks, and never a figure', () => {
+    const rows = [
+      { item: 'Repays its holding costs', amount: 'Not within the term' },
+      { item: 'Total', amount: '-$96 a week' },
+    ];
+    const html = renderDataTable(cols, rows, { wrapPhrases: true });
+    expect(html).toContain(`<td class="num ${PHRASE_CELL_CLASS}">Not within the term</td>`);
+    expect(html).toContain('<td class="num">-$96 a week</td>');
+    // Absent the option the markup is what it always was.
+    expect(renderDataTable(cols, rows)).not.toContain(PHRASE_CELL_CLASS);
+  });
+
+  it('reads a phrase as words with no figure among them', () => {
+    expect(isPhrase('Not within the term')).toBe(true);
+    expect(isPhrase('Principal and interest')).toBe(true);
+    expect(isPhrase('Tied')).toBe(false);
+    expect(isPhrase('Year 7')).toBe(false);
+    expect(isPhrase('$1,200 pa')).toBe(false);
+    expect(isPhrase('— —')).toBe(false);
+  });
+
+  it('carries the choice through the portrait matrix, and nothing without it', () => {
+    const input = {
+      lineLabel: 'Measure',
+      headings: ['1 Example Street', '2 Example Street'],
+      lines: [{ label: 'Repays', values: ['Not within the term', 'Year 7'] }],
+      caption: 'Timing',
+      className: 'test-matrix',
+    };
+    expect(renderPortraitMatrix({ ...input, wrapPhrases: true }))
+      .toContain(`class="num ${PHRASE_CELL_CLASS}">Not within the term`);
+    expect(renderPortraitMatrix(input)).not.toContain(PHRASE_CELL_CLASS);
   });
 
   it('puts a wide matrix on the landscape page', () => {

@@ -4716,6 +4716,31 @@ intact comparison. Two rules bite.
   the migration has not reached refuses the update and still saves the
   comparison.
 
+## The comparisons say what each figure is, and nothing runs off the sheet
+Read §15 of [`COMPARISON.md`](./docs/reports/COMPARISON.md) and §14 of
+[`CASH_FLOW_COMPARISON.md`](./docs/reports/CASH_FLOW_COMPARISON.md) before
+touching either comparison's `render.pure.ts` or `charts.pure.ts`, `winnerOf`,
+`PHRASE_CELL_CLASS` / `wrapPhrases`, `renderPortraitMatrix`, `truncateAtWord`
+or `withFlattenedSuffix`. Audit 8 (1 Oct 2026) measured both comparisons at
+two, three and five properties over all 51 designs, and found two things. At
+five properties the Cash Flow Comparison's fifth column ran past the sheet's
+edge on 49 pages. Both donuts counted different things from the tables beside
+them. Three rules bite.
+
+- **A phrase in a figure column may wrap, and a figure never does.**
+  `wrapPhrases` marks a right-aligned cell that holds words and no digit. A
+  table opts in, and without it the markup is byte-identical.
+- **An absence says which absence it is.** A tie, a payback year no property
+  reaches, and a measure fewer than two properties have are three different
+  words (`undecided`). A chart counts exactly the measures its table counts, in
+  counts, never shares.
+- **A flattened copy is named by the flatten button.** A caller names the
+  document it flattens and never passes "flattened" itself. The helper also
+  refuses to say the word twice.
+
+The AI generation is untouched, and nothing the producer numbered by
+`propertyNumber` is newly attributed (F4).
+
 ## The Intelligence Hub export is the adviser's report
 Read §14 of [`docs/reports/QA.md`](./docs/reports/QA.md) before touching
 `readTitleBlock`, `isGenericSectionHeading`, `planFromMarkdown`'s `continuous`

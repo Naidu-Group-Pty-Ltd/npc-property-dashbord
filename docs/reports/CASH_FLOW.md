@@ -546,9 +546,13 @@ is still level 2 in the outline.
 growth line above it". Since §11 it sits beside the end-of-term table, so it now
 says "its capital growth over the term".
 
-**The filename is readable** (§5). The legacy copy is qualified "legacy layout"
-and the flattened copy "flattened", so neither shares a name with the typeset
-document in one folder. The Excel workbook takes the same name.
+**The filename is readable** (§5). The legacy copy is qualified "legacy layout",
+so it never shares a name with the typeset document in one folder. The
+flattened copy is of the legacy layout and carries the same name plus the
+"-flattened" the flatten button adds. (Audit 8 found this first passing
+"flattened" as the qualifier as well, which named the file
+`10 Year Cash Flow - flattened - … - 1 Oct 2026-flattened.pdf`.) The Excel
+workbook takes the same name.
 
 **The choice sits beside the act.** "Choose template" used to be an item inside
 the export menu. On a phone that menu is itself inside "More", so the picker was

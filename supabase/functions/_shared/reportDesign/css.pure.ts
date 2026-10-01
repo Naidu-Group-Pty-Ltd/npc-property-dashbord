@@ -384,6 +384,11 @@ function tableRules(
    * which is the right trade in a financial table.
    */
   table.data td.num, table.data th.num { text-align: right; white-space: nowrap; }
+  /* A phrase in a figure column (PHRASE_CELL_CLASS) is not a figure: "Not
+     within the term" wraps between its words where its column is narrower than
+     it. Only a table that asks for it (wrapPhrases) carries the class, and a
+     cell with a digit in it never does. */
+  table.data td.num.phrase { white-space: normal; }
   table.data td.pos { color: ${palette.positive}; }
   table.data td.neg { color: ${palette.negative}; }
   table.data thead { display: table-header-group; }

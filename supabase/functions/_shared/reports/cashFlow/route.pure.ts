@@ -86,8 +86,10 @@ export function parseRenderRequest(body: unknown): RequestParse {
  * report's download now follows. The date still tells two revisions of one
  * property apart in a client's downloads folder; it is the day as a reader
  * says it. The qualifier names a copy that is not the typeset document — the
- * browser's "legacy layout", or a "flattened" one — so the two never share a
- * name in one folder.
+ * browser's "legacy layout" — so the two never share a name in one folder. A
+ * flattened copy is named by the flatten button itself (`withFlattenedSuffix`
+ * adds the word), so it is handed the name of what it flattens and no more:
+ * passing "flattened" here as well printed the word twice.
  */
 export function cashFlowFileName(propertyAddress: string, isoDate: string, qualifier?: string | null): string {
   return readableFileName({
