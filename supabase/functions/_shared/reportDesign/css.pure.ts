@@ -513,8 +513,12 @@ function chapterRules(
      the same h4, the same colour, the same place in the outline. */
   /* A memo section's own subheads (SECTION_SUBHEAD_CLASS): the h2 element,
      so the outline keeps its level, at h3's size — one modular step below the
-     memo title above it rather than a point or two short of it. */
-  .memo h2.section-subhead {
+     memo title above it rather than a point or two short of it. A full
+     chapter that asks for the class gets the same size: the 10 Year Cash
+     Flow's one subhead set at the display subhead size was the largest type on
+     a page of tables (Audit 7, 1 Oct 2026). */
+  .memo h2.section-subhead,
+  .chapter-body h2.section-subhead {
     font-size: ${pt(type.h3 * F.display)};
     line-height: 1.25;
     margin: ${pt(d.blockGapPt + 6)} 0 ${pt(d.paragraphGapPt + 1)};

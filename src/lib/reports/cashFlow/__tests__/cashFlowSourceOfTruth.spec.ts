@@ -26,8 +26,10 @@ const BRIDGE_SHAPE =
 /** Siblings, or the design system next door. Nothing else. *
  * `../reportDate.pure.ts` is the shared date reader, a file in the parent
  * like the others here — eleven routes each carried a private copy.
+ * `../readableFileName.pure.ts` is the one filename rule every report's
+ * download follows (Audit 7); it imports nothing but the date reader.
  */
-const ALLOWED_IMPORT = /^(?:\.\/[\w.]+\.pure\.ts|\.\.\/\.\.\/reportDesign\/[\w.]+\.(?:pure|generated)\.ts|\.\.\/reportDate\.pure\.ts)$/;
+const ALLOWED_IMPORT = /^(?:\.\/[\w.]+\.pure\.ts|\.\.\/\.\.\/reportDesign\/[\w.]+\.(?:pure|generated)\.ts|\.\.\/(?:reportDate|readableFileName)\.pure\.ts)$/;
 
 describe('cash flow projection — single source of truth', () => {
   it('has at least one canonical module', () => {

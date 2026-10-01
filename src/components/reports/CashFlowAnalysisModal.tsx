@@ -24,6 +24,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { secureStorageUpload } from '@/hooks/useSecureStorage';
 import { requestCashFlowPdf } from '@/lib/reports/cashFlow/requestCashFlowPdf';
+import { cashFlowFileName, cashFlowWorkbookFileName } from '@/lib/reports/cashFlow/route.pure';
 import {
   assertProjectionComplete,
   describeAssumedInputs,
@@ -2131,7 +2132,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     XLSX.utils.book_append_sheet(wb, ws2, '10 Year Projections');
 
     // Download
-    const fileName = `Cash_Flow_Analysis_${report.property_address.replace(/[^a-zA-Z0-9]/g, '_')}.xlsx`;
+    const fileName = cashFlowWorkbookFileName(report.property_address, new Date().toISOString());
     XLSX.writeFile(wb, fileName);
 
     toast({
@@ -3364,9 +3365,11 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         return pdf.output('blob');
       }
 
-      // Save PDF - use cleaned address for filename
+      // Save PDF - use cleaned address for filename. Named as every report is
+      // now (`cashFlowFileName`), and marked as the legacy layout so it never
+      // shares a name with the typeset document in one downloads folder.
       const cleanedAddressForFile = report.property_address.replace(/[_\s]?Copy[_\s]?\d*$/i, '').trim();
-      const fileName = `Cash_Flow_10Year_${cleanedAddressForFile.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
+      const fileName = cashFlowFileName(cleanedAddressForFile, new Date().toISOString(), 'legacy layout');
       pdf.save(fileName);
 
       toast({
@@ -3536,7 +3539,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         legacyBlob = blob;
         return {
           url: '',
-          fileName: `Cash_Flow_Analysis_${(report.property_address || 'report').replace(/[^a-zA-Z0-9]/g, '_')}.pdf`,
+          fileName: cashFlowFileName(report.property_address || '', new Date().toISOString(), 'legacy layout'),
           bytes: blob.size,
         };
       },
@@ -4140,6 +4143,15 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
             comparisonCount={comparisonReports.length + 1}
             onResetAll={() => setShowResetConfirm(true)}
             onSaveChanges={handleSaveOverrides}
+            templateChoice={(
+              // The choice, then the act, as on every other report's export.
+              <ChooseTemplateButton
+                reportType="cashflow"
+                formatLabel="10 Year Cash Flow"
+                disabled={isExportingServerPdf}
+                className="min-h-10 shrink-0 rounded-xl shadow-sm"
+              />
+            )}
             exportMenu={(
               <CashFlowExportMenu
                 includeAllChartsInExport={includeAllChartsInExport}
@@ -4152,7 +4164,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                 onExportPdf={exportSingleReportPDF}
                 onPrintView={openPrintView}
                 onSendToClient={() => setSendToClientOpen(true)}
-                filename={`Cash_Flow_10Year_${(report?.property_address || 'report').replace(/[^a-zA-Z0-9]/g, '_')}.pdf`}
+                filename={cashFlowFileName(report?.property_address || '', new Date().toISOString(), 'flattened')}
               />
             )}
           />

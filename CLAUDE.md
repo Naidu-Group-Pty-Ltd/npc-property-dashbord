@@ -2999,6 +2999,31 @@ Three rules bite.
 - **The loan is re-sized to land plus build at the case's LVR, and duty stays
   the land's.**
 
+## The 10 Year Cash Flow's notes reach the page whole (Audit 7, 1 Oct 2026)
+Read §12 of [`CASH_FLOW.md`](./docs/reports/CASH_FLOW.md) before touching
+`MAX_NOTE_CHARS` or the notes read in `normalise.pure.ts`, `evidenceBasisNotes`,
+`toAssumptions`, the `onePage` sections in `sections.pure.ts`, the subhead in
+`cashFlow/render.pure.ts` or the template choice in `CashFlowCommandHeader`. The
+document was drawn in all 51 designs for four cases, and the layout was already
+sound. What was wrong was what it said. Three rules bite.
+
+- **A note is never cut mid-sentence.** Notes shared the 240-character `slice`
+  of every text field, and the tax caveat lost "with an accountant" the moment
+  its wording grew. `MAX_NOTE_CHARS` is 600, more than twice the longest note
+  the browser composes, and a spec holds every variant to that. A note past it
+  is cut at a word and ends in an ellipsis.
+- **"What this assumes" is a one-page section.** At the full opener, a fourth
+  note (depreciation excluded) put the caution alone on an extra page in 37 of
+  51 designs. Opened as "Value, debt and equity" is, four notes at their
+  longest fit in all 51.
+- **One figure, one name, in the client's words.** The assumptions table uses
+  the Input Summary's labels. A note says what "was not provided for this
+  analysis", never "not held", which reads as "the owner holds no other land".
+
+"Choose template" is a button beside the export menu, never an item inside it.
+The menu's chart switches say they reach the legacy layout, which is all they
+reach. The file is `10 Year Cash Flow Analysis - <address> - <date>.pdf`.
+
 ## The 291 Stone Mason Drive audit (QA-291SM)
 Read [`docs/reports/QA_291SM_REMEDIATION_TRACKER.md`](./docs/reports/QA_291SM_REMEDIATION_TRACKER.md)
 before touching the standard (pdf-lib) presentation, the fork's section

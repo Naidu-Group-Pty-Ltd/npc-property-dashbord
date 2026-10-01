@@ -427,7 +427,9 @@ export const SUBHEAD_CLASS = 'subhead';
  * Performance Review's property addresses and "What could go wrong" read as
  * rival section titles. This sets the same `h2` at h3's size: still level 2 in
  * the outline, the bookmarks and the tagged PDF (a level is never skipped),
- * one step below the title it sits under. Only a memo section sizes it.
+ * one step below the title it sits under. A memo section sizes it, and so does
+ * a full chapter's body that asks for it — the 10 Year Cash Flow's subhead
+ * among its tables (Audit 7).
  */
 export const SECTION_SUBHEAD_CLASS = 'section-subhead';
 

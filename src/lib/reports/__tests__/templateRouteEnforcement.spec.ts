@@ -174,7 +174,9 @@ const CHOICE_SURFACES: Record<string, string> = {
   qa: 'src/components/report-qa/ReportQaDownloadButton.tsx',
   commercial_capacity: 'src/components/clients/ClientCommercialIndustrialTab.tsx',
   market_intelligence: 'src/components/marketing/MarketIntelligenceDownloadButton.tsx',
-  cashflow: 'src/components/cash-flow/modal/CashFlowExportMenu.tsx',
+  // Beside the export menu, in the header row (Audit 7): the menu is itself
+  // inside "More" on a phone, and a picker opened from a menu vanishes with it.
+  cashflow: 'src/components/reports/CashFlowAnalysisModal.tsx',
 };
 
 describe('the choice can be made where the document is produced', () => {
