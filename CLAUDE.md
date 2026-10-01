@@ -3840,6 +3840,36 @@ bite.
   PDF", and the file is `Client Details - <client> - <date>.pdf` under a
   URL-safe storage key.
 
+## The five Investment documents, through all fifty masters (Audit 6)
+Read §21 of [`A_PREMIUM_DOCUMENT.md`](./docs/reports/A_PREMIUM_DOCUMENT.md)
+and §9 of [`NARRATIVE_PACKING.md`](./docs/reports/NARRATIVE_PACKING.md)
+before touching `recordTables` / `recordLayout` in `markdown.pure.ts`,
+`openingShared` in the packer or the geometry, `donutReading`, `sparkRange`,
+`renderTimelineRibbon`'s axis, `presentableName.pure.ts`, `statFigure` or the
+fork branch of `stripBakedCover`. All five tiers for two production rows were
+drawn through all fifty masters (500 documents) and read from WeasyPrint's own
+box tree. A quarter-width risk register cell ran ten to thirteen lines, so 805
+rows stood taller than 150pt and 174 pages ended early before a table. Three
+rules bite.
+
+- **A register whose cells are sentences is set as records, not a grid.** Only
+  the template narrative asks for it, and only a table of four or more
+  labelled columns averaging 100 printed characters a cell qualifies. That
+  threshold is measured (the registers carry 136–396, the planning Evidence
+  column 99 and stays a grid).
+- **A figure prints what its source wrote.** A donut keeps a percentage's sign
+  and never turns a share of a workforce into a share of the ring. A spark is
+  scaled against a tenth of its own magnitude. A timeline draws only the
+  horizons its items reach, and a single stop is tabulated.
+- **A shared opening box that cannot take the first block stands empty.** The
+  body opens overleaf rather than setting ten lines in six through the running
+  foot. A first box on a page of its own is never emptied.
+
+The report page's export button is "Export PDF", with "Choose template" beside
+it, and the file is `Investment Compass - <address> - <date>.pdf`. The stored
+fixtures predate the 25 Sep generation rules, so a content review of a newer
+row is still BLOCKED on a stored report this work could not read.
+
 ## A template dresses nine report types, and never pages them
 Read [`TEMPLATE_PARITY.md`](./docs/reports/TEMPLATE_PARITY.md) before touching
 `templateParity.pure.ts`, `templateDesign*.pure.ts`, `templateDesignRead.ts`,

@@ -311,7 +311,10 @@ describe('output safety', () => {
       renderMicroMap(ctx, { suburb: HOSTILE, state: HOSTILE, neighbours: [HOSTILE] }),
       renderDonut(ctx, [{ label: HOSTILE, value: 1 }], { title: HOSTILE, centerLabel: HOSTILE }),
       renderQuadrant(ctx, [{ x: 1, y: 1, label: HOSTILE }], { title: HOSTILE, q1: HOSTILE }),
-      renderTimelineRibbon(ctx, [{ phase: 'existing', label: HOSTILE }], { title: HOSTILE }),
+      // Two stops: a single stop is not a timeline and the ribbon declines it
+      // (the caller tabulates), so the hostile label needs a second horizon
+      // to be drawn at all.
+      renderTimelineRibbon(ctx, [{ phase: 'existing', label: HOSTILE }, { phase: '0-2y', label: HOSTILE }], { title: HOSTILE }),
     ];
     for (const svg of svgs) {
       expect(svg).not.toContain('<script>');
@@ -544,7 +547,13 @@ describe('a label never runs past the drawing it belongs to', () => {
     const xs = [...svg.matchAll(/<circle cx="([\d.]+)"/g)].map((m) => Number(m[1]));
     expect(xs).toEqual([98, 286, 474, 662]);
     const heightOf = (s: string) => Number(/viewBox="0 0 [\d.]+ ([\d.]+)"/.exec(s)![1]);
-    const short = renderTimelineRibbon(ctx, [{ phase: 'existing', label: 'Rail' }], {});
+    // Compared over the same four stops, so the only difference is the labels.
+    const short = renderTimelineRibbon(ctx, [
+      { phase: 'existing', label: 'Rail' },
+      { phase: '0-2y', label: 'Bus' },
+      { phase: '3-5y', label: 'Road' },
+      { phase: '5y+', label: 'Park' },
+    ], {});
     expect(heightOf(svg)).toBeGreaterThan(heightOf(short));
     // Every label row sits above the bottom of the ground.
     const ys = [...svg.matchAll(/<text x="[\d.]+" y="([\d.]+)"/g)].map((m) => Number(m[1]));
