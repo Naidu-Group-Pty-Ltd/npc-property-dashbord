@@ -1587,9 +1587,9 @@ section's own name.
   percentage, whose title calls it a share, or whose parts add to a hundred.
   One that sums to less than the whole is drawn against 100, with the rest of
   the ring left as the rest.
-- *Counts* print as counts, even under a title that calls them a share:
-  3,200 and 1,800 are not percentages whatever the title says, and reading
-  them as such would print "3200%".
+- *Counts* print as counts. A value above 100 is never read as a
+  percentage on the strength of a title or a centre: "Share of dwellings"
+  over 3,200 and 1,800 would otherwise print "3200%".
 - *A whole ring* is drawn as two half arcs (`ringSegmentPath`). An arc whose
   ends meet draws nothing, so the SEIFA donut's 4-of-4 printed as a half-disc
   above a separate circle.
