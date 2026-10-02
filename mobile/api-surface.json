@@ -489,7 +489,7 @@
       "name": "compare-investment-reports",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "condense-investment-report",
@@ -1101,7 +1101,7 @@
       "name": "get-investment-reports",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "get-portal-client-data",
@@ -1509,7 +1509,7 @@
       "name": "manage-investment-reports",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "manage-lead-magnets",
