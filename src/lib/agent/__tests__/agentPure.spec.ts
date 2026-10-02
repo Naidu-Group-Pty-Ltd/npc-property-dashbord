@@ -154,6 +154,24 @@ describe('takeSpeakable', () => {
     expect(rest.next).toBe(raw.length);
   });
 
+  it('announces a streamed table once, however many chunks it arrives in', () => {
+    const raw = 'Here it is:\n| Stage | Count |\n|---|---|\n| Lead | 4 |\n| Won | 2 |\n\nThat is all. ';
+    let cursor = 0;
+    const said: string[] = [];
+    // Feed the buffer as it would stream, one character at a time.
+    for (let end = 1; end <= raw.length; end += 1) {
+      const take = takeSpeakable(raw.slice(0, end), cursor, false);
+      if (take.text) said.push(take.text);
+      cursor = take.next;
+    }
+    const final = takeSpeakable(raw, cursor, true);
+    if (final.text) said.push(final.text);
+    const joined = said.join(' ');
+    expect(joined.match(/I have put the details in a table\./g)).toHaveLength(1);
+    expect(joined).toContain('That is all.');
+    expect(joined).not.toMatch(/Lead|\|/);
+  });
+
   it('returns nothing when there is nothing new', () => {
     expect(takeSpeakable('Done.', 5, true)).toEqual({ text: '', next: 5 });
   });

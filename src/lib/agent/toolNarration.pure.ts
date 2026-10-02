@@ -287,3 +287,13 @@ export function describePendingAction(toolCall: unknown): PendingActionSummary |
   }
   return { name, title, detail, domain: toolDomain(name) };
 }
+
+/** Every action a reply proposes, described once each, in the order proposed. */
+export function summarisePendingActions(toolCalls: unknown[] | undefined): PendingActionSummary[] {
+  const out: PendingActionSummary[] = [];
+  for (const tc of toolCalls ?? []) {
+    const s = describePendingAction(tc);
+    if (s && !out.some((o) => o.title === s.title && o.detail === s.detail)) out.push(s);
+  }
+  return out;
+}

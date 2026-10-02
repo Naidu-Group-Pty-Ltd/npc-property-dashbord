@@ -23,8 +23,16 @@ const ABBREVIATIONS = new Set([
 
 const EMOJI_RE = /[\p{Extended_Pictographic}\u{FE0F}\u{200D}]/gu;
 
+export interface SpeakableOptions {
+  /**
+   * The text before this fragment ended inside a table, so rows at the head
+   * of the fragment continue a table that was already announced.
+   */
+  continuesTable?: boolean;
+}
+
 /** Plain sentences from Markdown. Safe on a fragment as well as a whole reply. */
-export function toSpeakable(markdown: string): string {
+export function toSpeakable(markdown: string, options: SpeakableOptions = {}): string {
   if (!markdown) return '';
   let text = markdown;
 
@@ -34,7 +42,7 @@ export function toSpeakable(markdown: string): string {
 
   const lines = text.split('\n');
   const kept: string[] = [];
-  let tableAnnounced = false;
+  let tableAnnounced = options.continuesTable === true;
   for (const rawLine of lines) {
     const line = rawLine.trim();
     if (!line) {
@@ -120,6 +128,14 @@ export interface SpeakableTake {
   next: number;
 }
 
+/** Whether the consumed text ends inside a table (its last line is a row). */
+function endsInTable(consumed: string): boolean {
+  if (!consumed || /\n\s*\n\s*$/.test(consumed)) return false;
+  const lines = consumed.split('\n').map((l) => l.trim()).filter(Boolean);
+  const last = lines[lines.length - 1];
+  return !!last && last.startsWith('|');
+}
+
 /**
  * Take the next speakable stretch of `raw` starting at `from`.
  *
@@ -129,15 +145,16 @@ export interface SpeakableTake {
  */
 export function takeSpeakable(raw: string, from: number, final: boolean): SpeakableTake {
   if (from >= raw.length) return { text: '', next: from };
+  const options = { continuesTable: endsInTable(raw.slice(0, from)) };
   if (final) {
-    return { text: toSpeakable(raw.slice(from)), next: raw.length };
+    return { text: toSpeakable(raw.slice(from), options), next: raw.length };
   }
   const tail = raw.slice(from);
   const boundaries = sentenceBoundaries(tail);
   for (let k = boundaries.length - 1; k >= 0; k -= 1) {
     const end = from + boundaries[k];
     if (fenceCount(raw.slice(0, end)) % 2 === 0) {
-      return { text: toSpeakable(raw.slice(from, end)), next: end };
+      return { text: toSpeakable(raw.slice(from, end), options), next: end };
     }
   }
   return { text: '', next: from };
